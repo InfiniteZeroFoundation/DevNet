@@ -1,0 +1,246 @@
+/* Reset default styles for consistency */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Root styles */
+body {
+  font-family: 'Inter', sans-serif; /* Modern, clean font */
+  background-color: #f4f7fa; /* Light gray background */
+  color: #333; /* Dark gray text for readability */
+  line-height: 1.6;
+}
+
+/* Main app container */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh; /* Full viewport height */
+}
+
+/* Header styles */
+.header {
+  background-color: #1a73e8; /* Vibrant blue */
+  color: white;
+  padding: 1.5rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.header h1 {
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+/* Navbar styles */
+.navbar ul {
+  list-style: none;
+  display: flex;
+  gap: 1.5rem;
+}
+
+.navbar a {
+  color: white;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.3s ease;
+}
+
+.navbar a:hover {
+  color: #ffd700; /* Gold hover effect */
+}
+
+/* Main content */
+.main-content {
+  flex: 1; /* Takes up remaining space */
+  padding: 2rem;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  padding: 2rem;
+}
+
+/* TabBar styling */
+.tab-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.tab-button {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background-color: #e0e0e0; /* Light gray for non-active */
+  color: #333; /* Dark text for visibility */
+  transition: background-color 0.3s ease;
+}
+
+.tab-button.active {
+  background-color: #1a73e8; /* Blue for active */
+  color: white; /* White text */
+}
+
+.tab-button:hover {
+  background-color: #d0d0d0; /* Darker gray on hover */
+}
+
+.tab-button.active:hover {
+  background-color: #1563c0; /* Darker blue on hover */
+}
+
+/* Generic section styling */
+div[style*="border: 1px solid #ccc"] {
+  border: 1px solid #e0e0e0 !important;
+  border-radius: 8px;
+  padding: 1.5rem !important;
+  background-color: #fafafa; /* Subtle off-white */
+  margin-bottom: 1.5rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1a73e8; /* Blue heading */
+  margin-bottom: 1rem;
+}
+
+h3 {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: #444;
+  margin-bottom: 0.75rem;
+}
+
+p {
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Buttons */
+button {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  background-color: #1a73e8; /* Blue button */
+  color: white;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.1s ease;
+}
+
+button:hover {
+  background-color: #1557b0; /* Darker blue on hover */
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+/* Specific button styles */
+button[style*="backgroundColor: red"] {
+  background-color: #d32f2f !important; /* Red reset button */
+}
+
+button[style*="backgroundColor: red"]:hover {
+  background-color: #b71c1c !important;
+}
+
+/* Lists */
+ul {
+  list-style: none;
+  margin-left: 1rem;
+}
+
+ul li {
+  margin-bottom: 0.5rem;
+  position: relative;
+}
+
+ul li::before {
+  content: "•";
+  color: #1a73e8;
+  font-weight: bold;
+  display: inline-block;
+  width: 1rem;
+  margin-left: -1rem;
+}
+
+/* Bolder text for <b> inside lists */
+ul li b {
+  color: #555;
+}
+
+/* Code block styling */
+pre {
+  background-color: #f5f5f5;
+  padding: 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  overflow-x: auto;
+}
+
+/* Message styling */
+div[style*="color: red"] {
+  color: #d32f2f !important;
+  font-weight: 500;
+}
+
+div[style*="color: green"] {
+  color: #2e7d32 !important;
+  font-weight: 500;
+}
+
+/* Footer */
+.footer {
+  background-color: #1a73e8;
+  color: white;
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.9rem;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    text-align: center;
+    padding: 1rem;
+  }
+
+  .navbar ul {
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+
+  .main-content {
+    padding: 1rem;
+  }
+
+  .container {
+    padding: 1rem;
+  }
+
+  .tab-bar {
+    flex-wrap: wrap;
+  }
+
+  .tab-button {
+    flex: 1 1 45%;
+    margin-bottom: 0.5rem;
+  }
+}
