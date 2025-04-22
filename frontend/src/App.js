@@ -24,9 +24,44 @@ function TabBar({ activeTab, setActiveTab }) {
 
 /** ======================= ModelOwner TAB ======================= */
 function ModelOwnerTab() {
+  const [genesisModelF, setGenesisModelF] = useState(false);
+  
+  const createGenesisModel = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/modelowner/createGenesisModel");
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      console.log(data.message);
+
+      // Show tooltip
+      if (data.status === "success") {
+        setGenesisModelF(true);
+        showTooltip(data.message, false);
+      } else {
+        showTooltip(data.message, true);
+      }
+    } catch (err) {
+      console.error("Error creating genesis model:", err);
+      // Show error tooltip
+      showTooltip(err.message, true);
+    }
+  };
+  
   return (
     <div className="tab-content">
       <h2>ModelOwner</h2>
+      {genesisModelF ? (
+        <div>
+          <h3>Genesis Model Available</h3>
+        </div>
+      ) : (
+        <div>
+          <h3>Genesis Model Not Available</h3>
+          <button className="button button--primary" onClick={() => createGenesisModel()}>Create Genesis Model</button>
+        </div>
+      )}
     </div>
   );
 }
