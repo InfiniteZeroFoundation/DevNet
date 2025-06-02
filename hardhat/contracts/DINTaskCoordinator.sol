@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-contract DINCoordinator {
+import "./DinToken.sol"; // Import the DINToken contract interface
+
+contract DINTaskCoordinator {
 
     address public owner;  // model owner
     string public genesisModelIpfsHash; // genesis model ipfs hash
@@ -10,14 +12,32 @@ contract DINCoordinator {
     mapping (uint => mapping(address => string)) public clientModels;
     mapping (uint => address[]) public clientAddresses;
 
+    uint public totalDepositedRewards = 0;
 
-    constructor() {
+    DinToken public dintoken;
+
+    event RewardDeposited(address indexed modelOwner, uint256 amount);
+
+    constructor(address dintoken_address) {
         owner = msg.sender;
+        dintoken = DinToken(dintoken_address);
     }
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
         _;
+    }
+
+
+    function depositReward(uint _amount) public onlyOwner {
+        require(_amount > 0, "Amount must be greater than 0");
+
+        // Pull DIN tokens from sender (ModelOwner)
+        bool success = dintoken.transferFrom(msg.sender, address(this), _amount);
+        require(success, "DINToken transfer failed");
+
+        totalDepositedRewards += _amount;
+        emit RewardDeposited(msg.sender, _amount);
     }
 
     function setGenesisModelIpfsHash(string memory _genesisModelIpfsHash) public onlyOwner {

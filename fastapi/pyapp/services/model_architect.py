@@ -3,21 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 from services.ipfs_service import upload_to_ipfs
+from services.blockchain_services import get_w3
 import torch.nn.init as init
-from web3 import Web3
 from dotenv import dotenv_values
 import json
 
-RPC_URL = os.getenv("RPC_URL")           # e.g. "http://127.0.0.1:8545"
 
-def get_w3():
-    try:
-        w3 = Web3(Web3.HTTPProvider(RPC_URL))
-        if not w3.is_connected():
-            raise HTTPException(status_code=400, detail="Could not connect to Ethereum node.")
-        return w3
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not connect to Ethereum node: {e}")
 
 
 class ModelArchitecture(nn.Module):
@@ -58,19 +49,19 @@ def getGenesisModelIpfs():
     model_hash = upload_to_ipfs("./models/modelowner/genesis_model.pth", "Genesis model")
     return model_hash
 
-def get_DINCoordinator_Instance(dincoordinator_address=None):
+def get_DINTaskCoordinator_Instance(dintaskcoordinator_address=None):
     w3 = get_w3()
-    if dincoordinator_address is None:
-        dincoordinator_address = dotenv_values(".env").get("DINCoordinator_Contract_Address")
+    if dintaskcoordinator_address is None:
+        dintaskcoordinator_address = dotenv_values(".env").get("DINTaskCoordinator_Contract_Address")
     
-    with open("../../hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json") as f:
-        dincoordinator_data = json.load(f)
-        dincoordinator_abi = dincoordinator_data["abi"]
-        dincoordinator_bytecode = dincoordinator_data["bytecode"]
-    
-    if dincoordinator_address:
-        deployed_DINCoordinatorContract = w3.eth.contract(address=dincoordinator_address, abi=dincoordinator_abi)
-        return deployed_DINCoordinatorContract
+    with open("../../hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json") as f:
+        dintaskcoordinator_data = json.load(f)
+        dintaskcoordinator_abi = dintaskcoordinator_data["abi"]
+        dintaskcoordinator_bytecode = dintaskcoordinator_data["bytecode"]
+        
+    if dintaskcoordinator_address:
+        deployed_DINTaskCoordinatorContract = w3.eth.contract(address=dintaskcoordinator_address, abi=dintaskcoordinator_abi, bytecode=dintaskcoordinator_bytecode)
+        return deployed_DINTaskCoordinatorContract
     else:
-        return w3.eth.contract(abi=dincoordinator_abi, bytecode=dincoordinator_bytecode)
-    
+        return w3.eth.contract(abi=dintaskcoordinator_abi, bytecode=dintaskcoordinator_bytecode)
+ 
