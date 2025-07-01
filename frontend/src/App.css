@@ -318,7 +318,7 @@ pre {
 }
 
 
-.validator {
+.listbox {
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -328,12 +328,12 @@ pre {
   transition: transform var(--transition), box-shadow var(--transition);
 }
 
-.validator:hover {
+.listbox:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-sm);
 }
 
-.validator p {
+.listbox p {
   margin: 0;
   font-size: 0.95rem;
   line-height: 1.6;

@@ -185,6 +185,8 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
   const [genesisModelIpfsHash, setGenesisModelIpfsHash] = useState(null);
   const [registeredTaskValidators, setRegisteredTaskValidators] = useState([]);
   const [clientModelsCreatedF, setClientModelsCreatedF] = useState(false);
+  const [clientModels, setClientModels] = useState([]);
+  const [clientAddresses, setClientAddresses] = useState([]);
   
 
   const fetchModelOwnerState = async () => {
@@ -365,7 +367,39 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
   }, []);
 
 
+  const fetchClientModels = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch("http://localhost:8000/modelowner/getClientModels", {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
+      const data = await response.json();
+      console.log(data);
+      setClientModels(data.client_models);
+      setClientAddresses(data.client_addresses);
+    } catch (err) {
+      console.error("Error fetching client models:", err);
+      showTooltip(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const approveClientModel = async (clientAddress) => {
+
+  }
+
+  const rejectClientModel = async (clientAddress) => {
+
+  }
+
+  useEffect(() => {
+    if (GIstate === "LM submissions closed" && clientModelsCreatedF){
+      fetchClientModels();
+    }
+  }, [GIstate, clientModelsCreatedF]);
 
   return (
     <div className="tab-content">
@@ -441,10 +475,33 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                   </button>
                 </div>
                   </>
-                ):(
-                <>
-                </>
-                )}
+                ):null}
+
+                {GIstate === "LM submissions closed" && clientModelsCreatedF ? (
+                  <>
+                  <div>
+                    <h3>Client Models</h3>
+                    {clientModels.map((model, index) => (
+                      <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }} key={index} className="listbox">
+                        <p>{clientAddresses[index]} : {model}</p>
+                        <button 
+                          className="button button--primary"
+                          onClick={() => approveClientModel(clientAddresses[index])}
+                        >
+                          Approve Client Model
+                        </button>
+
+                        <button 
+                          className="button button--danger"
+                          onClick={() => rejectClientModel(clientAddresses[index])}
+                        >
+                          Reject Client Model
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  </>
+                ):null}
                 
               </>
             ) : (
@@ -462,7 +519,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
 }
 
 /** ======================= Clients TAB ======================= */
-function ClientsTab() {
+function ClientsTab({setGIstate, fetchGIState, GIstate}) {
 
   const [clientModelsCreatedF, setClientModelsCreatedF] = useState(false);
   const [client_model_ipfs_hashes, setClientModelIpfsHashes] = useState([]);
@@ -532,6 +589,7 @@ function ClientsTab() {
     }
   };
 
+
   return (
     <div className="tab-content">
       <h2>Clients</h2>
@@ -542,47 +600,44 @@ function ClientsTab() {
         {/* Conditionally render DP selection or just display current mode */}
         {!clientModelsCreatedF ? (
           <div>
-            <label htmlFor="DPMode">Differential Privacy Mode:</label>
-            <select
-              id="DPMode"
-              value={DPMode}
-              onChange={(e) => setDPMode(e.target.value)}
-            >
-              <option value="disabled">Disabled</option>
-              {/* <option value="beforeTraining">Before Training</option> */}
-              <option value="afterTraining">After Training</option>
-            </select>
-          </div>
+          <label htmlFor="DPMode">Differential Privacy Mode:</label>
+          <select
+            id="DPMode"
+            value={DPMode}
+            onChange={(e) => setDPMode(e.target.value)}
+          >
+            <option value="disabled">Disabled</option>
+            {/* <option value="beforeTraining">Before Training</option> */}
+            <option value="afterTraining">After Training</option>
+          </select>
+          <p>No client models available.</p>
+        </div>
         ) : (
           <div>
             <h3>Differential Privacy Mode:</h3>
             <p>{DPMode}</p>
-          </div>
-        )}
 
-        {/* Client Models Display */}
-        {clientModelsCreatedF ? (
-        <div>
-          <h3>Client Models Available</h3>
+            <h3>Client Models Available</h3>
           {clients_address && clients_address.length > 0 ? (
             clients_address.map((address, index) => (
               <p key={index}>
                 {address} : {client_model_ipfs_hashes[index]}
               </p>
             ))
-          ) : (
-            <p>No client models available.</p>
-          )}
-        </div>
-      ) : (
-        <div>
+          ): null
+          }
+          </div>
+
+        )}
+
+        {!clientModelsCreatedF && GIstate === "LM submissions started"? (
+          <div>
           <h3>Client Models Not Available</h3>
           <button className="button button--primary" onClick={() => createClientModels()} style={{ marginTop: "1rem" }}>Create Client Models</button>
         </div>
-        )}
+        ): null}
         </> 
       )}
-      
     </div>
   );
 }
@@ -808,7 +863,7 @@ function ValidatorsTab({GIstate, GI}) {
           </div>  
           {validatorAddresses.length > 0 ? (
            validatorAddresses.map((address, index) => (
-            <div key={index} className="validator">
+            <div key={index} className="listbox">
               <p>Address - {address} </p><br/> 
               <p>ETH Balance - {validatorETHBalances[index]} </p><br/> 
               {dintoken_address ? (
@@ -826,7 +881,7 @@ function ValidatorsTab({GIstate, GI}) {
                 <p>DIN Validator Stake Contract not deployed</p>
               )}
 
-              { (GIstate === "GI started" || GIstate === "LM submissions started") && GI>0  && registeredTaskValidators.length > 0 &&registeredTaskValidators.includes(address) ? (
+              { (GIstate === "GI started" || GIstate === "LM submissions started" || GIstate === "LM submissions closed") && GI>0  && registeredTaskValidators.length > 0 &&registeredTaskValidators.includes(address) ? (
                 <p><span style={{ color: 'green' }}>✅</span> Registered Validator</p>
               ) : (
                 <p><span style={{ color: 'red' }}>❌</span> Not Registered Validator</p>
@@ -1010,7 +1065,7 @@ function App() {
           {activeTab === "DINDAO" && <DINDAO />}
           {activeTab === "ModelOwner" && <ModelOwnerTab setGIstate={setGIstate} fetchGIState={fetchGIState} GIstate={GIstate}/>}
           {activeTab === "Validators" && <ValidatorsTab GIstate={GIstate} GI={GI}/>}
-          {activeTab === "Clients" && <ClientsTab />}
+          {activeTab === "Clients" && <ClientsTab setGIstate={setGIstate} fetchGIState={fetchGIState} GIstate={GIstate}/>}
         </div>
       </main>
 

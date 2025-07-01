@@ -465,6 +465,44 @@ def close_LMsubmissions():
         return {"message": str(e),
                 "status": "error"}
 
+
+@router.post("/modelowner/getClientModels")
+def get_modelowner_client_models():
+    try:
+        env_config = dotenv_values(".env")
+        
+        w3 = get_w3()
+        
+        model_owner_address = env_config.get("ModelOwner_Address")
+        
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+        
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+        
+        curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+        
+        if curr_GIstate != 4:
+            raise Exception("Can not get client models at this time")
+        
+        client_addresses = deployed_DINTaskCoordinatorContract.functions.getClientAddresses(curr_GI).call()
+        
+        client_models = []
+        
+        for client_address in client_addresses:
+            client_model = deployed_DINTaskCoordinatorContract.functions.clientModels(curr_GI, client_address).call()
+            client_models.append(client_model)
+        
+        return {"message": "Client models collected successfully",
+                "status": "success",
+                "client_models": client_models,
+                "client_addresses": client_addresses}
+    except Exception as e:
+        print("Error collecting client models:", e)
+        return {"message": str(e),
+                "status": "error"}
+
 @router.post("/validators/getValidatorsState")
 def get_validators_state():
     try:

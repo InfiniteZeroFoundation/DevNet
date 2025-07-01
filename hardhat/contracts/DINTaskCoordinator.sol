@@ -21,6 +21,10 @@ contract DINTaskCoordinator {
         LMsubmissionsStarted,
         LMsubmissionsClosed,
         LMsubmissionsEvaluated,
+        Tier1BatchCreated,
+        Tier1AggregationDone,
+        Tier2BatchCreated,
+        Tier2AggregationDone,
         GIended
     }
     GIstates public GIstate;
@@ -30,7 +34,13 @@ contract DINTaskCoordinator {
     mapping (uint => mapping(address => string)) public clientModels;
     mapping (uint => address[]) public clientAddresses;
 
+    struct ApprovedModel {
+        address client;
+        string  modelCID;           // The approved local model
+    }
 
+    mapping(uint => ApprovedModel[])              public approvedModels;   // GI  ➜ list
+    
     uint public totalDepositedRewards = 0;
 
     DinToken public dintoken;
@@ -119,10 +129,6 @@ contract DINTaskCoordinator {
 
     
 
-    function getClientModel(uint _GI, address _clientAddress) public view returns (string memory) {
-        return clientModels[_GI][_clientAddress];
-    }
-
     function getClientAddresses(uint _GI) public view returns (address[] memory) {
         return clientAddresses[_GI];
     }
@@ -131,13 +137,31 @@ contract DINTaskCoordinator {
         return GI;
     }
 
-    function evaluateLMsubmissions(uint _GI, address _clientAddress, uint _score) public onlyOwner {
-        require(GIstate == GIstates.LMsubmissionsClosed, "LM submissions are not closed");
-        require(_GI == GI, "Invalid GlobalIteration");
+    function evaluateLM(
+        uint _GI,
+        address _client,
+        bool _approved            // true = keep, false = drop
+    ) external onlyOwner {
+        require(GIstate == GIstates.LMsubmissionsClosed, "Not evaluable");
+        require(_GI == GI, "Wrong GI");
+        string memory cid = clientModels[_GI][_client];
+        require(bytes(cid).length > 0, "No submission");
 
-        if (_score ==1) {
-
+        if (_approved) {
+            approvedModels[_GI].push(ApprovedModel(_client, cid));
         }
-        
+        // else: nothing – rejected models are ignored
+    }
+
+    // When owner has walked through all clients:
+    function finalizeEvaluation(uint _GI) external onlyOwner {
+        require(GIstate == GIstates.LMsubmissionsClosed, "Eval not ready");
+        require(_GI == GI, "Wrong GI");
+        GIstate = GIstates.LMsubmissionsEvaluated;
+    }
+
+    function getApprovedModels(uint _GI) external view returns (ApprovedModel[] memory) {
+        return approvedModels[_GI];
+    }
 
 }
