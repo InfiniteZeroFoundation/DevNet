@@ -171,8 +171,68 @@ function DINDAO() {
   );
 }
 
+
+
+
 /** ======================= ModelOwner TAB ======================= */
-function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
+
+const thStyle = {border:"1px solid #ccc", padding:"4px", background:"#f7f7f7"};
+const tdStyle = {border:"1px solid #eee", padding:"4px"};
+
+const short = addr => addr.slice(0,6)+"…"+addr.slice(-4);
+const shorties = arr => arr.map(short).join(", ");
+
+/* ---------- tables ---------- */
+function Tier1Table({ rows }) {
+  return (
+    <Table
+      headers={["ID","Validators","Model Idx","Final?","CID"]}
+      rows={rows.map(r => [
+        r.batch_id,
+        shorties(r.validators),
+        r.model_indexes.join(", "),
+        r.finalized ? "✅" : "⏳",
+        r.final_cid || "—"
+      ])}/>
+  );
+}
+
+function Tier2Table({ rows }) {
+  return (
+    <Table
+      headers={["ID","Validators","Final?","CID"]}
+      rows={rows.map(r => [
+        r.batch_id,
+        shorties(r.validators),
+        r.finalized ? "✅" : "⏳",
+        r.final_cid || "—"
+      ])}/>
+  );
+}
+
+function Table({ headers, rows }) {
+  return (
+    <table style={{borderCollapse:"collapse", width:"100%"}}>
+      <thead>
+        <tr>{headers.map(h=>
+          <th key={h} style={thStyle}>{h}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row,i)=>(
+          <tr key={i}>
+            {row.map((cell,j)=>(
+              <td key={j} style={tdStyle}>{cell}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+
+function ModelOwnerTab({ setGIstate, fetchGIState, GIstate, GIstatedes, setGIstatedes }) {
   const [loading, setLoading] = useState(true);
   const { showTooltip } = useContext(TooltipContext);
 
@@ -354,6 +414,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
       const data = await response.json();
       console.log(data);
       fetchGIState();
+      fetchClientModels();
     } catch (err) {
       console.error("Error closing LM submissions:", err);
       showTooltip(err.message, true);
@@ -440,7 +501,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
   }
 
   useEffect(() => {
-    if (clientModelsCreatedF){
+    if (clientModelsCreatedF && GIstate >= 4){
       fetchClientModels();
     }
   }, [clientModelsCreatedF]);
@@ -467,14 +528,36 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
   };
   
 
-  const allLmEvaluated =
-  lmSubmissions.length > 0 && lmSubmissions.every(s => s[2] === true);
+  const allLmEvaluated = GIstate >= 4 && lmSubmissions.length > 0 && lmSubmissions.every(s => s[2] === true);
 
-  const createTier1Batches = async () => {
+  const [tier1Batches, setTier1Batches] = useState([]);
+  const [tier2Batches, setTier2Batches] = useState([]);
+
+  const fetchTier1n2Batches = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch("http://localhost:8000/modelowner/getTier1n2Batches", {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      console.log(data);
+      setTier1Batches(data.tier1_batches);
+      setTier2Batches(data.tier2_batches);
+    } catch (err) {
+      console.error("Error fetching Tier 1 n 2 Batches:", err);
+      showTooltip(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createTier1n2Batches = async () => {
     try {
       setLoading(true);
       const response = await fetch(
-        "http://localhost:8000/modelowner/createTier1Batches",
+        "http://localhost:8000/modelowner/createTier1n2Batches",
         { method: "POST" }
       );
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -482,15 +565,118 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
       const data = await response.json();
       // update balances / state if the backend returns anything
       fetchGIState();          // refresh global state
-      showTooltip(data.message || "Tier 1 Batch created", false);
+      console.log(data);
+      fetchTier1n2Batches();
+      showTooltip(data.message || "Tier 1 n 2 Batches created", false);
     } catch (err) {
-      console.error("Error creating Tier 1 Batch:", err);
+      console.error("Error creating Tier 1 n 2 Batches:", err);
       showTooltip(err.message, true);
     } finally {
       setLoading(false);
     }
   };
 
+
+  useEffect(() => {
+    if (GIstate >= 6) {
+      fetchTier1n2Batches();
+    }
+  }, []);
+
+  const startT1Aggregation = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(
+        "http://localhost:8000/modelowner/startT1Aggregation",
+        { method: "POST" }
+      );
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  
+      const data = await response.json();
+      // update balances / state if the backend returns anything
+      fetchGIState();          // refresh global state
+      console.log(data);
+      fetchTier1n2Batches();
+      showTooltip(data.message || "Tier 1 Aggregation started", false);
+    } catch (err) {
+      console.error("Error starting Tier 1 Aggregation:", err);
+      showTooltip(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const finalizeT1Aggregation = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(
+        "http://localhost:8000/modelowner/finalizeT1Aggregation",
+        { method: "POST" }
+      );
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  
+      const data = await response.json();
+      // update balances / state if the backend returns anything
+      fetchGIState();          // refresh global state
+      console.log(data);
+      fetchTier1n2Batches();
+      showTooltip(data.message || "Tier 1 Aggregation finalized", false);
+    } catch (err) {
+      console.error("Error finalizing Tier 1 Aggregation:", err);
+      showTooltip(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startT2Aggregation = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(
+        "http://localhost:8000/modelowner/startT2Aggregation",
+        { method: "POST" }
+      );
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  
+      const data = await response.json();
+      // update balances / state if the backend returns anything
+      fetchGIState();          // refresh global state
+      console.log(data);
+      fetchTier1n2Batches();
+      showTooltip(data.message || "Tier 2 Aggregation started", false);
+    } catch (err) {
+      console.error("Error starting Tier 2 Aggregation:", err);
+      showTooltip(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const finalizeT2Aggregation = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(
+        "http://localhost:8000/modelowner/finalizeT2Aggregation",
+        { method: "POST" }
+      );
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  
+      const data = await response.json();
+      // update balances / state if the backend returns anything
+      fetchGIState();          // refresh global state
+      console.log(data);
+      fetchTier1n2Batches();
+      showTooltip(data.message || "Tier 2 Aggregation finalized", false);
+    } catch (err) {
+      console.error("Error finalizing Tier 2 Aggregation:", err);
+      showTooltip(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  
   return (
     <div className="tab-content">
       <h2>ModelOwner</h2>
@@ -531,7 +717,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
               <>
                 <h3>Genesis Model Created</h3>
                 <p>Genesis Model IPFS Hash: {genesisModelIpfsHash}</p>
-                {GIstate === "Genesis Model Created" || GIstate === "GI ended" ? (
+                {GIstate === 1 || GIstate === 11 ? (
                   <>
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={startGI}>
@@ -544,7 +730,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                 </>
                 )}
 
-                {GIstate === "GI started" && registeredTaskValidators.length >=12? (
+                {GIstatedes === "GI started" && registeredTaskValidators.length >=12? (
                   <>
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={startLMsubmissions}>
@@ -557,7 +743,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                 </>
                 )}
 
-                { GIstate === "LM submissions started" && clientModelsCreatedF ? (
+                { GIstatedes === "LM submissions started" && clientModelsCreatedF ? (
                   <>
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={closeLMsubmissions}>
@@ -567,7 +753,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                   </>
                 ):null}
 
-                { (GIstate === "LM submissions closed" || GIstate === "LM submissions evaluation closed") && clientModelsCreatedF ? (
+                { (GIstate > 3) && clientModelsCreatedF ? (
                   <div className="client-models-section">
                     <h3>Client Models</h3>
 
@@ -635,7 +821,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                   </div>
                 ) : null}
 
-                {GIstate === "LM submissions closed" && allLmEvaluated && (
+                {GIstatedes === "LM submissions closed" && allLmEvaluated && (
                   <div
                     style={{
                       marginTop: "1rem",
@@ -653,7 +839,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                   </div>
                 )}
 
-                {GIstate === "LM submissions evaluation closed" && (
+                {GIstatedes === "LM submissions evaluation closed" && (
                   <div
                     style={{
                       marginTop: "1rem",
@@ -664,13 +850,58 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
                   >
                     <button
                       className="button button--primary"
-                      onClick={createTier1Batches}
+                      onClick={createTier1n2Batches}
                     >
-                      Create Tier 1 Batches
+                      Create Tier 1 n 2 Batches
                     </button>
                   </div>
                 )}
 
+                {GIstate >=6 && (
+                  <>
+                  <div style={{ padding: 20, fontFamily: "sans-serif" }}>
+                  <h2>DINTaskCoordinator – T1 Batches</h2>
+                  {tier1Batches.length ? <Tier1Table rows={tier1Batches}/> : <p>No Tier‑1 batches.</p>}
+                  </div>
+
+                  <div style={{ padding: 20, fontFamily: "sans-serif" }}>
+                  <h2>DINTaskCoordinator – T2 Batches</h2>
+                  {tier2Batches.length ? <Tier2Table rows={tier2Batches}/> : <p>No Tier‑2 batch.</p>}
+                  </div>
+                  </>
+                )}
+
+                {GIstate === 6 && (
+                  <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
+                  <button className="button button--primary" onClick={startT1Aggregation}>
+                  Start T1 Aggregation
+                  </button>
+                  </div>
+                )}
+
+                {GIstate === 7 && (
+                  <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
+                  <button className="button button--primary" onClick={finalizeT1Aggregation}>
+                  Finalize T1 Aggregation
+                  </button>
+                  </div>
+                )}
+
+                {GIstate === 8 && (
+                  <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
+                  <button className="button button--primary" onClick={startT2Aggregation}>
+                  Start T2 Aggregation
+                  </button>
+                  </div>
+                )}
+
+                {GIstate === 9 && (
+                  <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
+                  <button className="button button--primary" onClick={finalizeT2Aggregation}>
+                  Finalize T2 Aggregation
+                  </button>
+                  </div>
+                )}
 
                 
               </>
@@ -689,7 +920,7 @@ function ModelOwnerTab({ setGIstate, fetchGIState, GIstate }) {
 }
 
 /** ======================= Clients TAB ======================= */
-function ClientsTab({setGIstate, fetchGIState, GIstate}) {
+function ClientsTab({setGIstate, fetchGIState, GIstate, GIstatedes, setGIstatedes}) {
 
   const [clientModelsCreatedF, setClientModelsCreatedF] = useState(false);
   const [client_model_ipfs_hashes, setClientModelIpfsHashes] = useState([]);
@@ -800,7 +1031,7 @@ function ClientsTab({setGIstate, fetchGIState, GIstate}) {
 
         )}
 
-        {!clientModelsCreatedF && GIstate === "LM submissions started"? (
+        {!clientModelsCreatedF && GIstatedes === "LM submissions started"? (
           <div>
           <h3>Client Models Not Available</h3>
           <button className="button button--primary" onClick={() => createClientModels()} style={{ marginTop: "1rem" }}>Create Client Models</button>
@@ -813,7 +1044,7 @@ function ClientsTab({setGIstate, fetchGIState, GIstate}) {
 }
 
 /** ======================= Validator TAB ======================= */
-function ValidatorsTab({GIstate, GI}) {
+function ValidatorsTab({GIstate, GI, GIstatedes}) {
 
   const [loading, setLoading] = useState(true);
   const { showTooltip } = useContext(TooltipContext);
@@ -824,6 +1055,10 @@ function ValidatorsTab({GIstate, GI}) {
   const [validatorDinStakedTokens, setValidatorDinStakedTokens] = useState([]);
   const [dintoken_address, setDintokenAddress] = useState(null);
   const [registeredTaskValidators, setRegisteredTaskValidators] = useState([]);
+  const [all_reg_val_t1bs, setAllRegValT1Bs] = useState([]);
+  const [all_reg_val_t2bs, setAllRegValT2Bs] = useState([]);
+  const [all_reg_val_t1br, setAllRegValT1BR] = useState([]);
+  const [all_reg_val_t2br, setAllRegValT2BR] = useState([]);
 
 
   const fetchValidatorsState = async () => {
@@ -844,6 +1079,16 @@ function ValidatorsTab({GIstate, GI}) {
       setValidatorDinStakedTokens(data.validator_din_staked_tokens);
       setDintokenAddress(data.dintoken_address);
       setRegisteredTaskValidators(data.registered_validators);
+
+      if (GIstate >= 7 && GI > 0) {
+        setAllRegValT1Bs(data.all_reg_val_assigned_t1_batches)
+        setAllRegValT2Bs(data.all_reg_val_assigned_t2_batches)
+        setAllRegValT1BR(data.all_res_val_t1)
+      }
+
+      if (GIstate >= 9 && GI > 0) {
+        setAllRegValT2BR(data.all_res_val_t2)
+      }
     } catch (err) {
       console.error("Error fetching validators state:", err);
       showTooltip(err.message, true);
@@ -853,6 +1098,8 @@ function ValidatorsTab({GIstate, GI}) {
   useEffect(() => {
     fetchValidatorsState();
   }, []);
+
+
 
   const buyDINTokens = async () => {
     try {
@@ -1004,6 +1251,306 @@ function ValidatorsTab({GIstate, GI}) {
     }
   };
 
+
+  const aggregateHonestlyT1 = async (address) => {
+    try {
+      console.log("Aggregate Honestly T1 for validator:", address);
+      const response = await fetch("http://localhost:8000/validators/aggregateHonestlyT1", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          validator_address: address,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      console.log("Aggregate Honestly T1 done successfully:", data);
+
+      setLoading(false);
+      showTooltip(data.message, false);
+      setTimeout(() => {
+        fetchValidatorsState();
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error aggregating honestly T1:", err);
+      showTooltip(err.message, true);
+    }
+  };
+
+  const aggregateMaliciouslyT1 = async (address) => {
+    try {
+      console.log("Aggregate Maliciously T1 for validator:", address);
+      const response = await fetch("http://localhost:8000/validators/aggregateMaliciouslyT1", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          validator_address: address,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      console.log("Aggregate Maliciously T1 done successfully:", data);
+
+      setLoading(false);
+      showTooltip(data.message, false);
+      setTimeout(() => {
+        fetchValidatorsState();
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error aggregating maliciously T1:", err);
+      showTooltip(err.message, true);
+    }
+  };
+
+  const aggregateHonestlyT2 = async (address) => {
+    try {
+      console.log("Aggregate Honestly T2 for validator:", address);
+      const response = await fetch("http://localhost:8000/validators/aggregateHonestlyT2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          validator_address: address,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      console.log("Aggregate Honestly T2 done successfully:", data);
+
+      setLoading(false);
+      showTooltip(data.message, false);
+      setTimeout(() => {
+        fetchValidatorsState();
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error aggregating honestly T2:", err);
+      showTooltip(err.message, true);
+    }
+  };
+
+  const aggregateMaliciouslyT2 = async (address) => {
+    try {
+      console.log("Aggregate Maliciously T2 for validator:", address);
+      const response = await fetch("http://localhost:8000/validators/aggregateMaliciouslyT2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          validator_address: address,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      console.log("Aggregate Maliciously T2 done successfully:", data);
+
+      setLoading(false);
+      showTooltip(data.message, false);
+      setTimeout(() => {
+        fetchValidatorsState();
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error aggregating maliciously T2:", err);
+      showTooltip(err.message, true);
+    }
+  };
+
+  function ValidatorT1BatchesViewer({
+    registeredTaskValidators,
+    all_reg_val_t1bs,
+    address,
+    all_reg_val_t1br
+  }) {
+    // 1. Find the index of the validator address
+    const validatorIndex = registeredTaskValidators.findIndex(
+      (a) => a.toLowerCase() === address.toLowerCase()
+    );
+  
+    if (validatorIndex === -1) {
+      return <div>Validator address not found.</div>;
+    }
+  
+    // 2. Get the assigned batches for that validator
+    const batches = all_reg_val_t1bs[validatorIndex];
+  
+    return (
+      <div>
+        <h2>Assigned Tier-1 Batches for {address}</h2>
+        {batches.length === 0 ? (
+          <p>No batches assigned.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Batch ID</th>
+                <th>Validators</th>
+                <th>Model Indexes</th>
+                <th>Finalized</th>
+                <th>Final CID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batches.map((batch, idx) => (
+                <tr key={idx}>
+                  <td>{batch.batch_id}</td>
+                  <td>
+                    {batch.validators.map((v) => (
+                      <div key={v}>{v}</div>
+                    ))}
+                  </td>
+                  <td>
+                    {batch.model_indexes.length
+                      ? batch.model_indexes.join(", ")
+                      : "—"}
+                  </td>
+                  <td>{batch.finalized ? "Yes" : "No"}</td>
+                  <td>{batch.final_cid || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {GIstate === 7 && batches.length > 0 && !all_reg_val_t1br.includes(address)? (
+            <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+            <button
+                className="button button--primary"
+                onClick={() => aggregateHonestlyT1(address)}
+                style={{
+                  backgroundColor: "#10B981",
+                  color: "white",
+                  fontWeight: "bold",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  border: "none",
+                  cursor: "pointer"
+                }}
+              >
+                Aggregate Honestly T1
+              </button>
+    
+              <button
+                className="button button--danger"
+                onClick={() => aggregateMaliciouslyT1(address)}
+                style={{
+                  backgroundColor: "#EF4444",
+                  color: "white",
+                  fontWeight: "bold",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  border: "none",
+                  cursor: "pointer"
+                }}
+              >
+                Aggregate Maliciously T1
+              </button>
+            </div>
+          ) : null}
+      </div>
+      
+    );
+  }
+
+  function ValidatorTier2BatchesViewer({
+    registeredTaskValidators,
+    all_reg_val_t2bs,
+    address,
+    all_reg_val_t2br
+  }) {
+    // 1. Find index
+    const validatorIndex = registeredTaskValidators.findIndex(
+      (a) => a.toLowerCase() === address.toLowerCase()
+    );
+  
+    if (validatorIndex === -1) {
+      return <div>Validator address not found.</div>;
+    }
+  
+    // 2. Get the assigned Tier-2 batches
+    const batches = all_reg_val_t2bs[validatorIndex];
+  
+    return (
+      <div>
+        <h2>Assigned Tier-2 Batches for {address}</h2>
+        {batches.length === 0 ? (
+          <p>No Tier-2 batches assigned.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Batch ID</th>
+                <th>Validators</th>
+                <th>Finalized</th>
+                <th>Final CID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batches.map((batch, idx) => (
+                <tr key={idx}>
+                  <td>{batch.batch_id}</td>
+                  <td>
+                    {batch.validators.map((v) => (
+                      <div key={v}>{v}</div>
+                    ))}
+                  </td>
+                  <td>{batch.finalized ? "Yes" : "No"}</td>
+                  <td>{batch.final_cid || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {GIstate === 9 && batches.length > 0 && !all_reg_val_t2br.includes(address)? (
+            <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+            <button
+                className="button button--primary"
+                onClick={() => aggregateHonestlyT2(address)}
+                style={{
+                  backgroundColor: "#10B981",
+                  color: "white",
+                  fontWeight: "bold",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  border: "none",
+                  cursor: "pointer"
+                }}
+              >
+                Aggregate Honestly T2
+              </button>
+    
+              <button
+                className="button button--danger"
+                onClick={() => aggregateMaliciouslyT2(address)}
+                style={{
+                  backgroundColor: "#EF4444",
+                  color: "white",
+                  fontWeight: "bold",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  border: "none",
+                  cursor: "pointer"
+                }}
+              >
+                Aggregate Maliciously T2
+              </button>
+            </div>
+          ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="tab-content">
       <h2>Validators</h2>
@@ -1025,7 +1572,7 @@ function ValidatorsTab({GIstate, GI}) {
             ) : (
               <p> DIN Validator Stake Contract not deployed</p>
             )}
-            {GIstate === "GI started" ? (
+            {GIstate >=2 ? (
               <button className="button button--primary" onClick={() => registerTaskValidators()}>Register Task Validators </button>
             ) : (
               <></>
@@ -1051,11 +1598,31 @@ function ValidatorsTab({GIstate, GI}) {
                 <p>DIN Validator Stake Contract not deployed</p>
               )}
 
-              { (GIstate === "GI started" || GIstate === "LM submissions started" || GIstate === "LM submissions closed" || GIstate === "LM submissions evaluation closed")  && GI>0  && registeredTaskValidators.length > 0 &&registeredTaskValidators.includes(address) ? (
+              { (GIstate >=2)  && GI>0  && registeredTaskValidators.length > 0 && registeredTaskValidators.includes(address) ? (
                 <p><span style={{ color: 'green' }}>✅</span> Registered Validator</p>
               ) : (
                 <p><span style={{ color: 'red' }}>❌</span> Not Registered Validator</p>
               )}
+
+              {(GIstate >=7)  && GI>0  && registeredTaskValidators.length > 0 && registeredTaskValidators.includes(address) ? (
+                <>
+                <ValidatorT1BatchesViewer
+                registeredTaskValidators={registeredTaskValidators}
+                all_reg_val_t1bs={all_reg_val_t1bs}
+                address={address}
+                all_reg_val_t1br={all_reg_val_t1br}
+                />
+
+                <ValidatorTier2BatchesViewer
+                registeredTaskValidators={registeredTaskValidators}
+                all_reg_val_t2bs={all_reg_val_t2bs}
+                address={address}
+                all_reg_val_t2br={all_reg_val_t2br}
+                />
+
+                </>
+
+              ) : null}
               
 
               {DINValidatorStakeAddress ? (
@@ -1076,7 +1643,7 @@ function ValidatorsTab({GIstate, GI}) {
               ): (<></>)
                 }
 
-              { (GIstate === "GI started") && GI>0  && (registeredTaskValidators.length > 0 || validatorDinStakedTokens[index] >= 1000000) &&registeredTaskValidators.indexOf(address) === -1 ? (
+              { (GIstate >= 2) && GI>0  && (registeredTaskValidators.length > 0 || validatorDinStakedTokens[index] >= 1000000) && registeredTaskValidators.indexOf(address) === -1 ? (
                 <>
                 <div style={{ display: "flex", justifyContent: "center", gap: "1rem", marginBottom: "1rem" }}>
                 <button className="button button--primary" onClick={() =>registerTaskValidatorSingle(address)} >Register Task Validator</button>
@@ -1103,7 +1670,8 @@ function App() {
   const [activeTab, setActiveTab] = useState("DINDAO");
   const { tooltipVisible, tooltipMsg, tooltipClass, hideTooltip, showTooltip } = useContext(TooltipContext);
   const [GI,setGI] = useState(0);
-  const [GIstate, setGIstate] = useState("started");
+  const [GIstate, setGIstate] = useState(0);
+  const [GIstatedes, setGIstatedes] = useState("AwaitingGenesisModel");
   const [loading, setLoading] = useState(true);
 
 
@@ -1117,6 +1685,7 @@ function App() {
       console.log(data);
       setGI(data.GI);
       setGIstate(data.GIstate);
+      setGIstatedes(data.GIstatedes);
       setLoading(false);
     } catch (err) {
       console.error("Error fetching GI state:", err);
@@ -1226,16 +1795,16 @@ function App() {
             <>
             <div style={{ marginTop: "1rem", marginBottom: "1rem" }}>
               <h3>Global Iteration: {GI}</h3>
-              <h3>Global Iteration State: {GIstate}</h3>
+              <h3>Global Iteration State: {GIstatedes}</h3>
             </div>
             </>
           )}
             
           <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
           {activeTab === "DINDAO" && <DINDAO />}
-          {activeTab === "ModelOwner" && <ModelOwnerTab setGIstate={setGIstate} fetchGIState={fetchGIState} GIstate={GIstate}/>}
-          {activeTab === "Validators" && <ValidatorsTab GIstate={GIstate} GI={GI}/>}
-          {activeTab === "Clients" && <ClientsTab setGIstate={setGIstate} fetchGIState={fetchGIState} GIstate={GIstate}/>}
+          {activeTab === "ModelOwner" && <ModelOwnerTab setGIstate={setGIstate} fetchGIState={fetchGIState} GIstate={GIstate} GIstatedes={GIstatedes} setGIstatedes={setGIstatedes}/>}
+          {activeTab === "Validators" && <ValidatorsTab GIstate={GIstate} GI={GI} setGIstatedes={setGIstatedes}/>}
+          {activeTab === "Clients" && <ClientsTab setGIstate={setGIstate} fetchGIState={fetchGIState} GIstate={GIstate} GIstatedes={GIstatedes} setGIstatedes={setGIstatedes}/>}
         </div>
       </main>
 

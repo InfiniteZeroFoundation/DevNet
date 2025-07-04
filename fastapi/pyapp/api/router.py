@@ -63,7 +63,7 @@ def get_GIState():
             return {"message": "DINTaskCoordinator_Contract_Address not found",
                     "status": "error",
                     "GI": 0,
-                    "GIstate": "DINTaskCoordinator contract not deployed"}
+                    "GIstatedes": "DINTaskCoordinator contract not deployed"}
         else:
             
             deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
@@ -73,38 +73,42 @@ def get_GIState():
             GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
             
             if GIstate == 0:
-                GIstate = "Awaiting Genesis Model"
+                GIstatedes = "Awaiting Genesis Model"
             elif GIstate == 1:
-                GIstate = "Genesis Model Created"
+                GIstatedes = "Genesis Model Created"
             elif GIstate == 2:
-                GIstate = "GI started"
+                GIstatedes = "GI started"
             elif GIstate == 3:
-                GIstate = "LM submissions started"
+                GIstatedes = "LM submissions started"
             elif GIstate == 4:
-                GIstate = "LM submissions closed"
+                GIstatedes = "LM submissions closed"
             elif GIstate == 5:
-                GIstate = "LM submissions evaluation closed"
+                GIstatedes = "LM submissions evaluation closed"
             elif GIstate == 6:
-                GIstate = "T1B created"
+                GIstatedes = "T1nT2B created"
             elif GIstate == 7:
-                GIstate = "T1B aggregation done"
+                GIstatedes = "T1B aggregation started"
             elif GIstate == 8:
-                GIstate = "T2B created"
+                GIstatedes = "T1B aggregation done"
             elif GIstate == 9:
-                GIstate = "T2B aggregation done"
+                GIstatedes = "T2B aggregation started"
             elif GIstate == 10:
-                GIstate = "GI ended"
+                GIstatedes = "T2B aggregation done"
+            elif GIstate == 11:
+                GIstatedes = "GI ended"
             
             
             return {"message": "GI state fetched successfully",
                     "status": "success",
                     "GI": GI,
-                    "GIstate": GIstate}
+                    "GIstate": GIstate,
+                    "GIstatedes": GIstatedes}
     except Exception as e:
         return {"message": str(e),
                 "status": "error",
                 "GI": None,
-                "GIstate": None}
+                "GIstate": None,
+                "GIstatedes": None}
 
 @router.post("/modelowner/startGI")
 def start_GI():
@@ -313,7 +317,7 @@ def deploy_dintaskcoordinator():
         DINTaskCoordinator_contract = get_DINTaskCoordinator_Instance()
         constructor_tx_hash  = DINTaskCoordinator_contract.constructor(DINToken_Contract_Address, DinValidatorStake_Contract_Address).transact({
             "from": model_owner_address,
-            "gas": 3000000,
+            "gas": 2*3000000,
             "gasPrice": w3.to_wei("5", "gwei"),
         })
         constructor_receipt = w3.eth.wait_for_transaction_receipt(constructor_tx_hash)
@@ -613,7 +617,7 @@ def closeLMsubmissionsEvaluation():
         return {"message": str(e),
                 "status": "error"}
 
-@router.post("/modelowner/createTier1Batches")
+@router.post("/modelowner/createTier1n2Batches")
 def createTier1Batches():
     try:
         env_config = dotenv_values(".env")
@@ -631,21 +635,119 @@ def createTier1Batches():
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
         if curr_GIstate != 5:
-            raise Exception("Can not create Tier 1 batches at this time")
+            raise Exception("Can not create Tier 1 n 2 batches at this time")
         
-        deployed_DINTaskCoordinatorContract.functions.createTier1Batches(curr_GI).transact({
+        deployed_DINTaskCoordinatorContract.functions.autoCreateTier1AndTier2(curr_GI).transact({
             "from": model_owner_address,
             "gas": 3000000,
             "gasPrice": w3.to_wei("5", "gwei"),
         })
         
-        return {"message": "Tier 1 batches created successfully",
+        return {"message": "Tier 1 n 2 batches created successfully",
                 "status": "success"}
     except Exception as e:
-        print("Error creating Tier 1 batches:", e)
+        print("Error creating Tier 1 n 2 batches:", e)
         return {"message": str(e),
                 "status": "error"}
+        
+        
+class Tier1Batch(BaseModel):
+    batch_id: int
+    validators: list[str]
+    model_indexes: list[int]
+    finalized: bool
+    final_cid: str
 
+class Tier2Batch(BaseModel):
+    batch_id: int
+    validators: list[str]
+    finalized: bool
+    final_cid: str
+
+class BatchPayload(BaseModel):
+    tier1_batches: list[Tier1Batch]
+    tier2_batches: list[Tier2Batch]
+    message: str
+    status: str
+    
+@router.post("/modelowner/getTier1n2Batches")
+def getTier1n2Batches():
+    try:
+        env_config = dotenv_values(".env")
+        
+        w3 = get_w3()
+        
+        model_owner_address = env_config.get("ModelOwner_Address")
+        
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+        
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+        
+        curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+        
+        if curr_GIstate < 6:
+            raise Exception("Can not get Tier 1 n 2 batches at this time")
+        
+        t1_batches_count  = deployed_DINTaskCoordinatorContract.functions.tier1BatchCount(curr_GI).call()
+        
+        t1_list = []
+        
+        for i in range(t1_batches_count):
+            (bid, val, idxs, fin, cid) = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+            t1_list.append(Tier1Batch(batch_id=bid, validators=val, model_indexes=idxs, finalized=fin, final_cid=cid))
+        
+        t2_list = []
+        t2_batches_count = 1
+        
+        for i in range(t2_batches_count):
+            (bid, val, fin, cid) = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(curr_GI, i).call()
+            t2_list.append(Tier2Batch(batch_id=bid, validators=val, finalized=fin, final_cid=cid))
+            
+        return BatchPayload(tier1_batches=t1_list,
+                            tier2_batches=t2_list,
+                            message="Tier 1 n 2 batches retrieved successfully",
+                            status="success")
+    except Exception as e:
+        print("Error getting Tier 1 n 2 batches:", e)
+        return BatchPayload(tier1_batches=[],
+                            tier2_batches=[],
+                            message=str(e),
+                            status="error")
+  
+@router.post("/modelowner/startT1Aggregation")
+def start_T1Aggregation():
+    try:
+        env_config = dotenv_values(".env")
+        
+        w3 = get_w3()
+        
+        model_owner_address = env_config.get("ModelOwner_Address")
+        
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+        
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+        
+        curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+        
+        if curr_GIstate != 6:
+            raise Exception("Can not start Tier 1 Aggregation at this time")
+        
+        deployed_DINTaskCoordinatorContract.functions.startT1Aggregation(curr_GI).transact({
+            "from": model_owner_address,
+            "gas": 3000000,
+            "gasPrice": w3.to_wei("5", "gwei"),
+        })
+        
+        return {"message": "Tier 1 Aggregation started successfully",
+                "status": "success"}
+    except Exception as e:
+        print("Error starting Tier 1 Aggregation:", e)
+        return {"message": str(e),
+                "status": "error"}
     
 @router.post("/validators/getValidatorsState")
 def get_validators_state():
@@ -668,6 +770,10 @@ def get_validators_state():
         print("Dintaskcoordinator_Contract_Address: ", Dintaskcoordinator_Contract_Address)
         
         registered_validators = []
+        all_reg_val_assigned_t1_batches = []
+        all_reg_val_assigned_t2_batches = []
+        all_res_val_t1 = []
+        all_res_val_t2 = []
         
         
         if Dintaskcoordinator_Contract_Address is not None:
@@ -686,8 +792,28 @@ def get_validators_state():
             if curr_GI > 0 and GIstate >= 2:
                 registered_validators = deployed_DINTaskCoordinatorContract.functions.getDINtaskValidators(curr_GI).call()
                 print("registered_validators: ", registered_validators)
-        
-            
+                
+            if curr_GI > 0 and GIstate >= 7:
+                t1_batches_count = deployed_DINTaskCoordinatorContract.functions.tier1BatchCount(curr_GI).call()
+                print("t1_batches_count: ", t1_batches_count)
+                
+                t2_batches_count = 1
+                
+                for validator_address in registered_validators:
+                    val_assigned_t1_batches = []
+                    for i in range(t1_batches_count):
+                        (bid, val, idxs, fin, cid) = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+                        if validator_address in val:
+                            val_assigned_t1_batches.append(Tier1Batch(batch_id=bid, validators=val, model_indexes=idxs, finalized=fin, final_cid=cid))
+                            
+                    val_assigned_t2_batches = []  
+                    for i in range(t2_batches_count):
+                        (bid, val, fin, cid) = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(curr_GI, i).call()
+                        if validator_address in val:
+                            val_assigned_t2_batches.append(Tier2Batch(batch_id=bid, validators=val, finalized=fin, final_cid=cid))    
+                            
+                    all_reg_val_assigned_t1_batches.append(val_assigned_t1_batches)
+                    all_reg_val_assigned_t2_batches.append(val_assigned_t2_batches)
         
         if DinToken_Contract_Address is  not None:
             deployed_DINtokenContract = get_DINtokenContract_Instance(dintoken_address=DinToken_Contract_Address)
@@ -714,6 +840,7 @@ def get_validators_state():
                 ValidatorDinStakedTokens.append(validator_din_staked_tokens)
             else:
                 ValidatorDinStakedTokens.append(0)
+                
         
         
         
@@ -725,7 +852,11 @@ def get_validators_state():
                 "DINValidatorStakeAddress": DinValidatorStake_Contract_Address,
                 "validator_din_staked_tokens": ValidatorDinStakedTokens, 
                 "dintoken_address": DinToken_Contract_Address,
-                "registered_validators": registered_validators}
+                "registered_validators": registered_validators,
+                "all_reg_val_assigned_t1_batches": all_reg_val_assigned_t1_batches,
+                "all_reg_val_assigned_t2_batches": all_reg_val_assigned_t2_batches,
+                "all_res_val_t1": all_res_val_t1,
+                "all_res_val_t2": all_res_val_t2}
     except Exception as e:
         return {"message": str(e),
                 "status": "error"}
