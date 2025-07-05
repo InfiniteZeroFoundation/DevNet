@@ -3,7 +3,7 @@ import React, { useState, useEffect, useContext } from "react";
 import { TooltipContext } from "../context/TooltipContext";
 
 /** ======================= Validator TAB ======================= */
-export default function ValidatorsTab({GIstate, GI, GIstatedes}) {
+export default function ValidatorsTab({GIstate, GI}) {
 
   const [loading, setLoading] = useState(true);
   const { showTooltip } = useContext(TooltipContext);

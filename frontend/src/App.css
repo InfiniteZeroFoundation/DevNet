@@ -424,6 +424,19 @@ pre {
   color: var(--color-primary);
 }
 
+.margin-block {
+  margin-block: 1rem;
+}
+
+.margin-block-left{
+  margin-left: 1rem;
+}
+
+.margin-block-lr{
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

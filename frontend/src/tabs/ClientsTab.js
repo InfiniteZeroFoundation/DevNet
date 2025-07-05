@@ -3,7 +3,7 @@ import { TooltipContext } from "../context/TooltipContext";
 
 
 /** ======================= Clients TAB ======================= */
-export default function ClientsTab({setGIstate, fetchGIState, GIstate, GIstatedes, setGIstatedes}) {
+export default function ClientsTab({ GIstate, GI}) {
 
   const [clientModelsCreatedF, setClientModelsCreatedF] = useState(false);
   const [client_model_ipfs_hashes, setClientModelIpfsHashes] = useState([]);
@@ -114,7 +114,7 @@ export default function ClientsTab({setGIstate, fetchGIState, GIstate, GIstatede
 
         )}
 
-        {!clientModelsCreatedF && GIstatedes === "LM submissions started"? (
+        {!clientModelsCreatedF && GIstate === 3? (
           <div>
           <h3>Client Models Not Available</h3>
           <button className="button button--primary" onClick={() => createClientModels()} style={{ marginTop: "1rem" }}>Create Client Models</button>

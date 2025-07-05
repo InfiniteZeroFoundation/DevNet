@@ -62,7 +62,7 @@ function Table({ headers, rows }) {
 }
 
 
-export default function ModelOwnerTab({ setGIstate, fetchGIState, GIstate, GIstatedes, setGIstatedes }) {
+export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes }) {
   const [loading, setLoading] = useState(true);
   const { showTooltip } = useContext(TooltipContext);
 
