@@ -83,6 +83,15 @@ pip freeze > requirements.txt
 pip install -r requirements.txt
 mkdir pyapp
 cd ./pyapp
+mkdir Dataset
+mkdir Dataset/clients
+mkdir Dataset/train
+mkdir Dataset/test
+mkdir data
+mkdir models
+mkdir models/clients
+mkdir models/modelowner
+mkdir models/validators
 ```
 
 ### ipfs
