@@ -94,6 +94,8 @@ mkdir models/modelowner
 mkdir models/validators
 ```
 
+
+
 ### ipfs
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -123,6 +125,8 @@ rm -rf Dataset/train/*
 rm -rf Dataset/test/*
 rm -rf data/*
 ```
+
+> **Note:** Make sure to click  `Distribute Dataset` button in the running frontend react app to distribute the dataset on first run.
 
 ---
 ## Dependencies (Assuming Ubuntu OS)
