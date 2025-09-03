@@ -426,7 +426,7 @@ export default function ValidatorsTab({GIstate, GI, GIstatestr}) {
                 Aggregate Maliciously T1
               </button>
             </div>
-          )  : GIstate >= 15 && batches.length > 0 && curr_cid ? ( // T1AggregationStarted
+          )  : GIstate >= 16 && batches.length > 0 && curr_cid ? ( // T1AggregationStarted
             // Show submitted CID otherwise if conditions match
             <div>
               <h3>Submitted CID: {curr_cid}</h3>
@@ -581,7 +581,7 @@ export default function ValidatorsTab({GIstate, GI, GIstatestr}) {
           {validatorAddresses.length > 0 ? (
            validatorAddresses.map((address, index) => (
             <div key={index} className="listbox">
-              <p>Address - {address} </p><br/> 
+              <h3>Address - {address} </h3><br/> 
               <p>ETH Balance - {validatorETHBalances[index]} </p><br/> 
               {dintoken_address ? (
                 <>

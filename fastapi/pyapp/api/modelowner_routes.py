@@ -736,9 +736,10 @@ def get_modelowner_client_models():
 
                     for auditor in auditors_in_batch:
                         try:
-                            score = contract.functions.auditScores(gi, batch_id, auditor, m_idx).call()
-                            eligible = contract.functions.LMeligibleVote(gi, batch_id, auditor, m_idx).call()
-                            has_voted = contract.functions.hasAuditedLM(gi, batch_id, auditor, m_idx).call()
+                            
+                            score = deployed_DINTaskAuditorContract.functions.auditScores(curr_GI, batch_id, auditor, m_idx).call()
+                            eligible = deployed_DINTaskAuditorContract.functions.LMeligibleVote(curr_GI, batch_id, auditor, m_idx).call()
+                            has_voted = deployed_DINTaskAuditorContract.functions.hasAuditedLM(curr_GI, batch_id, auditor, m_idx).call()
                         except:
                             score, eligible, has_voted = 0, False, False
 
@@ -981,7 +982,7 @@ def closeLMsubmissionsEvaluation():
         if curr_GIstate != GIstatestrToIndex("LMSevaluationStarted"):
             raise Exception("Can not close LM submissions evaluation at this time")
         
-        deployed_DINTaskCoordinatorContract.functions.finalizeEvaluation(curr_GI).transact({
+        deployed_DINTaskCoordinatorContract.functions.closeLMsubmissionsEvaluation(curr_GI).transact({
             "from": model_owner_address,
             "gas": 3000000,
             "gasPrice": w3.to_wei("5", "gwei"),
@@ -1011,7 +1012,7 @@ def createTier1Batches():
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 5:
+        if curr_GIstate != GIstatestrToIndex("LMSevaluationClosed"):
             raise Exception("Can not create Tier 1 n 2 batches at this time")
         
         deployed_DINTaskCoordinatorContract.functions.autoCreateTier1AndTier2(curr_GI).transact({
@@ -1096,7 +1097,7 @@ def start_T1Aggregation():
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 6:
+        if curr_GIstate < GIstatestrToIndex("T1nT2Bcreated"):
             raise Exception("Can not start Tier 1 Aggregation at this time")
         
         deployed_DINTaskCoordinatorContract.functions.startT1Aggregation(curr_GI).transact({
@@ -1123,7 +1124,7 @@ def finalize_t1_aggregation():
         
         deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
         
-        current_GI = deployed_DINTaskCoordinatorContract.functions.getGI().call()
+        current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
         deployed_DINTaskCoordinatorContract.functions.finalizeT1Aggregation(current_GI).transact({
             "from": w3.eth.accounts[1],
@@ -1154,7 +1155,7 @@ def start_T2Aggregation():
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 8:
+        if curr_GIstate < GIstatestrToIndex("T1AggregationDone"):
             raise Exception("Can not start Tier 2 Aggregation at this time")
         
         deployed_DINTaskCoordinatorContract.functions.startT2Aggregation(curr_GI).transact({
@@ -1182,7 +1183,7 @@ def finalize_t2_aggregation():
         
         deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
         
-        current_GI = deployed_DINTaskCoordinatorContract.functions.getGI().call()
+        current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
         deployed_DINTaskCoordinatorContract.functions.finalizeT2Aggregation(current_GI).transact({
             "from": model_owner_address,

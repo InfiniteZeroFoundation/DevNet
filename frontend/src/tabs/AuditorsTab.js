@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useContext } from "react";
 import { TooltipContext } from "../context/TooltipContext";
-
+import AuditorTaskCard from "../components/AuditorTaskCard";
 
 
 /** ======================= Auditors TAB ======================= */
@@ -16,6 +16,9 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
   const [DINValidatorStakeAddress, setDINValidatorStakeAddress] = useState(null);
   const [AuditorsDintokenBalances, setAuditorsDintokenBalances] = useState([]);
   const [AuditorsDinStakedTokens, setAuditorsDinStakedTokens] = useState([]);
+
+  const [auditorEvaluationBatches, setAuditorEvaluationBatches] = useState({});
+
 
   const fetchAuditorsState = async () => {
     try {
@@ -67,9 +70,6 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
     }
   };
 
-
-
-
   const stakeDINTokens = async () => {
     try {
       const response = await fetch("http://localhost:8000/auditors/stakeDINTokens", {
@@ -91,8 +91,6 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
     }
   };
 
-
-  
   const stakeDINTokensSingle = async (address) => {
     try {
       const response = await fetch("http://localhost:8000/auditors/stakeDINTokensSingle", {
@@ -202,6 +200,28 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
     }
   };
 
+  const fetchAuditorEvaluationBatches = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/auditors/getAuditorEvaluationBatches");
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      setAuditorEvaluationBatches(data.auditorEvaluationBatches);
+      console.log("Fetched auditor evaluation batches successfully:", data);
+      
+    } catch (error) {
+      console.error("Error fetching auditor evaluation batches:", error);
+    }
+  };  
+
+
+  useEffect(() => {
+    if (GIstate >= 13) {
+      fetchAuditorEvaluationBatches()
+    }
+    
+  }, [GIstate]);
+
   return (  
     <div className="tab-content">
       <h2>Auditors</h2>
@@ -242,8 +262,9 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
         </div>
         {auditorAddresses.length > 0 ? (
           auditorAddresses.map((address, index) => (
+
             <div key={index} className="listbox">
-              <p>Address - {address} </p><br/>
+              <h3>Address - {address} </h3><br/>
               <p>ETH Balance - {auditorETHBalances[index]} </p><br/> 
 
               {dintoken_address ? (
@@ -293,6 +314,15 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
                 </>
               ) : null
               }
+
+              {GIstate >= 13 && (
+                <AuditorTaskCard
+                key={address}
+                auditorData={auditorEvaluationBatches[address] || { auditor: address, assignedModels: [] }}
+
+                fetchAuditorEvaluationBatches={fetchAuditorEvaluationBatches}
+              />
+                )}
 
             </div>
           ))

@@ -4,7 +4,7 @@ from dotenv import load_dotenv, set_key, unset_key, dotenv_values
 import time
 
 from services.blockchain_services import get_w3
-from services.model_architect import get_DINTaskCoordinator_Instance, GIstatestrToIndex, GIstateToStr
+from services.model_architect import get_DINTaskCoordinator_Instance, get_DINTaskAuditor_Instance, GIstatestrToIndex, GIstateToStr
 from services.DAO_services import get_DINtokenContract_Instance, get_DINValidatorStake_Instance, get_DINCoordinator_Instance
 
 from services.ipfs_service import generate_fake_cid_v0
@@ -419,11 +419,15 @@ def aggregateHonestlyT1(request: ValidatorAddressRequest):
         
         deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
         
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        
+        deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
+        
         curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 15: #T1AggregationStarted
+        if curr_GIstate != 16: #T1AggregationStarted
             raise Exception("Can not submit aggregated T1 CiD honestly at this time")
         
         registered_validators = deployed_DINTaskCoordinatorContract.functions.getDINtaskValidators(curr_GI).call()
@@ -444,10 +448,10 @@ def aggregateHonestlyT1(request: ValidatorAddressRequest):
         
         model_cids = []
         for i in range(len(model_indexes)):
-            (client, modelCID, evaluated, approved) = deployed_DINTaskCoordinatorContract.functions.lmSubmissions(curr_GI, model_indexes[i]).call()
+            (client, modelCID, submittedAt, eligible,evaluated, approved, finalAvgScore) = deployed_DINTaskAuditorContract.functions.lmSubmissions(curr_GI, model_indexes[i]).call()
             model_cids.append(modelCID)
             
-        genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.getGenesisModelIpfsHash().call()
+        genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
         
         validator_aggregated_cid = get_validator_aggregated_cid(curr_GI, validator_address, model_cids, genesis_model_ipfs_hash)
         
@@ -486,7 +490,7 @@ def aggregateMaliciouslyT1(request: ValidatorAddressRequest):
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 15: #T1AggregationStarted
+        if curr_GIstate != 16: #T1AggregationStarted
             raise Exception("Can not submit aggregated T1 CID maliciously at this time")
         
         registered_validators = deployed_DINTaskCoordinatorContract.functions.getDINtaskValidators(curr_GI).call()
@@ -539,7 +543,7 @@ def aggregateHonestlyT2(request: ValidatorAddressRequest):
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 17: #T2AggregationStarted
+        if curr_GIstate != 18: #T2AggregationStarted
             raise Exception("Can not submit aggregated T2 CID honestly at this time")
         
         registered_validators = deployed_DINTaskCoordinatorContract.functions.getDINtaskValidators(curr_GI).call()
@@ -571,7 +575,7 @@ def aggregateHonestlyT2(request: ValidatorAddressRequest):
         for i in range(len(t1_batches)):
             model_cids.append(t1_batches[i].final_cid)
         
-        genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.getGenesisModelIpfsHash().call()
+        genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
         
         validator_aggregated_cid = get_validator_aggregated_cid(curr_GI, validator_address, model_cids, genesis_model_ipfs_hash)
         
@@ -607,7 +611,7 @@ def aggregateMaliciouslyT2(request: ValidatorAddressRequest):
         
         curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
         
-        if curr_GIstate != 17: #T2AggregationStarted
+        if curr_GIstate != 18: #T2AggregationStarted
             raise Exception("Can not submit aggregated T2 CID maliciously at this time")
         
         registered_validators = deployed_DINTaskCoordinatorContract.functions.getDINtaskValidators(curr_GI).call()

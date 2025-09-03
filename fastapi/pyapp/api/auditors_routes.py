@@ -303,7 +303,6 @@ def register_task_auditor_single(request: AuditorAddressRequest):
         DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
         
         
-        print("to remove ", " DINTaskAuditor_Contract_Address", DINTaskAuditor_Contract_Address)
         
         deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
         
@@ -334,3 +333,126 @@ def register_task_auditor_single(request: AuditorAddressRequest):
         return {"message": str(e),
                 "status": "error"}
         
+@router.get("/getAuditorEvaluationBatches")
+def get_auditor_evaluation_batches():
+    try:
+        env_config = dotenv_values(".env")
+    
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+    
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+        
+        curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+        
+        if curr_GIstate < GIstatestrToIndex("LMSevaluationStarted"):
+            raise Exception("Can not get auditor evaluation batches at this time")
+    
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+            
+        deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
+        
+        raw_lm_submissions = deployed_DINTaskAuditorContract.functions.getClientModels(curr_GI).call()
+    
+        lm_submissions = {}
+        
+        for idx, sub in enumerate(raw_lm_submissions):
+            client, model_cid, submitted_at, eligible, evaluated, approved, final_avg = sub
+            lm_submissions[idx] = {
+                "client": client,
+                "modelCID": model_cid or "None"
+            }
+            
+        raw_audit_batches = []
+        
+        audit_batch_count = deployed_DINTaskAuditorContract.functions.AuditorsBatchCount(curr_GI).call()
+        
+        for batch_id in range(audit_batch_count):
+            raw_audit_batches.append(deployed_DINTaskAuditorContract.functions.getAuditorsBatch(curr_GI, batch_id).call())
+            
+        auditor_tasks = {} 
+        
+        for batch_data in raw_audit_batches:
+            batch_id, auditors, model_indexes, test_cid = batch_data
+
+            for auditor in auditors:
+                # Ensure auditor entry exists
+                if auditor not in auditor_tasks:
+                    auditor_tasks[auditor] = {
+                        "auditor": auditor,
+                        "assignedModels": []
+                    }
+
+                # Add each model in this batch
+                for m_idx in model_indexes:
+                    # Fetch on-chain state: hasAuditedLM
+                    try:
+                        has_voted = deployed_DINTaskAuditorContract.functions.hasAuditedLM(curr_GI, batch_id, auditor, m_idx).call()
+                        is_eligible = deployed_DINTaskAuditorContract.functions.LMeligibleVote(curr_GI, batch_id, auditor, m_idx).call()
+                        has_auditScores = deployed_DINTaskAuditorContract.functions.auditScores(curr_GI, batch_id, auditor, m_idx).call()
+                        
+                    except:
+                        has_voted = False  # fail-safe
+                        has_auditScores = 0
+                        is_eligible = False
+
+                    # Get model details
+                    model_info = lm_submissions.get(m_idx, {
+                        "client": "Unknown",
+                        "modelCID": "N/A"
+                    })
+
+                    auditor_tasks[auditor]["assignedModels"].append({
+                        "modelIndex": m_idx,
+                        "batchId": batch_id,
+                        "hasVoted": has_voted,
+                        "isEligible": is_eligible,
+                        "hasAuditScores": has_auditScores,
+                        "model": model_info,
+                        "testCID": test_cid or "None"
+                    })
+
+
+        return {"message": "Auditor evaluation batches fetched successfully", "status": "success",
+                "auditorEvaluationBatches": auditor_tasks}
+
+    except Exception as e:
+        return {"message": str(e),
+                "status": "error"}
+
+class EvaluateLMRequest(BaseModel):
+    auditor_address: str
+    batch_id: int
+    model_index: int        
+    
+@router.post("/evaluateLM")
+def evaluate_lm(request: EvaluateLMRequest):
+    try:
+        print(f"Evaluating LM for auditor {request.auditor_address}, batch {request.batch_id}, model {request.model_index}")
+        
+        env_config = dotenv_values(".env")
+        
+        w3 = get_w3()
+        
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+        
+        deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
+        
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+        
+        curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+        
+        if curr_GIstate < GIstatestrToIndex("LMSevaluationStarted"):
+            raise Exception("Can not evaluate LM at this time")
+        
+        deployed_DINTaskAuditorContract.functions.setAuditScorenEligibility(curr_GI, request.batch_id, request.model_index, 60, True).transact({'from': request.auditor_address,  "gas": int(3000000),
+            "gasPrice": w3.to_wei("5", "gwei"),})
+        
+        return {"message": "LM evaluated successfully", "status": "success"}
+    except Exception as e:
+        return {"message": str(e), "status": "error"}

@@ -515,6 +515,8 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
       const data = await response.json();
       // update balances / state if the backend returns anything
       fetchGIState();          // refresh global state
+      fetchClientModels();
+      
       showTooltip(data.message || "Submissions evaluated", false);
     } catch (err) {
       console.error("Error closing LM submissions evaluation:", err);
@@ -525,7 +527,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
   };
   
 
-  const allLmEvaluated = GIstate >= 4 && lmSubmissions.length > 0 && lmSubmissions.every(s => s[2] === true);
+
 
   const [tier1Batches, setTier1Batches] = useState([]);
   const [tier2Batches, setTier2Batches] = useState([]);
@@ -970,7 +972,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
 
                 
 
-                {GIstatedes === "LM submissions closed" && allLmEvaluated && (
+                {GIstatestr === "LMSevaluationStarted" && (
                   <div
                     style={{
                       marginTop: "1rem",
@@ -988,7 +990,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstatedes === "LM submissions evaluation closed" && (
+                {GIstatestr === "LMSevaluationClosed" && (
                   <div
                     style={{
                       marginTop: "1rem",
@@ -1006,7 +1008,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate >=14 && (   //T1nT2Bcreated
+                {GIstate >=15 && (   //T1nT2Bcreated
                   <>
                   <div style={{ padding: 20, fontFamily: "sans-serif" }}>
                   <h2>DINTaskCoordinator – T1 Batches</h2>
@@ -1020,7 +1022,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </>
                 )}
 
-                {GIstate === 14 && ( // T1nT2Bcreated
+                {GIstate === 15 && ( // T1nT2Bcreated
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={startT1Aggregation}>
                   Start T1 Aggregation
@@ -1028,7 +1030,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate === 15 && ( // T1AggregationStarted
+                {GIstate === 16 && ( // T1AggregationStarted
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={finalizeT1Aggregation}>
                   Finalize T1 Aggregation
@@ -1036,7 +1038,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate === 16 && ( // T1AggregationDone
+                {GIstate === 17 && ( // T1AggregationDone
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={startT2Aggregation}>
                   Start T2 Aggregation
@@ -1044,7 +1046,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate === 17 && ( // T2AggregationStarted
+                {GIstate === 18 && ( // T2AggregationStarted
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={finalizeT2Aggregation}>
                   Finalize T2 Aggregation
@@ -1052,7 +1054,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate === 18 && ( // T2AggregationDone
+                {GIstate === 19 && ( // T2AggregationDone
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={slashAuditors}>
                   Slash Auditors
@@ -1060,7 +1062,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate === 19 && ( // AuditorsSlashed
+                {GIstate === 20 && ( // AuditorsSlashed
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={slashValidators}>
                   Slash Validators
@@ -1068,7 +1070,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                {GIstate === 20 && ( // ValidatorSlashed
+                {GIstate === 21 && ( // ValidatorSlashed
                   <div style={{ marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "center" }}>
                   <button className="button button--primary" onClick={endGI}>
                   End GI

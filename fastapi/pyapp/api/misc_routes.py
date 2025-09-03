@@ -138,6 +138,7 @@ ONE_CLICK_STEPS: List[Tuple[str, str, Optional[dict]]] = [
     ("POST", "/clients/createClientModels",            {"selectedDPMode": "afterTraining"}),
     ("POST", "/modelowner/closeLMsubmissions",            None),
     ("POST", "/modelowner/createAuditorsBatches", None),
+    ("POST", "/modelowner/createTestSubDatasetsForAuditorsBatches", None),
     ("POST", "/modelowner/startLMsubmissionsEvaluation",            None)
 ]
 
