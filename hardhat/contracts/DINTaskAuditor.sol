@@ -202,6 +202,7 @@ contract DINTaskAuditor is Ownable {
 
     event AuditorsBatchAuto(uint indexed GI, uint indexed batchId);
     event AuditorsBatchesCreated(uint indexed GI, uint batchCount);
+    event PassScoreUpdated(uint8 oldScore, uint8 newScore);
 
 
 
@@ -224,6 +225,16 @@ contract DINTaskAuditor is Ownable {
 
         totalDepositedRewards += _amount;
         emit RewardDeposited(msg.sender, _amount);
+    }
+
+
+    function updatePassScore(uint8 newPassScore) external onlyTaskCoordinator {
+        require(newPassScore <= 100, "Pass score must be between 0 and 100");
+
+        uint8 oldScore = params.passScore;
+        params.passScore = newPassScore;
+
+        emit PassScoreUpdated(oldScore, newPassScore);
     }
 
     function registerDINAuditor(uint _GI) public {

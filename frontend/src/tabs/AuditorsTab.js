@@ -222,6 +222,21 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
     
   }, [GIstate]);
 
+  const evaluateallLMs = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/auditors/evaluateallLMs", { method: "POST" });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      console.log(data);
+      fetchAuditorEvaluationBatches();
+      
+    }
+    catch (error) {
+      console.error("Error evaluating all LMs:", error);
+    }
+  }
+
   return (  
     <div className="tab-content">
       <h2>Auditors</h2>
@@ -251,6 +266,10 @@ export default function AuditorsTab({GIstate, GI, GIstatestr}) {
 
               {GIstatestr ==="DINauditorRegistrationStarted" ? (
                 <button className="button button--primary" onClick={() => registerTaskAuditors()}>Register Task Auditors </button>
+              ) : null}
+
+              {GIstatestr ==="LMSevaluationStarted" ? (
+                <button className="button button--primary" onClick={() => evaluateallLMs()}>Evaluate All LMs </button>
               ) : null}
             
             </div>  

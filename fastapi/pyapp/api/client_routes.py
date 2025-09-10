@@ -115,9 +115,9 @@ def create_client_models(request: ClientModelCreateRequest):
             
         #*****----------- fixed for demo --------------***************    
         
-        # client_model_ipfs_hashes = train_client_model_and_upload_to_ipfs(genesis_model_ipfs_hash, initial_model_ipfs_hash, dp_mode=dp_mode)
+        client_model_ipfs_hashes = train_client_model_and_upload_to_ipfs(genesis_model_ipfs_hash, initial_model_ipfs_hash, dp_mode=dp_mode)
         
-        client_model_ipfs_hashes = ["QmNk7RPtC2xsSQAeuE3gomzBuaTqxCZnsC8KHzTkwWSm5q", "QmcNftx1vRrhep1YdD2mWsLeUYmWkxUS66T5po2rw5joNC", "Qma8rGwkpLYz3boAZPjRe1Y4rzr6MsyP68jkzvmHC2K4AD", "QmPPiDteruYghi6dN7hakhLNuPajjLJkEH2SKsoQ8RiVSK", "QmcZ8HfabqT3ys4YSGq37HAvypKeZNvZNsck4ZTkm2cJLb", "QmboKdv9tPEAjZydmcMQnJazNHpRcTRR8Cd14iwuXK7Dza", "QmQkBQjevrFPJudFubCFwJ6t3Ki15nje8T2T4XS5ihCyh7", "QmWacddXyaBaSKpvC7cKre151q963QkZM9oKzio25QnCvW", "QmcVfxh8BjdmutCuoEzNdDjLacRzXDz8mBEKwxqSv4cuJB"]
+        # client_model_ipfs_hashes = ["QmNk7RPtC2xsSQAeuE3gomzBuaTqxCZnsC8KHzTkwWSm5q", "QmcNftx1vRrhep1YdD2mWsLeUYmWkxUS66T5po2rw5joNC", "Qma8rGwkpLYz3boAZPjRe1Y4rzr6MsyP68jkzvmHC2K4AD", "QmPPiDteruYghi6dN7hakhLNuPajjLJkEH2SKsoQ8RiVSK", "QmcZ8HfabqT3ys4YSGq37HAvypKeZNvZNsck4ZTkm2cJLb", "QmboKdv9tPEAjZydmcMQnJazNHpRcTRR8Cd14iwuXK7Dza", "QmQkBQjevrFPJudFubCFwJ6t3Ki15nje8T2T4XS5ihCyh7", "QmWacddXyaBaSKpvC7cKre151q963QkZM9oKzio25QnCvW", "QmcVfxh8BjdmutCuoEzNdDjLacRzXDz8mBEKwxqSv4cuJB"]
         
         
         #*****----------- fixed for demo --------------***************

@@ -15,6 +15,7 @@ interface IDINTaskAuditor {
     function setTestDataAssignedFlag(uint _GI, bool flag) external;
     function finalizeEvaluation(uint _GI) external returns (bool);
     function approvedModelIndexes(uint _GI) external view returns (uint[] memory);
+    function updatePassScore(uint8 newPassScore) external;
 }
     
 
@@ -94,6 +95,7 @@ contract DINTaskCoordinator is Ownable {
     }
     
     mapping(uint => Tier2Batch[]) public tier2Batches;
+    mapping(uint => uint) public tier2Score;
 
     mapping(uint => mapping(uint => mapping(address => string))) public t2SubmissionCID;
     mapping(uint => mapping(uint => mapping(address => bool  ))) public t2Submitted;
@@ -136,9 +138,10 @@ contract DINTaskCoordinator is Ownable {
         GIstate = GIstates.GenesisModelCreated;
     }
 
-    function startGI(uint _GI) public onlyOwner {
+    function startGI(uint _GI, uint score) public onlyOwner {
         require(GIstate == GIstates.GenesisModelCreated || GIstate == GIstates.GIended, "GI can not be started");
         require(_GI == GI+1, "Invalid GlobalIteration");
+        dinTaskAuditorContract.updatePassScore(uint8(score));
         GIstate = GIstates.GIstarted;
         GI++;
     }
@@ -513,8 +516,15 @@ contract DINTaskCoordinator is Ownable {
         GIstate = GIstates.T2AggregationDone;
     }   
 
+    function slashAuditors(uint _GI) external onlyOwner {
+        require(GIstate == GIstates.T2AggregationDone, "Not ready to slash auditors");
+        require(_GI == GI, "Wrong GI");
+        // The Actual Slashing logic maybe implemented here
+        GIstate = GIstates.AuditorsSlashed;
+    }
+
     function slashValidators(uint _GI) external onlyOwner {
-        require(GIstate == GIstates.T2AggregationDone, "Not ready to slash validators");
+        require(GIstate == GIstates.AuditorsSlashed, "Not ready to slash validators");
         require(_GI == GI, "Wrong GI");
 
         uint256 slashAmount = minStake;
@@ -561,11 +571,23 @@ contract DINTaskCoordinator is Ownable {
         
     }
 
+    function setTier2Score(uint _GI, uint _score) external onlyOwner {
+        require(_GI == GI, "Wrong GI");
+        require(GIstate == GIstates.T2AggregationDone || GIstate == GIstates.GenesisModelCreated, "Not ready to set Tier 2 score");
+        tier2Score[_GI] = _score;
+    }
+
+    function getTier2Score(uint _GI) external view returns (uint) {
+        return tier2Score[_GI];
+    }
+
     function endGI(uint _GI) external onlyOwner {
         require(GIstate == GIstates.ValidatorSlashed, "Not ready to end GI");
         require(_GI == GI, "Wrong GI");
         GIstate = GIstates.GIended;
     }   
+
+    
 
 
 

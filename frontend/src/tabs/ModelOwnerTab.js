@@ -284,6 +284,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
+      console.log(data);
       fetchGIState();
     } catch (err) {
       console.error("Error starting GI in DINTaskCoordinator:", err);
@@ -479,6 +480,8 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
       const data = await response.json();
       console.log(data);
       fetchGIState();
+      fetchClientModels();
+      fetchAuditBatches();
     } catch (err) {
       console.error("Error creating test sub datasets for auditors batches:", err);
     } finally {
@@ -897,7 +900,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                     </>
                   ):(<>
                     <p>Not enough auditors registered - need atleast 9 for demo</p>
-                    <p>{registeredTaskAuditors.length} Validators registered</p>
+                    <p>{registeredTaskAuditors.length} Auditors registered</p>
                     </>
                   )
                 ): GIstate >= 9 ? (
@@ -953,7 +956,7 @@ export default function ModelOwnerTab({ fetchGIState, GIstate, GIstatedes, GIsta
                   </div>
                 )}
 
-                { (GIstate >= 11 && GIstate < 13) && clientModelsCreatedF ? ( //LMSclosed
+                { (GIstate >= 11 && GIstate < 12) && clientModelsCreatedF ? ( //LMSclosed
                  <ModelList lm_submissions={lmSubmissions} />
                 ) : null}
 

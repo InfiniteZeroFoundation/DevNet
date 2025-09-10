@@ -15,6 +15,7 @@ import ModelOwnerTab from "./tabs/ModelOwnerTab";
 import ClientsTab from "./tabs/ClientsTab";
 import ValidatorsTab from "./tabs/ValidatorsTab";
 import AuditorsTab from "./tabs/AuditorsTab";
+import GlobalAnalyticsTab from "./tabs/GlobalAnalyticsTab";
 
 import useGIState from "./hooks/useGIState";
 import { resetAll, distributeDataset } from "./services/global";
@@ -22,7 +23,7 @@ import { resetAll, distributeDataset } from "./services/global";
 
 export default function App() {
 
-  const [activeTab, setActiveTab] = useState("DINDAO");
+  const [activeTab, setActiveTab] = useState("Tether Foundation");
   const { tooltipVisible, tooltipMsg, tooltipClass, hideTooltip, showTooltip } = useContext(TooltipContext);
   const { GI, GIstate, GIstatestr, GIstatedes, loading, error, fetchGIState } = useGIState(showTooltip, activeTab);
 
@@ -78,6 +79,7 @@ export default function App() {
             error={error}
             GI={GI}
             GIstatedes={GIstatedes}
+            fetchGIState = {fetchGIState}
           />
             
           <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -103,6 +105,10 @@ export default function App() {
 
           {activeTab === "Clients" && <ClientsTab 
           GIstate={GIstate} 
+          GI={GI} 
+          GIstatestr={GIstatestr}/>}
+
+          {activeTab === "Global Analytics" && <GlobalAnalyticsTab GIstate={GIstate} 
           GI={GI} 
           GIstatestr={GIstatestr}/>}
 

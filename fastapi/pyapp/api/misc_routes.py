@@ -20,6 +20,7 @@ def get_GIState():
             return {"message": "DINTaskCoordinator_Contract_Address not found",
                     "status": "error",
                     "GI": 0,
+                    "GIstate": 0,
                     "GIstatestr": "DINTaskCoordinator contract not deployed",
                     "GIstatedes": "DINTaskCoordinator contract not deployed"}
         else:
@@ -110,7 +111,7 @@ def test():
 
 
 # Order matters. Add the rest of your steps here.
-ONE_CLICK_STEPS: List[Tuple[str, str, Optional[dict]]] = [
+ONE_CLICK_STEPS_GI0: List[Tuple[str, str, Optional[dict]]] = [
     ("GET",  "/reset/resetall",                               None),
     ("POST", "/tetherfoundation/deployTetherMockContract",    None),
     ("POST", "/dindao/deployDINCoordinator",                  None),
@@ -124,28 +125,11 @@ ONE_CLICK_STEPS: List[Tuple[str, str, Optional[dict]]] = [
     ("POST", "/dindao/addDINTaskAuditorAsSlasher",            None),
     ("POST", "/modelowner/setDINTaskAuditorAsSlasher",            None),
     ("POST", "/modelowner/createGenesisModel",            None),
-    ("POST", "/modelowner/startGI",            None),
-    ("POST", "/modelowner/startDINvalidatorRegistration",            None),
-    ("POST", "/validators/buyDINTokens",            None),
-    ("POST", "/validators/stakeDINTokens",            None),
-    ("POST", "/validators/registerTaskValidators",            None),
-    ("POST", "/modelowner/closeDINvalidatorRegistration",            None),
-    ("POST", "/modelowner/startDINauditorRegistration",            None),
-    ("POST", "/auditors/buyDINTokens",            None),
-    ("POST", "/auditors/stakeDINTokens",            None),
-    ("POST", "/auditors/registerTaskAuditors",            None),
-    ("POST", "/modelowner/closeDINauditorRegistration",            None),
-    ("POST", "/modelowner/startLMsubmissions",            None),
-    ("POST", "/clients/createClientModels",            {"selectedDPMode": "afterTraining"}),
-    ("POST", "/modelowner/closeLMsubmissions",            None),
-    ("POST", "/modelowner/createAuditorsBatches", None),
-    ("POST", "/modelowner/createTestSubDatasetsForAuditorsBatches", None),
-    ("POST", "/modelowner/startLMsubmissionsEvaluation",            None)
-]
+ ]
 
 
-@router.get("/oneclicksetup")
-async def oneclicksetup(
+@router.get("/oneClickSetupG0")
+async def oneClickSetupG0(
     request: Request,
     stop_on_error: bool = True,
     timeout_seconds: float = 60.0,
@@ -159,7 +143,7 @@ async def oneclicksetup(
         base_url="http://app",  # required placeholder
         timeout=timeout_seconds,
     ) as client:
-        for method, path, payload in ONE_CLICK_STEPS:
+        for method, path, payload in ONE_CLICK_STEPS_GI0:
             try:
                 resp = await client.request(method, path, json=payload)
                 try:
@@ -194,4 +178,98 @@ async def oneclicksetup(
                         "results": results,
                     }
 
-    return {"ok": True, "message": "One click setup completed!", "results": results}
+    return {"ok": True, "message": "One click setup G0 completed!", "results": results}
+
+
+
+# Order matters. Add the rest of your steps here.
+ONE_CLICK_STEPS_GIG0: List[Tuple[str, str, Optional[dict]]] = [
+    ("POST", "/modelowner/startGI",            None),
+    ("POST", "/modelowner/startDINvalidatorRegistration",            None),
+    ("POST", "/validators/buyDINTokens",            None),
+    ("POST", "/validators/stakeDINTokens",            None),
+    ("POST", "/validators/registerTaskValidators",            None),
+    ("POST", "/modelowner/closeDINvalidatorRegistration",            None),
+    ("POST", "/modelowner/startDINauditorRegistration",            None),
+    ("POST", "/auditors/buyDINTokens",            None),
+    ("POST", "/auditors/stakeDINTokens",            None),
+    ("POST", "/auditors/registerTaskAuditors",            None),
+    ("POST", "/modelowner/closeDINauditorRegistration",            None),
+    ("POST", "/modelowner/startLMsubmissions",            None),
+    ("POST", "/clients/createClientModels",            {"selectedDPMode": "disabled"}),
+    ("POST", "/modelowner/closeLMsubmissions",            None),
+    ("POST", "/modelowner/createAuditorsBatches", None),
+    ("POST", "/modelowner/createTestSubDatasetsForAuditorsBatches", None),
+    ("POST", "/modelowner/startLMsubmissionsEvaluation",            None),
+    ("POST", "/auditors/evaluateallLMs", None),
+    ("POST", "/modelowner/closeLMsubmissionsEvaluation",            None),
+    ("POST", "/modelowner/createTier1n2Batches", None),
+    ("POST", "/modelowner/startT1Aggregation", None),
+    ("POST", "/validators/aggregateHonestlyAllT1", None),
+    ("POST", "/modelowner/finalizeT1Aggregation", None),
+    ("POST", "/modelowner/startT2Aggregation", None),
+    ("POST", "/validators/aggregateHonestlyAllT2", None),
+    ("POST", "/modelowner/finalizeT2Aggregation", None),
+    ("POST", "/modelowner/slashAuditors", None),
+    ("POST", "/modelowner/slashValidators", None),
+    ("POST", "/modelowner/endGI", None),
+    
+    
+    
+    
+    
+]
+
+
+@router.get("/oneClickSetupGIG0")
+async def oneClickSetupGIG0(
+    request: Request,
+    stop_on_error: bool = True,
+    timeout_seconds: float = 60.0,
+):
+    """Run a stack of your existing routes in sequence, in-process."""
+    transport = httpx.ASGITransport(app=request.app)
+    results: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://app",  # required placeholder
+        timeout=timeout_seconds,
+    ) as client:
+        for method, path, payload in ONE_CLICK_STEPS_GIG0:
+            try:
+                resp = await client.request(method, path, json=payload)
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text
+
+                results.append({
+                    "method": method,
+                    "path": path,
+                    "status": resp.status_code,
+                    "ok": resp.is_success,
+                    "response": body,
+                })
+                
+                time.sleep(2)
+
+                if not resp.is_success and stop_on_error:
+                    return {
+                        "ok": False,
+                        "message": "One click setup halted on error.",
+                        "failed_at": path,
+                        "results": results,
+                    }
+            except Exception as e:
+                results.append({"method": method, "path": path, "ok": False, "error": str(e)})
+                if stop_on_error:
+                    return {
+                        "ok": False,
+                        "message": "One click setup halted on exception.",
+                        "failed_at": path,
+                        "results": results,
+                    }
+
+    return {"ok": True, "message": "One click setup GIG0 completed!", "results": results}
+

@@ -4,7 +4,7 @@ from dotenv import load_dotenv, set_key, unset_key, dotenv_values
 
 import traceback; 
 from services.blockchain_services import get_w3
-from services.modelowner_services import create_audit_testDataCIDs
+from services.modelowner_services import create_audit_testDataCIDs, getscoreforGM
 from services.model_architect import getGenesisModelIpfs, get_DINTaskCoordinator_Instance, get_DINTaskAuditor_Instance, GIstatestrToIndex, GIstateToStr
 from services.DAO_services import get_DINCoordinator_Instance, get_DINtokenContract_Instance, get_DINValidatorStake_Instance
 from services.tetherfoundation_services import get_TetherMock_Instance
@@ -441,12 +441,25 @@ def create_genesis_model():
         set_key(".env", "IS_GenesisModelCreated", "True")
         set_key(".env", "GenesisModelIpfsHash", model_hash)
     
-
+        
+        accuracy = getscoreforGM(0, model_hash)
+        
+        print("Genesis model accuracy:", accuracy)
+        
+        tx = deployed_DINTaskCoordinatorContract.functions.setTier2Score(0, int(accuracy)).transact({
+            "from": model_owner_account,
+            "gas": 3000000,
+            "gasPrice": w3.to_wei("5", "gwei"),
+        })
+        
+        w3.eth.wait_for_transaction_receipt(tx)
+        
         
         return {"message": "Genesis model created & uploaded to IPFS successfully, logged in smart contract",
                 "status": "success",
                 "IS_GenesisModelCreated": True,
-                "model_ipfs_hash": model_hash,}
+                "model_ipfs_hash": model_hash,
+                "accuracy": accuracy}
     except Exception as e:
         return {"message": str(e),
                 "status": "error",
@@ -469,7 +482,14 @@ def start_GI():
         
         curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
-        tx_hash = deployed_DINTaskCoordinatorContract.functions.startGI(curr_GI+1).transact({
+        if curr_GI == 0:
+            gmcid = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
+        else:
+            batch_id, _, _, gmcid = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(curr_GI,0).call()
+        
+        accuracy = getscoreforGM(curr_GI, gmcid)
+        print("Current GI:", curr_GI, "GM Accuracy:", accuracy)
+        tx_hash = deployed_DINTaskCoordinatorContract.functions.startGI(curr_GI+1, int(accuracy-5)).transact({
             "from": model_owner_address,
             "gas": 3000000,
             "gasPrice": w3.to_wei("5", "gwei"),
@@ -479,7 +499,8 @@ def start_GI():
         unset_key(".env", "ClientModelsCreatedF")
         
         return {"message": "GI started successfully",
-                "status": "success"}
+                "status": "success",
+                "passScore": int(accuracy)}
     except Exception as e:
         return {"message": str(e),
                 "status": "error"}
@@ -1185,17 +1206,61 @@ def finalize_t2_aggregation():
         
         current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
-        deployed_DINTaskCoordinatorContract.functions.finalizeT2Aggregation(current_GI).transact({
+        tx = deployed_DINTaskCoordinatorContract.functions.finalizeT2Aggregation(current_GI).transact({
             "from": model_owner_address,
             "gas": 3000000,
             "gasPrice": w3.to_wei("5", "gwei"),
         })
+        
+        w3.eth.wait_for_transaction_receipt(tx)
+        
+        tier2_batch = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(current_GI, 0).call()
+        
+        finalCID = tier2_batch[3]
+        
+        accuracy = getscoreforGM(current_GI, finalCID)
+        
+        tx = deployed_DINTaskCoordinatorContract.functions.setTier2Score(current_GI, int(accuracy)).transact({
+            "from": model_owner_address,
+            "gas": 3000000,
+            "gasPrice": w3.to_wei("5", "gwei"),
+        })
+        
+        w3.eth.wait_for_transaction_receipt(tx)
         
         return {"message": "T2 Aggregation finalized successfully",
                 "status": "success"}
     except Exception as e:
         return {"message": str(e),
                 "status": "error"}
+        
+        
+@router.post("/slashAuditors")
+def slash_auditors():
+    try:
+        w3 = get_w3()
+        
+        env_config = dotenv_values(".env")
+        model_owner_address = env_config.get("ModelOwner_Address")
+        
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+        
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+        
+        current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        deployed_DINTaskCoordinatorContract.functions.slashAuditors(current_GI).transact({
+            "from": model_owner_address,
+            "gas": 3000000,
+            "gasPrice": w3.to_wei("5", "gwei"),
+        })
+        
+        return {"message": "Auditors slashed successfully",
+                "status": "success"}
+    except Exception as e:
+        return {"message": str(e),
+                "status": "error"}
+        
 
 
 @router.post("/slashValidators")
@@ -1210,7 +1275,7 @@ def slash_validators():
         
         deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
         
-        current_GI = deployed_DINTaskCoordinatorContract.functions.getGI().call()
+        current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
         deployed_DINTaskCoordinatorContract.functions.slashValidators(current_GI).transact({
             "from": model_owner_address,
@@ -1236,7 +1301,7 @@ def end_GI():
         
         deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
         
-        current_GI = deployed_DINTaskCoordinatorContract.functions.getGI().call()
+        current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
         
         deployed_DINTaskCoordinatorContract.functions.endGI(current_GI).transact({
             "from": model_owner_address,

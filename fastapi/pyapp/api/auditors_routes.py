@@ -5,7 +5,7 @@ import time
 from services.DAO_services import get_DINtokenContract_Instance, get_DINValidatorStake_Instance, get_DINCoordinator_Instance
 from services.blockchain_services import get_w3
 from services.model_architect import get_DINTaskCoordinator_Instance, GIstatestrToIndex, GIstateToStr, get_DINTaskAuditor_Instance
-
+from services.auditor_services import Score_model_by_auditor
 
 router = APIRouter(prefix="/auditors", tags=["Auditors"])
 
@@ -450,9 +450,7 @@ def evaluate_lm(request: EvaluateLMRequest):
         
         if curr_GIstate < GIstatestrToIndex("LMSevaluationStarted"):
             raise Exception("Can not evaluate LM at this time")
-        
-        # ******************* working **********************************
-        
+
         audit_batch = deployed_DINTaskAuditorContract.functions.getAuditorsBatch(curr_GI, request.batch_id).call()
         
         testDataCID = audit_batch[3]
@@ -465,11 +463,67 @@ def evaluate_lm(request: EvaluateLMRequest):
         
         lm = deployed_DINTaskAuditorContract.functions.lmSubmissions(curr_GI, request.model_index).call()
         
-        print("lm",lm)
+        lm_cid = lm[1]
         
-        # deployed_DINTaskAuditorContract.functions.setAuditScorenEligibility(curr_GI, request.batch_id, request.model_index, 60, True).transact({'from': request.auditor_address,  "gas": int(3000000),
-            # "gasPrice": w3.to_wei("5", "gwei"),})
+        genesis_model_cid = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
+        
+        score, eligible = Score_model_by_auditor(curr_GI, genesis_model_cid, request.batch_id, request.model_index, request.auditor_address, testDataCID, lm_cid, deployed_DINTaskAuditorContract)
+        
+        print("eligible",eligible, "score", score)
+        
+            
+        deployed_DINTaskAuditorContract.functions.setAuditScorenEligibility(curr_GI, request.batch_id, request.model_index, int(score), bool(eligible)).transact({'from': request.auditor_address,  "gas": int(3000000),
+            "gasPrice": w3.to_wei("5", "gwei"),})
         
         return {"message": "LM evaluated successfully", "status": "success"}
+    except Exception as e:
+        return {"message": str(e), "status": "error"}
+    
+@router.post("/evaluateallLMs")
+def evaluate_all_lms():
+    try:
+        env_config = dotenv_values(".env")
+        
+        w3 = get_w3()
+        
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        
+        DINTaskCoordinator_Contract_Address = env_config.get("DINTaskCoordinator_Contract_Address")
+        
+        deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
+        
+        deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
+  
+        curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        curr_GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+        
+        if curr_GIstate < GIstatestrToIndex("LMSevaluationStarted"):
+            raise Exception("Can not evaluate LM at this time")
+        
+        AuditorsBatchCount = deployed_DINTaskAuditorContract.functions.AuditorsBatchCount(curr_GI).call()
+        
+        genesis_model_cid = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
+        
+        for batch_id in range(AuditorsBatchCount):
+            audit_batch = deployed_DINTaskAuditorContract.functions.getAuditorsBatch(curr_GI, batch_id).call()
+            
+            testDataCID = audit_batch[3]
+            
+            for model_index in audit_batch[2]:
+                for auditor_address in audit_batch[1]:
+                    lm = deployed_DINTaskAuditorContract.functions.lmSubmissions(curr_GI, model_index).call()
+        
+                    lm_cid = lm[1]
+                    
+                    score, eligible = Score_model_by_auditor(curr_GI, genesis_model_cid, batch_id, model_index, auditor_address, testDataCID, lm_cid)
+                    
+                    print("eligible",eligible, "score", score)
+                    
+                    deployed_DINTaskAuditorContract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).transact({'from': auditor_address,  "gas": int(3000000),
+                    "gasPrice": w3.to_wei("5", "gwei"),})
+                    
+        
+        return {"message": "All LM evaluated successfully", "status": "success"}
     except Exception as e:
         return {"message": str(e), "status": "error"}

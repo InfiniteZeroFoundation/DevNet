@@ -6,10 +6,10 @@ export default function GlobalActions({ onReset, onDistribute, isResetting, isDi
 
     const { showTooltip } = useContext(TooltipContext);
 
-    const oneClickSetup = async () => {
+    const oneClickSetupG0 = async () => {
       try {
 
-        const response = await fetch("http://localhost:8000/oneclicksetup", {
+        const response = await fetch("http://localhost:8000/oneClickSetupG0", {
           method: "GET",
         });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -21,10 +21,30 @@ export default function GlobalActions({ onReset, onDistribute, isResetting, isDi
       } catch (error) {
         showTooltip(error.message, true);
       }
-
-  
   
     }
+
+    const oneClickSetupGIG0 = async () => {
+      try {
+
+        const response = await fetch("http://localhost:8000/oneClickSetupGIG0", {
+          method: "GET",
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        const data = await response.json();
+        console.log(data);
+        showTooltip(data.message, false);
+        
+      } catch (error) {
+        showTooltip(error.message, true);
+      }
+  
+    }
+
+
+
+
 
 
     return (
@@ -44,7 +64,9 @@ export default function GlobalActions({ onReset, onDistribute, isResetting, isDi
           {isDistributing ? "Distributing..." : "Distribute Dataset"}
         </button>
 
-        <button className="button button--primary margin-block-lr" onClick={() => oneClickSetup()}>One-Click Setup</button>
+        <button className="button button--primary margin-block-lr" onClick={() => oneClickSetupG0()}>One-Click Setup-GI-0</button>
+
+        <button className="button button--primary margin-block-lr" onClick={() => oneClickSetupGIG0()}>One-Click Setup-GIG0</button>
       </div>
     );
   }
