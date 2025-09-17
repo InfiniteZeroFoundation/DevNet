@@ -98,5 +98,9 @@ contract DinValidatorStake is Ownable {
         return validators[validator].stake;
     }
 
+    function is_slasher_contract(address slasher_contract) public view returns (bool) {
+        return slasher_contracts[slasher_contract];
+    }
+
 
 }

@@ -53,8 +53,16 @@ def get_tetherfoundation_state():
 def deploy_tethermock_contract():
     try:
         w3 = get_w3()
-        
+           
         env_config = dotenv_values(".env")
+        
+        model_owner_address = env_config.get("ModelOwner_Address")
+        
+        if model_owner_address is None:
+            model_owner_address = w3.eth.accounts[1] 
+            set_key(".env", "ModelOwner_Address", model_owner_address)
+      
+     
         
         TetherMock_Contract_Address = env_config.get("TetherMock_Contract_Address")
         

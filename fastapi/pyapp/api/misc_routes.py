@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from dotenv import load_dotenv, set_key, unset_key, dotenv_values
 router = APIRouter(tags=["Miscellaneous"])
 
-
+import httpx
+from typing import List, Tuple, Optional, Dict, Any
 from services.dataset_service import load_mnist_dataset, save_datasets
 from services.partition_service import partition_dataset, save_partitioned_data
+import time
 
-from services.model_architect import get_DINTaskCoordinator_Instance
+from services.model_architect import get_DINTaskCoordinator_Instance, GIstateToDes, GIstateToStr
 
 @router.get("/getGIState")
 def get_GIState():
@@ -18,6 +20,8 @@ def get_GIState():
             return {"message": "DINTaskCoordinator_Contract_Address not found",
                     "status": "error",
                     "GI": 0,
+                    "GIstate": 0,
+                    "GIstatestr": "DINTaskCoordinator contract not deployed",
                     "GIstatedes": "DINTaskCoordinator contract not deployed"}
         else:
             
@@ -27,44 +31,21 @@ def get_GIState():
             
             GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
             
-            if GIstate == 0:
-                GIstatedes = "Awaiting Genesis Model"
-            elif GIstate == 1:
-                GIstatedes = "Genesis Model Created"
-            elif GIstate == 2:
-                GIstatedes = "GI started"
-            elif GIstate == 3:
-                GIstatedes = "LM submissions started"
-            elif GIstate == 4:
-                GIstatedes = "LM submissions closed"
-            elif GIstate == 5:
-                GIstatedes = "LM submissions evaluation closed"
-            elif GIstate == 6:
-                GIstatedes = "T1nT2B created"
-            elif GIstate == 7:
-                GIstatedes = "T1B aggregation started"
-            elif GIstate == 8:
-                GIstatedes = "T1B aggregation done"
-            elif GIstate == 9:
-                GIstatedes = "T2B aggregation started"
-            elif GIstate == 10:
-                GIstatedes = "T2B aggregation done"
-            elif GIstate == 11:
-                GIstatedes = "Validators slashed"
-            elif GIstate == 12:
-                GIstatedes = "GI ended"
-            
+            GIstatedes = GIstateToDes(GIstate)
+            GIstatestr = GIstateToStr(GIstate)
             
             return {"message": "GI state fetched successfully",
                     "status": "success",
                     "GI": GI,
                     "GIstate": GIstate,
+                    "GIstatestr": GIstatestr,
                     "GIstatedes": GIstatedes}
     except Exception as e:
         return {"message": str(e),
                 "status": "error",
                 "GI": None,
                 "GIstate": None,
+                "GIstatestr": None,
                 "GIstatedes": None}
 
 
@@ -110,6 +91,10 @@ def resetall():
         unset_key(".env", "DPModeUsed")
         unset_key(".env", "DINTaskCoordinatorISslasher")
         unset_key(".env", "TetherMock_Contract_Address")
+        unset_key(".env", "DINTaskAuditor_Contract_Address")
+        unset_key(".env", "DINTaskAuditorISslasher")
+        unset_key(".env", "TestDataset_CIDs_Assigned")
+        
         
         
         
@@ -122,3 +107,169 @@ def resetall():
 @router.get("/test")
 def test():
     return {"message": "Router is working!"}
+
+
+
+# Order matters. Add the rest of your steps here.
+ONE_CLICK_STEPS_GI0: List[Tuple[str, str, Optional[dict]]] = [
+    ("GET",  "/reset/resetall",                               None),
+    ("POST", "/tetherfoundation/deployTetherMockContract",    None),
+    ("POST", "/dindao/deployDINCoordinator",                  None),
+    ("POST", "/dindao/deployDinValidatorStake",               None),
+    ("POST", "/modelowner/buyUSDT",                           None),
+    ("POST", "/modelowner/deployDINTaskCoordinator",          None),
+    ("POST", "/modelowner/deployDINtaskAuditor",              None),
+    ("POST", "/modelowner/depositRewardInDINtaskAuditor",            None),
+    ("POST", "/dindao/addDINTaskCoordinatorAsSlasher",            None),
+    ("POST", "/modelowner/setDINTaskCoordinatorAsSlasher",            None),
+    ("POST", "/dindao/addDINTaskAuditorAsSlasher",            None),
+    ("POST", "/modelowner/setDINTaskAuditorAsSlasher",            None),
+    ("POST", "/modelowner/createGenesisModel",            None),
+ ]
+
+
+@router.get("/oneClickSetupG0")
+async def oneClickSetupG0(
+    request: Request,
+    stop_on_error: bool = True,
+    timeout_seconds: float = 60.0,
+):
+    """Run a stack of your existing routes in sequence, in-process."""
+    transport = httpx.ASGITransport(app=request.app)
+    results: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://app",  # required placeholder
+        timeout=timeout_seconds,
+    ) as client:
+        for method, path, payload in ONE_CLICK_STEPS_GI0:
+            try:
+                resp = await client.request(method, path, json=payload)
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text
+
+                results.append({
+                    "method": method,
+                    "path": path,
+                    "status": resp.status_code,
+                    "ok": resp.is_success,
+                    "response": body,
+                })
+                
+                time.sleep(2)
+
+                if not resp.is_success and stop_on_error:
+                    return {
+                        "ok": False,
+                        "message": "One click setup halted on error.",
+                        "failed_at": path,
+                        "results": results,
+                    }
+            except Exception as e:
+                results.append({"method": method, "path": path, "ok": False, "error": str(e)})
+                if stop_on_error:
+                    return {
+                        "ok": False,
+                        "message": "One click setup halted on exception.",
+                        "failed_at": path,
+                        "results": results,
+                    }
+
+    return {"ok": True, "message": "One click setup G0 completed!", "results": results}
+
+
+
+# Order matters. Add the rest of your steps here.
+ONE_CLICK_STEPS_GIG0: List[Tuple[str, str, Optional[dict]]] = [
+    ("POST", "/modelowner/startGI",            None),
+    ("POST", "/modelowner/startDINvalidatorRegistration",            None),
+    ("POST", "/validators/buyDINTokens",            None),
+    ("POST", "/validators/stakeDINTokens",            None),
+    ("POST", "/validators/registerTaskValidators",            None),
+    ("POST", "/modelowner/closeDINvalidatorRegistration",            None),
+    ("POST", "/modelowner/startDINauditorRegistration",            None),
+    ("POST", "/auditors/buyDINTokens",            None),
+    ("POST", "/auditors/stakeDINTokens",            None),
+    ("POST", "/auditors/registerTaskAuditors",            None),
+    ("POST", "/modelowner/closeDINauditorRegistration",            None),
+    ("POST", "/modelowner/startLMsubmissions",            None),
+    ("POST", "/clients/createClientModels",            {"selectedDPMode": "disabled"}),
+    ("POST", "/modelowner/closeLMsubmissions",            None),
+    ("POST", "/modelowner/createAuditorsBatches", None),
+    ("POST", "/modelowner/createTestSubDatasetsForAuditorsBatches", None),
+    ("POST", "/modelowner/startLMsubmissionsEvaluation",            None),
+    ("POST", "/auditors/evaluateallLMs", None),
+    ("POST", "/modelowner/closeLMsubmissionsEvaluation",            None),
+    ("POST", "/modelowner/createTier1n2Batches", None),
+    ("POST", "/modelowner/startT1Aggregation", None),
+    ("POST", "/validators/aggregateHonestlyAllT1", None),
+    ("POST", "/modelowner/finalizeT1Aggregation", None),
+    ("POST", "/modelowner/startT2Aggregation", None),
+    ("POST", "/validators/aggregateHonestlyAllT2", None),
+    ("POST", "/modelowner/finalizeT2Aggregation", None),
+    ("POST", "/modelowner/slashAuditors", None),
+    ("POST", "/modelowner/slashValidators", None),
+    ("POST", "/modelowner/endGI", None),
+    
+    
+    
+    
+    
+]
+
+
+@router.get("/oneClickSetupGIG0")
+async def oneClickSetupGIG0(
+    request: Request,
+    stop_on_error: bool = True,
+    timeout_seconds: float = 60.0,
+):
+    """Run a stack of your existing routes in sequence, in-process."""
+    transport = httpx.ASGITransport(app=request.app)
+    results: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://app",  # required placeholder
+        timeout=timeout_seconds,
+    ) as client:
+        for method, path, payload in ONE_CLICK_STEPS_GIG0:
+            try:
+                resp = await client.request(method, path, json=payload)
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text
+
+                results.append({
+                    "method": method,
+                    "path": path,
+                    "status": resp.status_code,
+                    "ok": resp.is_success,
+                    "response": body,
+                })
+                
+                time.sleep(2)
+
+                if not resp.is_success and stop_on_error:
+                    return {
+                        "ok": False,
+                        "message": "One click setup halted on error.",
+                        "failed_at": path,
+                        "results": results,
+                    }
+            except Exception as e:
+                results.append({"method": method, "path": path, "ok": False, "error": str(e)})
+                if stop_on_error:
+                    return {
+                        "ok": False,
+                        "message": "One click setup halted on exception.",
+                        "failed_at": path,
+                        "results": results,
+                    }
+
+    return {"ok": True, "message": "One click setup GIG0 completed!", "results": results}
+

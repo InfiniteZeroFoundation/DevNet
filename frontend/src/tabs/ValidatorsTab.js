@@ -3,7 +3,7 @@ import React, { useState, useEffect, useContext } from "react";
 import { TooltipContext } from "../context/TooltipContext";
 
 /** ======================= Validator TAB ======================= */
-export default function ValidatorsTab({GIstate, GI}) {
+export default function ValidatorsTab({GIstate, GI, GIstatestr}) {
 
   const [loading, setLoading] = useState(true);
   const { showTooltip } = useContext(TooltipContext);
@@ -39,7 +39,7 @@ export default function ValidatorsTab({GIstate, GI}) {
       setDintokenAddress(data.dintoken_address);
       setRegisteredTaskValidators(data.registered_validators);
 
-      if (GIstate >= 7 && GI > 0) {
+      if (GIstate >= 15 && GI > 0) { // T1AggregationStarted
         setAllRegValT1Bs(data.all_reg_val_assigned_t1_batches)
         setAllRegValT2Bs(data.all_reg_val_assigned_t2_batches)
         setAllRegValT1BR(data.all_res_val_t1)
@@ -65,14 +65,14 @@ export default function ValidatorsTab({GIstate, GI}) {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
-      console.log("Fetched validators state:", data);
+      console.log("Buy DIN tokens:", data);
 
       setLoading(false);
       setValidatorAddresses(data.validator_addresses);
       setValidatorDintokenBalances(data.validator_dintoken_balances);
       setValidatorETHBalances(data.validator_eth_balances);
     } catch (err) {
-      console.error("Error fetching validators state:", err);
+      console.error("Error buying DIN tokens:", err);
       showTooltip(err.message, true);
     }
   };
@@ -392,7 +392,7 @@ export default function ValidatorsTab({GIstate, GI}) {
             </tbody>
           </table>
         )}
-        {GIstate === 7 && batches.length > 0 && !curr_cid? (
+        {GIstatestr === "T1AggregationStarted" && batches.length > 0 && !curr_cid? (
             <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
             <button
                 className="button button--primary"
@@ -426,7 +426,7 @@ export default function ValidatorsTab({GIstate, GI}) {
                 Aggregate Maliciously T1
               </button>
             </div>
-          )  : GIstate >= 7 && batches.length > 0 && curr_cid ? (
+          )  : GIstate >= 16 && batches.length > 0 && curr_cid ? ( // T1AggregationStarted
             // Show submitted CID otherwise if conditions match
             <div>
               <h3>Submitted CID: {curr_cid}</h3>
@@ -505,7 +505,7 @@ export default function ValidatorsTab({GIstate, GI}) {
             </tbody>
           </table>
         )}
-        {GIstate === 9 && batches.length > 0 && !curr_cid? (
+        {GIstatestr === "T2AggregationStarted" && batches.length > 0 && !curr_cid? (  //T2AggregationStarted
             <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
             <button
                 className="button button--primary"
@@ -539,7 +539,7 @@ export default function ValidatorsTab({GIstate, GI}) {
                 Aggregate Maliciously T2
               </button>
             </div>
-          ) : GIstate >= 9 && batches.length > 0 && curr_cid ? (
+          ) : GIstate >= 17 && batches.length > 0 && curr_cid ? ( //T2AggregationStarted
             // Show submitted CID otherwise if conditions match
             <div>
               <h3>Submitted CID: {curr_cid}</h3>
@@ -562,7 +562,11 @@ export default function ValidatorsTab({GIstate, GI}) {
           <p>{registeredTaskValidators.length} Validators</p>
         </div>
           <div style={{ display: "flex", justifyContent: "center", gap: "1rem", marginBottom: "1rem" }}>
-            <button className="button button--primary" onClick={() => buyDINTokens()}>Buy DIN Tokens</button>
+            {dintoken_address ? (
+              <button className="button button--primary" onClick={() => buyDINTokens()}>Buy DIN Tokens</button>
+            ) : (
+              <p> DIN Token Contract not deployed</p>
+            )}
             {DINValidatorStakeAddress ? (
               <>
               <button className="button button--primary" onClick={() => stakeDINTokens()}>Stake DIN Tokens</button>
@@ -570,16 +574,14 @@ export default function ValidatorsTab({GIstate, GI}) {
             ) : (
               <p> DIN Validator Stake Contract not deployed</p>
             )}
-            {GIstate >=2 ? (
+            {GIstatestr ==="DINvalidatorRegistrationStarted" ? (
               <button className="button button--primary" onClick={() => registerTaskValidators()}>Register Task Validators </button>
-            ) : (
-              <></>
-            )}
+            ) : null}
           </div>  
           {validatorAddresses.length > 0 ? (
            validatorAddresses.map((address, index) => (
             <div key={index} className="listbox">
-              <p>Address - {address} </p><br/> 
+              <h3>Address - {address} </h3><br/> 
               <p>ETH Balance - {validatorETHBalances[index]} </p><br/> 
               {dintoken_address ? (
                 <>
@@ -596,13 +598,13 @@ export default function ValidatorsTab({GIstate, GI}) {
                 <p>DIN Validator Stake Contract not deployed</p>
               )}
 
-              { (GIstate >=2)  && GI>0  && registeredTaskValidators.length > 0 && registeredTaskValidators.includes(address) ? (
+              { (GIstate >=6)  && GI>0  && registeredTaskValidators.length > 0 && registeredTaskValidators.includes(address) ? ( // DINvalidatorRegistrationStarted
                 <p><span style={{ color: 'green' }}>✅</span> Registered Validator</p>
               ) : (
                 <p><span style={{ color: 'red' }}>❌</span> Not Registered Validator</p>
               )}
 
-              {(GIstate >=7)  && GI>0  && registeredTaskValidators.length > 0 && registeredTaskValidators.includes(address) ? (
+              {(GIstate >=14)  && GI>0  && registeredTaskValidators.length > 0 && registeredTaskValidators.includes(address) ? ( // T1nT2Bcreated
                 <>
                 <ValidatorT1BatchesViewer
                 registeredTaskValidators={registeredTaskValidators}
@@ -629,8 +631,8 @@ export default function ValidatorsTab({GIstate, GI}) {
                 <button className="button button--primary" onClick={() => buyDINTokensSingle(address)} >Buy DIN Tokens</button>
                 </div>
                 </>
-              ): (<></>)
-                }
+              ): null
+              }
 
               {DINValidatorStakeAddress ? (
                 <>
@@ -638,18 +640,17 @@ export default function ValidatorsTab({GIstate, GI}) {
                 <button className="button button--primary" onClick={() => stakeDINTokensSingle(address)} >Stake DIN Tokens</button>
                 </div>
                 </>
-              ): (<></>)
-                }
+              ): null
+              }
 
-              { (GIstate >= 2) && GI>0  && (registeredTaskValidators.length > 0 || validatorDinStakedTokens[index] >= 1000000) && registeredTaskValidators.indexOf(address) === -1 ? (
+              { (GIstate >= 6) && GI>0  && (registeredTaskValidators.length > 0 || validatorDinStakedTokens[index] >= 1000000) && registeredTaskValidators.indexOf(address) === -1 ? ( //DINvalidatorRegistrationStarted
                 <>
                 <div style={{ display: "flex", justifyContent: "center", gap: "1rem", marginBottom: "1rem" }}>
                 <button className="button button--primary" onClick={() =>registerTaskValidatorSingle(address)} >Register Task Validator</button>
                 </div>
                 </>
-              ) : (
-                (<></>)
-              )}
+              ) : null
+              }
             </div>
           ))
           ) : (

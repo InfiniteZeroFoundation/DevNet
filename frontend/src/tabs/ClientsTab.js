@@ -91,7 +91,7 @@ export default function ClientsTab({ GIstate, GI}) {
     }
   }, [selectedDPMode]);
 
-  const canCreateModels = !clientModelsCreatedF && GIstate === 3;
+  const canCreateModels = !clientModelsCreatedF && GIstate === 10; //LMSstarted
   return (
     <div className="tab-content">
       <h2>Clients</h2>

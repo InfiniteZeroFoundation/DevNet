@@ -6,7 +6,7 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       accounts: {
-        count: 50, // Generate 50 accounts
+        count: 70, // Generate 70 accounts
         accountsBalance: "10000000000000000000000"
       },
       chainId: 1337,

@@ -64,4 +64,98 @@ def get_DINTaskCoordinator_Instance(dintaskcoordinator_address=None):
         return deployed_DINTaskCoordinatorContract
     else:
         return w3.eth.contract(abi=dintaskcoordinator_abi, bytecode=dintaskcoordinator_bytecode)
- 
+
+def get_DINTaskAuditor_Instance(dintaskauditor_address=None):
+    w3 = get_w3()
+    
+    if dintaskauditor_address is None:
+        dintaskauditor_address = dotenv_values(".env").get("DINTaskAuditor_Contract_Address")
+    
+    with open("../../hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json") as f:
+        dintaskauditor_data = json.load(f)
+        dintaskauditor_abi = dintaskauditor_data["abi"]
+        dintaskauditor_bytecode = dintaskauditor_data["bytecode"]
+    
+    if dintaskauditor_address:
+        deployed_DINTaskAuditorContract = w3.eth.contract(address=dintaskauditor_address, abi=dintaskauditor_abi, bytecode=dintaskauditor_bytecode)
+        return deployed_DINTaskAuditorContract
+    else:
+        return w3.eth.contract(abi=dintaskauditor_abi, bytecode=dintaskauditor_bytecode)
+    
+def GIstateToDes(GIstate: int) -> str:
+    stateDescription = [
+        "Awaiting DINTaskAuditor to be set",
+        "Awaiting DINTaskCoordinator to be set as slasher",
+        "Awaiting DINTaskAuditor to be set as slasher",
+        "Awaiting Genesis Model",
+        "Genesis Model Created",
+        "GI started",
+        "DIN validator registration started",
+        "DIN validator registration closed",
+        "DIN auditor registration started",
+        "DIN auditor registration closed",
+        "LM submissions started",
+        "LM submissions closed",
+        "Auditors batches created",
+        "LM submissions evaluation started",
+        "LM submissions evaluation closed",
+        "T1nT2B created",
+        "T1B aggregation started",
+        "T1B aggregation done",
+        "T2B aggregation started",
+        "T2B aggregation done",
+        "Auditors slashed",
+        "Validators slashed",
+        "GI ended"
+    ]
+    
+    if 0 <= GIstate < len(stateDescription):
+        return stateDescription[GIstate]
+    else:
+        return f"UnknownState({GIstate})"
+    
+    
+states = [
+        "AwaitingDINTaskAuditorToBeSet",
+        "AwaitingDINTaskCoordinatorAsSlasher",
+        "AwaitingDINTaskAuditorAsSlasher",
+        "AwaitingGenesisModel",
+        "GenesisModelCreated",
+        "GIstarted",
+        "DINvalidatorRegistrationStarted",
+        "DINvalidatorRegistrationClosed",
+        "DINauditorRegistrationStarted",
+        "DINauditorRegistrationClosed",
+        "LMSstarted",
+        "LMSclosed",
+        "AuditorsBatchesCreated",
+        "LMSevaluationStarted",
+        "LMSevaluationClosed",
+        "T1nT2Bcreated",
+        "T1AggregationStarted",
+        "T1AggregationDone",
+        "T2AggregationStarted",
+        "T2AggregationDone",
+        "AuditorsSlashed",
+        "ValidatorSlashed",
+        "GIended"
+    ]
+
+
+GIstate_to_index = {state: idx for idx, state in enumerate(states)}   
+    
+    
+def GIstateToStr(GIstate: int) -> str:
+    """
+    Convert GIstate integer (from Solidity enum) to its string representation.
+    Safe against errors by returning 'Unknown' for invalid states.
+    """
+    
+    
+    if 0 <= GIstate < len(states):
+        return states[GIstate]
+    else:
+        return f"UnknownState({GIstate})"
+    
+def GIstatestrToIndex(GIstateStr: str) -> int:    
+    return GIstate_to_index[GIstateStr]               

@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv, set_key, unset_key, dotenv_values
 
 from services.blockchain_services import get_w3
-from services.model_architect import get_DINTaskCoordinator_Instance
+from services.model_architect import get_DINTaskCoordinator_Instance, get_DINTaskAuditor_Instance
 from services.DAO_services import get_DINCoordinator_Instance, get_DINtokenContract_Instance, get_DINValidatorStake_Instance
 from services.client_services import train_client_model_and_upload_to_ipfs
 
@@ -26,15 +26,20 @@ def get_client_models_created_f():
         
         dp_mode = env_config.get("DPModeUsed")
         
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        
         client_model_ipfs_hashes = []
         ClientAddresses = []
         
         if client_models_created_f:
             deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
             
-            current_GI = deployed_DINTaskCoordinatorContract.functions.getGI().call()
+            current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
             
-            lm_submissions = deployed_DINTaskCoordinatorContract.functions.getClientModels(current_GI).call()
+            deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
+       
+            
+            lm_submissions = deployed_DINTaskAuditorContract.functions.getClientModels(current_GI).call()
             
             print("lm_submissions: ", lm_submissions)
             
@@ -86,7 +91,11 @@ def create_client_models(request: ClientModelCreateRequest):
         
         deployed_DINTaskCoordinatorContract = get_DINTaskCoordinator_Instance(dintaskcoordinator_address=DINTaskCoordinator_Contract_Address)
         
-        current_GI = deployed_DINTaskCoordinatorContract.functions.getGI().call()
+        current_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+        
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        deployed_DINTaskAuditorContract = get_DINTaskAuditor_Instance(dintaskauditor_address=DINTaskAuditor_Contract_Address)
+        
         initial_model_ipfs_hash = None
         t2_list = []
         if current_GI > 1:
@@ -102,12 +111,19 @@ def create_client_models(request: ClientModelCreateRequest):
             initial_model_ipfs_hash = t2_batch_gi_minus_1.final_cid
         
         
-        genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.getGenesisModelIpfsHash().call()
+        genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
             
+        #*****----------- fixed for demo --------------***************    
+        
         client_model_ipfs_hashes = train_client_model_and_upload_to_ipfs(genesis_model_ipfs_hash, initial_model_ipfs_hash, dp_mode=dp_mode)
+        
+        # client_model_ipfs_hashes = ["QmNk7RPtC2xsSQAeuE3gomzBuaTqxCZnsC8KHzTkwWSm5q", "QmcNftx1vRrhep1YdD2mWsLeUYmWkxUS66T5po2rw5joNC", "Qma8rGwkpLYz3boAZPjRe1Y4rzr6MsyP68jkzvmHC2K4AD", "QmPPiDteruYghi6dN7hakhLNuPajjLJkEH2SKsoQ8RiVSK", "QmcZ8HfabqT3ys4YSGq37HAvypKeZNvZNsck4ZTkm2cJLb", "QmboKdv9tPEAjZydmcMQnJazNHpRcTRR8Cd14iwuXK7Dza", "QmQkBQjevrFPJudFubCFwJ6t3Ki15nje8T2T4XS5ihCyh7", "QmWacddXyaBaSKpvC7cKre151q963QkZM9oKzio25QnCvW", "QmcVfxh8BjdmutCuoEzNdDjLacRzXDz8mBEKwxqSv4cuJB"]
+        
+        
+        #*****----------- fixed for demo --------------***************
             
         for i, ipfs_model_hash in enumerate(client_model_ipfs_hashes):
-            deployed_DINTaskCoordinatorContract.functions.submitLocalModel(ipfs_model_hash, current_GI).transact({
+            deployed_DINTaskAuditorContract.functions.submitLocalModel(ipfs_model_hash, current_GI).transact({
                 "from": w3.eth.accounts[i+2],
                 "gas": 3000000,
                 "gasPrice": w3.to_wei("5", "gwei"),

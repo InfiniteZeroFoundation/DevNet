@@ -3,7 +3,8 @@ import { useState, useEffect } from "react";
 export default function useGIState(showTooltip, activeTab) {
   const [GI, setGI] = useState(0);
   const [GIstate, setGIstate] = useState(0);
-  const [GIstatedes, setGIstatedes] = useState("AwaitingGenesisModel");
+  const [GIstatestr, setGIstatestr] = useState("");
+  const [GIstatedes, setGIstatedes] = useState("DINTaskCoordinator not deployed");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -17,6 +18,7 @@ export default function useGIState(showTooltip, activeTab) {
       console.log("Fetched GI state:", data);
       setGI(data.GI);
       setGIstate(data.GIstate);
+      setGIstatestr(data.GIstatestr);
       setGIstatedes(data.GIstatedes);
     } catch (err) {
       console.error("Error fetching GI state:", err);
@@ -34,6 +36,7 @@ export default function useGIState(showTooltip, activeTab) {
   return {
     GI,
     GIstate,
+    GIstatestr,
     GIstatedes,
     loading,
     error,

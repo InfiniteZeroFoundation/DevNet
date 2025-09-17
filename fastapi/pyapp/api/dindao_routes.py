@@ -144,6 +144,40 @@ def add_dintaskcoordinator_as_slasher():
         return {"message": str(e),
                 "status": "error"}
 
+
+@router.post("/addDINTaskAuditorAsSlasher")
+def add_dintaskauditor_as_slasher():
+    try:
+        env_config = dotenv_values(".env")
+        w3 = get_w3()
+        
+        dincoordinator_address = env_config.get("DINCoordinator_Contract_Address")
+        
+        deployed_dincoordinator = get_DINCoordinator_Instance(dincoordinator_address=dincoordinator_address)
+        
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        
+        tx_hash = deployed_dincoordinator.functions.add_slasher_contract(DINTaskAuditor_Contract_Address).transact({
+            "from": w3.eth.accounts[0],
+            "gas": 3000000,
+            "gasPrice": w3.to_wei("5", "gwei"),
+        })
+        
+        if tx_hash is not None:
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            if receipt.status == 1:
+                print("DINTaskAuditor added as Slasher to DINCoordinator contract successfully")
+                set_key(".env", "DINTaskAuditorISslasher", "True")
+            else:
+                print("Failed to add DINTaskAuditor as Slasher to DINCoordinator contract")
+        
+        return {"message": "DINTaskAuditor added as Slasher to DINCoordinator contract successfully",
+                "status": "success"}
+    except Exception as e:
+        return {"message": str(e),
+                "status": "error"}
+
+
 @router.post("/getDINDAOState")
 def get_dindao_state():
     try:
@@ -155,6 +189,9 @@ def get_dindao_state():
         DINDAORepresentative_address = w3.eth.accounts[0]
         DINValidatorStake_Contract_Address = env_config.get("DINValidatorStake_Contract_Address")
         DINTaskCoordinatorISslasher = env_config.get("DINTaskCoordinatorISslasher")
+        DINTaskAuditorISslasher = env_config.get("DINTaskAuditorISslasher")
+        DINTaskAuditor_Contract_Address = env_config.get("DINTaskAuditor_Contract_Address")
+        
         print("DINTaskCoordinatorISslasher", DINTaskCoordinatorISslasher)
         if DINCoordinator_Contract_Address is None:
             DINCoordinator_Eth_balance = 0
@@ -171,7 +208,9 @@ def get_dindao_state():
                 "DINCoordinator_Eth_balance": DINCoordinator_Eth_balance,
                 "DINValidatorStake_address": DINValidatorStake_Contract_Address,
                 "DINTaskCoordinator_address": DINTaskCoordinator_Contract_Address,
-                "DINTaskCoordinatorISslasher": DINTaskCoordinatorISslasher=="True"}
+                "DINTaskCoordinatorISslasher": DINTaskCoordinatorISslasher=="True",
+                "DINTaskAuditor_address": DINTaskAuditor_Contract_Address,
+                "DINTaskAuditorISslasher": DINTaskAuditorISslasher=="True"}
     except Exception as e:
         return {"message": str(e),
                 "status": "error"}

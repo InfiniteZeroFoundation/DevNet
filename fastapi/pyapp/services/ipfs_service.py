@@ -2,6 +2,7 @@
 import requests
 import string
 import random
+import os
 
 ipfs_api_url_add = 'http://127.0.0.1:5001/api/v0/add'
 ipfs_api_url_retrieve = 'http://127.0.0.1:5001/api/v0/cat?arg='
@@ -20,6 +21,8 @@ def upload_to_ipfs(file_path, msg=None):
 
 def retrieve_from_ipfs(hash_value, retrieved_file_path):
     retrieve_response = requests.post(ipfs_api_url_retrieve + hash_value, stream=True)
+    os.makedirs(os.path.dirname(retrieved_file_path), exist_ok=True)
+    
     if retrieve_response.status_code == 200:
         with open(retrieved_file_path, 'wb') as outfile:
             for chunk in retrieve_response.iter_content(chunk_size=8192):

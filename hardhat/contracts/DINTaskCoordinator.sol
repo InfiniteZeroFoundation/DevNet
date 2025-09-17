@@ -1,199 +1,76 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-import "./MockUSDT.sol"; // Import the MockUSDT contract interface
+
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 interface IDinValidatorStake {
     function getStake(address validator) external view returns (uint256);
     function slash(address validator, uint256 amount) external;
+    function is_slasher_contract(address slasher_contract) external view returns (bool);
 }
 
-
-contract DINTaskCoordinator {
-
-    address public owner;  // model owner
-    string public genesisModelIpfsHash; // genesis model ipfs hash
+interface IDINTaskAuditor {
+    function createAuditorsBatches(uint _GI) external returns (bool);
+    function setTestDataAssignedFlag(uint _GI, bool flag) external;
+    function finalizeEvaluation(uint _GI) external returns (bool);
+    function approvedModelIndexes(uint _GI) external view returns (uint[] memory);
+    function updatePassScore(uint8 newPassScore) external;
+}
     
-    uint public GI = 0; // GlobalIteration
-    uint256 public minStake = 1_000_000;
-    
-    GIstates public GIstate;
 
-    mapping (uint => address[]) public dinValidators;
 
-    struct LMSubmission {
-        address client;
-        string  modelCID;
-        bool    evaluated;   // ← set by evaluateLM()
-        bool    approved;    // ← set by evaluateLM()
-    }
-    
-    mapping(uint => LMSubmission[]) public lmSubmissions;
-
-    ///  GI  ➜  submitter  ➜  bool
-    mapping(uint => mapping(address => bool)) public clientHasSubmitted;
-
-    uint public totalDepositedRewards = 0;
+contract DINTaskCoordinator is Ownable {
 
     
-    MockUSDT public mockusdt;
-    IDinValidatorStake public dinvalidatorStakeContract;
-
-    uint MAX_LM_SUBMISSIONS = 10000;
-
-    event RewardDeposited(address indexed modelOwner, uint256 amount);
-
-
-
-    constructor(address mockusdt_address, address dinvalidatorStakeContract_address) {
-        owner = msg.sender;
-        mockusdt = MockUSDT(mockusdt_address);
-        dinvalidatorStakeContract = IDinValidatorStake(dinvalidatorStakeContract_address);
-        GIstate = GIstates.AwaitingGenesisModel;
-    }
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
-    }
-
-
-    function depositReward(uint _amount) public onlyOwner {
-        require(_amount > 0, "Amount must be greater than 0");
-
-        // Pull MockUSDT from sender (ModelOwner)
-        bool success = mockusdt.transferFrom(msg.sender, address(this), _amount);
-        require(success, "MockUSDT transfer failed");
-
-        totalDepositedRewards += _amount;
-        emit RewardDeposited(msg.sender, _amount);
-    }
-
-    function setGenesisModelIpfsHash(string memory _genesisModelIpfsHash) public onlyOwner {
-        genesisModelIpfsHash = _genesisModelIpfsHash;
-        GIstate = GIstates.GenesisModelCreated;
-    }
-
-    function getGenesisModelIpfsHash() public view returns (string memory) {
-        return genesisModelIpfsHash;
-    }
-
-    function startGI(uint _GI) public onlyOwner {
-        require(GIstate == GIstates.GenesisModelCreated || GIstate == GIstates.GIended, "GI can not be started");
-        require(_GI == GI+1, "Invalid GlobalIteration");
-        GIstate = GIstates.GIstarted;
-        GI++;
-    }
-
-    function startLMsubmissions(uint _GI) public onlyOwner {
-        require(GIstate == GIstates.GIstarted, "GI is not started");
-        require(_GI == GI, "Invalid GlobalIteration");
-        GIstate = GIstates.LMSstarted;
-    }
-
-    function closeLMsubmissions(uint _GI) public onlyOwner {
-        require(GIstate == GIstates.LMSstarted, "LM submissions are not started");
-        require(_GI == GI, "Invalid GlobalIteration");
-        GIstate = GIstates.LMSclosed;
-    }
-
-    function registerDINvalidator(uint _GI) public {
-        require(GIstate == GIstates.GIstarted, "validators can only be registered when the GI is started");
-        uint256 stake = dinvalidatorStakeContract.getStake(msg.sender);
-        require(stake >= minStake, "Insufficient stake to register");
-        address[] storage validators = dinValidators[_GI];
-
-        // Optional: prevent double registration
-        for (uint256 i = 0; i < validators.length; i++) {
-            require(validators[i] != msg.sender, "Validator already registered");
-        }
-
-        validators.push(msg.sender);
-
-    }
-
-    function getDINtaskValidators(uint _GI) public view returns (address[] memory) {
-        return dinValidators[_GI];
-    }
-
-    function submitLocalModel(string memory _clientModel, uint _GI) public {
-        require(_GI == GI, "Invalid GI");
-        require(GIstate == GIstates.LMSstarted, "Submissions not open");
-        require(!clientHasSubmitted[_GI][msg.sender], "Already submitted");
-        require(lmSubmissions[_GI].length < MAX_LM_SUBMISSIONS, "Max submissions reached");
-
-        lmSubmissions[_GI].push(LMSubmission({
-            client:    msg.sender,
-            modelCID:  _clientModel,
-            evaluated: false,
-            approved:  false
-        }));
-        clientHasSubmitted[_GI][msg.sender] = true;
-    }
-
-    function _clearclientHasSubmitted(uint _GI) internal {
-        // iterate once over the array to know who to delete
-        LMSubmission[] storage list = lmSubmissions[_GI];
-        for (uint i = 0; i < list.length; i++) {
-            delete clientHasSubmitted[_GI][list[i].client];
-        }
-    }
-
-    function getClientModels(uint _GI) public view returns (LMSubmission[] memory) {
-        return lmSubmissions[_GI];
-    }
-
-    function getGI() public view returns (uint) {
-        return GI;
-    }
-
-    function evaluateLM(
-        uint _GI,
-        address _client,
-        bool _approved            // true = keep, false = drop
-    ) external onlyOwner {
-        require(GIstate == GIstates.LMSclosed, "Not evaluable");
-        require(_GI == GI, "Wrong GI");
-        LMSubmission[] storage list = lmSubmissions[_GI];
-        bool found = false;
-        for (uint i = 0; i < list.length; i++) {
-            if (list[i].client == _client) {
-                require(!list[i].evaluated, "Already evaluated");
-                list[i].evaluated = true;
-                list[i].approved = _approved;
-                found = true;
-                break;
-            }
-        }
-        require(found, "Submission not found");
-    }
-
-    // When owner has walked through all clients:
-    function finalizeEvaluation(uint _GI) external onlyOwner {
-        require(GIstate == GIstates.LMSclosed, "Eval not ready");
-        require(_GI == GI, "Wrong GI");
-        GIstate = GIstates.LMSevaluationClosed;
-    }
-
-    uint8 public constant T1_VALIDATORS_PER_BATCH = 3;
-    uint8 public constant T1_MODELS_PER_BATCH     = 3;
-    uint8 public constant MIN_T1_MODELS_PER_BATCH = 2;
 
     enum GIstates {
+        AwaitingDINTaskAuditorToBeSet,
+        AwaitingDINTaskCoordinatorAsSlasher,
+        AwaitingDINTaskAuditorAsSlasher,
         AwaitingGenesisModel,
         GenesisModelCreated,
         GIstarted,
+        DINvalidatorRegistrationStarted,
+        DINvalidatorRegistrationClosed,
+        DINauditorRegistrationStarted,
+        DINauditorRegistrationClosed,
         LMSstarted,
         LMSclosed,
+        AuditorsBatchesCreated,
+        LMSevaluationStarted,
         LMSevaluationClosed,
         T1nT2Bcreated,
         T1AggregationStarted,
         T1AggregationDone,
         T2AggregationStarted,
         T2AggregationDone,
+        AuditorsSlashed,
         ValidatorSlashed,
         GIended
     }
+
+
+
+    IDinValidatorStake public dinvalidatorStakeContract;
+    IDINTaskAuditor public dinTaskAuditorContract;
+
+    uint public GI = 0; // GlobalIteration
+
+    GIstates public GIstate;
+
+    string public genesisModelIpfsHash; // genesis model ipfs hash
+
+    uint256 public minStake = 1_000_000;
+
+    mapping(uint => address[]) public dinValidators;
+
+    // Track if an address is registered for a given _GI
+    mapping(uint => mapping(address => bool)) public isDINValidator;
+
+    uint8 public constant T1_VALIDATORS_PER_BATCH = 3;
+    uint8 public constant T1_MODELS_PER_BATCH     = 3;
+    uint8 public constant MIN_T1_MODELS_PER_BATCH = 2;
 
     struct Tier1Batch {
         uint           batchId;             // Unique inside round
@@ -218,13 +95,152 @@ contract DINTaskCoordinator {
     }
     
     mapping(uint => Tier2Batch[]) public tier2Batches;
+    mapping(uint => uint) public tier2Score;
 
     mapping(uint => mapping(uint => mapping(address => string))) public t2SubmissionCID;
     mapping(uint => mapping(uint => mapping(address => bool  ))) public t2Submitted;
     mapping(uint => mapping(uint => mapping(string  => uint ))) public t2Votes;
 
-    event Tier1BatchAuto(uint indexed GI, uint indexed batchId, address[3] validators, uint[3] modelIdx);
-    event Tier2BatchAuto(uint indexed GI, uint indexed batchId, address[] validators);
+  
+    event DINValidatorRegistered(uint indexed GI, address indexed validator);
+    event Tier1BatchAuto(uint indexed GI, uint indexed batchId);
+    event Tier2BatchAuto(uint indexed GI, uint indexed batchId);
+
+    constructor(address dinvalidatorStakeContract_address) Ownable(msg.sender) {
+
+        dinvalidatorStakeContract = IDinValidatorStake(dinvalidatorStakeContract_address);
+        GIstate = GIstates.AwaitingDINTaskAuditorToBeSet;
+    }
+
+
+
+    function setDINTaskAuditorContract(address _dintaskauditor_contract_address) public onlyOwner {
+        require(GIstate == GIstates.AwaitingDINTaskAuditorToBeSet, "DINTaskAuditor contract can not be set");
+        dinTaskAuditorContract = IDINTaskAuditor(_dintaskauditor_contract_address);
+        GIstate = GIstates.AwaitingDINTaskCoordinatorAsSlasher;
+    }
+
+    function setDINTaskCoordinatorAsSlasher() public onlyOwner {
+        require(GIstate == GIstates.AwaitingDINTaskCoordinatorAsSlasher, "DINTaskCoordinator can not be set as slasher");
+        require(dinvalidatorStakeContract.is_slasher_contract(address(this)), "DINTaskCoordinator is not a slasher");
+        GIstate = GIstates.AwaitingDINTaskAuditorAsSlasher;
+    }
+
+    function setDINTaskAuditorAsSlasher() public onlyOwner {
+        require(GIstate == GIstates.AwaitingDINTaskAuditorAsSlasher, "DINTaskAuditor can not be set as slasher");
+        require(dinvalidatorStakeContract.is_slasher_contract(address(dinTaskAuditorContract)), "DINTaskAuditor is not a slasher");
+        GIstate = GIstates.AwaitingGenesisModel;
+    }
+
+    function setGenesisModelIpfsHash(string memory _genesisModelIpfsHash) public onlyOwner {
+        require(GIstate == GIstates.AwaitingGenesisModel, "Genesis model ipfs hash can not be set");
+        genesisModelIpfsHash = _genesisModelIpfsHash;
+        GIstate = GIstates.GenesisModelCreated;
+    }
+
+    function startGI(uint _GI, uint score) public onlyOwner {
+        require(GIstate == GIstates.GenesisModelCreated || GIstate == GIstates.GIended, "GI can not be started");
+        require(_GI == GI+1, "Invalid GlobalIteration");
+        dinTaskAuditorContract.updatePassScore(uint8(score));
+        GIstate = GIstates.GIstarted;
+        GI++;
+    }
+
+    function startDINvalidatorRegistration(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.GIstarted, "DINvalidator registration can not be started");
+        require(_GI == GI, "Invalid GlobalIteration");
+        GIstate = GIstates.DINvalidatorRegistrationStarted;
+    }
+
+    function registerDINvalidator(uint _GI) public {
+        require(GIstate == GIstates.DINvalidatorRegistrationStarted, "validators registration not open");
+        uint256 stake = dinvalidatorStakeContract.getStake(msg.sender);
+        require(stake >= minStake, "Insufficient stake to register");
+        // Check if already registered using O(1) lookup
+        require(!isDINValidator[_GI][msg.sender], "Validator already registered");
+
+        // Add to list and mark as registered
+        dinValidators[_GI].push(msg.sender);
+        isDINValidator[_GI][msg.sender] = true;
+
+        emit DINValidatorRegistered(_GI, msg.sender);
+
+    }
+
+    
+
+    function closeDINvalidatorRegistration(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.DINvalidatorRegistrationStarted, "DINvalidator registration can not be finished");
+        require(_GI == GI, "Invalid GlobalIteration");
+        GIstate = GIstates.DINvalidatorRegistrationClosed;
+    }
+
+
+    function getDINtaskValidators(uint _GI) public view returns (address[] memory) {
+        return dinValidators[_GI];
+    }
+
+    function startDINauditorRegistration(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.DINvalidatorRegistrationClosed, "DINauditor registration can not be started");
+        require(_GI == GI, "Invalid GlobalIteration");
+        GIstate = GIstates.DINauditorRegistrationStarted;
+    }
+
+    function closeDINauditorRegistration(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.DINauditorRegistrationStarted, "DINauditor registration can not be finished");
+        require(_GI == GI, "Invalid GlobalIteration");
+        GIstate = GIstates.DINauditorRegistrationClosed;
+    }
+
+    function startLMsubmissions(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.DINauditorRegistrationClosed, "LM submissions can not be started");
+        require(_GI == GI, "Invalid GlobalIteration");
+        GIstate = GIstates.LMSstarted;
+    }
+
+    function closeLMsubmissions(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.LMSstarted, "LM submissions are not started");
+        require(_GI == GI, "Invalid GlobalIteration");
+        GIstate = GIstates.LMSclosed;
+    }
+
+
+    function createAuditorsBatches(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.LMSclosed, "LM submissions evaluation can not be started");
+        require(_GI == GI, "Invalid GlobalIteration");
+
+
+        bool success = dinTaskAuditorContract.createAuditorsBatches(_GI);
+        require(success, "Failed to create auditors batches");
+        
+        GIstate = GIstates.AuditorsBatchesCreated;
+        
+    }
+
+    function setTestDataAssignedFlag ( uint _GI, bool flag ) external onlyOwner {
+        require(_GI == GI, "Wrong GI");
+        require(GIstate == GIstates.AuditorsBatchesCreated, "TC: can not set TestDataAssignedFlag");
+
+        dinTaskAuditorContract.setTestDataAssignedFlag(_GI, flag);
+
+
+    }
+
+
+    function startLMsubmissionsEvaluation(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.AuditorsBatchesCreated, "LM submissions evaluation can not be started");
+        require(_GI == GI, "Invalid GlobalIteration");
+
+        GIstate = GIstates.LMSevaluationStarted;
+    }
+
+    function closeLMsubmissionsEvaluation(uint _GI) public onlyOwner {
+        require(GIstate == GIstates.LMSevaluationStarted, "LM submissions evaluation can not be finished");
+        require(_GI == GI, "Invalid GlobalIteration");
+        bool success = dinTaskAuditorContract.finalizeEvaluation(_GI);
+        require(success, "Failed to finalize evaluation");
+        GIstate = GIstates.LMSevaluationClosed;
+    }
 
      /// @notice Build Tier‑1 and Tier‑2 batches automatically.
     /// @dev  REQUIRES: LM evaluation closed.  Validators must already be registered in dinValidators[_GI].
@@ -274,13 +290,7 @@ contract DINTaskCoordinator {
 
             emit Tier1BatchAuto(
                 _GI,
-                b.batchId,
-                [b.validators[0], b.validators[1], b.validators[2]],
-                [
-                    b.modelIndexes[0],
-                    b.modelIndexes.length > 1 ? b.modelIndexes[1] : 0,
-                    b.modelIndexes.length > 2 ? b.modelIndexes[2] : 0
-                ]
+                b.batchId
             );
 
             vPtr += T1_VALIDATORS_PER_BATCH;
@@ -295,7 +305,7 @@ contract DINTaskCoordinator {
                 t2.validators.push(valPool[vPtr + k]);
             }
 
-            emit Tier2BatchAuto(_GI, 0, t2.validators);
+            emit Tier2BatchAuto(_GI, t2.batchId);
         }
 
         GIstate = GIstates.T1nT2Bcreated;
@@ -321,17 +331,8 @@ contract DINTaskCoordinator {
         view
         returns (uint[] memory out)
     {
-        LMSubmission[] storage list = lmSubmissions[_GI];
-        uint count;
-        for (uint i = 0; i < list.length; i++)
-            if (list[i].evaluated && list[i].approved) count++;
-
-        require(count >= T1_MODELS_PER_BATCH, "Not enough approved models");
-
-        out = new uint[](count);
-        uint j;
-        for (uint i = 0; i < list.length; i++)
-            if (list[i].evaluated && list[i].approved) out[j++] = i;
+        out = dinTaskAuditorContract.approvedModelIndexes(_GI);
+        require(out.length >= T1_MODELS_PER_BATCH, "Not enough approved models");
     }
 
     // ──────────── read helpers (optional UX) ────────────
@@ -515,8 +516,15 @@ contract DINTaskCoordinator {
         GIstate = GIstates.T2AggregationDone;
     }   
 
+    function slashAuditors(uint _GI) external onlyOwner {
+        require(GIstate == GIstates.T2AggregationDone, "Not ready to slash auditors");
+        require(_GI == GI, "Wrong GI");
+        // The Actual Slashing logic maybe implemented here
+        GIstate = GIstates.AuditorsSlashed;
+    }
+
     function slashValidators(uint _GI) external onlyOwner {
-        require(GIstate == GIstates.T2AggregationDone, "Not ready to slash validators");
+        require(GIstate == GIstates.AuditorsSlashed, "Not ready to slash validators");
         require(_GI == GI, "Wrong GI");
 
         uint256 slashAmount = minStake;
@@ -563,9 +571,25 @@ contract DINTaskCoordinator {
         
     }
 
+    function setTier2Score(uint _GI, uint _score) external onlyOwner {
+        require(_GI == GI, "Wrong GI");
+        require(GIstate == GIstates.T2AggregationDone || GIstate == GIstates.GenesisModelCreated, "Not ready to set Tier 2 score");
+        tier2Score[_GI] = _score;
+    }
+
+    function getTier2Score(uint _GI) external view returns (uint) {
+        return tier2Score[_GI];
+    }
+
     function endGI(uint _GI) external onlyOwner {
         require(GIstate == GIstates.ValidatorSlashed, "Not ready to end GI");
         require(_GI == GI, "Wrong GI");
         GIstate = GIstates.GIended;
     }   
+
+    
+
+
+
+
 }

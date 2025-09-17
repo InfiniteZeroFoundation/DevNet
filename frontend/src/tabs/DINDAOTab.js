@@ -2,7 +2,7 @@ import React, { useState, useEffect, useContext } from "react";
 import { TooltipContext } from "../context/TooltipContext";
 
 /** ======================= DINDAO TAB ======================= */
-export default function DINDAOTab({GIstate, GI}) {
+export default function DINDAOTab({GIstate, GI, GIstatestr}) {
 
   const [loading, setLoading] = useState(true);
   const { showTooltip } = useContext(TooltipContext);
@@ -14,6 +14,8 @@ export default function DINDAOTab({GIstate, GI}) {
   const [DinValidatorStake_address, setDinValidatorStakeAddress] = useState(null);
   const [DINTaskCoordinator_address, setDINTaskCoordinatorAddress] = useState(null);
   const [DINTaskCoordinatorISslasher, setDINTaskCoordinatorISslasher] = useState(null);
+  const [DINTaskAuditorISslasher, setDINTaskAuditorISslasher] = useState(null);
+  const [DINTaskAuditor_address, setDINTaskAuditorAddress] = useState(null);
 
   const deployDinValidatorStake = async () => {
     try {
@@ -102,6 +104,33 @@ export default function DINDAOTab({GIstate, GI}) {
     }
   };
 
+  const addDINTaskAuditorAsSlasher = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/dindao/addDINTaskAuditorAsSlasher", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      console.log(data.message);
+      
+      // Show tooltip
+      if (data.status === "success") {
+        showTooltip(data.message, false);
+      } else {
+        showTooltip(data.message, true);
+      }
+    } catch (err) {
+      console.error("Error adding DINTaskAuditor as Slasher:", err);
+      // Show error tooltip
+      showTooltip(err.message, true);
+    } finally {
+      fetchDINDAOState();
+      setLoading(false);
+    }
+  };
+
+
+
   const fetchDINDAOState = async () => {
     try {
       setLoading(true);
@@ -119,6 +148,10 @@ export default function DINDAOTab({GIstate, GI}) {
       setDinValidatorStakeAddress(data.DINValidatorStake_address);
       setDINTaskCoordinatorAddress(data.DINTaskCoordinator_address);
       setDINTaskCoordinatorISslasher(data.DINTaskCoordinatorISslasher);
+      setDINTaskAuditorAddress(data.DINTaskAuditor_address);
+      setDINTaskAuditorISslasher(data.DINTaskAuditorISslasher);
+      
+
     
     } catch (err) {
       console.error("Error fetching DINDAO state:", err);
@@ -172,13 +205,23 @@ export default function DINDAOTab({GIstate, GI}) {
             )}
           </div>
 
-          {GI ===0 && GIstate === 0 && DINTaskCoordinator_address && !DINTaskCoordinatorISslasher && (
+          {GI ===0 && GIstatestr==="AwaitingDINTaskCoordinatorAsSlasher" && DINTaskCoordinator_address && !DINTaskCoordinatorISslasher && (
             <button
               className="button button--primary"
               onClick={addDINTaskCoordinatorAsSlasher}
               style={{ marginTop: "1rem" }}
             >
               Add DINTaskCoordinator as Slasher 
+            </button>
+          )}
+
+          {GI ===0 && GIstatestr==="AwaitingDINTaskAuditorAsSlasher" && DINTaskAuditor_address && !DINTaskAuditorISslasher && (
+            <button
+              className="button button--primary"
+              onClick={addDINTaskAuditorAsSlasher}
+              style={{ marginTop: "1rem" }}
+            >
+              Add DINTaskAuditor as Slasher 
             </button>
           )}
 
@@ -197,8 +240,26 @@ export default function DINDAOTab({GIstate, GI}) {
                 {DINTaskCoordinatorISslasher ? 'Enabled ✅' : 'Disabled ❌'}
               </span>
             </h3>
-        </div>
-        )}
+            </div>
+          )}
+
+          {DINTaskAuditor_address && DINTaskAuditorISslasher && (
+            <div>
+            <h3>
+              DINTaskAuditor Address:
+              <span>
+                {DINTaskAuditor_address}
+              </span>
+            </h3>
+          
+            <h3>
+              DINTaskAuditor is Slasher:
+              <span>
+                {DINTaskAuditorISslasher ? 'Enabled ✅' : 'Disabled ❌'}
+              </span>
+            </h3>
+            </div>
+          )}
         </>
       )}
     </div>
