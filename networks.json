@@ -1,0 +1,27 @@
+{
+    "local": {
+      "ModelOwner": "0x7099...",
+      "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "Router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "DINCoordinator": "0x5FC8d32690cc91...",
+      "DINToken": "0x61c36a8d610163...",
+      "DINStake": "0x0165878A594ca..."
+    },
+    "sepolia": {
+      "ModelOwner": "0xaabb...",
+      "USDT": "0xF55c... (Sepolia USDT)",
+      "Router": "0x1b02... (UniV2 router on Sepolia)",
+      "DINCoordinator": "0x____",
+      "DINToken": "0x____",
+      "DINStake": "0x____"
+    },
+    "mainnet": {
+      "ModelOwner": "your_mainnet_wallet",
+      "USDT": "0xdAC17F958D...", 
+      "Router": "0x7a250d5630...", 
+      "DINCoordinator": "0x____",
+      "DINToken": "0x____",
+      "DINStake": "0x____"
+    }
+  }
+  

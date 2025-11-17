@@ -5,3 +5,8 @@ fastapi/pyapp/Dataset/train/*.pt
 fastapi/pyapp/Dataset/test/*.pt
 
 ReadMe_local.md
+
+.env
+.env.local
+.env.sepolia
+.env.mainnet
