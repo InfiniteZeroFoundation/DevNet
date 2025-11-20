@@ -1,77 +1,416 @@
+# 🔹 GLOBAL
+
+```
 dincli --help
 dincli --version
+dincli --network >> <network|local|sepolia|mainnet>
+```
 
 
-dincli connect-wallet <0xprivatekey>
+# 🔹 SYSTEM UTILITIES
 
-dincli reset-all
-dincli reset <FL_task_Coordinator_Address>
-
-dincli --network
-
-dincli distribute-mnist-dataset --clients 9
-
-dincli --usdt-info
-dincli --dinCoordinator-info --network <network|local|sepolia|mainnet>
-dincli --dinStake-info --network <network|local|sepolia|mainnet>
-dincli --dinToken-info --network <network|local|sepolia|mainnet>
-dincli dinRepresentative-info --network <network|local|sepolia|mainnet>
-dincli dindao  deploy-dinCoordinator --network <network|local|sepolia|mainnet>
-dincli dindao deploy-dinToken --network <network|local|sepolia|mainnet> --dinCoordinator-address <dinCoordinator-address>
-dincli dindao  deploy-dinStake --network <network|local|sepolia|mainnet> --dinCoordinator-address <dinCoordinator-address> --dinToken-address <dinToken-address>
-dincli dindao add-slasher --dinTaskCoordinator-address <dinTaskCoordinator-address> --network <network|local|sepolia|mainnet>
-dincli dindao add-slasher --dinTaskAuditor-address <dinTaskAuditor-address>  --network <network|local|sepolia|mainnet>
+```
+dincli system connect-wallet <0xprivatekey>
+dincli system reset-all
+dincli system reset <DINTaskCoordinatorAddress>
+dincli system --usdt-info
+dincli system din-info --coordinator|--token|--stake|--representative --network <net>
+```
 
 
-dincli modelowner buy-usdt <USDT-Amount> --network <network|local|sepolia|mainnet>
-dincli modelowner deploy-dinTaskCoordinator --network <network|local|sepolia|mainnet>
-dincli modelowner deploy-dinTaskAuditor --network <network|local|sepolia|mainnet> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> 
-dincli modelowner depositUSTD-dinTaskAuditor --network <network|local|sepolia|mainnet> --dinTaskAuditor-Address <dinTaskAuditor-Address> <Amount>
-dincli modelowner add-slasher --network <network|local|sepolia|mainnet> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> 
-dincli modelowner add-slasher --network <network|local|sepolia|mainnet> --dinTaskAuditor-Address <dinTaskAuditor-Address> 
-dincli modelowner create-genesis-model <ipfs-hash> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner strart-GI <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner strart-DIN-Aggregators-registration <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner strart-DIN-Auditors-registration <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner close-DIN-Aggregators-registration <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner close-DIN-Auditors-registration <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner start-DIN-LM-Submissions <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner show-LMS <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner close-DIN-LM-Submissions <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner create-DIN-Auditor-Batches <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner Assign-TestCID-DIN-Auditor-Batch <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address> --BatchIndex <BatchIndex> --network <network|local|sepolia|mainnet>
-dincli modelowner start-LMS-evaluation <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner close-LMS-evaluation <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner create-T1nT2-AggregationBatches <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner start-T1-Aggregation <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner finalize-T1-Aggregation <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner start-T2-Aggregation <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner finalize-T2-Aggregation <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner slash-Auditors <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner slash-Aggregators <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-dincli modelowner end-GI <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address>  --network <network|local|sepolia|mainnet>
-
-dincli aggregator buy-DINtokens <Amount> --network <network|local|sepolia|mainnet>
-dincli aggregator stake-DINtokens <Amount> --network <network|local|sepolia|mainnet>
-dincli aggregator registerAsAggregator <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli aggregator getmyT1batch <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli aggregator AggregateT1Batch <IPFShash> <GI> --aggregationScheme <aggregationScheme> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli aggregator getmyT2batch <GI> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli aggregator AggregateT2batch <IPFShash> <GI> --aggregationScheme <aggregationScheme> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
+Datasets:
+```
+dincli system dataset distribute-mnist --clients <num>
+```
 
 
-dincli auditor buy-DINtokens <Amount> --network <network|local|sepolia|mainnet>
-dincli auditor stake-DINtokens <Amount> --network <network|local|sepolia|mainnet>
-dincli auditor registerAsAuditor --dinTaskAuditor-Address <dinTaskAuditor-Address> --network <network|local|sepolia|mainnet>
-dincli auditor getmyAuditorLMS <GI> --dinTaskAuditor-Address <dinTaskAuditor-Address>  --network <network|local|sepolia|mainnet>
-dincli auditor evaluate-LMS --client-adress <client-adress> --AuditingScheme <AuditingScheme> --dinTaskAuditor-Address <dinTaskAuditor-Address> --network <network|local|sepolia|mainnet>
+# 🔹 DAO LAYER (PLATFORM LEVEL — DINCoordinator)
+
+Everything here uses **DINCoordinator** only.
+
+### Deploy platform contracts
+
+```
+dincli dindao deploy din-coordinator --network <net>
+
+dincli dindao deploy din-token \
+  --dinCoordinator <address> \
+  --network <net>
+
+dincli dindao deploy din-stake \
+  --dinCoordinator <address> \
+  --dinToken <address> \
+  --network <net>
+```
+
+### Add platform-level slashers
+
+```
+dincli dindao add-slasher \
+  --contract <address> \
+  --network <net>
+```
+
+*(This slasher affects Aggregators & Auditors **via** TaskContract delegation; but lives at DAO level)*
+
+---
+
+# 🔹 MODEL OWNER COMMANDS
+
+These create & operate **task-level** contracts.
+
+---
+
+## ▶️ 1. Buy USDT for task operations
 
 
-dincli client download-initial-GM --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli client download-latest-GM --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli client download-training-scheme --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
-dincli client create-LM-submission --initial-GM <initial-GM.pkl> --latest-GM <latest-GM.pkl> --training-scheme <training-scheme.pkl>
-dincli client upload-LMS --LMS <LMS.pkl> --dinTaskCoordinator-Address <dinTaskCoordinator-Address> --network <network|local|sepolia|mainnet>
+```
+dincli modelowner buy-usdt <amount> --network <net>
+```
+
+---
+
+
+## ▶️ 2. Deploy Task-Level Contracts
+
+### Deploy DINTaskCoordinator (task contract)
+
+```
+dincli modelowner deploy task-coordinator \
+  --network <net> 
+```
+
+### Deploy DINTaskAuditor
+
+```
+dincli modelowner deploy task-auditor \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+---
+
+## ▶️ 3. Deposit USDT into DINTaskAuditor
+
+```
+dincli modelowner deposit-usdt \
+  --taskAuditor <taskAuditorAddress> \
+  <amount> \
+  --network <net>
+```
+
+---
+
+## ▶️ 4. Task-Level Slasher 
+
+### **1. Add slasher to DINTaskCoordinator**
+
+Used for slashing **Aggregators**.
+
+```
+dincli modelowner add-slasher \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <network>
+```
+### **2. Add slasher to DINTaskCoordinator**
+
+Used for slashing **Aggregators**.
+
+```
+dincli modelowner add-slasher \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <network>
+```
+
+---
+
+## ▶️ 5. Upload Genesis Model (GM)
+
+```
+dincli modelowner model create-genesis <ipfs-hash> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+
+## ▶️ 6. GLOBAL ITERATION (GI) lifecycle (task-level)
+
+All GI state is inside **DINTaskCoordinator**.
+
+```
+dincli modelowner gi start <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli modelowner gi end <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+
+---
+
+## ▶️ 7. Registration Phases
+
+These belong to **DINTaskCoordinator (aggregators)**
+and **DINTaskAuditor (auditors)** separately.
+
+### Aggregator registration (task-level)
+
+```
+dincli modelowner reg aggregators-open <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli modelowner reg aggregators-close <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+### Auditor registration (task-level)
+
+```
+dincli modelowner reg auditors-open <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+
+dincli modelowner reg auditors-close <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+```
+
+---
+
+## ▶️ 8. LMS Submissions Phase (Auditor contract)
+
+```
+dincli modelowner lms open <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+
+dincli modelowner lms show <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+
+dincli modelowner lms close <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+```
+
+---
+
+
+## ▶️ 9. Auditor Batch Management
+
+```
+dincli modelowner auditor-batch create <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+
+dincli modelowner auditor-batch assign-testCID <GI>  <ipfs-hash> \
+  --taskAuditor <taskAuditorAddress> \
+  --batch <batchIndex> \
+  --network <net>
+```
+
+---
+
+
+## ▶️ 10. Evaluation Phase (Auditor contract)
+
+```
+dincli modelowner lms-evaluation start <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+
+dincli modelowner lms-evaluation close <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+```
+
+---
+## ▶️ 11. Aggregation (T1 + T2) (TaskCoordinator contract)
+
+```
+dincli modelowner aggregation create-T1nT2-batches <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+### T1 phase
+
+```
+dincli modelowner aggregation T1 start <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli modelowner aggregation T1 fnalize <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+### T2 phase
+
+```
+dincli modelowner aggregation T2 start <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli modelowner aggregation T2 finalize <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+---
+## ▶️ 12. Slashing (TaskCoordinator contract)
+
+```
+dincli modelowner slash auditors <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli modelowner slash aggregators <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+---
+
+
+# 🔹 AGGREGATOR COMMANDS
+
+Aggregator always interacts with **DINCoordinator (stake+token)** + **TaskCoordinator (task)**.
+
+### Tokens & staking (DAO)
+
+```
+dincli aggregator buy DINtokens <amount> --network <net>
+dincli aggregator stake DINtokens <amount> --network <net>
+```
+
+### Registration (task-level)
+
+```
+dincli aggregator register <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+### T1 Batches
+
+```
+dincli aggregator getbatch T1 <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli aggregator submit T1 <ipfsHash> <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --scheme <aggregationScheme> \
+  --network <net>
+```
+
+### T2 Batches
+
+```
+dincli aggregator getbatch T2 <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli aggregator submit T2 <ipfsHash> <GI> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --scheme <aggregationScheme> \
+  --network <net>
+```
+
+---
+
+# 🔹 AUDITOR COMMANDS
+
+Auditors interact with **DINCoordinator (stake)** + **DINTaskAuditor (task)**.
+
+### Token ops
+
+```
+dincli auditor buy DINtokens <amount> --network <net>
+dincli auditor stake DINtokens <amount> --network <net>
+```
+
+### Registration (task auditor)
+
+```
+dincli auditor register \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+```
+
+### Get LMS for evaluation
+
+```
+dincli auditor getbatch <GI> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+```
+
+### Evaluate
+
+```
+dincli auditor evaluate \
+  --client <clientAddress> \
+  --scheme <auditingScheme> \
+  --taskAuditor <taskAuditorAddress> \
+  --network <net>
+```
+
+---
+
+# 🔹 CLIENT COMMANDS
+
+Client interacts only with **TaskCoordinator** and their local training environment.
+
+### Download initial model, latest model, and training scheme
+
+```
+dincli client download gm-initial \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli client download gm-latest \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+
+dincli client download scheme \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+### Create LMS
+
+```
+dincli client create-LMS \
+  --initial <gm-initial.pkl> \
+  --latest <gm-latest.pkl> \
+  --scheme <training-scheme.pkl>
+```
+
+### Upload LMS (to TaskCoordinator)
+
+```
+dincli client upload-LMS <lmsFilePath> \
+  --taskCoordinator <taskCoordinatorAddress> \
+  --network <net>
+```
+
+---
+
+
+
+
+
+
+
+
+
+
 
 
 
