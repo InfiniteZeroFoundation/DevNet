@@ -357,17 +357,26 @@ python -m dincli.main model-owner lms-evaluation show --network local --auditor
 
 python -m dincli.main auditor lms-evaluation show-batch --network local
 
-python -m dincli.main auditor lms-evaluation evaluate --network local  --lmi 1 --batch 2 --submit
+python -m dincli.main auditor lms-evaluation evaluate --network local --submit
 
 python -m dincli.main model-owner lms-evaluation close --network local
 
 python -m dincli.main model-owner aggregation create-t1nt2-batches --network local 
 
-python -m dincli.main model-owner aggregation show-t1-batches --network local
-python -m dincli.main model-owner aggregation show-t2-batches --network local
+python -m dincli.main model-owner aggregation show-t1-batches --network local --detailed
+python -m dincli.main model-owner aggregation show-t2-batches --network local --detailed
+
+python -m dincli.main system connect-wallet --account 11
+python -m dincli.main aggregator show-t1-batches --network local
+python -m dincli.main aggregator show-t2-batches --network local
 
 
 python -m dincli.main model-owner aggregation T1 start --network local
+
+python -m dincli.main system connect-wallet --account 11
+python -m dincli.main aggregator aggregate-t1 --network local --submit
+
+
 python -m dincli.main model-owner aggregation T1 close --network local
 
 python -m dincli.main model-owner aggregation T2 start --network local

@@ -507,50 +507,66 @@ def evaluate_lms(
         console.print("[red]Error:[/red] Can not evaluate auditor batches at this time as GIstate is ",GIstateToStr(curr_GIstate))
         raise typer.Exit(1)
 
-    if not lmi and not batch:
-        console.print(f"[bold green]Evaluating all LM from assigned batches![/bold green]")
-    elif lmi and not batch:
-        console.print(f"[bold green]Evaluating LM {lmi} from assigned batches![/bold green]")
-    elif not lmi and batch:
-        console.print(f"[bold green]Evaluating all LM from batch {batch}![/bold green]")
-    elif lmi and batch:
-        console.print(f"[bold green]Evaluating LM {lmi} from batch {batch}![/bold green]")
-        audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch).call()
-        if account.address not in audit_batch[1]:
-            console.print(f"[bold red]✗ You are not assigned to evaluate batch {batch}![/bold red]")
-            raise typer.Exit(1)
-        if lmi not in audit_batch[2]:
-            console.print(f"[bold red]✗ LM {lmi} is not in batch {batch}![/bold red]")
-            raise typer.Exit(1)
+    audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(curr_GI).call()
+    
+    genesis_model_cid = task_coordinator_contract.functions.genesisModelIpfsHash().call()
+    
+    found_any = False
+
+    for batch_id in range(audtor_batch_count):
+        # Filter by batch arg if provided
+        if batch is not None and batch != batch_id:
+            continue
+
+        audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
+        auditors_in_batch = audit_batch[1]
+        model_indexes = audit_batch[2]
         testDataCID = audit_batch[3]
 
-        lms = task_auditor_contract.functions.lmSubmissions(curr_GI, lmi).call()
+        if account.address not in auditors_in_batch:
+            # If user specifically requested this batch, warn them
+            if batch is not None and batch == batch_id:
+                console.print(f"[bold red]✗ You are not assigned to evaluate batch {batch_id}![/bold red]")
+            continue
 
-        lm_cid = lms[1]
-        
-        genesis_model_cid = task_coordinator_contract.functions.genesisModelIpfsHash().call()
+        for model_index in model_indexes:
+            # Filter by lmi arg if provided
+            if lmi is not None and lmi != model_index:
+                continue
 
-        score, eligible = Score_model_by_auditor(curr_GI, genesis_model_cid, batch, lmi, account.address, testDataCID, lm_cid)
+            found_any = True
+            console.print(f"[bold green]Evaluating LM {model_index} from batch {batch_id}![/bold green]")
 
-        console.print(f"Score: {score}")
-        console.print(f"Eligible: {eligible}")
+            lms = task_auditor_contract.functions.lmSubmissions(curr_GI, model_index).call()
+            lm_cid = lms[1]
+            
+            score, eligible = Score_model_by_auditor(curr_GI, genesis_model_cid, batch_id, model_index, account.address, testDataCID, lm_cid)
 
-        if submit:
-            tx = task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch, lmi, int(score), bool(eligible)).build_transaction({
-                'from': account.address,
-                "gas": int(3000000),
-                "gasPrice": w3.to_wei("5", "gwei"),
-                'nonce': w3.eth.get_transaction_count(account.address),
-                "chainId": effective_network})
-            signed_tx = account.sign_transaction(tx)
-            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            console.print(f"Score: {score}")
+            console.print(f"Eligible: {eligible}")
 
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            if submit:
+                try:
+                    tx = task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).build_transaction({
+                        'from': account.address,
+                        "gas": int(3000000),
+                        "gasPrice": w3.to_wei("5", "gwei"),
+                        'nonce': w3.eth.get_transaction_count(account.address),
+                        "chainId": w3.eth.chain_id})
+                    signed_tx = account.sign_transaction(tx)
+                    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
-            if receipt.status == 1:
-                console.print(f"[bold green]✓ Audit score and eligibility submitted successfully for LM {lmi} from batch {batch}![/bold green]")
-            else:
-                console.print(f"[bold red]✗ Audit score and eligibility submission failed for LM {lmi} from batch {batch}![/bold red]")
+                    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+                    if receipt.status == 1:
+                        console.print(f"[bold green]✓ Audit score and eligibility submitted successfully for LM {model_index} from batch {batch_id}![/bold green]")
+                    else:
+                        console.print(f"[bold red]✗ Audit score and eligibility submission failed for LM {model_index} from batch {batch_id}![/bold red]")
+                except Exception as e:
+                     console.print(f"[bold red]✗ Error submitting for LM {model_index}: {e}[/bold red]")
+
+    if not found_any:
+        console.print("[yellow]No matching assigned tasks found.[/yellow]")
 
         
         

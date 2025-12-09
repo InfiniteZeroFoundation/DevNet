@@ -63,7 +63,7 @@ def getscoreforGM(gi: int, gmcid: str):
             temp_model = torch.load(CONFIG_DIR / "modelowner"/"models"/ f"gm_{gi}.pt", weights_only=False)
             gm_weights = temp_model.state_dict()
         else:
-            gm_weights = torch.load(CONFIG_DIR / "models"/"modelowner"/"gm_{gi}.pt", weights_only=True)
+            gm_weights = torch.load(CONFIG_DIR / "modelowner"/"models"/f"gm_{gi}.pt", weights_only=True)
         
         model_architecture.load_state_dict(gm_weights)
         

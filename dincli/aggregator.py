@@ -1,11 +1,13 @@
 import typer
 from rich import print
+from rich.table import Table
 from typing import Optional
 from rich.console import Console
 from pathlib import Path
 from dotenv import dotenv_values, set_key, get_key, unset_key
-from dincli.utils import resolve_network, get_w3, load_account, load_din_info, load_usdt_config, GIstateToStr
+from dincli.utils import resolve_network, get_w3, load_account, load_din_info, load_usdt_config, GIstateToStr, GIstatestrToIndex
 from dincli.contract_utils import get_contract_instance
+from dincli.services.aggregator import get_aggregated_cid
 
 app = typer.Typer(help="Commands for Aggregators in DIN.")
 
@@ -249,4 +251,326 @@ taskCoordinator: str = typer.Option(None, "--taskCoordinator", help="Task coordi
     
   
    
+@app.command(help="Show T1 batches")    
+def show_t1_batches(
+    network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
+    task_coordinator: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    detailed: bool = typer.Option(False, "--detailed", help="Show detailed information"),
+):
+    effective_network = resolve_network(network)
+    w3 = get_w3(effective_network)
+    account = load_account()
+    console.print("Aggregator address: ", account.address)
+
+    if not task_coordinator:
+        task_coordinator = get_key(".env", "DINTaskCoordinator_Contract_Address")
+        
+    artifact_path = Path(__file__).parent / "abis" / "DINTaskCoordinator.json"
+    deployed_DINTaskCoordinatorContract = get_contract_instance(str(artifact_path), effective_network, task_coordinator)
+    
+    curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+    GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+
+    if gi:
+        if curr_GI != gi:
+            console.print(f"[red]Error:[/red] invalid global iteration {gi} does not match current GI {curr_GI}")
+            raise typer.Exit(1)
+
+    if GIstate < GIstatestrToIndex("T1nT2Bcreated"):
+        console.print(f"[red]Error:[/red] GI state is {GIstateToStr(GIstate)}. Batches do not exist yet.")
+        raise typer.Exit(1)
+
+    t1_count = deployed_DINTaskCoordinatorContract.functions.tier1BatchCount(curr_GI).call()
+
+    table = Table(title=f"Tier 1 Batches (GI: {curr_GI}) for aggregator {account.address}")
+    table.add_column("Batch ID", justify="right", style="cyan")
+    table.add_column("Model Indexes", style="green")
+    table.add_column("Finalized", style="yellow")
+    table.add_column("Final CID", style="white")
+
+    if detailed:
+        table.add_column("Submitted CID", style="green")
+
+    found_batches = False
+    for i in range(t1_count):
+        bid, validators, model_idxs, finalized, cid = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+        for validator in validators:
+            if validator == account.address:
+
+                if not detailed:
+                    table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid or "")
+                
+                if detailed:
+                    submission_cid = deployed_DINTaskCoordinatorContract.functions.t1SubmissionCID(curr_GI, bid, validator).call()
+                    table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid or "", submission_cid)
+                found_batches = True
+
+    if found_batches:
+        console.print(table)
+    else:
+        console.print(f"[yellow]No T1 batches found for aggregator {account.address} in GI {curr_GI}[/yellow]")
+
+@app.command(help="Show T2 batches")
+def show_t2_batches(
+    network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
+    task_coordinator: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    detailed: bool = typer.Option(False, "--detailed", help="Show detailed information"),
+):
+    effective_network = resolve_network(network)
+    w3 = get_w3(effective_network)
+    account = load_account()
+    console.print("Aggregator address: ", account.address)
+
+    if not task_coordinator:
+        task_coordinator = get_key(".env", "DINTaskCoordinator_Contract_Address")
+        
+    artifact_path = Path(__file__).parent / "abis" / "DINTaskCoordinator.json"
+    deployed_DINTaskCoordinatorContract = get_contract_instance(str(artifact_path), effective_network, task_coordinator)
+    
+    curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+    GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+
+    if gi:
+        if curr_GI != gi:
+            console.print(f"[red]Error:[/red] invalid global iteration {gi} does not match current GI {curr_GI}")
+            raise typer.Exit(1)
+
+    if GIstate < GIstatestrToIndex("T1nT2Bcreated"):
+        console.print(f"[red]Error:[/red] GI state is {GIstateToStr(GIstate)}. Batches do not exist yet.")
+        raise typer.Exit(1)
+
+    # Assuming 1 T2 batch for now as per reference code
+    t2_count = 1 
+
+    table = Table(title=f"Tier 2 Batches (GI: {curr_GI}) for aggregator {account.address}")
+    table.add_column("Batch ID", justify="right", style="cyan")
+    table.add_column("Finalized", style="yellow")
+    table.add_column("Final CID", style="white")
+
+    if detailed:
+        table.add_column("Submitted CID", style="green")
+
+    found_batches = False
+    for i in range(t2_count):
+        bid, validators, finalized, cid = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(curr_GI, i).call()
+        for validator in validators:
+            if validator == account.address:
+                if not detailed:
+                    table.add_row(str(bid), str(finalized), cid or "")
+                else:
+                    submission_cid = deployed_DINTaskCoordinatorContract.functions.t2SubmissionCID(curr_GI, bid, validator).call()
+                    table.add_row(str(bid), str(finalized), submission_cid or "", cid or "")
+                found_batches = True
+
+    if found_batches:
+        console.print(table)
+    else:
+        console.print(f"[yellow]No T2 batches found for aggregator {account.address} in GI {curr_GI}[/yellow]")
+
+@app.command(help="Aggregate T1 batches")
+def aggregate_t1(
+    network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
+    task_coordinator: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"),
+    task_auditor: str = typer.Option(None, "--taskAuditor", help="Task auditor address"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    submit: bool = typer.Option(False, "--submit", help="Submit aggregation to task coordinator"),
+    batch_id: int = typer.Option(None, "--batch", help="Batch ID"),
+):
+    effective_network = resolve_network(network)
+    w3 = get_w3(effective_network)
+    account = load_account()
+    console.print("Aggregator address: ", account.address)
+
+    if not task_coordinator:
+        task_coordinator = get_key(".env", "DINTaskCoordinator_Contract_Address")
+        
+    artifact_path = Path(__file__).parent / "abis" / "DINTaskCoordinator.json"
+    deployed_DINTaskCoordinatorContract = get_contract_instance(str(artifact_path), effective_network, task_coordinator)
+
+    if not task_auditor:
+        task_auditor = get_key(".env", "DINTaskAuditor_Contract_Address")
+    
+    artifact_path = Path(__file__).parent / "abis" / "DINTaskAuditor.json"
+    deployed_DINTaskAuditorContract = get_contract_instance(str(artifact_path), effective_network, task_auditor)
+    
+    curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+    GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+
+    if gi:
+        if curr_GI != gi:
+            console.print(f"[red]Error:[/red] invalid global iteration {gi} does not match current GI {curr_GI}")
+            raise typer.Exit(1)
+
+    if GIstate < GIstatestrToIndex("T1AggregationStarted"):
+        console.print(f"[red]Error:[/red] GI state is {GIstateToStr(GIstate)}. Batches do not exist yet.")
+        raise typer.Exit(1)
+
+
+    t1_batches_count = deployed_DINTaskCoordinatorContract.functions.tier1BatchCount(curr_GI).call() 
+
+    genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
+
+    found_batch = False
+
+    if batch_id and batch_id >= t1_batches_count:
+        console.print(f"[red]Error:[/red] invalid T1 batch ID {batch_id} does not exist")
+        raise typer.Exit(1)
+
+    for i in range(t1_batches_count):
+
+        if batch_id:
+            if i != batch_id:
+                continue
+            console.print(f"Aggregating T1 batch {batch_id} found... on task coordinator {task_coordinator}")
+        
+        (bid, val, idxs, fin, cid) = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+        
+        if account.address not in val:
+            continue
+            console.print(f"Aggregating T1 batch {bid} for aggregator {account.address} found... on task coordinator {task_coordinator}")
+        
+        found_batch = True       
+
+        model_cids = []
+        for j in range(len(idxs)):
+            (client, modelCID, submittedAt, eligible,evaluated, approved, finalAvgScore) = deployed_DINTaskAuditorContract.functions.lmSubmissions(curr_GI, idxs[j]).call()
+            model_cids.append(modelCID)
+
+        aggregated_cid = get_aggregated_cid(curr_GI, account.address, model_cids, genesis_model_ipfs_hash)
+
+        if submit:
+
+            console.print(f"Submitting T1 aggregation CID for T1 batch {bid} ... on task coordinator {task_coordinator} with aggregated CID {aggregated_cid}")
+            tx = deployed_DINTaskCoordinatorContract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid).build_transaction({
+                "from": account.address,
+                "gas": 3000000,
+                "gasPrice": w3.eth.gas_price,
+                "chainId": w3.eth.chain_id,
+                "nonce": w3.eth.get_transaction_count(account.address),
+            })
+
+            signed_tx = account.sign_transaction(tx)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+            if receipt.status == 1:
+                console.print(f"[bold green]✓ Aggregation CID submitted.[/bold green]")
+            else:
+                console.print(f"[bold red]✗ Could not submit aggregation CID.[/bold red]")
+
+    if not found_batch:
+        console.print(f"[yellow]No T1 batches found for aggregator {account.address} in GI {curr_GI}[/yellow]")
+
+    
+@app.command(help="Aggregate T2 batches")
+def aggregate_t2(
+    network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
+    task_coordinator: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"),
+    task_auditor: str = typer.Option(None, "--taskAuditor", help="Task auditor address"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    submit: bool = typer.Option(False, "--submit", help="Submit aggregation to task coordinator"),
+    batch_id: int = typer.Option(None, "--batch", help="Batch ID"),
+):
+
+    effective_network = resolve_network(network)
+    w3 = get_w3(effective_network)
+    account = load_account()
+    console.print("Aggregator address: ", account.address)
+    
+    if not task_coordinator:
+        task_coordinator = get_key(".env", "DINTaskCoordinator_Contract_Address")
+        
+    artifact_path = Path(__file__).parent / "abis" / "DINTaskCoordinator.json"
+    deployed_DINTaskCoordinatorContract = get_contract_instance(str(artifact_path), effective_network, task_coordinator)
+    
+    if not task_auditor:
+        task_auditor = get_key(".env", "DINTaskAuditor_Contract_Address")
+    
+    artifact_path = Path(__file__).parent / "abis" / "DINTaskAuditor.json"
+    deployed_DINTaskAuditorContract = get_contract_instance(str(artifact_path), effective_network, task_auditor)
+    
+    curr_GI = deployed_DINTaskCoordinatorContract.functions.GI().call()
+    GIstate = deployed_DINTaskCoordinatorContract.functions.GIstate().call()
+    
+    if gi:
+        if curr_GI != gi:
+            console.print(f"[red]Error:[/red] invalid global iteration {gi} does not match current GI {curr_GI}")
+            raise typer.Exit(1)
+    
+    if GIstate < GIstatestrToIndex("T2AggregationStarted"):
+        console.print(f"[red]Error:[/red] GI state is {GIstateToStr(GIstate)}. T2 aggregation has not started yet.")
+        raise typer.Exit(1)
+    
+    t2_batches_count = 1
+
+    genesis_model_ipfs_hash = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
+    
+    found_batch = False
+    
+    if batch_id and batch_id >= t2_batches_count:
+        console.print(f"[red]Error:[/red] invalid T2 batch ID {batch_id} does not exist")
+        raise typer.Exit(1)
+    
+    for i in range(t2_batches_count):
+        if batch_id:
+            if i != batch_id:
+                continue
+            console.print(f"Aggregating T2 batch {batch_id} found... on task coordinator {task_coordinator}")
+        
+        (bid, validators, finalized, cid) = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(curr_GI, i).call()
+
+        if account.address not in validators:
+            continue
+            console.print(f"Aggregating T2 batch {bid} for aggregator {account.address} found... on task coordinator {task_coordinator}")
+        
+        found_batch = True      
+
+        model_cids = []
+
+        t1_batches_count = deployed_DINTaskCoordinatorContract.functions.tier1BatchCount(curr_GI).call()
+
+        for j in range(t1_batches_count):
+            (bid, val, idxs, fin, cid) = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, j).call()
+            model_cids.append(cid)
+
+        aggregated_cid = get_aggregated_cid(curr_GI, account.address, model_cids, genesis_model_ipfs_hash)
+
+        if submit:
+            console.print(f"Submitting T2 aggregation CID for T2 batch {i} ... on task coordinator {task_coordinator} with aggregated CID {aggregated_cid}")
+            tx = deployed_DINTaskCoordinatorContract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid).build_transaction({
+                "from": account.address,
+                "gas": 3000000,
+                "gasPrice": w3.eth.gas_price,
+                "chainId": w3.eth.chain_id,
+                "nonce": w3.eth.get_transaction_count(account.address),
+            })
+
+            signed_tx = account.sign_transaction(tx)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+            if receipt.status == 1:
+                console.print(f"[bold green]✓ Aggregation CID submitted.[/bold green]")
+            else:
+                console.print(f"[bold red]✗ Could not submit aggregation CID.[/bold red]")
+
+    if not found_batch:
+        console.print(f"[yellow]No T2 batches found for aggregator {account.address} in GI {curr_GI}[/yellow]")
+
+            
+        
+
+
+
+
+
+        
+     
+                
+            
+
     

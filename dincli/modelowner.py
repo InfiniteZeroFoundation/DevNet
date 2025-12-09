@@ -1758,6 +1758,7 @@ def show_t1_batches(
     network: str = typer.Option(None, "--network", help="Network to use"),
     task_coordinator: str = typer.Option(None, "--taskCoordinator", help="DINTaskCoordinator contract address"),
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    detailed: bool = typer.Option(False, "--detailed", help="Show detailed information"),
 ):
     effective_network = resolve_network(network)
     w3 = get_w3(effective_network)
@@ -1786,23 +1787,43 @@ def show_t1_batches(
         raise typer.Exit(1)
 
     t1_count = deployed_DINTaskCoordinatorContract.functions.tier1BatchCount(curr_GI).call()
-    
-    table = Table(title=f"Tier 1 Batches (GI: {curr_GI})")
-    table.add_column("Batch ID", justify="right", style="cyan")
-    table.add_column("Validators", style="magenta")
-    table.add_column("Model Indexes", style="green")
-    table.add_column("Finalized", style="yellow")
-    table.add_column("Final CID", style="white")
+    if not detailed:
+        table = Table(title=f"Tier 1 Batches (GI: {curr_GI})")
+        table.add_column("Batch ID", justify="right", style="cyan")
+        table.add_column("Aggregators", style="magenta")
+        table.add_column("Model Indexes", style="green")
+        table.add_column("Finalized", style="yellow")
+        table.add_column("Final CID", style="white")
 
-    for i in range(t1_count):
-        bid, validators, model_idxs, finalized, cid = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+        for i in range(t1_count):
+            bid, validators, model_idxs, finalized, cid = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+            
+            val_display = "\n".join([f"{v[:6]}...{v[-4:]}" for v in validators])
+            idxs_display = ", ".join(map(str, model_idxs))
+            
+            table.add_row(str(bid), val_display, idxs_display, str(finalized), cid or "")
+            
+        console.print(table)
+
+
+    if detailed:
+
+        detailed_table = Table(title=f"Detailed Tier 1 Batches (GI: {curr_GI})")
+        detailed_table.add_column("Batch ID", justify="right", style="cyan")
+        detailed_table.add_column("Aggregator Address", style="magenta")
+        detailed_table.add_column("Submitted CID", style="green")
+        detailed_table.add_column("Model Indexes", style="green")
+        detailed_table.add_column("Finalized CID", style="white")
+        for i in range(t1_count):
+            bid, validators, model_idxs, finalized, final_cid = deployed_DINTaskCoordinatorContract.functions.getTier1Batch(curr_GI, i).call()
+            
+            for validator in validators:
+                submitted_cid = deployed_DINTaskCoordinatorContract.functions.t1SubmissionCID(curr_GI, bid, validator).call()
+                idxs_display = ", ".join(map(str, model_idxs))
+                detailed_table.add_row(str(bid), validator, submitted_cid or "None", idxs_display, final_cid or "Pending")
         
-        val_display = "\n".join([f"{v[:6]}...{v[-4:]}" for v in validators])
-        idxs_display = ", ".join(map(str, model_idxs))
+        console.print(detailed_table)
         
-        table.add_row(str(bid), val_display, idxs_display, str(finalized), cid or "")
-        
-    console.print(table)
 
 
 @aggregation_app.command("show-t2-batches")
@@ -1810,6 +1831,7 @@ def show_t2_batches(
     network: str = typer.Option(None, "--network", help="Network to use"),
     task_coordinator: str = typer.Option(None, "--taskCoordinator", help="DINTaskCoordinator contract address"),
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    detailed: bool = typer.Option(False, "--detailed", help="Show detailed information"),
 ):
     effective_network = resolve_network(network)
     w3 = get_w3(effective_network)
@@ -1839,6 +1861,8 @@ def show_t2_batches(
     table = Table(title=f"Tier 2 Batches (GI: {curr_GI})")
     table.add_column("Batch ID", justify="right", style="cyan")
     table.add_column("Validators", style="magenta")
+    if detailed:
+        table.add_column("Submitted CID", style="green")
     table.add_column("Finalized", style="yellow")
     table.add_column("Final CID", style="white")
     
@@ -1846,7 +1870,11 @@ def show_t2_batches(
         try:
             bid, validators, finalized, cid = deployed_DINTaskCoordinatorContract.functions.getTier2Batch(curr_GI, i).call()
             val_display = "\n".join([f"{v[:6]}...{v[-4:]}" for v in validators])
-            table.add_row(str(bid), val_display, str(finalized), cid or "")
+            if not detailed:
+                table.add_row(str(bid), val_display, str(finalized), cid or "")
+            else:
+                submitted_cid_display = "\n".join(deployed_DINTaskCoordinatorContract.functions.t2SubmissionCID(curr_GI, bid, v).call() for v in validators)
+                table.add_row(str(bid), val_display, submitted_cid_display, str(finalized), cid or "")
         except Exception:
             # Maybe batch doesn't exist if count assumption is wrong or not created
             pass
@@ -2286,19 +2314,19 @@ def show(
         batch_id, auditors, model_indexes, test_cid = batch_data
 
         for a in auditors:
-            auditor_batch[a.lower()]=auditor_batch.get(a.lower(), {"raw_batches": []})
-            auditor_batch[a.lower()]["raw_batches"].append({"batch_id": batch_id, "model_indexes": model_indexes, "test_cid": test_cid})
+            auditor_batch[a]=auditor_batch.get(a, {"raw_batches": []})
+            auditor_batch[a]["raw_batches"].append({"batch_id": batch_id, "model_indexes": model_indexes, "test_cid": test_cid})
 
-        all_auditors.update(a.lower() for a in auditors)
+        all_auditors.update(auditors)
 
     if auditor:
         for a in all_auditors:
-            auditor_batch[a.lower()]["batch_count"] = len(auditor_batch[a.lower()]["raw_batches"])
+            auditor_batch[a]["batch_count"] = len(auditor_batch[a]["raw_batches"])
 
-            relevant_lm_submissions[a.lower()] = set()
+            relevant_lm_submissions[a] = set()
 
-            for batch in auditor_batch[a.lower()]["raw_batches"]:
-                relevant_lm_submissions[a.lower()].update(batch["model_indexes"])
+            for batch in auditor_batch[a]["raw_batches"]:
+                relevant_lm_submissions[a].update(batch["model_indexes"])
 
                 for model_idx in batch["model_indexes"]:
                     model_idx_to_batch_id[model_idx] = batch["batch_id"]
@@ -2320,15 +2348,17 @@ def show(
                     batch_id = model_idx_to_batch_id[idx]
 
                     try:
-                        has_voted = task_auditor_contract.functions.hasAuditedLM(curr_GI, batch_id, account.address, idx).call()
+                        has_voted = deployed_DINTaskAuditorContract.functions.hasAuditedLM(curr_GI, batch_id, auditor, idx).call()
                     except:
                         has_voted = False
+                    
                     try:
-                        is_eligible = task_auditor_contract.functions.LMeligibleVote(curr_GI, batch_id, account.address, idx).call()
+                        is_eligible = deployed_DINTaskAuditorContract.functions.LMeligibleVote(curr_GI, batch_id, auditor, idx).call()
                     except:
                         is_eligible = False
+                    
                     try:
-                        has_auditScores = task_auditor_contract.functions.auditScores(curr_GI, batch_id, account.address, idx).call()
+                        has_auditScores = deployed_DINTaskAuditorContract.functions.auditScores(curr_GI, batch_id, auditor, idx).call()
                     except:
                         has_auditScores = False
 
@@ -2385,7 +2415,7 @@ def show(
             assigned_lm_submissions_table.add_column("Has AuditScores", overflow="fold")
             assigned_lm_submissions_table.add_column("Test CID", overflow="fold")
 
-            for idx, sub in enumerate(assigned_lm_submissions[auditor.lower()]):
+            for idx, sub in enumerate(assigned_lm_submissions[auditor]):
                 assigned_lm_submissions_table.add_row(
                     str(sub["model_index"]),
                     str(sub["client"]),
