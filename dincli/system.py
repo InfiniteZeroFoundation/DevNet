@@ -326,13 +326,20 @@ def configure_demo(
 @app.command()
 def connect_wallet(
     privatekey: Optional[str] = typer.Argument(None, help="Your Ethereum private key (0x...)"),
-    account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),):
+    key_file: Optional[Path] = typer.Option(None, "--key-file", "-f", help="Path to file containing private key"),
+    account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),
+):
     """
-    
     Connect a wallet to DIN CLI.
     
     Usage:
-      # Connect with explicit private key
+      # Interactive prompt (Recommended)
+      dincli system connect-wallet
+
+      # Connect using a key file (Secure)
+      dincli system connect-wallet --key-file ~/.dincli/wallet.key
+      
+      # Connect with explicit private key (Not recommended due to logs/history)
       dincli system connect-wallet 0x123...
       
       # Connect Hardhat dev account by index (auto demo mode)
@@ -343,14 +350,20 @@ def connect_wallet(
     """
 
     # Validate mutual exclusivity
-    if privatekey is not None and account is not None:
-        print("[red]❌ Cannot specify both private key and --account.[/red]")
-        raise typer.Exit(1)
-    if privatekey is None and account is None:
-        print("[red]❌ Specify either a private key or --account <index>.[/red]")
+    auth_methods = [
+        (privatekey, "private key argument"),
+        (key_file, "key file"),
+        (account, "account index")
+    ]
+    provided_methods = [name for val, name in auth_methods if val is not None]
+    
+    if len(provided_methods) > 1:
+        print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
         raise typer.Exit(1)
     
     # Resolve private key
+    demo_mode = False
+    
     if account is not None:
         # Load from demo accounts
         try:
@@ -359,14 +372,39 @@ def connect_wallet(
         except (FileNotFoundError, IndexError) as e:
             print(f"[red]❌ {e}[/red]")
             raise typer.Exit(1)
-    else:
-        # Validate explicit private key
-        if not privatekey.startswith("0x") or len(privatekey) != 66:
-            print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
+            
+    elif key_file is not None:
+        # Load from file
+        key_file = key_file.expanduser() 
+        if not key_file.exists():
+            print(f"[red]❌ Key file not found: {key_file}[/red]")
             raise typer.Exit(1)
-        # Use existing demo_mode setting
+        try:
+            with open(key_file, 'r') as f:
+                privatekey = f.read().strip()
+            config = load_config()
+            demo_mode = config.get("demo_mode", False)
+        except Exception as e:
+            print(f"[red]❌ Failed to read key file: {e}[/red]")
+            raise typer.Exit(1)
+            
+    elif privatekey is not None:
+        # Explicit argument
+        print("[yellow]⚠️  Warning: Providing private key as argument is insecure (saved in shell history). Use interactive mode or --key-file instead.[/yellow]")
         config = load_config()
         demo_mode = config.get("demo_mode", False)
+        
+    else:
+        # Interactive prompt
+        print("[cyan]Enter your Ethereum private key (input will be hidden):[/cyan]")
+        privatekey = getpass("Private Key: ").strip()
+        config = load_config()
+        demo_mode = config.get("demo_mode", False)
+
+    # Validate format (for all methods)
+    if not privatekey.startswith("0x") or len(privatekey) != 66:
+        print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
+        raise typer.Exit(1)
     
     # Ensure config dir exists
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

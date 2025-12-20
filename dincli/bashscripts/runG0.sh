@@ -21,6 +21,10 @@ show python -m dincli.main dindao deploy din-validator-stake --network local --a
 
 show python -m dincli.main system dump-abi --artifact "/home/azureuser/projects/DINv1MVC/hardhat/artifacts/contracts/DinValidatorStake.sol/DinValidatorStake.json"
 
+show python -m dincli.main dindao deploy din-model-registry --network local --artifact "/home/azureuser/projects/DINv1MVC/hardhat/artifacts/contracts/DINModelRegistry.sol/DINModelRegistry.json"
+
+show python -m dincli.main system dump-abi --artifact "/home/azureuser/projects/DINv1MVC/hardhat/artifacts/contracts/DINModelRegistry.sol/DINModelRegistry.json"
+
 show python -m dincli.main system connect-wallet --account 1
 show python -m dincli.main system --eth-balance --usdt-balance 
 
@@ -55,6 +59,13 @@ show python -m dincli.main dindao add-slasher --taskAuditor --network local
 show python -m dincli.main system connect-wallet --account 1
 
 show python -m dincli.main model-owner add-slasher --taskAuditor --network local 
+
+
+
+
+show python -m dincli.main system connect-wallet --account 1
+
+show python -m dincli.main 
 
 show python -m dincli.main model-owner model create-genesis --network local 
 

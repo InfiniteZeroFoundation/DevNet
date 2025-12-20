@@ -5,6 +5,8 @@ from platformdirs import user_config_dir
 from typing import Optional
 from eth_account import Account
 import os
+import time
+from getpass import getpass
 
 from .config.networks import NETWORKS
 
@@ -221,13 +223,81 @@ def load_account() -> Account:
         private_key = data["private_key"]
         return Account.from_key(private_key)
 
-    # Encrypted mode: prompt for password
-    password = getpass("Enter wallet password: ")
+    # Encrypted mode: check for cached password or env var
+    password = _get_password()
     try:
         private_key = Account.decrypt(data, password)
+        # Verify strict permissions and save to cache if successful and not from env
+        _cache_password_if_needed(password)
         return Account.from_key(private_key)
     except ValueError:
-        raise ValueError("Invalid password or corrupted keystore.") 
+        # If decryption fails, clear cache and retry once if it was a cached/env password
+        if _clear_session_cache():
+             print("[yellow]Cached password failed, prompting...[/yellow]")
+             password = getpass("Enter wallet password: ")
+             try:
+                private_key = Account.decrypt(data, password)
+                _cache_password_if_needed(password)
+                return Account.from_key(private_key)
+             except ValueError:
+                 pass
+        raise ValueError("Invalid password or corrupted keystore.")
+
+def _get_password() -> str:
+    """
+    Get password from:
+    1. DIN_WALLET_PASSWORD env var
+    2. Session cache file (~/.dincli/.session)
+    3. Interactive prompt
+    """
+    # 1. Environment variable
+    env_pass = os.environ.get("DIN_WALLET_PASSWORD")
+    if env_pass:
+        return env_pass
+
+    # 2. Session cache
+    session_file = CONFIG_DIR / ".session"
+    if session_file.exists():
+        try:
+            # Check file permissions (must be 600)
+            st = session_file.stat()
+            if st.st_mode & 0o777 != 0o600:
+                print("[yellow]Session file permissions unsafe (should be 600). Ignoring.[/yellow]")
+            # Check timeout (default 15 mins)
+            elif (time.time() - st.st_mtime) < (15 * 60):
+                with open(session_file, "r") as f:
+                    return f.read().strip()
+        except Exception:
+            pass # ignore errors, fall back to prompt
+
+    # 3. Prompt
+    return getpass("Enter wallet password: ")
+
+def _cache_password_if_needed(password: str):
+    """Save password to session cache if not from env var."""
+    if os.environ.get("DIN_WALLET_PASSWORD"):
+        return
+
+    session_file = CONFIG_DIR / ".session"
+    try:
+        # Create with strict permissions
+        # Remove if exists to ensure permissions are reset
+        if session_file.exists():
+            session_file.unlink()
+        
+        fd = os.open(session_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(password)
+    except Exception as e:
+        print(f"[yellow]Failed to cache password: {e}[/yellow]")
+
+def _clear_session_cache() -> bool:
+    """Remove session cache file. Returns True if a file was removed."""
+    session_file = CONFIG_DIR / ".session"
+    if session_file.exists():
+        session_file.unlink()
+        return True
+    return False 
     
     
 def load_din_info() -> dict:

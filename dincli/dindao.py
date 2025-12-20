@@ -172,6 +172,58 @@ def din_validator_stake(
         print("Failed to add DinValidatorStake contract to DINCoordinator contract")
 
 
+@deploy_app.command("din-model-registry")
+def deploy_din_model_registry(
+    network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
+    artifact_path: str = typer.Option(..., "--artifact", help="Path to contract artifact JSON (Hardhat/Brownie format)"),
+    
+):
+    
+    effective_network = resolve_network(network)
+    
+    w3 = get_w3(effective_network)
+    
+    DINModelRegistry_contract = get_DINModelRegistry_Instance(artifact_path, effective_network)
+    
+    # Load account
+    account = load_account()  # returns LocalAccount
+
+    din_addresses = load_din_info()
+    
+    dinValidatorStake_address = din_addresses[effective_network]["stake"]
+    
+    nonce = w3.eth.get_transaction_count(account.address)    
+    tx = DINModelRegistry_contract.constructor(dinValidatorStake_address).build_transaction({
+        "from": account.address,        # ← MUST be string address,
+        "nonce": nonce,
+        "gas": 3000000,
+        "gasPrice": w3.to_wei("5", "gwei"),
+        "chainId": w3.eth.chain_id,
+    }) 
+    
+    # Sign transaction
+    signed_tx = account.sign_transaction(tx)  
+    
+    # Send raw transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    
+    DINModelRegistry_contract_address = tx_receipt.contractAddress
+
+    print(f"[bold green]Deploying DIN DINModelRegistry on network:[/bold green] {effective_network}")
+    
+    print("DINModelRegistry contract deployed at:", DINModelRegistry_contract_address)
+    
+    dinmodelregistry_address = tx_receipt.contractAddress
+    din_addresses[effective_network]["registry"] = dinmodelregistry_address
+    
+    save_din_info(din_addresses)
+    
+    deployed_DINModelRegistry_Contract = get_DINModelRegistry_Instance(artifact_path, effective_network, DINModelRegistry_contract_address)
+    
+    
+    
+
 
 # ```
 # dincli dindao add-slasher \
