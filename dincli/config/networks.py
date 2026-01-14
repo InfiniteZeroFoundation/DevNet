@@ -6,7 +6,13 @@ NETWORKS = {
         "explorer": "http://127.0.0.1:8545",
 
     },
-    "sepolia": {
+    "sepolia_devnet": {
+        "rpc_url": "https://sepolia.infura.io/v3/YOUR_INFURA_KEY",
+        # OR use a free Alchemy/QuickNode endpoint
+        "chain_id": 11155111,
+        "explorer": "https://sepolia.etherscan.io",
+    },
+    "sepolia_testnet": {
         "rpc_url": "https://sepolia.infura.io/v3/YOUR_INFURA_KEY",
         # OR use a free Alchemy/QuickNode endpoint
         "chain_id": 11155111,

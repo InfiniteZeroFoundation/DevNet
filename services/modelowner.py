@@ -7,11 +7,14 @@ from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
 from pathlib import Path
 from platformdirs import user_config_dir
 from dincli.utils import CONFIG_DIR
-from dincli.services.model import ModelArchitecture
 import torch.nn.init as init
 from dotenv import dotenv_values
 import json
-    
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from model import ModelArchitecture
+
 def initialize_weights(m):
     if isinstance(m, nn.Linear):
         # Initialize weights with Xavier uniform initialization
@@ -27,28 +30,31 @@ def getGenesisModelIpfs():
     model.apply(initialize_weights)
     
     # Save the trained genesis model to disk
-    os.makedirs(CONFIG_DIR / "modelowner"/"models", exist_ok=True)
-    torch.save(model, CONFIG_DIR / "modelowner"/"models"/"genesis_model.pth")
-    
+    model_dir = Path("models")
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = model_dir / "genesis_model.pth"
+    # 🔑 Convert Path to string for compatibility with torch.save()
+    torch.save(model, str(model_path))
+    print("saving genesis model at " + str(model_path))
     # Upload the model to IPFS
-    model_hash = upload_to_ipfs(CONFIG_DIR / "modelowner"/"models"/"genesis_model.pth", "Genesis model")
+    model_hash = upload_to_ipfs(str(model_path), "Genesis model")
     return model_hash
 
 
 def getscoreforGM(gi: int, gmcid: str):
     try:
-        os.makedirs(CONFIG_DIR / "dataset"/"test", exist_ok=True)
-        testdata = torch.load(CONFIG_DIR / "dataset"/"test"/"test_dataset.pt", weights_only=False)
+        os.makedirs(Path(os.getcwd()) / "dataset"/"test", exist_ok=True)
+        testdata = torch.load(Path(os.getcwd()) / "dataset"/"test"/"test_dataset.pt", weights_only=False)
         
-        model_architecture = torch.load(CONFIG_DIR / "modelowner"/"models"/"genesis_model.pth", weights_only=False)
+        model_architecture = torch.load(Path(os.getcwd()) /"models"/"genesis_model.pth", weights_only=False)
         
-        retrieve_from_ipfs(gmcid, CONFIG_DIR / "modelowner"/"models"/ f"gm_{gi}.pt")
+        retrieve_from_ipfs(gmcid, Path(os.getcwd()) / "models"/ f"gm_{gi}.pt")
         
         if gi ==0 :
-            temp_model = torch.load(CONFIG_DIR / "modelowner"/"models"/ f"gm_{gi}.pt", weights_only=False)
+            temp_model = torch.load(Path(os.getcwd()) / "models"/ f"gm_{gi}.pt", weights_only=False)
             gm_weights = temp_model.state_dict()
         else:
-            gm_weights = torch.load(CONFIG_DIR / "modelowner"/"models"/f"gm_{gi}.pt", weights_only=True)
+            gm_weights = torch.load(Path(os.getcwd()) / "models"/f"gm_{gi}.pt", weights_only=True)
         
         model_architecture.load_state_dict(gm_weights)
         

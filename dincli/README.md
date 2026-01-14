@@ -2,10 +2,12 @@
 # DIN CLI structured:
 
 ```
-dincli <role> <command> [options]
+dincli <role> <command> [options] --network <network>
 ```
 
-Where `<role>` ∈ { `model-owner`, `auditor`, `aggregator`, `dindao` }
+Where `<role>` ∈ { `model-owner`, `auditor`, `aggregator`, `client`, `dindao` }
+
+where `<network>` ∈ { `local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet` }
 
 That’s the **Typer multi-app pattern**, which allows subcommands for each stakeholder role, e.g.:
 
@@ -16,17 +18,6 @@ dincli auditor verify
 dincli aggregator aggregate
 dincli dindao status
 ```
-
-#### **4. Update `pyproject.toml`**
-
-Your CLI entry point doesn’t change — still:
-
-```toml
-[project.scripts]
-dincli = "main:app"
-```
-
----
 
 #### **5. Test it**
 
@@ -64,6 +55,3 @@ Commands:
 ```
 
 ---
-
-Would you like me to help you define **role-specific command sets** (like what each role can do from CLI: e.g., `train`, `submit`, `audit`, `stake`, etc.) next?
-That will make your `dincli` a full operational command-line interface for the devnet phase.

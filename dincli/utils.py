@@ -1,18 +1,25 @@
+import importlib.util
 import json
 from web3 import Web3
 from pathlib import Path
-from platformdirs import user_config_dir
-from typing import Optional
+from platformdirs import user_config_dir, user_cache_dir
+from typing import Optional, Callable
 from eth_account import Account
 import os
 import time
 from getpass import getpass
+from dincli.log import logger
+from rich.console import Console
+
+console = Console()
+
 
 from .config.networks import NETWORKS
 
 CONFIG_DIR = Path(user_config_dir("dincli"))
-CONFIG_FILE = CONFIG_DIR / "config.json"
+CACHE_DIR = Path(user_cache_dir("dincli"))
 
+CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 
 
@@ -28,21 +35,26 @@ def save_config(data):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
-    print(f"Config saved to {CONFIG_FILE}")
+    logger.debug(f"Config saved to {CONFIG_FILE}")
 
 
 def load_config():
     if CONFIG_FILE.exists():
+        logger.debug(f"Loading config from {CONFIG_FILE}")
         with open(CONFIG_FILE, "r") as f:
-            print(f"Config loaded from {CONFIG_FILE}")
-            return json.load(f)
-    print(f"No config found at {CONFIG_FILE}")
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                logger.error(f"Error decoding config file at {CONFIG_FILE}. Returning empty config.")
+                return {}
+    else:
+        logger.warning(f"No config found at {CONFIG_FILE}")
     return {}
 
 
-def get_config(key):
+def get_config(key, default=None):
     config = load_config()
-    return config.get(key, None)
+    return config.get(key, default)
 
 def load_usdt_config():
     config_path = Path(__file__).parent / "config" / "usdt_config.json"
@@ -55,16 +67,17 @@ def resolve_network(cli_network: str | None = None, default: str = "local") -> s
     """
     # 1. CLI takes highest precedence
     if cli_network is not None:
+        if cli_network not in ["local", "sepolia_devnet", "sepolia_testnet", "mainnet"]:
+            raise ValueError("Invalid network: must be 'local', 'sepolia_devnet', 'sepolia_testnet', or 'mainnet'")
         return cli_network
 
     # 2. Check .env (ignore empty strings)
-    from_env = get_env_key("network")
-    if from_env and isinstance(from_env, str) and from_env.strip():
-        return from_env.strip()
+    # from_env = get_env_key("NETWORK")
+    # if from_env and isinstance(from_env, str) and from_env.strip():
+    #     return from_env.strip()
 
     # 3. Check global config
-    cfg = load_config()
-    from_config = cfg.get("network")
+    from_config = get_config("network")
     if from_config and isinstance(from_config, str) and from_config.strip():
         return from_config.strip()
 
@@ -251,7 +264,7 @@ def _get_password() -> str:
     3. Interactive prompt
     """
     # 1. Environment variable
-    env_pass = os.environ.get("DIN_WALLET_PASSWORD")
+    env_pass = get_env_key("DIN_WALLET_PASSWORD")
     if env_pass:
         return env_pass
 
@@ -275,7 +288,7 @@ def _get_password() -> str:
 
 def _cache_password_if_needed(password: str):
     """Save password to session cache if not from env var."""
-    if os.environ.get("DIN_WALLET_PASSWORD"):
+    if get_env_key("DIN_WALLET_PASSWORD"):
         return
 
     session_file = CONFIG_DIR / ".session"
@@ -288,8 +301,9 @@ def _cache_password_if_needed(password: str):
         fd = os.open(session_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, 'w') as f:
             f.write(password)
+            console.print("[green]Password cached successfully.[/green]")
     except Exception as e:
-        print(f"[yellow]Failed to cache password: {e}[/yellow]")
+        console.print(f"[yellow]Failed to cache password: {e}[/yellow]")
 
 def _clear_session_cache() -> bool:
     """Remove session cache file. Returns True if a file was removed."""
@@ -387,4 +401,64 @@ def GIstateToStr(GIstate: int) -> str:
         return f"UnknownState({GIstate})"
     
 def GIstatestrToIndex(GIstateStr: str) -> int:    
-    return GIstate_to_index[GIstateStr]      
+    return GIstate_to_index[GIstateStr]
+
+
+def save_tasks(data: dict):
+    path = CONFIG_DIR / "tasks.json"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=4)
+    logger.debug(f"Tasks saved to {path}")
+
+def load_tasks() -> dict:
+    path = CONFIG_DIR / "tasks.json"
+    if not path.exists():
+        logger.debug(f"Tasks file not found: {path}")
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load tasks: {e}")
+        return {}
+
+
+def load_custom_fn(module_path: Path, fn_name: str) -> Callable:
+    """
+    Dynamically load a function from a project-local service file.
+
+    Example:
+        load_custom_fn(
+            Path.cwd() / "services" / "modelowner.py",
+            "getGenesisModelIpfs"
+        )
+    """
+    if not module_path.exists():
+        raise FileNotFoundError(
+            f"Custom service file not found: {module_path}"
+        )
+
+    spec = importlib.util.spec_from_file_location(
+        module_path.stem,
+        module_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module from {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if not hasattr(module, fn_name):
+        raise AttributeError(
+            f"{fn_name} not found in custom service {module_path}"
+        )
+
+    fn = getattr(module, fn_name)
+
+    if not callable(fn):
+        raise TypeError(
+            f"{fn_name} in {module_path} is not callable"
+        )
+
+    return fn 

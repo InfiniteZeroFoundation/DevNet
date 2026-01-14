@@ -1,11 +1,12 @@
 import typer
+import os
+from pathlib import Path
 from rich import print
 from rich.table import Table
 from typing import Optional
 from rich.console import Console
-from pathlib import Path
 from dotenv import dotenv_values, set_key, get_key, unset_key
-from dincli.utils import resolve_network, get_w3, load_account, load_din_info, load_usdt_config, GIstatestrToIndex, GIstateToStr
+from dincli.utils import resolve_network, get_w3, load_account, load_din_info, load_usdt_config, GIstatestrToIndex, GIstateToStr, load_custom_fn
 from dincli.contract_utils import get_contract_instance
 
 from dincli.system import connect_wallet
@@ -236,7 +237,7 @@ def task_auditor(
     # Resolve DINTaskCoordinator artifact path
     if task_coordinator_artifact is None:
         # Try to find artifact file
-        task_coordinator_artifact = Path(__file__).parent /"abis"/"DINTaskCoordinator.json"
+        task_coordinator_artifact = Path(__file__).parent / "abis" / "DINTaskCoordinator.json"
         if not task_coordinator_artifact.exists():
             print(f"[yellow]Warning:[/yellow] DINTaskCoordinator artifact not found at {task_coordinator_artifact}")
             print(f"[yellow]Skipping setDINTaskAuditorContract call on DINTaskCoordinator. Please call it manually.[/yellow]")
@@ -272,7 +273,9 @@ def task_auditor(
     return dintaskauditor_contract_address
     
     
-@app.command()
+
+    
+@app.command("deposit-reward-in-dintask-auditor")
 def deposit_reward_in_dintask_auditor(
     network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
     amount: int = typer.Option(..., "--amount", help="Amount of rewards to deposit in USDT"),
@@ -607,13 +610,34 @@ def add_slasher(
 
     return
 
-@model_app.command()
+@model_app.command("create-genesis")
 def create_genesis(
     network: str = typer.Option(None, "--network", help="Network to use"),
+    help: bool = typer.Option(False, "--help","-h", help="Show help"),
+    default: bool = typer.Option(False, "--default", help="use default service"),
+    custom: bool = typer.Option(False, "--custom", help="use custom service"),
+
 ):
 
+    if help:
+        console.print("[bold green]Usage:[/bold green]")
+        console.print("  dincli model-owner model create-genesis --network <network>")
+        console.print("\nIf --default flag is not specified, uses getGenesisModelIpfs() from")
+        console.print(f"  {Path(os.getcwd()) / 'services' / 'modelowner.py'}")
+        console.print("The genesis model hash is set in .env under GENESIS_MODEL_IPFS_HASH")
+        raise typer.Exit(0)
+
     effective_network = resolve_network(network)
-    model_hash = getGenesisModelIpfs()
+    if not default:
+        fn = load_custom_fn(
+            Path(os.getcwd()) / "services" / "modelowner.py",
+            "getGenesisModelIpfs",
+        )
+        model_hash = fn()
+    else:
+        model_hash = getGenesisModelIpfs()
+    
+    
     console.print(f"[bold green]Genesis model created successfully![/bold green]")
     console.print(f"[cyan]Model hash:[/cyan] {model_hash}")
 
@@ -622,13 +646,26 @@ def create_genesis(
     
     return
 
-@model_app.command()
+@model_app.command("submit-genesis")
 def submit_genesis(
     network: str = typer.Option(None, "--network", help="Network to use"),
     ipfs_hash: str = typer.Option(None, "--ipfs-hash", help="IPFS hash of the model"),
     task_coordinator_address: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"),
     score: int = typer.Option(None, "--score", help="Score of the model"),
+    default: bool = typer.Option(False, "--default", help="use default service"),
+    help: bool = typer.Option(False, "--help","-h", help="Show help"),
 ):
+
+    if help:
+        console.print("[bold green]Usage:[/bold green]")
+        console.print("  dincli model-owner model submit-genesis --network <network>")
+        console.print("\nIf --default flag is not specified, uses submitGenesisModel() from")
+        console.print(f"  {Path(os.getcwd()) / 'services' / 'modelowner.py'}")
+        console.print("\n [yellow]Warning:[/yellow] the test dataset must be available at: ")
+        console.print(f"  {Path(os.getcwd()) / 'dataset' / 'test' / 'test_dataset.pt'}")
+        console.print("\n [yellow]Warning:[/yellow] the genesis model must be available at: ")
+        console.print(f"  {Path(os.getcwd()) / 'models' / 'genesis_model.pth'}")
+        raise typer.Exit(0)
 
     effective_network = resolve_network(network)
 
@@ -674,12 +711,18 @@ def submit_genesis(
     
     
     set_key(".env", "IS_GenesisModelCreated", "True")
-    set_key(".env", "GenesisModelIpfsHash", ipfs_hash)
 
     if score:
         accuracy = score
     else:
-        accuracy = getscoreforGM(0, ipfs_hash)
+        if not default:
+            fn = load_custom_fn(
+                Path(os.getcwd()) / "services" / "modelowner.py",
+                "getscoreforGM",
+            )
+            accuracy = fn(0, ipfs_hash)
+        else:
+            accuracy = getscoreforGM(0, ipfs_hash)
         
     console.print("Genesis model accuracy:", accuracy)
     nonce = w3.eth.get_transaction_count(account.address)

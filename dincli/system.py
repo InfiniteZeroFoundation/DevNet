@@ -1,16 +1,23 @@
 import typer
 import json
 import shutil
+import os
 from datetime import datetime, timedelta
 from rich.prompt import Confirm
 from rich import print
+from rich.console import Console
 from typing import Optional
 from eth_account import Account
 from decimal import Decimal
 from getpass import getpass
-from dincli.utils import save_config, load_config, CONFIG_DIR, CONFIG_FILE, load_usdt_config, resolve_network, get_demo_private_key, get_w3, load_account
+from dincli.utils import save_config, load_config, CONFIG_DIR, CACHE_DIR, CONFIG_FILE, load_usdt_config, resolve_network, get_demo_private_key, get_w3, load_account, get_env_key
 from pathlib import Path
-
+from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
+import numpy as np
+import torch
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, random_split
+console = Console()
 dataset_app = typer.Typer(help="Manage federated datasets.")
 
 app = typer.Typer(help="System utilities for DIN CLI.")
@@ -20,6 +27,14 @@ app.add_typer(dataset_app, name="dataset")
 
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 
+def initialize_directories():
+    """
+    Create user-level config and cache dirs if they do not exist.
+    Call this explicitly (e.g. from CLI or first-run code), not on import.
+    """
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    print(f"Initialized directories:\n- Config: {CONFIG_DIR}\n- Cache: {CACHE_DIR}")
 
 @app.callback(invoke_without_command=True)
 def system(
@@ -117,7 +132,27 @@ def system(
         print(f"[blue]USDT Balance:[/blue] {usdt_balance_fmt} USDT")
 
     raise typer.Exit()
+
+
+@app.command()
+def where():
+    """Print where dincli is installed."""
+    typer.echo(f"dincli is installed at: {Path(__file__).parent.resolve()}")
         
+
+@app.command()
+def welcome():
+    """Print welcome message."""
+    typer.echo("Welcome to DIN CLI!")
+
+@app.command("init")
+def initialize():
+    """Initialize DIN CLI by creating config/cache directories and an empty config file."""
+    initialize_directories()
+    if not CONFIG_FILE.exists():
+        # Write an empty JSON object (valid JSON)
+        CONFIG_FILE.write_text("{}\n", encoding="utf-8")
+        console.print(f"[green]✅ Created empty config file at: {CONFIG_FILE}[/green]")
 
 @app.command()
 def buy_usdt(
@@ -279,28 +314,21 @@ def buy_usdt(
     
 
 
-@app.command()
-def configure_network(network: str = typer.Option(..., help="Network: local | sepolia | mainnet")):
-    """
-    Configure the network for the CLI
-    """
-    
+@app.command("configure-network")
+def configure_network(network: str = typer.Option(..., help="Network")):
     """
     Configure the default blockchain network for DIN CLI.
     """
-    allowed = ["local", "sepolia", "mainnet"]
-
-    if network not in allowed:
-        print(f"[red]Invalid network! Must be one of: {allowed}[/red]")
-        raise typer.Exit()
+    
+    effective_network = resolve_network(network)
 
     config = load_config()
-    config["network"] = network
+    config["network"] = effective_network
     save_config(config)
 
     print(f"[green]Network configured successfully: {network}[/green]")
 
-@app.command()
+@app.command("configure-demo")
 def configure_demo(
     mode: str = typer.Option("no", "--mode", help="Set demo mode: yes or no")
 ):
@@ -318,9 +346,26 @@ def configure_demo(
     config["demo_mode"] = enable
     save_config(config)
     status = "enabled" if enable else "disabled"
-    print(f"[green]Mock mode {status}.[/green]")
+    print(f"[green]Demo mode {status}.[/green]")
     if enable:
         print("[yellow]⚠️  Wallets will be stored in plaintext. Do NOT use with real keys![/yellow]")
+
+@app.command("configure-logging")
+def configure_logging(  
+    level: str = typer.Option("info", "--level", help="Set log level: debug | info | warning | error | critical")
+):
+    """
+    Configure the log level for DIN CLI.
+    """
+    
+    if level.lower() not in ("debug", "info", "warning", "error", "critical"):
+        print("[red]Level must be 'debug', 'info', 'warning', 'error', or 'critical'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_config()
+    config["log_level"] = level.lower()
+    save_config(config)
+    print(f"[green]Log level set to {level}.[/green]")
     
     
 @app.command()
@@ -469,17 +514,13 @@ def read_wallet():
         print(f"[red]Private Key:[/red] {data['private_key']}")
         print("[cyan]⚠️  This key is stored in plaintext — for local testing only![/cyan]")
         return
-
-    # Otherwise: encrypted keystore (standard format)
-    print("[bold green]🔐 Wallet (Encrypted Keystore)[/bold green]")
-    password = getpass("Enter wallet password: ")
     try:
-        private_key = Account.decrypt(data, password)
-        acct = Account.from_key(private_key)
+
+        acct = load_account()
         print(f"[yellow]Address:[/yellow] {acct.address}")
         print("[green]✅ Wallet decrypted successfully.[/green]")
-    except ValueError:
-        print("[red]❌ Incorrect password or corrupted keystore.[/red]")
+    except Exception as e:
+        print(f"[red]❌ {e}[/red]")
         raise typer.Exit(1)
 
 @app.command()
@@ -522,39 +563,156 @@ def din_info(
         print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
 
 
-@app.command()
+@app.command("reset-all")
 def reset_all(
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt")
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
+    cache: bool = typer.Option(False, "--cache", "-c", help="Reset cache directory"),
+    config: bool = typer.Option(False, "--config", "-co", help="Reset config directory"),
 ):
     """
-    Delete the entire DIN CLI config directory (~/.din).
-    This removes wallets, client datasets, network config, and more.
-    """
-    config_path = Path(CONFIG_DIR).resolve()
+    Reset DIN CLI state.
 
-    if not config_path.exists():
-        print(f"[yellow]Config directory does not exist: {config_path}[/yellow]")
+    By default (no flags), deletes both config and cache directories.
+    Use --cache or --config to delete only one.
+    """
+
+    # Decide which paths to consider
+    targets = []
+    if config:
+        targets.append(("Config", CONFIG_DIR))
+    if cache:
+        targets.append(("Cache", CACHE_DIR))
+
+    # If neither flag is given, reset both
+    if not (cache or config):
+        targets = [("Config", CONFIG_DIR), ("Cache", CACHE_DIR)]
+
+    # Filter only existing paths to avoid noise
+    to_delete = [(name, path) for name, path in targets if path.exists()]
+
+    if not to_delete:
+        typer.secho("[yellow]No DIN CLI data found to delete.[/yellow]", fg=typer.colors.YELLOW)
         return
 
+    # Build confirmation message
+    paths_str = "\n".join(str(path.resolve()) for _, path in to_delete)
     if not force:
-        confirm = typer.confirm(
-            f"[red]⚠️  This will permanently delete:[/red]\n{config_path}\n\nAre you sure?"
+        typer.secho(
+            f"[red]⚠️  This will permanently delete the following:[/red]\n{paths_str}\n",
+            fg=typer.colors.RED,
+            bold=True,
         )
-        if not confirm:
-            print("[cyan]Operation cancelled.[/cyan]")
+        if not typer.confirm("Are you sure?"):
+            typer.secho("[cyan]Operation cancelled.[/cyan]", fg=typer.colors.CYAN)
             raise typer.Exit()
 
-    try:
-        shutil.rmtree(config_path)
-        print(f"[green]✅ Successfully deleted config directory: {config_path}[/green]")
-    except Exception as e:
-        print(f"[red]❌ Failed to delete {config_path}: {e}[/red]")
-        raise typer.Exit(code=1)    
+    # Perform deletion
+    for name, path in to_delete:
+        try:
+            shutil.rmtree(path)
+            typer.secho(f"[green]✅ Deleted {name} directory: {path}[/green]")
+        except Exception as e:
+            typer.secho(f"[red]❌ Failed to delete {path}: {e}[/red]", fg=typer.colors.RED)
+            raise typer.Exit(code=1)    
 
-import numpy as np
-import torch
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
+
+@app.command("todo")
+def todo():
+    typer.secho("TODO list:", fg=typer.colors.CYAN)
+
+    if not CONFIG_DIR.exists():
+        console.print(f"[red]❌ Config directory does not exist: {CONFIG_DIR}[/red], run 'dincli system init' to create it.")
+    else:
+        console.print(f"[green]✅ Config directory exists: {CONFIG_DIR}[/green]")
+
+    if not CACHE_DIR.exists():
+        console.print(f"[red]❌ Cache directory does not exist: {CACHE_DIR}[/red], run 'dincli system init' to create it.")
+    else:
+        console.print(f"[green]✅ Cache directory exists: {CACHE_DIR}[/green]")
+    
+    if not CONFIG_FILE.exists():
+        console.print(f"[red]❌ Config file does not exist: {CONFIG_FILE}[/red], run 'dincli system init' to create it.")
+    else:
+        console.print(f"[green]✅ Config file exists: {CONFIG_FILE}[/green]")
+        config = load_config()
+        if config.get("network") is None: 
+            console.print(f"[red]❌ Config file does not contain a network[/red], run 'dincli system configure-network' to set it.")
+        else:
+            console.print(f"[green]✅ Config file contains a network: {config.get('network')}[/green]")
+        if config.get("log_level") is None: 
+            console.print(f"[red]❌ Config file does not contain a log level[/red], run 'dincli system configure-logging' to set it.")
+        else:
+            console.print(f"[green]✅ Config file contains a log level: {config.get('log_level')}[/green]")
+        if config.get("demo_mode") is None: 
+            console.print(f"[red]❌ Config file does not contain a demo mode[/red], run 'dincli system configure-demo' to set it.")
+        else:
+            console.print(f"[green]✅ Config file contains a demo mode: {config.get('demo_mode')}[/green]")
+
+    if not WALLET_FILE.exists():
+        console.print(f"[red]❌ Wallet file does not exist: {WALLET_FILE}[/red], run 'dincli system connect-wallet' to create it.")
+    else:
+        console.print(f"[green]✅ Wallet file exists: {WALLET_FILE}[/green]")
+    env_key = "DIN_WALLET_PASSWORD"
+    cwd = os.getcwd()
+
+    if get_env_key(env_key) is None:
+        console.print(
+            f"[red]❌ Wallet password not found.[/red]\n"
+            f"Please define [bold]{env_key}[/bold] in a [.env] file in your current directory:\n"
+            f"  → File path: [cyan]{cwd}/.env[/cyan]\n"
+            f"  → File content:\n"
+            f"      {env_key}=your_wallet_password\n"
+            f"[dim]🔒 Important: Never commit [.env] to version control.[/dim]"
+        )
+    else:
+        console.print(f"[green]✅ Wallet password found in environment variable: {env_key} in {cwd}/.env file[/green]")
+
+    if CONFIG_FILE.exists():
+        config = load_config()
+        network = config.get("network")
+        if network:
+            rpc_env_key = f"{network.upper()}_RPC_URL"
+            if get_env_key(rpc_env_key) is None:
+                console.print(
+                f"[red]❌ RPC URL not found for network '[bold]{network}[/bold]'.[/red]\n"
+                f"Please define [bold]{rpc_env_key}[/bold] in your [.env] file:\n"
+                f"  → File path: [cyan]{cwd}/.env[/cyan]\n"
+                f"  → Example value:\n"
+                f"      {rpc_env_key}=https://rpc.sepolia.org\n"
+                f"\n"
+                f"[dim]💡 You can get free RPC URLs from services like Infura, Alchemy, or QuickNode.[/dim]\n"
+                f"[dim]🔒 Remember: Never commit [.env] to version control.[/dim]"
+            )
+        else:
+            console.print(f"[green]✅ RPC URL found in environment variable: {rpc_env_key} in {cwd}/.env file[/green]")
+
+    if get_env_key("IPFS_API_URL_ADD") is None:
+        console.print(
+            f"[red]❌ IPFS API ADD URL not found.[/red]\n"
+            f"Please define [bold]IPFS_API_URL_ADD[/bold] in your [.env] file:\n"
+            f"  → File path: [cyan]{cwd}/.env[/cyan]\n"
+            f"  → Example value:\n"
+            f"      IPFS_API_URL_ADD=http://localhost:5001/api/v0\n"
+            f"\n"
+            f"[dim]🔒 Important: Never commit [.env] to version control.[/dim]"
+        )
+    else:
+        console.print(f"[green]✅ IPFS API ADD URL found in environment variable: IPFS_API_URL_ADD in {cwd}/.env file with value: {get_env_key('IPFS_API_URL_ADD')}[/green]")
+    if get_env_key("IPFS_API_URL_RETRIEVE") is None:
+        console.print(
+            f"[red]❌ IPFS API RETRIEVE URL not found.[/red]\n"
+            f"Please define [bold]IPFS_API_URL_RETRIEVE[/bold] in your [.env] file:\n"
+            f"  → File path: [cyan]{cwd}/.env[/cyan]\n"
+            f"  → Example value:\n"
+            f"      IPFS_API_URL_RETRIEVE=http://localhost:5001/api/v0\n"
+            f"\n"
+            f"[dim] Important: Never commit [.env] to version control.[/dim]"
+        )
+    else:
+        console.print(f"[green]✅ IPFS API RETRIEVE URL found in environment variable: IPFS_API_URL_RETRIEVE in {cwd}/.env file with value: {get_env_key('IPFS_API_URL_RETRIEVE')}[/green]")    
+    
+    
+
 @dataset_app.command()
 def distribute_mnist(
     clients: int = typer.Option(..., "--clients", "-c", help="Number of clients"),
@@ -635,6 +793,19 @@ def dump_abi(
         "-b",
         help="Also include 'bytecode' (useful for redeploying from CLI)."
     ),
+    output_dir: str = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Directory to save the output ABI file. Defaults to 'dincli/abis/'."
+    ),
+    official: bool = typer.Option(
+        False,
+        "--official",
+        "-O",  # uppercase O to avoid conflict
+        help="specify if official contract artifact.",
+    ),
+
     
 ):
     """
@@ -673,8 +844,17 @@ def dump_abi(
 
     # Determine name
     output_name = name or artifact.stem
-    abi_dir = Path(__file__).parent / "abis"
+
+    if official and not output_dir:
+        abi_dir = Path(__file__).parent / "abis"
+    elif output_dir:
+        abi_dir = Path(output_dir)
+    else:
+        # Default to ./abis in the current working directory (project root)
+        abi_dir = Path.cwd() / "abis"
+
     abi_dir.mkdir(exist_ok=True)
+
     output_path = abi_dir / f"{output_name}.json"
 
     # Save in Hardhat-compatible format
@@ -685,6 +865,42 @@ def dump_abi(
     print(f"[cyan]→ ABI-only: {not include_bytecode} | Includes bytecode: {include_bytecode}[/cyan]")
     
     
+
+@app.command("upload-to-ipfs")
+def upload_file_to_ipfs(
+    file_path: str = typer.Option(..., "--filepath", "-f", help="Path to file to upload to IPFS"),
+    name: str = typer.Option(None, "--name", "-n", help="Name for the file on IPFS"),
+):
+    """
+    Upload a file to IPFS and return the IPFS hash.
+    """
+    if name is None:
+        name = Path(file_path).name
+    
+    try:
+        ipfs_hash = upload_to_ipfs(file_path, name)
+        print(f"[green]✅ File uploaded to IPFS:[/green] {ipfs_hash}")
+    except Exception as e:
+        print(f"[red]❌ Failed to upload file to IPFS: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command("download-from-ipfs")
+def download_file_from_ipfs(
+    ipfs_hash: str = typer.Option(..., "--hash", "-h", help="IPFS hash of file to download"),
+    file_path: str = typer.Option(..., "--filepath", "-f", help="Path to save downloaded file"),
+):
+    """
+    Download a file from IPFS using its hash.
+    """
+    try:
+        retrieve_from_ipfs(ipfs_hash, file_path)
+        print(f"[green]✅ File downloaded from IPFS:[/green] {file_path}")
+    except Exception as e:
+        print(f"[red]❌ Failed to download file from IPFS: {e}[/red]")
+        raise typer.Exit(1)
+
+
+
 @app.command("add-role")    
 def add_role(
     role: str = typer.Option(..., "--role", "-r", help="Role to add (e.g., 'auditor, aggregator, client')"),
