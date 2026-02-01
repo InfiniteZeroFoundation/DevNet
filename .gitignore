@@ -4,3 +4,9 @@ ReadMe_local.md
 .env.local
 .env.sepolia
 .env.mainnet
+tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/dataset/*
+tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/models/*
+dincli/dincli.egg-info/*
+dincli.egg-info/*
+
+tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
