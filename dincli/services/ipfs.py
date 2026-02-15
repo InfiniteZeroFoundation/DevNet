@@ -1,11 +1,13 @@
 import os
+
 import requests
 from rich import console
 
 console = console.Console()
 
-from dincli.utils import resolve_ipfs_config
-from dincli.log import logger
+from dincli.cli.log import logger
+from dincli.cli.utils import resolve_ipfs_config
+
 ipfs_api_url_add, ipfs_api_url_retrieve = resolve_ipfs_config()
 
 
@@ -16,13 +18,13 @@ def upload_to_ipfs(file_path, msg=None):
         response = requests.post(ipfs_api_url_add, files={'file': file_content})
         if response.status_code == 200:
             if msg:
-                logger.debug(f"{msg} with path: {file_path} uploaded to IPFS [{response.status_code}]")
+                logger.info(f"{msg} with path: {file_path} uploaded to IPFS [{response.status_code}]")
             return response.json()['Hash']
         else:
             raise Exception(f"Failed to upload file to IPFS: {response.text} and Status code: [{response.status_code}]")
 
 def retrieve_from_ipfs(hash_value, retrieved_file_path):
-    logger.debug(f"Retrieving file from IPFS: {hash_value}")
+    logger.info(f"Retrieving file from IPFS: {hash_value}")
     retrieve_response = requests.post(ipfs_api_url_retrieve + hash_value, stream=True)
     os.makedirs(os.path.dirname(retrieved_file_path), exist_ok=True)
     

@@ -1,17 +1,16 @@
+import os
+from pathlib import Path
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-import os
-from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
-from pathlib import Path
-from platformdirs import user_config_dir
-from dincli.utils import CONFIG_DIR
-from dincli.services.model import ModelArchitecture
 import torch.nn.init as init
-from dotenv import dotenv_values
-import json
-    
+from torch.utils.data import DataLoader
+
+from dincli.cli.utils import CONFIG_DIR
+from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
+from dincli.services.model import ModelArchitecture
+
+
 def initialize_weights(m):
     if isinstance(m, nn.Linear):
         # Initialize weights with Xavier uniform initialization

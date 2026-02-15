@@ -1,23 +1,23 @@
-import importlib.util
 import json
-from web3 import Web3
-from datetime import datetime
-from pathlib import Path
-from platformdirs import user_config_dir, user_cache_dir
-from typing import Optional, Callable
-from eth_account import Account
 import os
-import time
-from getpass import getpass
-from dincli.log import logger
-from rich.console import Console
-from dincli.contract_utils import get_contract_instance
 import re
+import time
+from datetime import datetime
+from getpass import getpass
+from importlib.resources import files
+from pathlib import Path
+from typing import Optional
+
+import typer
+from eth_account import Account
+from platformdirs import user_cache_dir, user_config_dir
+from rich.console import Console
+from web3 import Web3
+
+from dincli.cli.contract_utils import get_contract_instance
+from dincli.cli.log import logger
 
 console = Console()
-
-
-from .config.networks import NETWORKS
 
 CONFIG_DIR = Path(user_config_dir("dincli"))
 CACHE_DIR = Path(user_cache_dir("dincli"))
@@ -25,10 +25,14 @@ CACHE_DIR = Path(user_cache_dir("dincli"))
 CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 
+MIN_STAKE = 1000000*10**18 
+
+ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_testnet", "mainnet"]
+
 
 # Optional: only import dotenv if needed
 try:
-    from dotenv import load_dotenv, dotenv_values
+    from dotenv import dotenv_values
     HAS_DOTENV = True
 except ImportError:
     HAS_DOTENV = False
@@ -60,7 +64,7 @@ def get_config(key, default=None):
     return config.get(key, default)
 
 def load_usdt_config():
-    config_path = Path(__file__).parent / "config" / "usdt_config.json"
+    config_path = files("dincli") / "config" / "usdt_config.json"
     with open(config_path, "r") as f:
         return json.load(f)
     
@@ -70,14 +74,9 @@ def resolve_network(cli_network: str | None = None, default: str = "local") -> s
     """
     # 1. CLI takes highest precedence
     if cli_network is not None:
-        if cli_network not in ["local", "sepolia_devnet", "sepolia_testnet", "mainnet"]:
-            raise ValueError("Invalid network: must be 'local', 'sepolia_devnet', 'sepolia_testnet', or 'mainnet'")
+        if cli_network not in ALLOWED_NETWORKS:
+            raise ValueError(f"Invalid network: {cli_network}. Must be one of: {ALLOWED_NETWORKS}")
         return cli_network
-
-    # 2. Check .env (ignore empty strings)
-    # from_env = get_env_key("NETWORK")
-    # if from_env and isinstance(from_env, str) and from_env.strip():
-    #     return from_env.strip()
 
     # 3. Check global config
     from_config = get_config("network")
@@ -105,20 +104,21 @@ def resolve_ipfs_config():
     if from_env and isinstance(from_env, str) and from_env.strip():
         ipfs_api_url_retrieve = from_env.strip()
 
-    if ipfs_api_url_add == "None" or ipfs_api_url_retrieve == "None":
-        ipfs_config_path = Path(__file__).parent / "config" / "ipfs_config.json"
-        with open(ipfs_config_path, "r") as f:
-            ipfs_config = json.load(f)
-            ipfs_api_url_add = ipfs_config.get("local").get("ipfs_api_url_add")
-            ipfs_api_url_retrieve = ipfs_config.get("local").get("ipfs_api_url_retrieve")
+    # if ipfs_api_url_add == "None" or ipfs_api_url_retrieve == "None":
+    #     ipfs_config_path = files("dincli.config") / "ipfs_config.json"
+    #     with open(ipfs_config_path, "r") as f:
+    #         ipfs_config = json.load(f)
+    #         ipfs_api_url_add = ipfs_config.get("local").get("ipfs_api_url_add")
+    #         ipfs_api_url_retrieve = ipfs_config.get("local").get("ipfs_api_url_retrieve")
 
     return ipfs_api_url_add, ipfs_api_url_retrieve
 
-def get_env_key(key: str, default: Optional[str] = None) -> Optional[str]:
+
+def get_env_key(key: str, default: Optional[str] = None, verbose: bool = True) -> Optional[str]:
     """
     Get a key from:
     1. Current environment (e.g., SEPOLIA_RPC_URL)
-    2. ./ .env file (if python-dotenv is installed)
+    2. ./ .env file
     3. Default fallback
     """
     # 1. Already in environment? (e.g., from shell or parent process)
@@ -126,13 +126,37 @@ def get_env_key(key: str, default: Optional[str] = None) -> Optional[str]:
         return os.environ[key]
 
     # 2. Load from .env in current directory (if available)
-    env_path = Path(".env")
+    env_path = Path(os.getcwd()) / ".env"
     if HAS_DOTENV and env_path.exists():
         # Load .env into a dict (doesn't pollute os.environ)
         values = dotenv_values(dotenv_path=env_path)
+        if key not in values and default is None:
+            if verbose:
+                console.print(f"[bold red] ❌ {key} not found in {os.getcwd()}/.env file[/bold red]")
         return values.get(key, default)
 
     return default
+
+
+def set_env_key(key: str, value: str):
+    """
+    Set a key in the .env file.
+    """
+    if not HAS_DOTENV:
+        console.print("[yellow]Warning: python-dotenv not installed. Cannot save to .env[/yellow]")
+        return
+
+    env_path = Path(os.getcwd()) / ".env"
+    
+    try:
+        from dotenv import set_key
+
+        # Create file if it doesn't exist
+        if not env_path.exists():
+            env_path.touch()
+        set_key(env_path, key, value)
+    except Exception as e:
+        console.print(f"[red]Error saving to .env: {e}[/red]")
 
 
 def resolve_network_value(
@@ -144,12 +168,11 @@ def resolve_network_value(
     Resolve a network-specific config value with priority:
     1. .env in current directory (e.g., SEPOLIA_RPC_URL)
     2. Global user config (~/.din/config.json → config["networks"][network][key])
-    3. Built-in defaults (NETWORKS[network][key])
-    4. Fallback default (if provided)
+    3. Fallback default (if provided)
 
     Example:
         resolve_network_value("sepolia", "rpc_url")
-        → checks SEPOLIA_RPC_URL in .env, then config, then NETWORKS
+        → checks SEPOLIA_RPC_URL in .env, then config
     """
     if not network or not key:
         raise ValueError("network and key must be non-empty strings")
@@ -171,11 +194,7 @@ def resolve_network_value(
     if network in user_networks and key in user_networks[network]:
         return user_networks[network][key]
     
-    # ✅ 3. Check built-in defaults
-    if network in NETWORKS and key in NETWORKS[network]:
-        return NETWORKS[network][key]
-    
-    # ✅ 4. Fallback to provided default or raise error
+    # ✅ 3. Fallback to provided default or raise error
     if default is not None:
         return default
 
@@ -183,7 +202,6 @@ def resolve_network_value(
         f"Could not resolve '{key}' for network '{network}'.\n"
         f"→ Checked .env for '{env_var_name}'\n"
         f"→ Checked config.json → networks.{network}.{key}\n"
-        f"→ Checked built-in NETWORKS['{network}']['{key}']\n"
         f"→ No fallback provided."
     )
     
@@ -202,7 +220,7 @@ def get_w3(effective_network):
 def get_demo_private_key(account_index: int) -> str:
     """Load private key for Hardhat dev account by index."""
     # Path to accounts.json (relative to dincli package)
-    accounts_file = Path(__file__).parent / "config" / "accounts.json"
+    accounts_file = files("dincli").joinpath("config", "accounts.json")
     
     if not accounts_file.exists():
         raise FileNotFoundError(
@@ -254,8 +272,7 @@ def load_account() -> Account:
 
 
     if not WALLET_FILE.exists():
-        print("[red]No wallet found. Run `dincli system connect-wallet` first.[/red]")
-        raise typer.Exit(1)
+        raise FileNotFoundError(f"No wallet found at {WALLET_FILE}. Run `dincli system connect-wallet` first.")
 
     with open(WALLET_FILE) as f:
         data = json.load(f)
@@ -285,16 +302,19 @@ def load_account() -> Account:
                  pass
         raise ValueError("Invalid password or corrupted keystore.")
 
-def _get_password() -> str:
+def _get_password(prompt: bool = True) -> str:
     """
     Get password from:
     1. DIN_WALLET_PASSWORD env var
     2. Session cache file (~/.dincli/.session)
     3. Interactive prompt
     """
+
+
     # 1. Environment variable
     env_pass = get_env_key("DIN_WALLET_PASSWORD")
     if env_pass:
+        console.print(f"[green]Got Wallet Password DIN_WALLET_PASSWORD from {os.getcwd()}/.env[/green]")
         return env_pass
 
     # 2. Session cache
@@ -308,12 +328,16 @@ def _get_password() -> str:
             # Check timeout (default 15 mins)
             elif (time.time() - st.st_mtime) < (15 * 60):
                 with open(session_file, "r") as f:
+                    console.print(f"[green]Got Wallet Password from session cache {session_file}[/green]")
                     return f.read().strip()
         except Exception:
             pass # ignore errors, fall back to prompt
 
     # 3. Prompt
-    return getpass("Enter wallet password: ")
+    if prompt:
+        return getpass("Enter wallet password: ")
+    else:
+        return ""
 
 def _cache_password_if_needed(password: str):
     """Save password to session cache if not from env var."""
@@ -344,12 +368,12 @@ def _clear_session_cache() -> bool:
     
     
 def load_din_info() -> dict:
-    path = Path(__file__).parent / "config" / "din_info.json"
+    path = files("dincli").joinpath("config", "din_info.json")
     with open(path) as f:
         return json.load(f)
 
 def save_din_info(data: dict):
-    path = Path(__file__).parent / "config" / "din_info.json"
+    path = files("dincli").joinpath("config", "din_info.json")
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -360,10 +384,10 @@ stateDescription = [
         "Awaiting Genesis Model",
         "Genesis Model Created",
         "GI started",
-        "DIN validator registration started",
-        "DIN validator registration closed",
-        "DIN auditor registration started",
-        "DIN auditor registration closed",
+        "DIN aggregators registration started",
+        "DIN aggregators registration closed",
+        "DIN auditors registration started",
+        "DIN auditors registration closed",
         "LM submissions started",
         "LM submissions closed",
         "Auditors batches created",
@@ -443,7 +467,7 @@ def save_tasks(data: dict):
 def load_tasks() -> dict:
     path = CONFIG_DIR / "tasks.json"
     if not path.exists():
-        logger.debug(f"Tasks file not found: {path}")
+        logger.warning(f"Tasks file not found: {path}")
         return {}
     try:
         with open(path) as f:
@@ -453,52 +477,7 @@ def load_tasks() -> dict:
         return {}
 
 
-def load_custom_fn(module_path: Path, fn_name: str, ipfs_hash: str = None) -> Callable:
-    """
-    Dynamically load a function from a project-local service file.
-
-    Example:
-        load_custom_fn(
-            Path.cwd() / "services" / "modelowner.py",
-            "getGenesisModelIpfs",
-            "Qma2FMYTrf9Ec4rfMdWLnVWFUniGfi2iVyh3VVYHYKym9w"
-        )
-    """
-    if not module_path.exists():
-        if ipfs_hash:
-            from dincli.services.ipfs import retrieve_from_ipfs
-            retrieve_from_ipfs(ipfs_hash, module_path)
-        else:
-            raise FileNotFoundError(
-                f"Custom service file not found: {module_path}"
-            )
-
-    spec = importlib.util.spec_from_file_location(
-        module_path.stem,
-        module_path
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load module from {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    if not hasattr(module, fn_name):
-        raise AttributeError(
-            f"{fn_name} not found in custom service {module_path}"
-        )
-
-    fn = getattr(module, fn_name)
-
-    if not callable(fn):
-        raise TypeError(
-            f"{fn_name} in {module_path} is not callable"
-        )
-
-    return fn 
-
-
-def cache_manifest(model_id: int, network: str, info: bool = False, update: bool = False):
+def cache_manifest(model_id: int, network: str, info: bool = False, update: bool = False, genesis_model_info: bool = False):
     if model_id < 0:
         console.print("[red]Error:[/red] Model ID must be non-negative")
         raise typer.Exit(1)
@@ -509,7 +488,7 @@ def cache_manifest(model_id: int, network: str, info: bool = False, update: bool
 
         din_info = load_din_info()
         din_registry_address = din_info[network]["registry"]
-        din_registry_abi = Path(__file__).parent / "abis" / "DINModelRegistry.json"
+        din_registry_abi = files("dincli").joinpath("abis", "DINModelRegistry.json")
 
         din_registry_contract = get_contract_instance(din_registry_abi, network, din_registry_address)
      
@@ -525,6 +504,12 @@ def cache_manifest(model_id: int, network: str, info: bool = False, update: bool
             console.print("Created At Human Readable :", datetime.fromtimestamp(model_info[3]).strftime("%Y-%m-%d %H:%M:%S %p"))  # am/pm
             console.print("Task Coordinator Address :", model_info[4])
             console.print("Task Auditor Address :", model_info[5])
+            if genesis_model_info:
+                din_task_coordinator_abi = files("dincli").joinpath("abis", "DINTaskCoordinator.json")
+                taskCoordinator_contract = get_contract_instance(din_task_coordinator_abi, network, model_info[4])
+                genesis_model_ipfs_hash = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+                console.print("Genesis Model IPFS Hash :", genesis_model_ipfs_hash)
+
         if  update or not (CACHE_DIR / network /  f"model_{model_id}" / "manifest.json").exists():
 
             from dincli.services.ipfs import retrieve_from_ipfs
@@ -566,3 +551,11 @@ def get_manifest_key( network: str, key: str, model_id: int = None, task_coordin
 def is_ethereum_address(s: str) -> bool:
     """Check if string looks like a valid Ethereum address (case-insensitive, 42 chars, starts with 0x)."""
     return bool(re.fullmatch(r'0x[a-fA-F0-9]{40}', s))
+
+
+
+
+
+
+    
+    

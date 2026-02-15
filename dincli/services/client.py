@@ -1,13 +1,13 @@
+
 import torch
-from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
-from torch.utils.data import DataLoader
 import torch.nn as nn
-from rich.console import Console
 import torch.optim as optim
-import os
-import torch
-import torch.nn.functional as F
-from dincli.utils import CONFIG_DIR, get_w3, get_config
+from rich.console import Console
+from torch.utils.data import DataLoader
+
+from dincli.cli.utils import CONFIG_DIR, get_config, get_w3
+from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
+
 console = Console()
 
 

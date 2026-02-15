@@ -1,23 +1,26 @@
-import typer
 import json
-import shutil
 import os
+import shutil
 from datetime import datetime, timedelta
-from rich.prompt import Confirm
-from rich import print
-from rich.console import Console
-from typing import Optional
-from eth_account import Account
 from decimal import Decimal
 from getpass import getpass
-from dincli.utils import save_config, load_config, CONFIG_DIR, CACHE_DIR, CONFIG_FILE, load_usdt_config, resolve_network, get_demo_private_key, get_w3, load_account, get_env_key
+from importlib.resources import files
 from pathlib import Path
-from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
+from typing import Optional
+
 import numpy as np
 import torch
+import typer
+from eth_account import Account
+from rich.prompt import Confirm
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
-console = Console()
+
+from dincli.cli.contract_utils import erc20_abi, router_abi
+from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, CONFIG_FILE,
+                              _get_password, get_config, get_demo_private_key,
+                              get_env_key, load_config, load_din_info,
+                              load_usdt_config, save_config)
+
 dataset_app = typer.Typer(help="Manage federated datasets.")
 
 app = typer.Typer(help="System utilities for DIN CLI.")
@@ -38,6 +41,7 @@ def initialize_directories():
 
 @app.callback(invoke_without_command=True)
 def system(
+    ctx: typer.Context,
     usdt_info: bool = typer.Option(
         False,
         "--usdt-info",
@@ -58,55 +62,46 @@ def system(
         "--address",
         help="Ethereum address to query. If not provided, uses your connected wallet."
     ),
-    network: str = typer.Option(
-        None,
-        "--network",
-        help="Network override: local | hardhat | sepolia | mainnet"
-    ),
-    
 ):
-    
-    
-    effective_network = resolve_network(network)
-    
+    # If the subcommand is one that doesn't need an account, we skip the default setup logic
+    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "buy-usdt", "dataset"]:
+        return
+
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
     if usdt_info:
-        cfg = load_config()
-        
+        usdt_cfg = load_usdt_config()
 
-        all_cfg = load_usdt_config()
-
-        if effective_network not in all_cfg:
-            print(f"[red]Network '{effective_network}' not found in config![/red]")
+        if effective_network not in usdt_cfg:
+            console.print(f"[red]Network '{effective_network}' not found in usdt config![/red]")
             raise typer.Exit()
 
-        data = all_cfg[effective_network]
+        data = usdt_cfg[effective_network]
 
-        print(f"[bold cyan]Active Network:[/bold cyan] {effective_network}")
-        print(f"[green]USDT Address:[/green] {data['usdt']}")
-        print(f"[yellow]WETH Address:[/yellow] {data['weth']}")
-        print(f"[magenta]Uniswap Router:[/magenta] {data['uniswap_router']}")
+        console.print("\n[bold green]Displaying USDT, WETH, and Uniswap router addresses for the active network.[/bold green]")
+        console.print(f"[green]USDT Address:[/green] {data['usdt']}")
+        console.print(f"[blue]WETH Address:[/blue] {data['weth']}")
+        console.print(f"[cyan]Uniswap Router:[/cyan] {data['uniswap_router']}")
 
-        raise typer.Exit()
+
     
     # Early exit if neither balance flag is set
     if not (eth_balance or usdt_balance):
         return  # let subcommands run, or do nothing
     
-    w3 = get_w3(effective_network)
-    
     if address:
         target_address = w3.to_checksum_address(address)
     else:
-        target_address = load_account().address
-        
+        target_address = account.address
+    console.print(f"\n[green]Account Address:[/green] {target_address}")
     
      # Fetch ETH balance if requested
     if eth_balance:
         balance_wei = w3.eth.get_balance(target_address)
         balance_eth = w3.from_wei(balance_wei, "ether")
-        print(f"[cyan]Network:[/cyan] {effective_network}")
-        print(f"[yellow]Address:[/yellow] {target_address}")
-        print(f"[green]ETH Balance:[/green] {balance_eth} ETH")    
+        
+        console.print(f"[green]ETH Balance:[/green] {balance_eth} ETH")    
         
     # Fetch USDT balance if requested
     if usdt_balance:
@@ -116,30 +111,21 @@ def system(
             raise typer.Exit()
         
         usdt_address = w3.to_checksum_address(usdt_cfg[effective_network]["usdt"])    
-        usdt_abi = [{
-            "constant": True,
-            "inputs": [{"name": "_owner", "type": "address"}],
-            "name": "balanceOf",
-            "outputs": [{"name": "balance", "type": "uint256"}],
-            "type": "function",
-        }]
-        usdt_contract = w3.eth.contract(address=usdt_address, abi=usdt_abi)
+        usdt_contract = w3.eth.contract(address=usdt_address, abi=erc20_abi)
         usdt_balance_raw = usdt_contract.functions.balanceOf(target_address).call()
         usdt_balance_fmt = Decimal(usdt_balance_raw) / Decimal(10**6)
 
-        print(f"[cyan]Network:[/cyan] {effective_network}")
-        print(f"[yellow]Address:[/yellow] {target_address}")
-        print(f"[blue]USDT Balance:[/blue] {usdt_balance_fmt} USDT")
+        console.print(f"[green]USDT Balance:[/green] {usdt_balance_fmt} USDT")
 
     raise typer.Exit()
 
 
 @app.command()
-def where():
+def where(ctx: typer.Context):
     """Print where dincli is installed."""
-    typer.echo(f"dincli is installed at: {Path(__file__).parent.resolve()}")
-        
-
+    typer.secho("dincli is installed at: ", fg="green", nl=False)
+    typer.secho(f"{files('dincli')}", fg="magenta")
+    
 @app.command()
 def welcome():
     """Print welcome message."""
@@ -156,8 +142,8 @@ def initialize():
 
 @app.command("buy-usdt")
 def buy_usdt(
+    ctx: typer.Context,
     amount: float = typer.Argument(..., help="Amount of USDT to buy"),
-    network: str = typer.Option(None, "--network", help="Target network (local|sepolia|mainnet)"),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
 ):
     """
@@ -166,11 +152,9 @@ def buy_usdt(
     Prompts user for confirmation within 1 minute after showing live exchange rate.
     Aborts if not confirmed. Actual received USDT may vary due to slippage and volatility.
     """
-    effective_network = resolve_network(network)
-    print(f"[bold green]Buying {amount} USDT on network:[/bold green] {effective_network}")
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    console.print(f"[bold green]Buying {amount} USDT:[/bold green]")
     
-    w3 = get_w3(effective_network)
-    account = load_account()
     
      # Load USDT config
     usdt_config = load_usdt_config()
@@ -182,50 +166,6 @@ def buy_usdt(
     router_address = usdt_config[effective_network]["uniswap_router"]
     weth_address = usdt_config[effective_network]["weth"]
     
-    # Minimal ABIs
-    erc20_abi = [
-        {
-            "constant": True,
-            "inputs": [],
-            "name": "decimals",
-            "outputs": [{"name": "", "type": "uint256"}],
-            "type": "function"
-        },
-        {
-            "constant": True,
-            "inputs": [{"name": "_owner", "type": "address"}],
-            "name": "balanceOf",
-            "outputs": [{"name": "balance", "type": "uint256"}],
-            "type": "function"
-        }
-    ]
-    router_abi = [
-        # For estimating input ETH needed
-        {
-            "inputs": [
-                {"internalType": "uint256", "name": "amountOut", "type": "uint256"},
-                {"internalType": "address[]", "name": "path", "type": "address[]"}
-            ],
-            "name": "getAmountsIn",
-            "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        # For executing the swap (ETH -> exact USDT)
-        {
-            "inputs": [
-                {"internalType": "uint256", "name": "amountOut", "type": "uint256"},
-                {"internalType": "address[]", "name": "path", "type": "address[]"},
-                {"internalType": "address", "name": "to", "type": "address"},
-                {"internalType": "uint256", "name": "deadline", "type": "uint256"}
-            ],
-            "name": "swapETHForExactTokens",
-            "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
-            "stateMutability": "payable",
-            "type": "function"
-        }
-    ]
-
     usdt_contract = w3.eth.contract(address=usdt_address, abi=erc20_abi)
     router_contract = w3.eth.contract(address=router_address, abi=router_abi)
     
@@ -243,39 +183,39 @@ def buy_usdt(
         eth_required_wei = amounts_in[0]
         eth_required = w3.from_wei(eth_required_wei, 'ether')
     except Exception as e:
-        print(f"[red]Failed to fetch swap rate: {e}[/red]")
+        console.print(f"[red]Failed to fetch swap rate: {e}[/red]")
         raise typer.Exit(1)
 
-    print(f"\n[bold cyan]Estimated ETH needed:[/bold cyan] {eth_required:.6f} ETH")
-    print(f"[bold yellow]⚠️  Disclaimer:[/bold yellow] Actual USDT received may differ due to price volatility and slippage.")
-    print(f"[bold yellow]You have 60 seconds to confirm.[/bold yellow]\n")
+    console.print(f"\n[bold cyan]Estimated ETH needed:[/bold cyan] {eth_required:.6f} ETH")
+    console.print(f"[bold yellow]⚠️  Disclaimer:[/bold yellow] Actual USDT received may differ due to price volatility and slippage.")
+    console.print(f"[bold yellow]You have 60 seconds to confirm.[/bold yellow]\n")
 
     # Wait for confirmation with timeout
     deadline = datetime.now() + timedelta(seconds=60)
     confirmed = None
     if yes:
         confirmed = True
-        print("[green]Skipping confirmation prompt.[/green]")
-        print(f"Swapping...{eth_required:.6f} ETH for {amount} USDT")
+        console.print("[green]Skipping confirmation prompt.[/green]")
+        console.print(f"Swapping...{eth_required:.6f} ETH for {amount} USDT")
     else:
         while datetime.now() < deadline:
             try:
                 confirmed = Confirm.ask(f"Confirm swap of ~{eth_required:.6f} ETH for {amount} USDT?")
                 break
             except KeyboardInterrupt:
-                print("\n[red]Cancelled by user.[/red]")
+                console.print("\n[red]Cancelled by user.[/red]")
                 raise typer.Exit(1)
             except Exception:
                 time.sleep(0.5)  # brief pause before retrying input
 
     if confirmed is not True:
-        print("[red]Confirmation timeout or declined. Aborting.[/red]")
+        console.print("[red]Confirmation timeout or declined. Aborting.[/red]")
         raise typer.Exit(1)
 
     # Final balance & gas check
     eth_balance = w3.eth.get_balance(account.address)
     if eth_balance < eth_required_wei:
-        print(f"[red]Insufficient ETH. Have: {w3.from_wei(eth_balance, 'ether'):.6f}, Need: {eth_required:.6f}[/red]")
+        console.print(f"[red]Insufficient ETH. Have: {w3.from_wei(eth_balance, 'ether'):.6f}, Need: {eth_required:.6f}[/red]")
         raise typer.Exit(1)
 
     # Add 10% slippage on ETH input (i.e., allow up to 10% more ETH to ensure USDT amount is met)
@@ -301,50 +241,47 @@ def buy_usdt(
 
         signed_tx = account.sign_transaction(swap_tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        print(f"[cyan]Transaction sent: {tx_hash.hex()}[/cyan]")
+        console.print(f"[cyan]Transaction sent: {tx_hash.hex()}[/cyan]")
 
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         if receipt.status != 1:
-            print("[red]Transaction failed on-chain.[/red]")
+            console.print("[red]Transaction failed on-chain.[/red]")
             raise typer.Exit(1)
 
         final_usdt_balance = usdt_contract.functions.balanceOf(account.address).call()
         final_formatted = final_usdt_balance / (10 ** decimals)
-        print(f"[bold green]✅ USDT purchase successful![/bold green]")
-        print(f"[cyan]Your USDT balance:[/cyan] {final_formatted:.6f} USDT")
+        console.print(f"[bold green]✅ USDT purchase successful![/bold green]")
+        console.print(f"[cyan]Your USDT balance:[/cyan] {final_formatted:.6f} USDT")
 
     except Exception as e:
-        print(f"[red]Transaction error: {e}[/red]")
+        console.print(f"[red]Transaction error: {e}[/red]")
         raise typer.Exit(1)
     
-    
-
-
 @app.command("configure-network")
-def configure_network(network: str = typer.Option(..., help="Network")):
+def configure_network(ctx: typer.Context):
     """
     Configure the default blockchain network for DIN CLI.
     """
     
-    effective_network = resolve_network(network)
+    effective_network, console = ctx.obj.network, ctx.obj.console
 
     config = load_config()
     config["network"] = effective_network
     save_config(config)
 
-    print(f"[green]Network configured successfully: {network}[/green]")
+    console.print(f"[green]Network configured successfully: {effective_network}[/green]")
 
 @app.command("configure-demo")
-def configure_demo(
-    mode: str = typer.Option("no", "--mode", help="Set demo mode: yes or no")
+def configure_demo(ctx: typer.Context,
+    mode: str = typer.Option("yes", "--mode", help="Set demo mode: yes or no")
 ):
     """
     Enable/disable demo mode (plaintext wallet storage, no password).
     Useful for Hardhat/local testing.
     """
-    
+    console = ctx.obj.console
     if mode.lower() not in ("yes", "no"):
-        print("[red]Mode must be 'yes' or 'no'[/red]")
+        console.print("[red]Mode must be 'yes' or 'no'[/red]")
         raise typer.Exit(1)
     
     enable = mode.lower() == "yes"
@@ -352,30 +289,30 @@ def configure_demo(
     config["demo_mode"] = enable
     save_config(config)
     status = "enabled" if enable else "disabled"
-    print(f"[green]Demo mode {status}.[/green]")
+    console.print(f"[green]Demo mode {status}.[/green]")
     if enable:
-        print("[yellow]⚠️  Wallets will be stored in plaintext. Do NOT use with real keys![/yellow]")
+        console.print("[red]⚠️  Wallets will be stored in plaintext. Do NOT use with real keys![/red]")
 
 @app.command("configure-logging")
-def configure_logging(  
+def configure_logging(ctx: typer.Context,  
     level: str = typer.Option("info", "--level", help="Set log level: debug | info | warning | error | critical")
 ):
     """
     Configure the log level for DIN CLI.
     """
-    
+    console = ctx.obj.console
     if level.lower() not in ("debug", "info", "warning", "error", "critical"):
-        print("[red]Level must be 'debug', 'info', 'warning', 'error', or 'critical'[/red]")
+        console.print("[red]Level must be 'debug', 'info', 'warning', 'error', or 'critical'[/red]")
         raise typer.Exit(1)
     
     config = load_config()
     config["log_level"] = level.lower()
     save_config(config)
-    print(f"[green]Log level set to {level}.[/green]")
+    console.print(f"[green]Log level set to {level}.[/green]")
     
     
 @app.command()
-def connect_wallet(
+def connect_wallet(ctx: typer.Context,
     privatekey: Optional[str] = typer.Argument(None, help="Your Ethereum private key (0x...)"),
     key_file: Optional[Path] = typer.Option(None, "--key-file", "-f", help="Path to file containing private key"),
     account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),
@@ -407,28 +344,33 @@ def connect_wallet(
         (account, "account index")
     ]
     provided_methods = [name for val, name in auth_methods if val is not None]
+    console = ctx.obj.console
     
     if len(provided_methods) > 1:
-        print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
+        console.print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
         raise typer.Exit(1)
+
+    console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
     
-    # Resolve private key
-    demo_mode = False
+    demo_mode = get_config("demo_mode")
     
-    if account is not None:
+    if account is not None and demo_mode:
         # Load from demo accounts
         try:
             privatekey = get_demo_private_key(account)
-            demo_mode = True  # auto-enable demo mode
         except (FileNotFoundError, IndexError) as e:
-            print(f"[red]❌ {e}[/red]")
+            console.print(f"[red]❌ {e}[/red]")
+            raise typer.Exit(1)
+    elif account is not None and not demo_mode:
+        privatekey = get_env_key("ETH_PRIVATE_KEY_"+str(account))
+        if privatekey is None:
             raise typer.Exit(1)
             
     elif key_file is not None:
         # Load from file
         key_file = key_file.expanduser() 
         if not key_file.exists():
-            print(f"[red]❌ Key file not found: {key_file}[/red]")
+            console.print(f"[red]❌ Key file not found: {key_file}[/red]")
             raise typer.Exit(1)
         try:
             with open(key_file, 'r') as f:
@@ -436,25 +378,25 @@ def connect_wallet(
             config = load_config()
             demo_mode = config.get("demo_mode", False)
         except Exception as e:
-            print(f"[red]❌ Failed to read key file: {e}[/red]")
+            console.print(f"[red]❌ Failed to read key file: {e}[/red]")
             raise typer.Exit(1)
             
     elif privatekey is not None:
         # Explicit argument
-        print("[yellow]⚠️  Warning: Providing private key as argument is insecure (saved in shell history). Use interactive mode or --key-file instead.[/yellow]")
+        console.print("[yellow]⚠️  Warning: Providing private key as argument is insecure (saved in shell history). Use interactive mode or --key-file instead.[/yellow]")
         config = load_config()
         demo_mode = config.get("demo_mode", False)
         
     else:
         # Interactive prompt
-        print("[cyan]Enter your Ethereum private key (input will be hidden):[/cyan]")
+        console.print("[cyan]Enter your Ethereum private key (input will be hidden):[/cyan]")
         privatekey = getpass("Private Key: ").strip()
         config = load_config()
         demo_mode = config.get("demo_mode", False)
 
     # Validate format (for all methods)
     if not privatekey.startswith("0x") or len(privatekey) != 66:
-        print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
+        console.print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
         raise typer.Exit(1)
     
     # Ensure config dir exists
@@ -473,21 +415,22 @@ def connect_wallet(
         }
         with open(WALLET_FILE, "w") as f:
             json.dump(wallet_data, f, indent=4)
-        print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
-        print(f"[yellow]Address:[/yellow] {acct.address}")
-        print(f"[cyan]File:[/cyan] {WALLET_FILE}")
+        console.print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
+        console.print(f"[yellow]Address:[/yellow] {acct.address}")
+        console.print(f"[cyan]File:[/cyan] {WALLET_FILE}")
         
     else:
 
-        # Ask for encryption password
-        password = getpass("Create wallet password: ")
-        confirm = getpass("Confirm password: ")
+        password = _get_password(False)
 
-        if password != confirm:
-            print("[red]Passwords do not match![/red]")
-            raise typer.Exit()
+        if password == "":
+            # Ask for encryption password
+            password = getpass("Create wallet password: ")
+            confirm = getpass("Confirm password: ")
 
-    
+            if password != confirm:
+                console.print("[red]Passwords do not match![/red]")
+                raise typer.Exit()
 
         # Use eth-account to create an encrypted keystore
         keystore = Account.encrypt(privatekey, password)
@@ -496,18 +439,19 @@ def connect_wallet(
         with open(WALLET_FILE, "w") as f:
             json.dump(keystore, f, indent=4)
 
-        print(f"[green]Wallet connected successfully![/green]")
-        print(f"[yellow]Address:[/yellow] {acct.address}")
-        print(f"[cyan]Encrypted keystore saved at:[/cyan] {WALLET_FILE}")
+        console.print(f"[green]Wallet connected successfully![/green]")
+        console.print(f"[green] Active Account Address:[/green] {acct.address}")
+        console.print(f"[green]Encrypted keystore saved at:[/green] {WALLET_FILE}")
     
 @app.command()
-def read_wallet():
+def read_wallet(ctx: typer.Context):
     """
     Read and display wallet info.
     In demo mode, shows private key. Otherwise, shows only address (after decrypting).
     """
+    console = ctx.obj.console
     if not WALLET_FILE.exists():
-        print("[red]No wallet found. Run `dincli system connect-wallet` first.[/red]")
+        console.print("[red]No wallet found. Run `dincli system connect-wallet` first.[/red]")
         raise typer.Exit(1)
 
     with open(WALLET_FILE) as f:
@@ -515,81 +459,76 @@ def read_wallet():
 
     # Check if it's demo mode (plaintext)
     if isinstance(data, dict) and data.get("demo_mode") is True:
-        print("[bold green]🔐 Wallet (Demo Mode - Plaintext)[/bold green]")
-        print(f"[yellow]Address:[/yellow] {data['address']}")
-        print(f"[red]Private Key:[/red] {data['private_key']}")
-        print("[cyan]⚠️  This key is stored in plaintext — for local testing only![/cyan]")
+        console.print("[bold green]🔐 Wallet (Demo Mode - Plaintext)[/bold green]")
+        console.print(f"[yellow]Address:[/yellow] {data['address']}")
+        console.print(f"[red]Private Key:[/red] {data['private_key']}")
+        console.print("[cyan]⚠️  This key is stored in plaintext — for local testing only![/cyan]")
         return
     try:
-
-        acct = load_account()
-        print(f"[yellow]Address:[/yellow] {acct.address}")
-        print("[green]✅ Wallet decrypted successfully.[/green]")
+        console.print(f"[yellow]Address:[/yellow] {ctx.obj.account.address}")
+        console.print("[green]✅ Wallet decrypted successfully.[/green]")
     except Exception as e:
-        print(f"[red]❌ {e}[/red]")
+        console.print(f"[red]❌ {e}[/red]")
         raise typer.Exit(1)
 
 
 @app.command("show-index")
-def show_index(
+def show_index(ctx: typer.Context,
     address: str = typer.Option(..., "--address", "-a", help="Address of the contract"),
 ):
     """
     Show the index of the the account address in demo mode.
     """
-    from dincli.utils import get_demo_account_index
+    from dincli.cli.utils import get_demo_account_index
+    console = ctx.obj.console
     try:
         index = get_demo_account_index(address)
-        print(f"[green]Account Index:[/green] {index}")
+        console.print(f"[green]Account Index:[/green] {index}")
     except ValueError as e:
-        print(f"[red]{e}[/red]")
+        console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
     except FileNotFoundError as e:
-        print(f"[red]{e}[/red]")
+        console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
 
-@app.command()
-def din_info(
+@app.command("din-info")
+def din_info(ctx: typer.Context,
     coordinator: bool = typer.Option(False, "--coordinator", help="Show coordinator address"),
     token: bool = typer.Option(False, "--token", help="Show DIN token address"),
     stake: bool = typer.Option(False, "--stake", help="Show staking contract"),
     representative: bool = typer.Option(False, "--representative", help="Show representative logic"),
-    network: str = typer.Option(None, "--network", help="Override active network (local|sepolia|mainnet)"),
+    registry: bool = typer.Option(False, "--registry", help="Show registry contract"),
+    
 ):
     
     # Resolve effective network
-    effective_network = resolve_network(network)
+    effective_network, _, _, console = ctx.obj.get_en_w3_account_console()
 
-    # Validate
-    allowed_networks = {"local", "hardhat","sepolia", "mainnet"}
-    if effective_network not in allowed_networks:
-        print(f"[red]Invalid network: {effective_network}. Must be one of: {sorted(allowed_networks)}[/red]")
-        raise typer.Exit(1)
-
-    # Load address config (you can move this to utils too)
-    
-
-    data = din_addresses.get(effective_network, {})
+    data = load_din_info()[effective_network]
 
     # Print requested info
     if coordinator:
-        print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
+        console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
     if token:
-        print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
+        console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
     if stake:
-        print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
+        console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
     if representative:
-        print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
+        console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
+    if registry:
+        console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
 
-    if not any([coordinator, token, stake, representative]):
-        print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
-        print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
-        print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
-        print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
+    if not any([coordinator, token, stake, representative, registry]):
+        console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
+        console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
+        console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
+        console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
+        console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
 
 
 @app.command("reset-all")
 def reset_all(
+    ctx: typer.Context,
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
     cache: bool = typer.Option(False, "--cache", "-c", help="Reset cache directory"),
     config: bool = typer.Option(False, "--config", "-co", help="Reset config directory"),
@@ -643,7 +582,7 @@ def reset_all(
 
 @app.command("todo")
 def todo(
-    network: str = typer.Option("local", "--network", "-n", help="Network to use"),
+    ctx: typer.Context,
     client: bool = typer.Option(False, "--client", "-cl", help="todo as client"),
     aggregator: bool = typer.Option(False, "--aggregator", "-ag", help="todo as aggregator"),
     auditor: bool = typer.Option(False, "--auditor", "-au", help="todo as auditor"),
@@ -651,6 +590,8 @@ def todo(
     model_id: str = typer.Option(None, "--model-id", "-m", help="Model ID"),
 ):
     typer.secho("TODO list:", fg=typer.colors.CYAN)
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
     if not CONFIG_DIR.exists():
         console.print(f"[red]❌ Config directory does not exist: {CONFIG_DIR}[/red], run 'dincli system init' to create it.")
@@ -684,10 +625,10 @@ def todo(
         console.print(f"[red]❌ Wallet file does not exist: {WALLET_FILE}[/red], run 'dincli system connect-wallet' to create it.")
     else:
         console.print(f"[green]✅ Wallet file exists: {WALLET_FILE}[/green]")
+
     env_key = "DIN_WALLET_PASSWORD"
     cwd = os.getcwd()
-
-    if get_env_key(env_key) is None:
+    if get_env_key(env_key, None, False) is None:
         console.print(
             f"[red]❌ Wallet password not found.[/red]\n"
             f"Please define [bold]{env_key}[/bold] in a [.env] file in your current directory:\n"
@@ -699,12 +640,27 @@ def todo(
     else:
         console.print(f"[green]✅ Wallet password found in environment variable: {env_key} in {cwd}/.env file[/green]")
 
+    env_key = str(effective_network).upper() + "_RPC_URL"
+    if get_env_key(env_key, None, False) is None:
+        console.print(
+            f"[red]❌ RPC URL not found for network '[bold]{effective_network}[/bold]'.[/red]\n"
+            f"Please define [bold]{env_key}[/bold] in your [.env] file:\n"
+            f"  → File path: [cyan]{cwd}/.env[/cyan]\n"
+            f"  → Example value:\n"
+            f"      {env_key}=https://rpc.sepolia.org\n"
+            f"\n"
+            f"[dim]💡 You can get free RPC URLs from services like Infura, Alchemy, or QuickNode.[/dim]\n"
+            f"[dim]🔒 Remember: Never commit [.env] to version control.[/dim]"
+        )
+    else:
+        console.print(f"[green]✅ RPC URL found in environment variable: {env_key} in {cwd}/.env file[/green]")
+
     if CONFIG_FILE.exists():
         config = load_config()
         network = config.get("network")
         if network:
             rpc_env_key = f"{network.upper()}_RPC_URL"
-            if get_env_key(rpc_env_key) is None:
+            if get_env_key(rpc_env_key, None, False) is None:
                 console.print(
                 f"[red]❌ RPC URL not found for network '[bold]{network}[/bold]'.[/red]\n"
                 f"Please define [bold]{rpc_env_key}[/bold] in your [.env] file:\n"
@@ -718,7 +674,7 @@ def todo(
         else:
             console.print(f"[green]✅ RPC URL found in environment variable: {rpc_env_key} in {cwd}/.env file[/green]")
 
-    if get_env_key("IPFS_API_URL_ADD") is None:
+    if get_env_key("IPFS_API_URL_ADD", None, False) is None:
         console.print(
             f"[red]❌ IPFS API ADD URL not found.[/red]\n"
             f"Please define [bold]IPFS_API_URL_ADD[/bold] in your [.env] file:\n"
@@ -729,8 +685,8 @@ def todo(
             f"[dim]🔒 Important: Never commit [.env] to version control.[/dim]"
         )
     else:
-        console.print(f"[green]✅ IPFS API ADD URL found in environment variable: IPFS_API_URL_ADD in {cwd}/.env file with value: {get_env_key('IPFS_API_URL_ADD')}[/green]")
-    if get_env_key("IPFS_API_URL_RETRIEVE") is None:
+        console.print(f"[green]✅ IPFS API ADD URL found in environment variable: IPFS_API_URL_ADD in {cwd}/.env file with value: {get_env_key('IPFS_API_URL_ADD', None, False)}[/green]")
+    if get_env_key("IPFS_API_URL_RETRIEVE", None, False) is None:
         console.print(
             f"[red]❌ IPFS API RETRIEVE URL not found.[/red]\n"
             f"Please define [bold]IPFS_API_URL_RETRIEVE[/bold] in your [.env] file:\n"
@@ -741,10 +697,8 @@ def todo(
             f"[dim] Important: Never commit [.env] to version control.[/dim]"
         )
     else:
-        console.print(f"[green]✅ IPFS API RETRIEVE URL found in environment variable: IPFS_API_URL_RETRIEVE in {cwd}/.env file with value: {get_env_key('IPFS_API_URL_RETRIEVE')}[/green]")    
+        console.print(f"[green]✅ IPFS API RETRIEVE URL found in environment variable: IPFS_API_URL_RETRIEVE in {cwd}/.env file with value: {get_env_key('IPFS_API_URL_RETRIEVE', None, False)}[/green]")    
     
-    effective_network = resolve_network(network)
-    account = load_account()
     if client:
         if not model_id:
             console.print("[red]❌ Model ID not found in config file or cli argument.[/red]")
@@ -754,23 +708,16 @@ def todo(
             console.print(f"[green]✅ Client dataset found at: {client_path}[/green]")
         else:
             console.print(f"[red]❌ Client dataset not found at: {client_path}[/red]")
-                
-
-
-            
-
-    
-
-
 
 @dataset_app.command("distribute-mnist")
 def distribute_mnist(
+    ctx: typer.Context,
     num_clients: int = typer.Option(None, "--num-clients", "-nc", help="Number of clients"),
     seed: int = typer.Option(42, "--seed", "-s", help="Random seed"),
-    network: str = typer.Option("local", "--network", "-n", help="Network to use"),
-    test: bool = typer.Option(False, "--test", "-t", help="get test dataset"),
+    test_train: bool = typer.Option(False, "--test-train", "-tt", help="get test/train dataset"),
     clients: bool = typer.Option(False, "--clients", "-cl", help="get clients dataset"),
-    task_coordinator_address: str = typer.Option(None, "--task_coordinator", "-tc", help="TaskCoordinator address"),
+    task_coordinator_address: str = typer.Option(None, "--task-coordinator", "-tc", help="TaskCoordinator address"),
+    task: bool = typer.Option(False, "--task", "-t", help="get task dataset"),
     model_id: str = typer.Option(None, "--model-id", "-m", help="Model ID"),
 
 ):
@@ -778,14 +725,33 @@ def distribute_mnist(
     Download MNIST and distribute it across N clients (IID split).
     """
 
-    effective_network = resolve_network(network)
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
-    if not task_coordinator_address:
-        task_coordinator_address = get_env_key(effective_network.upper() + "_DINTaskCoordinator_Contract_Address")
+    if (not task_coordinator_address or not task) and not model_id:
+
         if not task_coordinator_address:
-            console.print(f"[bold red] X {effective_network.upper()}_DINTaskCoordinator_Contract_Address not found in {os.getcwd()}/.env file[/bold red]")
-            raise typer.Exit(1)
+            task_coordinator_address = get_env_key(effective_network.upper() + "_DINTaskCoordinator_Contract_Address")
+            if not task_coordinator_address:
+                console.print("[red]❌ Both Task coordinator address and model ID not found in cli argument. Moreover, Task coordinator address not found in environment variable.[/red]")
+                raise typer.Exit(1)
+
     
+    if model_id:
+        base_dir = Path(CACHE_DIR)/effective_network.lower()/ f"model_{model_id}"
+    elif task_coordinator_address:
+        base_dir = Path(os.getcwd())/"tasks"/effective_network.lower()/task_coordinator_address   
+
+    dataset_dir = base_dir / "dataset"
+    clients_dir = base_dir / "dataset" / "clients"
+
+    # Ensure directories exist
+    if not test_train and not clients:
+        console.print("[red]❌ Both train/test flag and clients flag not found in cli argument.[/red]")
+        raise typer.Exit(1)
+    if test_train:
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+    if clients:
+        clients_dir.mkdir(parents=True, exist_ok=True)
 
     if clients and num_clients <= 0:
         console.print("[red]Number of clients must be >= 1[/red]")
@@ -793,21 +759,8 @@ def distribute_mnist(
     if clients and num_clients > 10:
         console.print("[red]Number of clients must be < 10[/red]")
         raise typer.Exit(1)
-    
-    if model_id:
-        base_dir = Path(CACHE_DIR)/effective_network.lower()/ f"model_{model_id}"
-    else:
-        base_dir = Path(os.getcwd())/"tasks"/effective_network.lower()/task_coordinator_address   
-    dataset_dir = base_dir / "dataset"
-    clients_dir = base_dir / "dataset" / "clients"
 
-    # Ensure directories exist
-    if test:
-        dataset_dir.mkdir(parents=True, exist_ok=True)
-    if clients:
-        clients_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"[cyan]Using dir:[/cyan] {base_dir}")
+    print(f"[cyan]Using base dir:[/cyan] {base_dir}")
 
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -822,10 +775,10 @@ def distribute_mnist(
     (dataset_dir / "train").mkdir(exist_ok=True)
     (dataset_dir / "test").mkdir(exist_ok=True)
 
-    if test:
+    if test_train:
         torch.save(train_dataset, dataset_dir / "train/train_dataset.pt")
         torch.save(test_dataset, dataset_dir / "test/test_dataset.pt")
-        console.print(f"[green]Processed Datasets saved successfully to {dataset_dir}![/green]")
+        console.print(f"[green]Processed Train/Test Datasets saved successfully to {dataset_dir}![/green]")
     if clients:
         # IID SPLIT
         total_samples = len(train_dataset)
@@ -843,7 +796,6 @@ def distribute_mnist(
             acct = Account.from_key(private_key)
             accounts_list.append(acct.address)
 
-
         for i, idxs in enumerate(partitions):
             client_path = clients_dir / accounts_list[i]
             client_path.mkdir(parents=True, exist_ok=True)
@@ -860,6 +812,7 @@ def distribute_mnist(
     
 @app.command()
 def dump_abi(
+    ctx: typer.Context,
     artifact_path: str = typer.Option(..., "--artifact", help="Path to contract artifact JSON (e.g., hardhat/artifacts/.../DINCoordinator.json)"),
     name: str = typer.Option(
         None,
@@ -895,10 +848,12 @@ def dump_abi(
     Example:
       dincli dindao dump-abi --artifact "hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json" --bytecode
     """
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     
     artifact = Path(artifact_path)
     if not artifact.exists():
-        print(f"[red]❌ Artifact not found: {artifact}[/red]")
+        console.print(f"[red]❌ Artifact not found: {artifact}[/red]")
         raise typer.Exit(1)
 
      # Load full artifact
@@ -906,12 +861,12 @@ def dump_abi(
         with open(artifact) as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        print(f"[red]❌ Failed to read artifact: {e}[/red]")
+        console.print(f"[red]❌ Failed to read artifact: {e}[/red]")
         raise typer.Exit(1)
 
     # Validate required fields
     if "abi" not in data:
-        print(f"[red]❌ No 'abi' field in {artifact}[/red]")
+        console.print(f"[red]❌ No 'abi' field in {artifact}[/red]")
         raise typer.Exit(1)
 
     # Build output data
@@ -920,112 +875,26 @@ def dump_abi(
     if include_bytecode and "bytecode" in data:
         output_data["bytecode"] = data["bytecode"]
     elif include_bytecode:
-        print(f"[yellow]⚠️  'bytecode' not found in {artifact}, skipping.[/yellow]")
+        console.print(f"[yellow]⚠️  'bytecode' not found in {artifact}, skipping.[/yellow]")
 
     # Determine name
     output_name = name or artifact.stem
 
     if official and not output_dir:
-        abi_dir = Path(__file__).parent / "abis"
+        abi_dir = files("dincli").joinpath("abis")
     elif output_dir:
         abi_dir = Path(output_dir)
     else:
-        # Default to ./abis in the current working directory (project root)
+        # Default to ./abis in the cwd
         abi_dir = Path.cwd() / "abis"
 
     abi_dir.mkdir(exist_ok=True)
-
     output_path = abi_dir / f"{output_name}.json"
 
     # Save in Hardhat-compatible format
     with open(output_path, "w") as f:
         json.dump(output_data, f, indent=2)
 
-    print(f"[green]✅ Artifact saved to:[/green] {output_path}")
-    print(f"[cyan]→ ABI-only: {not include_bytecode} | Includes bytecode: {include_bytecode}[/cyan]")
-    
-    
-
-@app.command("upload-to-ipfs")
-def upload_file_to_ipfs(
-    file_path: str = typer.Option(..., "--filepath", "-f", help="Path to file to upload to IPFS"),
-    name: str = typer.Option(None, "--name", "-n", help="Name for the file on IPFS"),
-):
-    """
-    Upload a file to IPFS and return the IPFS hash.
-    """
-    if name is None:
-        name = Path(file_path).name
-    
-    try:
-        ipfs_hash = upload_to_ipfs(file_path, name)
-        print(f"[green]✅ File uploaded to IPFS:[/green] {ipfs_hash}")
-    except Exception as e:
-        print(f"[red]❌ Failed to upload file to IPFS: {e}[/red]")
-        raise typer.Exit(1)
-
-@app.command("download-from-ipfs")
-def download_file_from_ipfs(
-    ipfs_hash: str = typer.Option(..., "--hash", "-h", help="IPFS hash of file to download"),
-    file_path: str = typer.Option(..., "--filepath", "-f", help="Path to save downloaded file"),
-):
-    """
-    Download a file from IPFS using its hash.
-    """
-    try:
-        retrieve_from_ipfs(ipfs_hash, file_path)
-        print(f"[green]✅ File downloaded from IPFS:[/green] {file_path}")
-    except Exception as e:
-        print(f"[red]❌ Failed to download file from IPFS: {e}[/red]")
-        raise typer.Exit(1)
-
-
-
-@app.command("add-role")    
-def add_role(
-    role: str = typer.Option(..., "--role", "-r", help="Role to add (e.g., 'auditor, aggregator, client')"),
-    model_id: int = typer.Option(..., "--model-id", "-m", help="Model ID to add role to"),
-):
-    if role not in ["auditor", "aggregator", "client"]:
-        print(f"[red]❌ Invalid role: {role}[/red]")
-        raise typer.Exit(1)
-
-    if model_id < 0:
-        print(f"[red]❌ Invalid model ID: {model_id}[/red]")
-        raise typer.Exit(1)
-
-    config_path = Path(CONFIG_DIR).resolve()
-    if not config_path.exists():
-        os.makedirs(config_path)
-    
-    role_dir_path = config_path / "roles"
-    if not role_dir_path.exists():
-        os.makedirs(role_dir_path)
-        
-    role_path = role_dir_path / f"{role}.json"
-
-    if role_path.exists():
-        with open(role_path, "r") as f:
-            data = json.load(f)
-        
-        if model_id in data["models"]:
-            print(f"[red]❌ Model ID {model_id} already exists for role {role}[/red]")
-            raise typer.Exit(1)
-        
-        data["models"].append(model_id)
-        with open(role_path, "w") as f:
-            json.dump(data, f, indent=2)
-        
-        print(f"[green]✅ Added model ID {model_id} to role {role}[/green]")
-        return
-    
-    with open(role_path, "w") as f:
-        json.dump({"models": [model_id]}, f, indent=2)
-    
-    print(f"[green]✅ Added model ID {model_id} to role {role}[/green]")
-
-    
-
-
-
+    console.print(f"[green]✅ Artifact saved to:[/green] {output_path}")
+    console.print(f"[cyan]→ ABI-only: {not include_bytecode} | Includes bytecode: {include_bytecode}[/cyan]")
     

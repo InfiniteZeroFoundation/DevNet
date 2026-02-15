@@ -1,19 +1,17 @@
+import os
+import sys
+from pathlib import Path
+from typing import Union
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-import os
-from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
-from pathlib import Path
-from platformdirs import user_config_dir
-from dincli.utils import CONFIG_DIR
 import torch.nn.init as init
-from dotenv import dotenv_values
-import json
-import sys
-import os
+from torch.utils.data import DataLoader
+
+from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from model import ModelArchitecture
+
 
 def initialize_weights(m):
     if isinstance(m, nn.Linear):
@@ -23,14 +21,16 @@ def initialize_weights(m):
         if m.bias is not None:
             init.zeros_(m.bias)  
 
-def getGenesisModelIpfs(path):
+def getGenesisModelIpfs(base_path):
+
+    from model import ModelArchitecture
     model = ModelArchitecture()
     
     #initialize model
     model.apply(initialize_weights)
     
     # Save the trained genesis model to disk
-    model_dir = Path(path/"models")
+    model_dir = Path(base_path/"models")
     os.makedirs(model_dir, exist_ok=True)
     model_path = model_dir / "genesis_model.pth"
     # 🔑 Convert Path to string for compatibility with torch.save()
@@ -41,20 +41,23 @@ def getGenesisModelIpfs(path):
     return model_hash
 
 
-def getscoreforGM(gi: int, gmcid: str, path):
+def getscoreforGM(gi: int, gmcid: str, base_path):
     try:
-        os.makedirs(path / "dataset"/"test", exist_ok=True)
-        testdata = torch.load(path / "dataset"/"test"/"test_dataset.pt", weights_only=False)
+        os.makedirs(base_path / "dataset"/"test", exist_ok=True)
+        if not os.path.exists(base_path / "dataset"/"test"/"test_dataset.pt"):
+            print("test dataset not found at " + str(base_path / "dataset"/"test"/"test_dataset.pt"))
+            return
+        testdata = torch.load(base_path / "dataset"/"test"/"test_dataset.pt", weights_only=False)
         
-        model_architecture = torch.load(path /"models"/"genesis_model.pth", weights_only=False)
+        model_architecture = torch.load(base_path /"models"/"genesis_model.pth", weights_only=False)
         
-        retrieve_from_ipfs(gmcid, path / "models"/ f"gm_{gi}.pt")
+        retrieve_from_ipfs(gmcid, base_path / "models"/ f"gm_{gi}.pt")
         
         if gi ==0 :
-            temp_model = torch.load(path / "models"/ f"gm_{gi}.pt", weights_only=False)
+            temp_model = torch.load(base_path / "models"/ f"gm_{gi}.pt", weights_only=False)
             gm_weights = temp_model.state_dict()
         else:
-            gm_weights = torch.load(path / "models"/f"gm_{gi}.pt", weights_only=True)
+            gm_weights = torch.load(base_path / "models"/f"gm_{gi}.pt", weights_only=True)
         
         model_architecture.load_state_dict(gm_weights)
         
@@ -92,16 +95,43 @@ def getscoreforGM(gi: int, gmcid: str, path):
         print(e)
         
 
-def create_audit_testDataCIDs(batch_counts: int, gi: int, base_path: str, test_data_path: str = None):
+def create_audit_testDataCIDs(
+    batch_counts: int, 
+    gi: int, 
+    base_path: Union[str, Path], 
+    test_data_path: Union[str, Path, None] = None
+) -> list[str]:
+    """
+    Create audit datasets by sampling from test data and uploading to IPFS.
+    
+    Args:
+        batch_counts: Number of auditor batches to create
+        gi: Generation index for naming datasets
+        base_path: Root directory path (task/workspace directory)
+        test_data_path: Optional custom path to test dataset (defaults to base_path/dataset/test/test_dataset.pt)
+    
+    Returns:
+        List of IPFS CIDs for uploaded auditor datasets
+    """
+    # Normalize paths to Path objects
+    base_path = Path(base_path)
+    test_data_path = Path(test_data_path) if test_data_path else None
+
     print("batch_counts", batch_counts)
 
+    # Determine test dataset path
     if test_data_path is None:
-        if not os.path.exists(f"{base_path}/dataset/test/test_dataset.pt"):
-            raise FileNotFoundError(f"Test dataset not found at {base_path}/dataset/test/test_dataset.pt")
-        test_data = torch.load(f"{base_path}/dataset/test/test_dataset.pt", weights_only=False)
+        default_test_path = base_path / "dataset" / "test" / "test_dataset.pt"
+        if not default_test_path.exists():
+            raise FileNotFoundError(
+                f"Test dataset not found at {default_test_path.resolve()}"
+            )
+        test_data = torch.load(default_test_path, weights_only=False)
     else:
-        if not os.path.exists(test_data_path):
-            raise FileNotFoundError(f"Test dataset not found at {test_data_path}")
+        if not test_data_path.exists():
+            raise FileNotFoundError(
+                f"Test dataset not found at {test_data_path.resolve()}"
+            )
         test_data = torch.load(test_data_path, weights_only=False)
     
     total_test_samples = len(test_data)
@@ -112,22 +142,23 @@ def create_audit_testDataCIDs(batch_counts: int, gi: int, base_path: str, test_d
     samples_per_batch = int(total_test_samples * (testData_percentage_per_auditor_batch / 100))
     
     audit_testDataCIDs = []
+    audit_dir = base_path / "dataset" / "auditor" / "TestDatasets"
+    audit_dir.mkdir(parents=True, exist_ok=True)  # Modern Path-based mkdir
     
     for batch_id in range(batch_counts):
         
         torch.manual_seed(batch_id)
         
-        # Generate random indices
         random_indices = torch.randperm(total_test_samples)[:samples_per_batch]
-        
-        # Create shuffled subset
         assigned_testData = torch.utils.data.Subset(test_data, random_indices)
         
-        os.makedirs(f"{base_path}/dataset/auditor/TestDatasets", exist_ok=True)
+        # Path-based file handling (no string formatting)
+        audit_path = audit_dir / f"auditorDataset_{gi}_{batch_id}.pt"
+        torch.save(assigned_testData, audit_path)
         
-        torch.save(assigned_testData, f"{base_path}/dataset/auditor/TestDatasets/auditorDataset_{gi}_{batch_id}.pt")
-        
-        ipfs_hash = upload_to_ipfs(f"{base_path}/dataset/auditor/TestDatasets/auditorDataset_{gi}_{batch_id}.pt", f"Auditor Dataset for gi_{gi} index {batch_id} uploaded")
-        
+        ipfs_hash = upload_to_ipfs(
+            str(audit_path),  # Convert to str ONLY for external API
+            f"Auditor Dataset for gi_{gi} index {batch_id} uploaded"
+        )
         audit_testDataCIDs.append(ipfs_hash)
     return audit_testDataCIDs

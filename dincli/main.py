@@ -1,34 +1,23 @@
 import typer
-from rich.console import Console
-from dincli.log import logger, logging
-
-# Import role-specific subcommands
-from .system import app as system_app
-from .dindao import app as dindao_app
-from .modelowner import app as model_owner_app
-from .aggregator import app as aggregators_app
-from .auditor import app as auditor_app
-from .client import app as client_app
-from .task import app as task_app
-from .ipfs import app as ipfs_app
-
-from dincli.utils import get_config, resolve_network
-
 
 from dincli import __version__
+from dincli.cli.aggregator import app as aggregators_app
+from dincli.cli.auditor import app as auditor_app
+from dincli.cli.client import app as client_app
+from dincli.cli.context import DinContext
+from dincli.cli.core import GlobalOptionsGroup
+from dincli.cli.dindao import app as dindao_app
+from dincli.cli.ipfs import app as ipfs_app
+from dincli.cli.modelowner import app as model_owner_app
+# Import role-specific subcommands
+from dincli.cli.system import app as system_app
+from dincli.cli.task import app as task_app
 
 app = typer.Typer(
     help="DIN Command Line Interface (CLI) — Validators, Auditors, and Model Owners.",
-    pretty_exceptions_enable=True
+    pretty_exceptions_enable=False,
+    cls=GlobalOptionsGroup,
     )
-console = Console()
-
-
-# # Initialize logging
-# log_level_str = get_config("log_level", default="INFO")
-# logger.setLevel(getattr(logging, log_level_str.upper(), logging.INFO))
-# Use default until config is loaded later (or accept that CLI logs use INFO by default)
-logger.setLevel(logging.INFO)
 
 # Add subcommands for roles
 app.add_typer(system_app, name="system")
@@ -42,6 +31,7 @@ app.add_typer(ipfs_app, name="ipfs")
 
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         None,
         "--version",
@@ -50,32 +40,32 @@ def main(
         callback=None,
         is_eager=True,
     ),
-     network: bool = typer.Option(
-         None, 
-         "--network", 
-         help="Specify network", 
-         callback=None,
-         is_eager=True,
-     ),
+    network: str = typer.Option(
+        None,
+        "--network",
+        help="Specify network (local | sepolia_devnet | sepolia_testnet | mainnet)",
+        callback=None,
+        is_eager=True,
+    ),
     
 ):
+    ctx.obj = DinContext()
+    console = ctx.obj.console
+
+    configured_network  = ctx.obj.select_network(network).network
+    if configured_network:
+        console.print(f"[bold cyan]Active Network:[/bold cyan] {configured_network}")
+    else:
+        console.print(f"[bold cyan]Network[/bold cyan] not configured")
     
     if version:
         console.print(f"[bold cyan]DIN CLI[/bold cyan] v{__version__} — Decentralized Intelligence Network")
         raise typer.Exit()
-    if network:
-        configured_network  = resolve_network(cli_network=None)
-        if configured_network:
-            print(f"[bold cyan]Active Network:[/bold cyan] {configured_network}")
-            raise typer.Exit()
-        else:
-            console.print(f"[bold cyan]Network[/bold cyan] not configured")
-            raise typer.Exit()
     
 @app.command()
-def version():
+def version(ctx: typer.Context):
     """Show DIN CLI version."""
-    console.print(f"[bold cyan]DIN CLI[/bold cyan] v{__version__} — Decentralized Intelligence Network")
+    ctx.obj.console.print(f"[bold cyan]DIN CLI[/bold cyan] v{__version__} — Decentralized Intelligence Network")
 
 
 

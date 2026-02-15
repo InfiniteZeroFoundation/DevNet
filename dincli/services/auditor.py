@@ -1,10 +1,11 @@
 import os
-import torch
 
-from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
-from torch.utils.data import DataLoader
-from dincli.utils import CONFIG_DIR
+import torch
 from rich import console
+from torch.utils.data import DataLoader
+
+from dincli.cli.utils import CONFIG_DIR
+from dincli.services.ipfs import retrieve_from_ipfs
 
 console = console.Console()
 

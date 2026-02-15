@@ -154,6 +154,15 @@ contract DINModelRegistry {
         );
 
         // adding 1 to avoid 0-indexed default value issue
+
+        require(
+            _modelIdByTaskCoordinator[taskCoordinator] == 0,
+            "Task Coordinator already registered"
+        );
+        require(
+            _modelIdByTaskAuditor[taskAuditor] == 0,
+            "Task Auditor already registered"
+        );
         _modelIdByTaskCoordinator[taskCoordinator] = modelId + 1;
         _modelIdByTaskAuditor[taskAuditor] = modelId + 1;
 

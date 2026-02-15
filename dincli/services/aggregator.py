@@ -1,8 +1,10 @@
-import torch
 import os
-from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
-from dincli.utils import CONFIG_DIR
+
+import torch
 from rich import console
+
+from dincli.cli.utils import CONFIG_DIR
+from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
 
 console = console.Console()
 
