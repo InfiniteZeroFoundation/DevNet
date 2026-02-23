@@ -768,12 +768,12 @@ def distribute_mnist(
     test_dataset = datasets.MNIST(root=dataset_dir, train=False, download=True, transform=transform)
 
     # Save raw datasets
-    (dataset_dir / "train").mkdir(exist_ok=True)
-    (dataset_dir / "test").mkdir(exist_ok=True)
+    (dataset_dir / "train").mkdir(parents=True, exist_ok=True)
+    (dataset_dir / "test").mkdir(parents=True, exist_ok=True)
 
     if test_train:
-        torch.save(train_dataset, dataset_dir / "train/train_dataset.pt")
-        torch.save(test_dataset, dataset_dir / "test/test_dataset.pt")
+        torch.save(train_dataset, dataset_dir / "train" / "train_dataset.pt")
+        torch.save(test_dataset, dataset_dir / "test" / "test_dataset.pt")
         console.print(f"[green]Processed Train/Test Datasets saved successfully to {dataset_dir}![/green]")
     if clients:
         # IID SPLIT
@@ -893,4 +893,49 @@ def dump_abi(
 
     console.print(f"[green]✅ Artifact saved to:[/green] {output_path}")
     console.print(f"[cyan]→ ABI-only: {not include_bytecode} | Includes bytecode: {include_bytecode}[/cyan]")
+    
+# dincli system
+@app.command("configure-ipfs")
+def configure_ipfs(ctx: typer.Context,
+    provider: str = typer.Option(None, "--provider", "-p", help="IPFS application name [filebase, pinata]"),
+    ipfs_service_path: str = typer.Option(None, "--ipfs-service-path", "-p", help="Path to IPFS service"),
+    api_key: str = typer.Option(None, "--api-key", "-k", help="API key"),
+    api_secret: str = typer.Option(None, "--api-secret", "-s", help="API secret"),
+    delete_config: bool = typer.Option(False, "--delete", "-d", help="Delete IPFS config"),
+):
+
+    config = load_config()
+    
+    if not delete_config and not provider: 
+        ctx.obj.console.print("[red]❌ Please specify a provider or delete config.[/red]")
+        raise typer.Exit(1)
+
+    if provider:
+        config["ipfs_provider"] = provider
+
+    if api_key:
+        config["ipfs_api_key"] = api_key
+    if api_secret:
+        config["ipfs_api_secret"] = api_secret
+
+    if ipfs_service_path:
+        config["ipfs_service_path"] = ipfs_service_path
+
+    if delete_config:
+        config.pop("ipfs_provider", None)
+        config.pop("ipfs_api_key", None)
+        config.pop("ipfs_api_secret", None)
+        config.pop("ipfs_service_path", None)
+    save_config(config)
+
+    ctx.obj.console.print(f"[green]IPFS configured successfully: {provider} [/green]")
+    if ipfs_service_path:
+        ctx.obj.console.print(f"[green] with service path {ipfs_service_path}[/green]")
+
+
+
+
+
+
+    
     

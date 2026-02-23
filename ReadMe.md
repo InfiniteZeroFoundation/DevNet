@@ -69,6 +69,10 @@ This project consists of multiple components.
 # Sample manifest_CID
 QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp
 
+# ipfs upload
+
+python -m dincli.main ipfs upload -f /home/azureuser/projects/DINv1MVC/cache_model_0/manifest.json
+
 # cp 
 
 cp /home/azureuser/.cache/dincli/local/model_0/manifest.json /home/azureuser/projects/DINv1MVC/cache_model_0/manifest.json

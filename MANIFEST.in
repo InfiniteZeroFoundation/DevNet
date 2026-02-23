@@ -3,7 +3,6 @@ include README.md
 include requirements.txt
 include dincli/config/accounts.json
 include dincli/config/din_info.json
-include dincli/config/ipfs_config.json
 include dincli/config/usdt_config.json
 include dincli/abis/*
 

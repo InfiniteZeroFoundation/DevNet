@@ -85,7 +85,7 @@ show python -m dincli.main model-owner model create-genesis --network local
 # show python -m dincli.main system dataset distribute-mnist --seed 42 --network local --test-train --task 
 
 
-show python -m dincli.main model-owner model submit-genesis --network local 
+show python -m dincli.main model-owner model submit-genesis --default-test-data --network local 
 
 show python -m dincli.main task model-owner register --network local 
 

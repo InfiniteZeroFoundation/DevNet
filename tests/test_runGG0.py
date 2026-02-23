@@ -4,6 +4,9 @@ def test_run_gg0_flow(cli_cmd):
     """
     Replicates the workflow from bashscripts/runGG0.sh
     """
+
+    # show python -m dincli.main system dataset distribute-mnist --seed 42 --clients  "--test-train" --num-clients 9 --model-id 0
+    cli_cmd(["system", "dataset", "distribute-mnist", "--seed", "42", "--clients", "--test-train","--num-clients",  "9", "--model-id", "0"])
     
     # 16: show python -m dincli.main system connect-wallet --account 1
     cli_cmd(["system", "connect-wallet", "--account", "1"])
@@ -22,14 +25,9 @@ def test_run_gg0_flow(cli_cmd):
     aggregator_accounts = range(11, 23) # 11 to 22
     for acc in aggregator_accounts:
         cli_cmd(["system", "connect-wallet", "--account", str(acc)])
-        cli_cmd(["aggregator", "dintoken", "buy", "1", "--network", "local"])
-
-    # Aggregators Stake & Register loop (Accounts 11-22)
-    # Lines 60-153
-    for acc in aggregator_accounts:
-        cli_cmd(["system", "connect-wallet", "--account", str(acc)])
-        cli_cmd(["aggregator", "dintoken", "stake", "1000000", "--network", "local"])
-        cli_cmd(["aggregator", "dintoken", "read-stake", "--network", "local"])
+        cli_cmd(["aggregator", "dintoken", "buy", "1"])
+        cli_cmd(["aggregator", "dintoken", "stake", "1000000"])
+        cli_cmd(["aggregator", "dintoken", "read-stake"])
         cli_cmd(["aggregator", "register", "0"])
 
     # 156: show python -m dincli.main system connect-wallet --account 1
@@ -49,9 +47,9 @@ def test_run_gg0_flow(cli_cmd):
     auditor_accounts = range(50, 59) # 50 to 58
     for acc in auditor_accounts:
         cli_cmd(["system", "connect-wallet", "--account", str(acc)])
-        cli_cmd(["auditor", "dintoken", "buy", "1", "--network", "local"])
-        cli_cmd(["auditor", "dintoken", "stake", "1000000", "--network", "local"])
-        cli_cmd(["auditor", "dintoken", "read-stake", "--network", "local"])
+        cli_cmd(["auditor", "dintoken", "buy", "1"])
+        cli_cmd(["auditor", "dintoken", "stake", "1000000"])
+        cli_cmd(["auditor", "dintoken", "read-stake"])
         cli_cmd(["auditor", "register", "0"])
 
     # 218: show python -m dincli.main system connect-wallet --account 1
@@ -151,35 +149,35 @@ def test_run_gg0_flow(cli_cmd):
     cli_cmd(["model-owner", "aggregation", "T2", "start", "0"])
     
     # 381: show python -m dincli.main model-owner gi show-state 0 --network local
-    cli_cmd(["model-owner", "gi", "show-state", "0", "--network", "local"])
+    cli_cmd(["model-owner", "gi", "show-state", "0"])
 
     # 383: show python -m dincli.main model-owner aggregation show-t2-batches 0 --network local --detailed
-    cli_cmd(["model-owner", "aggregation", "show-t2-batches", "0", "--network", "local", "--detailed"])
+    cli_cmd(["model-owner", "aggregation", "show-t2-batches", "0", "--detailed"])
 
     # Aggregators T2 Loop (Accounts 11-22)
     # Lines 385-431
     for acc in aggregator_accounts:
         cli_cmd(["system", "connect-wallet", "--account", str(acc)])
-        cli_cmd(["aggregator", "show-t2-batches", "0", "--network", "local", "--detailed"])
+        cli_cmd(["aggregator", "show-t2-batches", "0", "--detailed"])
         cli_cmd(["aggregator", "aggregate-t2", "0", "--submit"])
 
     # 433: show python -m dincli.main system connect-wallet --account 1
     cli_cmd(["system", "connect-wallet", "--account", "1"])
     
     # 434: show python -m dincli.main model-owner aggregation show-t2-batches 0 --network local --detailed
-    cli_cmd(["model-owner", "aggregation", "show-t2-batches", "0", "--network", "local", "--detailed"])
+    cli_cmd(["model-owner", "aggregation", "show-t2-batches", "0", "--detailed"])
 
     # 437: show python -m dincli.main model-owner aggregation T2 close 0
     cli_cmd(["model-owner", "aggregation", "T2", "close", "0"])
 
     # 439: show python -m dincli.main model-owner slash auditors 0 --network local 
-    cli_cmd(["model-owner", "slash", "auditors", "0", "--network", "local"])
+    cli_cmd(["model-owner", "slash", "auditors", "0"])
 
     # 441: show python -m dincli.main model-owner gi show-state 0 --network local 
-    cli_cmd(["model-owner", "gi", "show-state", "0", "--network", "local"])
+    cli_cmd(["model-owner", "gi", "show-state", "0"])
 
     # 442: show python -m dincli.main model-owner slash aggregators 0 --network local 
-    cli_cmd(["model-owner", "slash", "aggregators", "0", "--network", "local"])
+    cli_cmd(["model-owner", "slash", "aggregators", "0"])
 
     # 443: show python -m dincli.main model-owner gi end 0 --network local 
-    cli_cmd(["model-owner", "gi", "end", "0", "--network", "local"])
+    cli_cmd(["model-owner", "gi", "end", "0"])

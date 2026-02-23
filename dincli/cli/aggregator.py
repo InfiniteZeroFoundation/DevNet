@@ -59,7 +59,7 @@ def stake(ctx: typer.Context, amount: int):
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
 
-    DinToken_contract, DinStake_contract = ctx.get_deployed_din_token_contract(), ctx.get_deployed_din_stake_contract()
+    DinToken_contract, DinStake_contract = ctx.obj.get_deployed_din_token_contract(), ctx.obj.get_deployed_din_stake_contract()
 
     aggregator_Din_token_balance = DinToken_contract.functions.balanceOf(account.address).call()
 
@@ -121,7 +121,8 @@ def read_stake(ctx: typer.Context):
 @app.command(help="Register as aggregator")
 def register(
     ctx: typer.Context,
-    model_id: int = typer.Argument(..., help="Model ID")):
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number")):
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
@@ -130,6 +131,8 @@ def register(
     DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
 
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract, True, False, True)
+
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "DINaggregatorsRegistrationStarted", "Can not register aggregator at this time")
 
@@ -230,7 +233,7 @@ def show_t2_batches(
 
     taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
     
-    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract, True, False, True)
 
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI,GIstate, "T1nT2Bcreated", "Can not show T2 batches at this time")

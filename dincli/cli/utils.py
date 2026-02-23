@@ -104,13 +104,6 @@ def resolve_ipfs_config():
     if from_env and isinstance(from_env, str) and from_env.strip():
         ipfs_api_url_retrieve = from_env.strip()
 
-    # if ipfs_api_url_add == "None" or ipfs_api_url_retrieve == "None":
-    #     ipfs_config_path = files("dincli.config") / "ipfs_config.json"
-    #     with open(ipfs_config_path, "r") as f:
-    #         ipfs_config = json.load(f)
-    #         ipfs_api_url_add = ipfs_config.get("local").get("ipfs_api_url_add")
-    #         ipfs_api_url_retrieve = ipfs_config.get("local").get("ipfs_api_url_retrieve")
-
     return ipfs_api_url_add, ipfs_api_url_retrieve
 
 
@@ -478,13 +471,16 @@ def load_tasks() -> dict:
 
 
 def cache_manifest(model_id: int, network: str, info: bool = False, update: bool = False, genesis_model_info: bool = False):
-    if model_id < 0:
+    if int(model_id) < 0:
         console.print("[red]Error:[/red] Model ID must be non-negative")
         raise typer.Exit(1)
 
-    os.makedirs(CACHE_DIR / network /  f"model_{model_id}", exist_ok=True)
-
-    if not (CACHE_DIR / network /  f"model_{model_id}" / "manifest.json").exists() or info or update:
+    manifest_dir = CACHE_DIR / network / f"model_{model_id}"
+    os.makedirs(manifest_dir, exist_ok=True)
+    manifest_path = manifest_dir / "manifest.json"
+    cid_path = manifest_dir / "manifest.json.cid"
+    
+    if not manifest_path.exists() or info or update:
 
         din_info = load_din_info()
         din_registry_address = din_info[network]["registry"]
@@ -510,10 +506,14 @@ def cache_manifest(model_id: int, network: str, info: bool = False, update: bool
                 genesis_model_ipfs_hash = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
                 console.print("Genesis Model IPFS Hash :", genesis_model_ipfs_hash)
 
-        if  update or not (CACHE_DIR / network /  f"model_{model_id}" / "manifest.json").exists():
+        if  update or not manifest_path.exists():
 
             from dincli.services.ipfs import retrieve_from_ipfs
-            retrieve_from_ipfs(model_info[2], CACHE_DIR / network /  f"model_{model_id}/manifest.json")
+            retrieve_from_ipfs(model_info[2], manifest_path)
+            
+            # Save CID sidecar
+            with open(cid_path, "w") as f:
+                f.write(model_info[2])
         
 
 def get_manifest_key( network: str, key: str, model_id: int = None, task_coordinator_address: str = None):
@@ -528,9 +528,35 @@ def get_manifest_key( network: str, key: str, model_id: int = None, task_coordin
         raise ValueError("Only one of model_id or task_coordinator_address can be provided")
 
     if has_model_id:
-        manifest_path = CACHE_DIR / network /  f"model_{model_id}" / "manifest.json"
-        if not manifest_path.exists():
-            cache_manifest(model_id, network)
+        manifest_dir = CACHE_DIR / network / f"model_{model_id}"
+        manifest_path = manifest_dir / "manifest.json"
+        cid_path = manifest_dir / "manifest.json.cid"
+        
+        # Check freshness
+        needs_update = True
+        
+        # 1. Fetch on-chain CID
+        try:
+            din_info = load_din_info()
+            din_registry_address = din_info[network]["registry"]
+            din_registry_abi = files("dincli").joinpath("abis", "DINModelRegistry.json")
+            din_registry_contract = get_contract_instance(din_registry_abi, network, din_registry_address)
+            model_info = din_registry_contract.functions.getModel(int(model_id)).call()
+            on_chain_cid = model_info[2]
+            
+            if manifest_path.exists() and cid_path.exists():
+                with open(cid_path, "r") as f:
+                    local_cid = f.read().strip()
+                if local_cid == on_chain_cid:
+                    needs_update = False
+        except Exception as e:
+           
+            console.print(f"[yellow]Warning: Could not verify manifest freshness: {e}[/yellow]")
+            needs_update = True  
+            pass
+
+        if needs_update:
+            cache_manifest(int(model_id), network, update=True)
     
         with open(manifest_path, "r") as f:
             manifest = json.load(f)

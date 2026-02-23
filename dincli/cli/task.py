@@ -1,13 +1,10 @@
 import os
 from pathlib import Path
-
+import json
 import typer
-from rich.console import Console
 
 from dincli.cli.utils import cache_manifest, get_env_key
 from dincli.services.ipfs import upload_to_ipfs
-
-console = Console()
 
 app = typer.Typer(help="Manage DIN tasks/models across networks.")
 
@@ -151,6 +148,10 @@ def register(
         taskAuditor = get_env_key(key)
         console.print(f"[gray]Task Auditor not provided, using {key} : {taskAuditor} from {os.getcwd()}/.env[/gray]")
 
+    genesis_model_ipfs_hash = get_env_key(effective_network.upper() + "_" + taskCoordinator + "_GENESIS_MODEL_IPFS_HASH")
+    if not genesis_model_ipfs_hash:
+        console.print(f"[red]Error:[/red] Could not find {effective_network.upper()}_{taskCoordinator}_GENESIS_MODEL_IPFS_HASH in .env")
+        raise typer.Exit(1)
 
     if not manifestCID:
         console.print("[gray]Manifest CID not provided, uploading manifest to IPFS...[/gray]")
@@ -160,13 +161,27 @@ def register(
         if not os.path.exists(manifestpath):
             console.print("[red]Error:[/red] Manifest not found at path: {manifestpath}")
             raise typer.Exit(1)
+
+        with open(manifestpath, "r", encoding="utf-8") as f:
+            manifest_data = json.load(f)
+
+        if manifest_data["DINTaskCoordinator_Contract"] != taskCoordinator:
+            manifest_data["DINTaskCoordinator_Contract"] = taskCoordinator
+        
+        if manifest_data["DINTaskAuditor_Contract"] != taskAuditor:
+            manifest_data["DINTaskAuditor_Contract"] = taskAuditor
+
+        if manifest_data["Genesis_Model_CID"] != genesis_model_ipfs_hash:
+            manifest_data["Genesis_Model_CID"] = genesis_model_ipfs_hash
+
+        with open(manifestpath, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=4)
+
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
        
-
     dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
     # Get nonce
     nonce = w3.eth.get_transaction_count(account.address)
-
     console.print(f"[green]Registering model in DINRegistry[/green]")
     console.print(f"[gray]Manifest CID: {manifestCID}[/gray]")
     console.print(f"[gray]Task Coordinator: {taskCoordinator}[/gray]")
@@ -284,7 +299,16 @@ def update_manifest(
         else:
             console.print("[yellow]Warning: ManifestUpdated event not found in receipt.[/yellow]")
             
+@app.command("total-models")
+def total_models(ctx: typer.Context,
+    ):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
 
+    DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
+
+    models_length = DINModelRegistry_Contract.functions.totalModels().call()
+
+    console.print(f"[bold green]Total models: {models_length}[/bold green]")
         
         
 
