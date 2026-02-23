@@ -1,282 +1,331 @@
 # Model Owner Documentation
 
-The Model Owner is the central figure who initiates a task, deploys contracts, and manages the Global Iteration (GI) lifecycle.
+The Model Owner initiates and manages a federated learning task from start to finish. This includes deploying the required contracts, seeding the task with a genesis model, and orchestrating each Global Iteration (GI) lifecycle.
+
+---
 
 ## 1. Deployment & Setup
 
 ### Deploy Contracts
-Deploy the contracts specific to your task.
+
+Deploy the Task Coordinator and Task Auditor contracts specific to your task.
 
 ```bash
-# Task Coordinator
-dincli model-owner deploy task-coordinator --artifact <path>
+# Deploy the Task Coordinator
+dincli model-owner deploy task-coordinator --artifact <path_to_artifact>
 
-# Task Auditor
-dincli model-owner deploy task-auditor --artifact <path>
+# Deploy the Task Auditor
+dincli model-owner deploy task-auditor --artifact <path_to_artifact>
 ```
 
+The `--artifact` flag must point to the compiled Hardhat JSON output (contains ABI and bytecode).
 
-### Deposit Rewards in Task Auditor
+---
 
-> **Prerequisite**: The following key must be set in your `.env` file:
+### Deposit Rewards into the Task Auditor
 
-> `<NETWORK>_DINTaskCoordinator_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)
-> `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_DINTaskAuditor_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_0x1234567890123456789012345678901234567890_DINTaskAuditor_Contract_Address`)
+Fund the Task Auditor contract with USDT to be distributed as rewards.
+
+> **Prerequisites** — the following keys must be set in your `.env` file:
+> - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
+>   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
+> - `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_DINTaskAuditor_Contract_Address`  
+>   *(e.g. `SEPOLIA_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
 
 ```bash
-# Deposit rewards in Task Auditor
 dincli model-owner deposit-reward-in-dintask-auditor --amount <usdt_amount>
-# buy usdt using  
-# dincli system buy-usdt <usdt_amount>
 ```
 
+> [!TIP]
+> If you need USDT on a testnet or local network, use: `dincli system buy-usdt <usdt_amount>`
 
-### Confirm Task Coordinator and Task Auditor as Slashers after DINDAO has added them as Slasher in DIN Coordinator Contract
+---
 
-> **Prerequisite**: The following key must be set in your `.env` file:
-> `<NETWORK>_DINTaskCoordinator_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)
+### Register Task Coordinator & Task Auditor as Slashers
+
+After the DIN DAO has authorized the contracts as slashers in the DIN Coordinator, confirm them on the task side.
+
+> **Prerequisite** — the following key must be set in your `.env` file:
+> - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
+>   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
 
 ```bash
+# Confirm Task Coordinator as a slasher
 dincli model-owner add-slasher --taskCoordinator [--contract <task_coordinator_address>]
-dincli model-owner add-slasher --taskAuditor [--contract <task_auditor_address>]
+
+# Confirm Task Auditor as a slasher
+dincli model-owner add-slasher --taskAuditor [--contract <task_coordinator_address>]
 ```
-where `--contract` is optional and should be the address of the DIN task COordinator contract. If not provided, the contract address will be taken from the `.env` file from `<NETWORK>_DINTaskCoordinator_Contract_Address` key.
 
-## Manifest file and services files
+`--contract` is optional. If omitted, the address is read from the `<NETWORK>_DINTaskCoordinator_Contract_Address` key in your `.env` file.
 
-The manifest file is a json file that contains the metadata of the model and task. it must be created/ copied to  Path(os.getcwd()) / 'tasks' / effective_network.lower() / task_coordinator_address / 'manifest.json' and edited along
+---
 
-if it is not present, it will be created with default values from default_manifest_CID = "QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp". during create-genesis setup
+### Manifest File & Service Files
 
-The services for each stakeholder and Model Architect must be created by Model Owner specific to the task such as
+**Manifest file**
 
-1. modelowner.py
-2. model.py
-3. client.py
-4. aggregator.py
-5. auditor.py
+The manifest is a JSON file containing the metadata for your model and task. It must be placed at:
 
-The sample services files are available in the `DINv1MVC/cache_model_0/services` directory.
-You must be elegant and ensure that your servives work fine for all stakeholders. model.py is for model architect, client.py is for client, aggregator.py is for aggregator and auditor.py is for auditor.
+```
+<project_root>/tasks/<network>/task_<coordinator_address>/manifest.json
+```
+
+If the file is absent when the genesis setup runs, it is automatically created with default values from the default manifest CID (`QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp`).
+
+**Service files**
+
+The Model Owner must provide a set of service files tailored to the task. These files implement the task-specific logic for each participant role:
+
+| File | Role |
+|---|---|
+| `modelowner.py` | Model Owner |
+| `model.py` | Model Architect |
+| `client.py` | Client |
+| `aggregator.py` | Aggregator |
+| `auditor.py` | Auditor |
+
+Sample service files are located in the `DINv1MVC/cache_model_0/services/` directory.
+
+The service files must be uploaded to IPFS and the CID must be included in the manifest file at appropriate fields.
+
+---
 
 ## 2. Genesis Model
 
-Create and submit the initial model to start the task.
+Create and submit the initial (genesis) model to seed the task.
 
 ### Create Genesis Model
 
-**Prerequisite**: The following key must be set in your `.env` file:
+Uploads the genesis model to IPFS.
 
-> `<NETWORK>_DINTaskCoordinator_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)
-
+> **Prerequisite** — `<NETWORK>_DINTaskCoordinator_Contract_Address` must be set in your `.env` file.
 
 ```bash
-# Create (upload to IPFS)
 dincli model-owner model create-genesis
 ```
 
 ### Submit Genesis Model
 
-**Prerequisite**: The following key must be set in your `.env` file:
+Registers the genesis model on-chain.
 
-> `<NETWORK>_DINTaskCoordinator_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)
-
-The test_data set must be available at Path(os.getcwd()) / "tasks" / effective_network.lower() / task_coordinator_address / "dataset"/"test"/"test_dataset.pt")
+> **Prerequisite** — `<NETWORK>_DINTaskCoordinator_Contract_Address` must be set in your `.env` file.  
+> The test dataset must exist at:  
+> `<project_root>/tasks/<network>/task_<coordinator_address>/dataset/test/test_dataset.pt`
 
 ```bash
-# Submit (register on-chain)
-dincli model-owner model submit-genesis [--taskCoordinator <task_coordinator_address>] [--ipfs-hash <ipfs_hash>] [--score <score>] 
+dincli model-owner model submit-genesis [--taskCoordinator <address>] [--ipfs-hash <hash>] [--score <score>]
 ```
 
-where taskCoordinator is optional and is address of the DIN task coordinator contract. If not provided, the contract address will be taken from the `.env` file from `<NETWORK>_DINTaskCoordinator_Contract_Address` key.
+| Option | Required | Description |
+|---|---|---|
+| `--taskCoordinator <address>` | No | Address of the Task Coordinator contract. Defaults to the value in `.env` if omitted |
+| `--ipfs-hash <hash>` | No | IPFS hash of the genesis model from the previous step. Defaults to the value stored in `.env` if omitted as `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_GENESIS_MODEL_IPFS_HASH` |
+| `--score <score>` | No | Score of the genesis model. Calculated automatically via `getscoreforGM()` in `modelowner.py` if omitted |
 
-where ipfs-hash is optional and is the ipfs hash of the Genesis Model created in previous step. If not provided, the ipfs hash will be taken from the `.env` file from {effective_network.upper() + '_' + task_coordinator_address + '_GENESIS_MODEL_IPFS_HASH'} key.
-
-where score is optional and is the score of the genesis model. If not provided, the score will be calculated using the `getscoreforGM` function in the `modelowner.py` service file.
-
-
+---
 
 ## 3. Global Iteration (GI) Lifecycle
 
-The bulk of the work happens in cycles called Global Iterations.
+The bulk of the work happens in repeating cycles called Global Iterations. Follow these steps in order for each GI.
 
-### Step 1: Start GI
-```bash
-dincli model-owner gi start <model-id> [--threshold <threshold>] [--gi <gi_index>]
+---
 
-```
-where model-id is the id of the model to start the GI for.
-
-where threshold is optional and is the score approval threshold for the local modelsfor the GI. If not provided, the default threshold is 5% accuracy less from the accuracy of the latest global model.
-
-where gi_index is optional and is the index of the GI. If not provided, the current GI index will be used
-
-
-### Step 2: Registrations
-Manage the registration windows for participants.
+### Step 1 — Start GI
 
 ```bash
-# Open Registrations for Aggregators
-dincli model-owner gi reg aggregators-open <model-id> [--gi <gi_index>]
-
-
-# Close Registrations for Aggregators (after some appropriate time)
-dincli model-owner gi reg aggregators-close <model-id> [--gi <gi_index>]
-
-# show registered aggregators for current GI or specific GI
-dincli model-owner gi show-registered-aggregators <model-id> [--gi <gi_index>]
-
-where --gi is optional and is the index of the GI. If not provided, the current GI index will be used
-
-# Open Registrations for Auditors
-dincli model-owner gi reg auditors-open <model-id> [--gi <gi_index>]
-
-# Close Registrations for Auditors (after some appropriate time)
-dincli model-owner gi reg auditors-close <model-id> [--gi <gi_index>]
+dincli model-owner gi start <model_id> [--gi <gi_index>] [--threshold <threshold>]
 ```
-# show registered auditors for current GI or specific GI
-dincli model-owner gi show-registered-auditors <model-id> [--gi <gi_index>]
 
-where --gi is optional and is the index of the GI. If not provided, the current GI index will be used
+| Argument / Option | Required | Description |
+|---|---|---|
+| `<model_id>` | Yes | The ID of the model to start the GI for |
+| `--gi <gi_index>` | No | GI index to start. Defaults to the next sequential GI if omitted |
+| `--threshold <threshold>` | No | Minimum score threshold for accepting local models. Defaults to 5% below the latest global model accuracy if omitted |
 
-### Step 3: Local Model Submission (LMS)
-Allow clients to train and submit models.
+---
+
+### Step 2 — Registration
+
+Open and close registration windows for Aggregators and Auditors.
+
+```bash
+# Open Aggregator registration
+dincli model-owner gi reg aggregators-open <model_id> [--gi <gi_index>]
+
+# Close Aggregator registration
+dincli model-owner gi reg aggregators-close <model_id> [--gi <gi_index>]
+
+# Show registered Aggregators
+dincli model-owner gi show-registered-aggregators <model_id> [--gi <gi_index>]
+
+# Open Auditor registration
+dincli model-owner gi reg auditors-open <model_id> [--gi <gi_index>]
+
+# Close Auditor registration
+dincli model-owner gi reg auditors-close <model_id> [--gi <gi_index>]
+
+# Show registered Auditors
+dincli model-owner gi show-registered-auditors <model_id> [--gi <gi_index>]
+```
+
+`--gi` is optional for all commands above. Defaults to the current GI if omitted.
+
+---
+
+### Step 3 — Local Model Submission (LMS)
+
+Open and close the window during which Clients can submit their trained local models.
 
 ```bash
 # Open LMS
 dincli model-owner lms open <model_id> [--gi <gi_index>]
 
-# Close LMS (after appropriate deadline)
+# Close LMS
 dincli model-owner lms close <model_id> [--gi <gi_index>]
-```
- 
-Show lms submissions from clients
 
-```bash
+# View submissions from Clients
 dincli model-owner lms show-models <model_id> [--gi <gi_index>]
 ```
 
-### Step 4: Auditor Assignment
-Assign registered auditors to evaluate the submitted batches.
+`--gi` is optional for all commands above. Defaults to the current GI if omitted.
+
+---
+
+### Step 4 — Auditor Assignment
+
+Assign registered Auditors to evaluate the submitted local model batches.
 
 ```bash
-# Create Auditors Batches
-dincli model-owner auditor-batches create <model-id> [--gi <gi_index>]
+# Create Auditor batches
+dincli model-owner auditor-batches create <model_id> [--gi <gi_index>]
 
-# Create Test Dataset for Auditing Batches
-dincli model-owner auditor-batches create-testdataset <model-id> [--test-data-path <path>] [--gi <gi_index>]
-```
-where --gi is optional and is the index of the GI. If not provided, the current GI index will be used
---test-data-path is optional and is the path to the test dataset. If not provided, the test dataset must be available at Path(CACHE_DIR) / effective_network /  f"model_{model_id}" / "dataset" / "test" / "test_dataset.pt"
+# Generate the test dataset used for auditing
+dincli model-owner auditor-batches create-testdataset <model_id> [--gi <gi_index>] [--test-data-path <path>]
 
-
-# show auditor batches
-```bash
-dincli model-owner auditor-batches show <model-id> [--gi <gi_index>]
+# Show Auditor batches
+dincli model-owner auditor-batches show <model_id> [--gi <gi_index>]
 ```
 
+| Option | Required | Description |
+|---|---|---|
+| `--gi <gi_index>` | No | GI index. Defaults to the current GI if omitted |
+| `--test-data-path <path>` | No | Path to the test dataset. Defaults to `<CACHE_DIR>/<network>/model_<model_id>/dataset/test/test_dataset.pt` if omitted |
 
-### Step 5: Evaluation Phase
-Manage the evaluation period.
+---
 
-```bash
-# Start Evaluation
-dincli model-owner lms-evaluation start <model-id>
-# let the auditors do there work
+### Step 5 — Evaluation Phase
 
-# Close Evaluation
-dincli model-owner lms-evaluation close <model-id>
-```
-
-# show lms evaluation results
-```
-dincli model-owner lms-evaluation show <model-id> [--auditors] [--gi <gi_index>] [--models]
-```
--- auditors is optional, if provided, it will show the evaluation results of all models grouped per assigned auditor
-
--- models is optional, if provided, it will show the evaluation results of all assigned auditors grouped per local model
-
--- gi is optional, if provided, it will show the evaluation results for the given GI
-
-
-
-### Step 6: Aggregation Phase
-Manage the aggregation of evaluated models.
+Manage the period during which Auditors score the local models.
 
 ```bash
-# Create Aggregation Batches
-dincli model-owner aggregation create-t1nt2-batches <model-id> [--gi <gi_index>]
+# Start evaluation — Auditors begin their evaluations
+dincli model-owner lms-evaluation start <model_id>
 
-# Show T1 aggregation batches
-dincli model-owner aggregation show-t1-batches <model-id> [--gi <gi_index>] [--detailed]
-# --detailed is optional, if provided, it will show the detailed information of all T1 aggregation batches including Aggregator Address, Submitted CID from the aggregator, and the Finalized CID for the Batch
+# Close evaluation — collect results
+dincli model-owner lms-evaluation close <model_id>
+```
 
-# Show T2 aggregation batches
-dincli model-owner aggregation show-t2-batches <model-id> [--gi <gi_index>] [--detailed]
-# --detailed is optional, if provided, it will show the detailed information of all T2 aggregation batches including Aggregator Address, Submitted CID from the aggregator, and the Finalized CID for the Batch
+**View evaluation results:**
 
-# Start Tier 1 Aggregation
-dincli model-owner aggregation T1 start <model-id> [--gi <gi_index>]
-# ... wait for aggregators to submit their aggregated models ...
+```bash
+dincli model-owner lms-evaluation show <model_id> [--gi <gi_index>] [--auditors] [--models]
+```
+
+| Option | Required | Description |
+|---|---|---|
+| `--gi <gi_index>` | No | Show results for a specific GI. Defaults to the current GI if omitted |
+| `--auditors` | No | Also show results grouped per Auditor |
+| `--models` | No | Also show results grouped per local model |
+
+---
+
+### Step 6 — Aggregation Phase
+
+Manage the creation and execution of aggregation batches.
+
+```bash
+# Create Tier 1 and Tier 2 aggregation batches
+dincli model-owner aggregation create-t1nt2-batches <model_id> [--gi <gi_index>]
+
+# Show T1 batches
+dincli model-owner aggregation show-t1-batches <model_id> [--gi <gi_index>] [--detailed]
+
+# Show T2 batches
+dincli model-owner aggregation show-t2-batches <model_id> [--gi <gi_index>] [--detailed]
+```
+
+`--detailed` is optional. When provided, includes the Aggregator address, submitted CID, and finalized CID for each batch.
+
+```bash
+# Start Tier 1 Aggregation — Aggregators begin combining approved local model in T1 batches
+dincli model-owner aggregation T1 start <model_id> [--gi <gi_index>]
 
 # Close Tier 1 Aggregation
-dincli model-owner aggregation T1 close <model-id> [--gi <gi_index>]
+dincli model-owner aggregation T1 close <model_id> [--gi <gi_index>]
 
-# Start Tier 2 Aggregation
-dincli model-owner aggregation T2 start <model-id> [--gi <gi_index>]
-# ... wait for final aggregation ...
+# Start Tier 2 Aggregation — Aggregators produce the final global model from finalized T1 batches
+dincli model-owner aggregation T2 start <model_id> [--gi <gi_index>]
 
 # Close Tier 2 Aggregation
-dincli model-owner aggregation T2 close <model-id> [--gi <gi_index>]
+dincli model-owner aggregation T2 close <model_id> [--gi <gi_index>]
 ```
 
-### Step 7: End GI
+`--gi` is optional for all commands above. Defaults to the current GI if omitted.
 
-# Slash Auditors
+---
 
-SLash the stake of the auditors who did not submit their evaluation results or submitted malicious evaluation results
+### Step 7 — Slash & End GI
+
+**Slash non-compliant Auditors** — penalize Auditors who failed to submit or submitted malicious results:
 
 ```bash
-dincli model-owner slash auditors <model-id> [--gi <gi_index>]
+dincli model-owner slash auditors <model_id> [--gi <gi_index>]
 ```
 
-# Slash Aggregators
-
-SLash the stake of the aggregators who did not submit their aggregated models or submitted malicious aggregated models
+**Slash non-compliant Aggregators** — penalize Aggregators who failed to submit or submitted malicious results:
 
 ```bash
-dincli model-owner slash aggregators <model-id> [--gi <gi_index>]
+dincli model-owner slash aggregators <model_id> [--gi <gi_index>]
 ```
 
-# End GI
-
-Finalize the iteration and prepare for the next one.
+**End the GI** — finalize the iteration and advance to the next:
 
 ```bash
-dincli model-owner gi end <model-id> [--gi <gi_index>]
+dincli model-owner gi end <model_id> [--gi <gi_index>]
 ```
+
+`--gi` is optional for all commands above. Defaults to the current GI if omitted.
+
+---
 
 ## 4. Monitoring & Management
 
-### View State
-Check the current status of the GI or participants.
+### Check GI State
+
+View the full status of the current Global Iteration.
 
 ```bash
-dincli model-owner gi show-state <model-id>
+dincli model-owner gi show-state <model_id>
 ```
 
-### View Submissions
-Inspect what has been submitted.
+### View All Submissions
+
+A quick-reference set of read commands:
 
 ```bash
-dincli model-owner lms show-models <model-id>
-dincli model-owner lms-evaluation show --per-model <model-id>
-dincli model-owner auditor-batches show <model-id>
-dincli model-owner aggregation show-t1-batches <model-id>
-dincli model-owner aggregation show-t2-batches <model-id>
+# Local model submissions
+dincli model-owner lms show-models <model_id>
+
+# Evaluation results grouped by model
+dincli model-owner lms-evaluation show --models <model_id>
+
+# Auditor batch assignments
+dincli model-owner auditor-batches show <model_id>
+
+# Tier 1 aggregation batch status
+dincli model-owner aggregation show-t1-batches <model_id>
+
+# Tier 2 aggregation batch status
+dincli model-owner aggregation show-t2-batches <model_id>
 ```

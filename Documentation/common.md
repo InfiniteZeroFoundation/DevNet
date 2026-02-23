@@ -1,100 +1,120 @@
-# DIN CLI Common Documentation
+# DIN CLI — Common Reference
 
-The DIN CLI (`dincli`) is the primary tool for interacting with the Decentralized Intelligence Network. It supports various roles including Clients, Auditors, Model Owners, and Aggregators.
+The DIN CLI (`dincli`) is the primary command-line interface for interacting with the Decentralized Intelligence Network. It supports all participant roles: Clients, Auditors, Model Owners, Aggregators, and DAO administrators.
+
+---
 
 ## Global Options
 
-These options can be used with any command:
+These flags can be prepended to any command:
 
-- `--network <network>`: Specify the network to use (e.g., `local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet`). Overrides the configured default.
-- `--help`: Show help message for a command.
+| Option | Description |
+|---|---|
+| `--network <network>` | Override the default network (`local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet`) |
+| `--help` | Display help for any command |
 
-version command:
+**Check CLI version:**
 
 ```bash
 dincli --version
-
-or 
-
+# or
 dincli -v
 ```
 
+---
+
 ## System Commands
 
-The `system` command group manages configuration, wallet connection, and general utilities.
+The `system` command group manages configuration, wallet connections, and general utilities.
 
 ### Initialization & Configuration
 
-- **Initialize CLI**:
-  ```bash
-  dincli system init
-  ```
-  Creates the necessary `config` and `cache` directories.
+**Initialize the CLI** — creates the `config` and `cache` directories:
 
-- **Configure Network**:
-  ```bash
-  dincli system configure-network --network <network>
-  ```
-  Sets the default network (e.g., `local`).
+```bash
+dincli system init
+```
 
-- **Configure Logging**:
-  ```bash
-  dincli system configure-logging --level <level>
-  ```
-  Sets the log level (`debug`, `info`, `warning`, `error`, `critical`).
+**Set the default network:** (`local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet`)
 
-- **Configure Demo Mode**:
-  ```bash
-  dincli system configure-demo --mode <yes|no>
-  ```
-  Enables or disables demo mode. **Warning**: Demo mode stores wallets in plaintext. Do not use with real funds.
+```bash
+dincli system configure-network --network <network>
+```
+
+
+**Set the log level** (`debug`, `info`, `warning`, `error`, `critical`):
+
+```bash
+dincli system configure-logging --level <level>
+```
+
+**Toggle demo mode:**
+
+```bash
+dincli system configure-demo --mode <yes|no>
+```
+
+> [!WARNING]
+> Demo mode stores wallets in plaintext. **Do not use with real funds.**
+
+---
 
 ### Wallet Management
 
-- **Connect Wallet**:
-  ```bash
-  dincli system connect-wallet
-  ```
-  Interactive prompt to import your private key.
-  
-  Options:
-  - `--key-file <path>`: Import from a key file.
-  - `--account <index>`: (Demo/Hardhat only in demo m) Connect a dev account by index (0-9).
+**Connect a wallet:**
 
-- **Read Wallet Info**:
-  ```bash
-  dincli system read-wallet
-  ```
-  Displays current wallet address (and private key if in demo mode).
+```bash
+dincli system connect-wallet
+```
 
-- **Utilities**:
+Options:
+- `--key-file <path>` — Import a private key from a file.
+- `--account <index>` — Connect an account by index. Reads `ETH_PRIVATE_KEY_<index>` from your `.env` file.
 
-- **Check Balances**:
-  ```bash
-  dincli system --eth-balance --usdt-balance
-  ```
-  Shows ETH and USDT balances for the connected wallet.
+> [!IMPORTANT]
+> To use your own wallet (non-demo mode), ensure demo mode is disabled first:
+> ```bash
+> dincli system configure-demo --mode no
+> ```
 
-- **Buy USDT** (Testnets/Local):
-  ```bash
-  dincli system buy-usdt <usdt-amount>
-  ```
-  Swaps ETH for USDT via Uniswap router.
+**Read wallet info** — display the connected wallet address:
 
-- **Show Contract Info**:
-  ```bash
-  dincli system din-info
-  ```
-  Displays deployed contract addresses for the current network (Coordinator, Token, Stake, Registry).
+```bash
+dincli system read-wallet
+```
 
-- **Reset CLI State**:
-  ```bash
-  dincli system reset-all
-  ```
-  Clears configuration and cache. Use `--force` to skip confirmation.
+> In demo mode, the private key is also displayed.
 
-- **Check Installation Location**:
-  ```bash
-  dincli system where
-  ```
-  Prints the installation path of `dincli`.
+---
+
+### Utilities
+
+**Check balances** — show ETH and USDT for the connected wallet:
+
+```bash
+dincli system --eth-balance --usdt-balance
+```
+
+**Buy USDT** (testnets / local only) — swap ETH for USDT via the Uniswap router:
+
+```bash
+dincli system buy-usdt <usdt_amount>
+```
+
+**Show contract addresses** — display the deployed coordinator, token, stake, and registry addresses for the current network:
+
+```bash
+dincli system din-info
+```
+
+**Reset CLI state** — clears all configuration and cache data. Use `--force` to bypass the confirmation prompt:
+
+```bash
+dincli system reset-all [--force]
+```
+
+**Show installation path:**
+
+```bash
+dincli system where
+```

@@ -1,8 +1,12 @@
-# DIN Setup Guide
+# DIN CLI — Setup Guide
 
-This guide walks through the complete setup process for a DIN environment
+This guide walks you through the complete setup process for the DIN CLI (`dincli`) from installation to first use.
 
-# virtual environment setup
+---
+
+## 1. Virtual Environment
+
+It is recommended to install `dincli` inside a Python virtual environment.
 
 ```bash
 # Create a virtual environment
@@ -12,179 +16,158 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-## install dincli
+---
 
-### Option 1: install from local file
+## 2. Install `dincli`
+
+### Option A — Install from a Local Wheel
 
 ```bash
-# Download the wheel
+# Download the wheel file
 wget https://github.com/InfiniteZeroFoundation/DINv1MVC/raw/dincli/dist/dincli-0.1.0-py3-none-any.whl
 
-# Install from local file
+# Install it
 pip install dincli-0.1.0-py3-none-any.whl
 ```
 
-### Option 2: install from GitHub Releases
+### Option B — Install Directly from GitHub
 
 ```bash
-# Check if package is in GitHub Releases
 pip install git+https://github.com/InfiniteZeroFoundation/DINv1MVC.git@dincli#subdirectory=dist
 ```
 
-## verify installation
+### Verify Installation
 
 ```bash
 dincli --version
-```
-
-or 
-
-```bash
+# or
 dincli system welcome
 ```
 
-## Initialize DIN CLI
+---
+
+## 3. Initialize the CLI
 
 ```bash
-# Initialize DIN CLI, create config/cache directories and an empty config file.
 dincli system init
 ```
 
-## config setup
+Creates the required `config` and `cache` directories and generates an empty configuration file.
+
+---
+
+## 4. Configuration
 
 ```bash
-# Configure demo mode to no to use your own wallet with your own private keys
+# Disable demo mode to use your own wallet and private keys
 dincli system configure-demo --mode no
 
-# Configure network to [local|sepolia_devnet|sepolia_testnet|mainnet]
-# use sepolia_devnet for testing
-# will roll out to sepolia_testnet and then mainnet later
+# Set the default network  [local | sepolia_devnet | sepolia_testnet | mainnet]
 dincli system configure-network --network sepolia_devnet
 
-# Configure logging level to [debug|info|warning|error|critical]
+# Set the log level  [debug | info | warning | error | critical]
 dincli system configure-logging --level info
 ```
 
-## .env setup
+> [!NOTE]
+> Use `sepolia_devnet` for testing. Mainnet support will be rolled out in a future release.
 
-In the root directory of the project, create a .env file:
+---
 
+## 5. Environment Variables (`.env`)
 
-### DIN WALLET PASSWORD
+Create a `.env` file in the root directory of your project and populate it with the variables below.
 
-DIN wallet password to encrypt your private key
+### Wallet Password
+
+The DIN CLI encrypts your private key using this password.
 
 ```bash
-# .env
-DIN_WALLET_PASSWORD=your_password
+DIN_WALLET_PASSWORD=your_secure_password
 ```
 
 ### RPC URL
 
-Configure the RPC URL for the network you intend to use. This allows the CLI to send transactions and read data from the blockchain.
+The CLI needs an RPC endpoint to communicate with the blockchain. The variable name follows the pattern `[NETWORK]_RPC_URL` (uppercase).
 
-You can obtain an RPC URL and auth token from providers such as [Alchemy](https://www.alchemy.com/), [Infura](https://infura.io/), or [Ankr](https://ankr.com/).
-
-The CLI looks for environment variables in the format `[NETWORK]_RPC_URL` (uppercase). You only need to set the variable for the network you are connecting to.
-
-Supported networks: `local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet`.
+You can obtain an RPC URL from providers such as [Alchemy](https://www.alchemy.com/), [Infura](https://infura.io/), or [Ankr](https://www.ankr.com/).
 
 ```bash
-# .env
-
-# Local network (e.g. Hardhat node)
+# Local network (e.g. a Hardhat node)
 LOCAL_RPC_URL=http://127.0.0.1:8545
 
-# Sepolia Devnet (e.g. Alchemy, Infura, or Ankr endpoint)
-SEPOLIA_DEVNET_RPC_URL=https://sepolia.infura.io/v3/[auth_token]
+# Sepolia Devnet
+SEPOLIA_DEVNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
 
 # Sepolia Testnet
-SEPOLIA_TESTNET_RPC_URL=https://sepolia.infura.io/v3/[auth_token]
+SEPOLIA_TESTNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
 
 # Mainnet
-MAINNET_RPC_URL=https://mainnet.infura.io/v3/[auth_token]
+MAINNET_RPC_URL=https://mainnet.infura.io/v3/<auth_token>
 ```
 
-### ETH PRIVATE KEY
+### Private Key
 
-To use `dincli` with your own wallet (Non-Demo Mode), you must first disable demo mode:
+Store private keys using the pattern `ETH_PRIVATE_KEY_<account_index>`. You can define as many accounts as needed by incrementing the index.
+
+```bash
+ETH_PRIVATE_KEY_0=0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+ETH_PRIVATE_KEY_1=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+```
+
+Connect a stored account with:
+
+```bash
+dincli system connect-wallet --account 0
+```
+
+> [!IMPORTANT]
+> To use `dincli` with your own wallet (Non-Demo Mode), you must first disable demo mode:
 
 ```bash
 dincli system configure-demo --mode no
 ```
 
-Then, you can connect using a specific account index. This requires the private key to be set in your `.env` file using the format `ETH_PRIVATE_KEY_<account_index>`.
+---
+
+## 6. IPFS Setup
+
+`dincli` requires an IPFS provider to store and retrieve model data. Choose one of the options below.
+
+### Option A — Local IPFS Node
+
+Install the [IPFS CLI](https://docs.ipfs.tech/install/) and start the daemon:
 
 ```bash
-# Connect to Account 0
-dincli system connect-wallet --account 0
-```
-
-**Configuration in `.env`:**
-
-```bash
-# .env
-ETH_PRIVATE_KEY_0=0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-ETH_PRIVATE_KEY_1=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
-```
-
-You can define multiple private keys by incrementing the account index (e.g., `0`, `1`, `2`...).
-
-### IPFS setup
-
-you either need to run your own IPFS node or use a public IPFS gateway or use a paid IPFS service such as [Pinata](https://www.pinata.cloud/) or [Infura](https://infura.io/) 
-
-you need to run the ipfs 24/7 to make sure your data is available on the network. 
-
-or you can pin your data to a paid IPFS service such as [Pinata](https://www.pinata.cloud/) or [Infura](https://infura.io/) 
-
-
-#### run your own IPFS node
-
-To run your own IPFS node, you can install  ipfs, and run the following command:
-
-```bash
-# Run IPFS node
 ipfs daemon
 ```
 
-you need to add the upload and retrieve url in .env file
+Then add the following to your `.env` file:
 
 ```bash
-# .env
 IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0/add
 IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0/cat/
 ```
 
+> [!IMPORTANT]
+> Your local IPFS node must be running continuously to keep your data available on the network.
 
-#### filebase ipfs
+### Option B — Filebase (Managed IPFS)
 
-You can use filebase as ipfs provider. Filebase IPFS service is implemented in dincli. Ypu can get your api key from [filebase](https://filebase.co/). and configure it in dincli as follows:
-``` bash
+Obtain an API key from [Filebase](https://filebase.com/) and configure it:
+
+```bash
 dincli system configure-ipfs --provider filebase --api-key <your_api_key>
 ```
 
-#### infura ipfs
+### Option C — Infura IPFS
 
-``` bash
-# .env
-# Get from https://infura.io/dashboard/ipfs
+Add the following to your `.env` file (credentials available from the [Infura dashboard](https://infura.io/dashboard/ipfs)):
+
+```bash
 INFURA_PROJECT_ID=your_project_id
 INFURA_PROJECT_SECRET=your_project_secret
 
-# Construct URLs with Basic Auth embedded
-IPFS_API_URL_ADD=https://${INFURA_PROJECT_ID}:${INFURA_PROJECT_SECRET}@ipfs.infura.io:5001/api/v0/add?pin=true
+IPFS_API_URL_ADD=https://<INFURA_PROJECT_ID>:<INFURA_PROJECT_SECRET>@ipfs.infura.io:5001/api/v0/add?pin=true
 IPFS_API_URL_RETRIEVE=https://ipfs.infura.io:5001/api/v0/cat/
-
 ```
-
-
-
-
-
-
-
-
-
-
-

@@ -1,80 +1,92 @@
 # DIN DAO Documentation
 
-The DIN DAO (Decentralized Autonomous Organization) role involves deploying and managing the core infrastructure contracts of the network.
+The DIN DAO (Decentralized Autonomous Organization) administers the core infrastructure contracts of the DIN network. This includes deploying the fundamental contracts and authorizing participants (slashers) who can penalize misbehaving validators.
 
-## Deployment
+---
 
-Deploy the fundamental contracts that govern the DIN ecosystem.
+## 1. Deployment
 
-### DIN Coordinator
-Deploy the main coordinator contract.
+Deploy the core contracts in the order listed below. Each contract depends on the previous one being live.
+
+> [!NOTE]
+> The `--artifact` flag must point to the compiled JSON output from Hardhat (contains the ABI and bytecode).
+
+### 1. DIN Coordinator
+
+The main coordinator contract that governs network-wide operations.
 
 ```bash
 dincli dindao deploy din-coordinator --artifact <path_to_artifact>
 ```
 
-### Validator Stake
-Deploy the staking contract for validators.
+### 2. Validator Stake
+
+The staking contract used by validators (Auditors, Aggregators).
 
 ```bash
-dincli dindao deploy din-validator-stake  --artifact <path_to_artifact>
+dincli dindao deploy din-validator-stake --artifact <path_to_artifact>
 ```
 
-### Model Registry
-Deploy the registry where a federated learning task is recorded with initial global model and the model id is assigned to the learning task.
+### 3. Model Registry
+
+Records federated learning tasks, assigns a unique `model_id` to each task, and stores the initial global model reference and manifest for a task.
 
 ```bash
 dincli dindao deploy din-model-registry --artifact <path_to_artifact>
 ```
 
-*Note: The `--artifact` path should point to the compiled JSON output from Hardhat with the abi and bytecode.*
+---
 
-## Registry Management
+## 2. Registry Management
 
 ### View Total Models
-Check the number of models registered in the system.
+
+Check how many models are currently registered in the network.
 
 ```bash
 dincli dindao registry total-models
 ```
 
-## Slasher Management
+---
 
-Authorize contracts to act as slashers within the DIN system.
+## 3. Slasher Management
 
-### Add Slasher
-Register a Task Coordinator as a valid slasher.
+Slashers are contracts authorized to penalize misbehaving participants. The Task Coordinator and Task Auditor contracts must be registered as slashers before they can enforce penalties.
 
-> **Prerequisite**: The following key must be set in your `.env` file:
-> `<NETWORK>_DINTaskCoordinator_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)
+### Register Task Coordinator as a Slasher
+
+> **Prerequisite** — the following key must be set in your `.env` file:
+> - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
+>   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
 
 ```bash
-# Register the Task Coordinator as a slasher
 dincli dindao add-slasher --taskCoordinator
 ```
 
-Register Task Auditor as a slasher
+### Register Task Auditor as a Slasher
 
-> **Prerequisite**: The following key must be set in your `.env` file:
-> `<NETWORK>_DINTaskCoordinator_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)
-> `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_DINTaskAuditor_Contract_Address`
-> (e.g. `SEPOLIA_DEVNET_0x1234567890123456789012345678901234567890_DINTaskAuditor_Contract_Address`)
+> **Prerequisite** — the following keys must be set in your `.env` file:
+> - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
+>   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
+> - `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_DINTaskAuditor_Contract_Address`  
+>   *(e.g. `SEPOLIA_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
 
 ```bash
-# Register the Task Auditor as a slasher
 dincli dindao add-slasher --taskAuditor
 ```
 
-**Alternative**: If you already have the contract address, you can pass it directly with `--contract` instead:
+### Register by Address Directly
+
+If you already know the contract address, you can pass it explicitly instead of relying on the `.env` file:
 
 ```bash
 dincli dindao add-slasher --contract <contract_address>
 ```
 
+---
+
 ## Workflow
 
-1. **Deploy**: Deploy Coordinator -> Stake -> Registry in that order.
-2. **Configure**: Add slashers as new tasks are created (Task Coordinators/Auditors need permission to slash).
-3. **Monitor**: Use registry commands to track network growth.
+1. **Deploy** — Coordinator → Validator Stake → Model Registry (in order).
+2. **Configure Slashers** — After each new task is created, register its Task Coordinator and Task Auditor as slashers.
+3. **Monitor** — Use registry commands to track network growth.
