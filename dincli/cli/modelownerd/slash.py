@@ -62,7 +62,7 @@ def slash_aggregators(
     console.print(f"[bold green]Slashing Aggregators ...[/bold green]")
 
     try:
-        tx = task_coordinator_Contract.functions.slashValidators(ref_gi).build_transaction({
+        tx = task_coordinator_Contract.functions.slashAggregators(ref_gi).build_transaction({
             "from": account.address,
             "gas": 3000000,
             "gasPrice": w3.to_wei("5", "gwei"),

@@ -77,10 +77,15 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
-      forking: {
-        url: `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`, // Replace with your Alchemy API key
-        //blockNumber: 18700000, // Optional: specific block to fork from (or remove to fork latest)
-      },
+      ...(process.env.ALCHEMY_API_KEY
+        ? {
+          forking: {
+            url: `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
+            // Replace with your Alchemy API key
+            //blockNumber: 18700000, // Optional: specific block to fork from (or remove to fork latest)
+          },
+        }
+        : {}),
       accounts: {
         count: 70, // Generate 70 accounts
         accountsBalance: "10000000000000000000000"

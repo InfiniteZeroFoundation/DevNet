@@ -81,7 +81,7 @@ def deposit_reward_in_dintask_auditor(
         w3.eth.wait_for_transaction_receipt(tx_hash)
         console.print("[green]✓ Reset allowance[/green]")
 
-    if current_allowance != amount_wei or current_allowance == 0:
+    if current_allowance != amount_wei:
         # --- Step 1: Approve ---
         console.print(f"[cyan]Approving DINTaskAuditor to spend {amount} USDT...[/cyan]")
         nonce = w3.eth.get_transaction_count(account.address)

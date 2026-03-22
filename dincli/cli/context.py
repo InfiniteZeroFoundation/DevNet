@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import importlib.util
 from importlib.resources import files
 from pathlib import Path
@@ -184,19 +186,80 @@ class DinContext:
             self.console.print(f"[bold green]✓ Current global iteration state:[/bold green] {GIstateToStr(curr_GIstate)}")
         return curr_gi, curr_GIstate
     
+    # ------------------------------------------------------------------ #
+    #  CID store helpers  (one local.json.cid per directory)             #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _read_local_cid_store(directory: Path) -> dict:
+        """Load the local CID registry for *directory* (returns {} if missing/corrupt)."""
+        store_path = directory / "local.json.cid"
+        if store_path.exists():
+            try:
+                with open(store_path, "r") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
+
+    @staticmethod
+    def _write_local_cid_store(directory: Path, store: dict) -> None:
+        """Persist the CID registry for *directory*."""
+        store_path = directory / "local.json.cid"
+        directory.mkdir(parents=True, exist_ok=True)
+        with open(store_path, "w") as f:
+            json.dump(store, f, indent=2)
+
     def ensure_file_exists(self,
-        file_path: Path, 
-        ipfs_cid: str, 
+        file_path: Path,
+        ipfs_cid: str | None,
         description: str
     ) -> None:
-        """Retrieve file from IPFS if missing, with user-friendly feedback."""
-        if not file_path.exists():
+        """
+        Retrieve *file_path* from IPFS if it is missing or its stored CID
+        no longer matches *ipfs_cid* (i.e. the manifest was updated).
+
+        CIDs are tracked in ``<file_path.parent.parent>/local.json.cid`` under the
+        key ``file_path.name`` so a single registry file covers all service
+        files for a given model directory.
+
+        If *ipfs_cid* is None, only a presence check is done (no CID comparison).
+        """
+        directory = file_path.parent.parent
+        filename  = file_path.name
+
+        # --- presence-only fallback when no CID is provided ---
+        if ipfs_cid is None:
+            if not file_path.exists():
+                raise FileNotFoundError(
+                    f"{description} not found at {file_path} and no IPFS CID was provided to download it."
+                )
+            return
+
+        store = self._read_local_cid_store(directory)
+        stored_cid = store.get(filename)
+
+        needs_download = (
+            not file_path.exists()
+            or stored_cid != ipfs_cid
+        )
+
+        if stored_cid and stored_cid != ipfs_cid and file_path.exists():
+            self.console.print(
+                f"[yellow]🔄 {description} CID changed "
+                f"({stored_cid[:12]}… → {ipfs_cid[:12]}…), re-downloading…[/yellow]"
+            )
+
+        if needs_download:
             self.console.print(f"[yellow]📥 Retrieving {description} from IPFS with CID: {ipfs_cid} to {file_path}[/yellow]")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             retrieve_from_ipfs(ipfs_cid, file_path)
             if not file_path.exists():
                 self.console.print(f"[red]❌ Failed to retrieve {description} (CID: {ipfs_cid}) to {file_path}[/red]")
                 raise typer.Exit(1)
+            # Update the store
+            store[filename] = ipfs_cid
+            self._write_local_cid_store(directory, store)
             self.console.print(f"[green]✓ {description.capitalize()} ready with path:[/green] {file_path}")
 
     

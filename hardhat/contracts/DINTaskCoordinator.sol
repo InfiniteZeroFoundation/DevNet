@@ -530,9 +530,9 @@ contract DINTaskCoordinator is Ownable {
         GIstate = GIstates.AuditorsSlashed;
     }
 
-    function slashValidators(uint _GI) external onlyOwner onlyCurrentGI(_GI) {
+    function slashAggregators(uint _GI) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.AuditorsSlashed)
-            revert TC_NotReadyToSlashValidators();
+            revert TC_NotReadyToSlashAggregators();
 
         uint256 slashAmount = minStake;
 

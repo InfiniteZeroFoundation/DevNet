@@ -1,0 +1,1179 @@
+[dotenv@17.2.3] injecting env (9) from ../.env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+[dotenv@17.2.3] injecting env (6) from ../.env.local -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+Loaded ../.env.local
+
+
+  Measure Gas Costs
+    DIN contracts deployment gas costs
+Gas Used for DinCoordinator.deploy: 973686
+      ✔ should deploy DIN Coordinator contract (600ms)
+Gas Used for DinValidatorStake.deploy: 724092
+      ✔ should deploy DIN Validator Stake contract (162ms)
+Gas Used for DinCoordinator.add_dinvalidatorStakeContract: 46001
+      ✔ should add DIN Validator Stake contract to DIN Coordinator contract (44ms)
+Gas Used for DinModelRegistry.deploy: 1008373
+      ✔ should deploy DIN Model Registry contract (162ms)
+    USDT and ETH balances
+USDT Balance: 0
+ETH Balance: 10000000000000000000000
+      ✔ should get USDT and ETH balances (221ms)
+    Buy USDT 3000
+USDT Balance: 0
+ETH Balance: 10000000000000000000000
+🎯 Target USDT balance: 3000.0
+💰 ETH required: 1.470334206447423637 ETH
+Gas Used for swapETHForExactTokens: 150048
+✅ Final USDT balance: 3000.0
+      ✔ should buy USDT (1226ms)
+🔄 Attempt 1: Current=3000.0, Target=6000.0
+✅ After swap: 6000.0 USDT
+      ✔ should loop buying USDT until target balance reached (retry logic)
+    Deploy Model Owner Contracts
+Gas Used for DinTaskCoordinator.deploy: 2756173
+Gas Used for DinTaskAuditor.deploy: 2608037
+Gas Used for DinTaskCoordinator.setDINTaskAuditorContract: 69416
+      ✔ should deploy DINTaskCoordinator and DINTaskAuditor (367ms)
+    Model Owner deposit reward in din-task-auditor
+✅ Approving DINTaskAuditor to spend 1000.0 USDT
+⛽ Gas Used for USDT.approve: 48549
+💵 USDT Balance: 6000.0
+🔐 USDT Allowance: 1000.0
+⛽ Gas Used for DINTaskAuditor.depositReward: 94308
+🏦 Auditor USDT Balance: 1000.0
+      ✔ should deposit reward in din-task-auditor (112ms)
+    Add slashers 
+⛽ Gas Used for adding taskCoordinator to DINCoordinator as slasher by DINDAO: 53725
+      ✔ DINDAO - should add taskCoordinator as slasher (38ms)
+⛽ Gas Used for adding taskCoordinator to DINCoordinator as slasher by ModelOwner: 37010
+      ✔ ModelOwner - should add taskCoordinator as slasher
+⛽ Gas Used for adding taskAuditor to DINCoordinator as slasher by DINDAO: 53725
+      ✔ DINDAO - should add taskAuditor as slasher
+⛽ Gas Used for adding taskAuditor to DINCoordinator as slasher by ModelOwner: 38525
+      ✔ ModelOwner - should add taskAuditor as slasher
+    Submit Genesis Models
+⛽ Gas Used for submitting genesis model by ModelOwner: 97500
+⛽ Gas Used for setting tier 2 score of genesis model by ModelOwner: 51289
+      ✔ should submit genesis model (139ms)
+    Register Model to Registry
+⛽ Gas Used for submitting task by ModelOwner: 272362
+      ✔ should register model to registry (358ms)
+    Start GI
+⛽ Gas Used for starting global iteration by ModelOwner: 66210
+      ✔ should start global iteration
+    Aggregators Open
+⛽ Gas Used for opening aggregators registration by ModelOwner: 31826
+      ✔ should open aggregators registration
+    Aggregators Reg Loop
+
+🔄 Processing Aggregator: 0x71bE63f3384f5fb98995898A86B02Fb2426c5788
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 76821
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 98210
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 102359
+✅ Aggregator 0x71bE63f3384f5fb98995898A86B02Fb2426c5788 successfully registered!
+
+📋 Final State for 0x71bE63f3384f5fb98995898A86B02Fb2426c5788:
+   💰 ETH: 9998.999676002303359239
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a successfully registered!
+
+📋 Final State for 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a:
+   💰 ETH: 9998.999727622939473914
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec successfully registered!
+
+📋 Final State for 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec:
+   💰 ETH: 9998.999727752013237255
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097 successfully registered!
+
+📋 Final State for 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097:
+   💰 ETH: 9998.999727827870199299
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0xcd3B766CCDd6AE721141F452C550Ca635964ce71
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0xcd3B766CCDd6AE721141F452C550Ca635964ce71 successfully registered!
+
+📋 Final State for 0xcd3B766CCDd6AE721141F452C550Ca635964ce71:
+   💰 ETH: 9998.99972787245152471
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0x2546BcD3c84621e976D8185a91A922aE77ECEc30
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0x2546BcD3c84621e976D8185a91A922aE77ECEc30 successfully registered!
+
+📋 Final State for 0x2546BcD3c84621e976D8185a91A922aE77ECEc30:
+   💰 ETH: 9998.999727898652169319
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E successfully registered!
+
+📋 Final State for 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E:
+   💰 ETH: 9998.999727914050394613
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0xdD2FD4581271e230360230F9337D5c0430Bf44C0 successfully registered!
+
+📋 Final State for 0xdD2FD4581271e230360230F9337D5c0430Bf44C0:
+   💰 ETH: 9998.999727923099608944
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199 successfully registered!
+
+📋 Final State for 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199:
+   💰 ETH: 9998.999727928417955155
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f successfully registered!
+
+📋 Final State for 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f:
+   💰 ETH: 9998.999727931543685156
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D successfully registered!
+
+📋 Final State for 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D:
+   💰 ETH: 9998.999727933380377395
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Aggregator: 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Aggregator has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Aggregator not yet registered - proceeding with registration
+📝 Registering aggregator for GI: 1...
+⛽ Gas Used for registerDINaggregator: 85259
+✅ Aggregator 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE successfully registered!
+
+📋 Final State for 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE:
+   💰 ETH: 9998.999727934459923799
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🎉 Aggregator registration loop completed
+      ✔ should loop aggregators registration (3182ms)
+    Aggregators Close
+⛽ Gas Used for closing aggregators registration by ModelOwner: 31650
+
+📋 Registered Aggregators for GI 1:
+   12 aggregators registered
+   0x71bE63f3384f5fb98995898A86B02Fb2426c5788,0xFABB0ac9d68B0B445fB7357272Ff202C5651694a,0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec,0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097,0xcd3B766CCDd6AE721141F452C550Ca635964ce71,0x2546BcD3c84621e976D8185a91A922aE77ECEc30,0xbDA5747bFD65F08deb54cb465eB87D40e51B197E,0xdD2FD4581271e230360230F9337D5c0430Bf44C0,0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199,0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f,0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D,0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE
+      ✔ should close aggregators registration
+    Auditors Open
+⛽ Gas Used for opening auditors registration by ModelOwner: 31386
+      ✔ should open auditors registration
+    Auditor Reg Loop
+
+🔄 Processing Auditor: 0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 111371
+🔗 Tx Hash: undefined
+✅ Auditor 0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf successfully registered!
+
+📋 Final State for 0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf:
+   💰 ETH: 9998.999701823250212567
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0x145e2dc5C8238d1bE628F87076A37d4a26a78544
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0x145e2dc5C8238d1bE628F87076A37d4a26a78544 successfully registered!
+
+📋 Final State for 0x145e2dc5C8238d1bE628F87076A37d4a26a78544:
+   💰 ETH: 9998.999718923580057803
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51 successfully registered!
+
+📋 Final State for 0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51:
+   💰 ETH: 9998.999718923752719507
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0x042a63149117602129B6922ecFe3111168C2C323
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0x042a63149117602129B6922ecFe3111168C2C323 successfully registered!
+
+📋 Final State for 0x042a63149117602129B6922ecFe3111168C2C323:
+   💰 ETH: 9998.999718923854160505
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04 successfully registered!
+
+📋 Final State for 0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04:
+   💰 ETH: 9998.999718923913898106
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf successfully registered!
+
+📋 Final State for 0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf:
+   💰 ETH: 9998.999718923948863599
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0xAb707cb80e7de7C75d815B1A653433F3EEc44c74
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0xAb707cb80e7de7C75d815B1A653433F3EEc44c74 successfully registered!
+
+📋 Final State for 0xAb707cb80e7de7C75d815B1A653433F3EEc44c74:
+   💰 ETH: 9998.999718923969464082
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC successfully registered!
+
+📋 Final State for 0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC:
+   💰 ETH: 9998.999718923981509339
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🔄 Processing Auditor: 0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220
+────────────────────────────────────────────────────────────
+💰 ETH Balance: 10000.0 ETH
+🪙 DIN Balance: 0.0 DIN
+⚠️  DIN balance (0.0) < MIN_STAKE (1000000.0)
+🛒 Buying DIN tokens for 1.0 ETH...
+⛽ Gas Used for depositAndMint: 59721
+✅ DIN Balance after purchase: 1000000.0 DIN
+✅ Auditor has sufficient DIN balance for staking
+🔐 Approving ValidatorStake to spend 1000000.0 DIN...
+⛽ Gas Used for DIN.approve: 45974
+📊 Current stake: 0.0 DIN
+🎯 Staking 1000000.0 DIN tokens...
+⛽ Gas Used for stake: 81110
+✅ New stake: 1000000.0 DIN
+✅ Auditor not yet registered - proceeding with registration
+📝 Registering auditor for GI: 1...
+⛽ Gas Used for registerDINAuditor: 94271
+🔗 Tx Hash: undefined
+✅ Auditor 0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220 successfully registered!
+
+📋 Final State for 0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220:
+   💰 ETH: 9998.999718923988528319
+   🪙 DIN: 0.0
+   🔒 Staked: 1000000.0 DIN
+   ✅ Registered: true
+
+🎉 Auditors registration loop completed
+      ✔ should loop auditors registration (2197ms)
+    Auditors Close
+⛽ Gas Used for closing auditors registration by ModelOwner: 30990
+
+📋 Registered Auditors for GI 1:
+   9 auditors registered
+   0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf,0x145e2dc5C8238d1bE628F87076A37d4a26a78544,0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51,0x042a63149117602129B6922ecFe3111168C2C323,0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04,0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf,0xAb707cb80e7de7C75d815B1A653433F3EEc44c74,0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC,0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220
+      ✔ should close auditors registration
+    Open LMS
+⛽ Gas Used for opening LMS by ModelOwner: 30946
+      ✔ should open LMS
+    Clients Train
+
+🔄 Processing Client: 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 198404
+
+🔄 Processing Client: 0x90F79bf6EB2c4f870365E785982E1f101E93b906
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0x976EA74026E726554dB657fA54763abd0C3a0aa9
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+
+🔄 Processing Client: 0xBcd4042DE499D14e55001CcbB24a551F3b954096
+────────────────────────────────────────────────────────────
+⛽ Gas Used for LMS by Client: 201204
+      ✔ should train clients (2935ms)
+    Clients LMS Close
+⛽ Gas Used for closing LMS by ModelOwner: 31276
+
+📋 Registered Models for GI 1:
+   9 models registered
+ Client 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC submitted model QmXabcde1234567890x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+ Client 0x90F79bf6EB2c4f870365E785982E1f101E93b906 submitted model QmXabcde1234567890x90F79bf6EB2c4f870365E785982E1f101E93b906
+ Client 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65 submitted model QmXabcde1234567890x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
+ Client 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc submitted model QmXabcde1234567890x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
+ Client 0x976EA74026E726554dB657fA54763abd0C3a0aa9 submitted model QmXabcde1234567890x976EA74026E726554dB657fA54763abd0C3a0aa9
+ Client 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955 submitted model QmXabcde1234567890x14dC79964da2C08b23698B3D3cc7Ca32193d9955
+ Client 0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f submitted model QmXabcde1234567890x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f
+ Client 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720 submitted model QmXabcde1234567890xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+ Client 0xBcd4042DE499D14e55001CcbB24a551F3b954096 submitted model QmXabcde1234567890xBcd4042DE499D14e55001CcbB24a551F3b954096
+      ✔ should close clients lms
+    Create Auditors Batches
+⛽ Gas Used for creating auditors batches by ModelOwner: 722246
+⛽ Gas Used for assigning audit test dataset by ModelOwner: 104465
+⛽ Gas Used for assigning audit test dataset by ModelOwner: 104477
+⛽ Gas Used for assigning audit test dataset by ModelOwner: 104477
+⛽ Gas Used for setting test data assigned flag by ModelOwner: 60836
+
+📋 Showing auditor batches for global iteration 1!
+────────────────────────────────────────────────────────────────────────────────
+📊 Auditor batches count: 3
+[90m┌────────────[39m[90m┬─────────────────────────────────────────────[39m[90m┬─────────────────────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Auditors                                    [39m[90m│[39m[35m Model Indexes           [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├────────────[39m[90m┼─────────────────────────────────────────────[39m[90m┼─────────────────────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 0          [90m│[39m 0xa0ec...1b04, 0x042a...c323, 0xab70...4c74 [90m│[39m 8, 6, 5                 [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├────────────[39m[90m┼─────────────────────────────────────────────[39m[90m┼─────────────────────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 1          [90m│[39m 0xee7f...eeff, 0xe8b1...ddff, 0x1c87...2220 [90m│[39m 1, 2, 3                 [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├────────────[39m[90m┼─────────────────────────────────────────────[39m[90m┼─────────────────────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 2          [90m│[39m 0xd6a0...4a51, 0x0d80...26cc, 0x145e...8544 [90m│[39m 0, 7, 4                 [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m└────────────[39m[90m┴─────────────────────────────────────────────[39m[90m┴─────────────────────────[39m[90m┴────────────────────────────────────────┘[39m
+✅ Auditor batches shown!
+      ✔ should create auditors batches (1474ms)
+    Start LMS evaluation
+⛽ Gas Used for starting LMS evaluation by ModelOwner: 30924
+      ✔ should start LMS evaluation
+    Submit LMS evaluations
+Evaluating LM 1 from Audit batch 1 by Auditor 0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 136191
+Evaluating LM 2 from Audit batch 1 by Auditor 0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 138581
+Evaluating LM 3 from Audit batch 1 by Auditor 0xEe7f6A930B29d7350498Af97f0F9672EaecbeeFf!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 140971
+Evaluating LM 0 from Audit batch 2 by Auditor 0x145e2dc5C8238d1bE628F87076A37d4a26a78544!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 137005
+Evaluating LM 7 from Audit batch 2 by Auditor 0x145e2dc5C8238d1bE628F87076A37d4a26a78544!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 139407
+Evaluating LM 4 from Audit batch 2 by Auditor 0x145e2dc5C8238d1bE628F87076A37d4a26a78544!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 141797
+Evaluating LM 0 from Audit batch 2 by Auditor 0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 144220
+Evaluating LM 7 from Audit batch 2 by Auditor 0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 146622
+Evaluating LM 4 from Audit batch 2 by Auditor 0xD6A098EbCc5f8Bd4e174D915C54486B077a34A51!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 149012
+Evaluating LM 8 from Audit batch 0 by Auditor 0x042a63149117602129B6922ecFe3111168C2C323!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 136592
+Evaluating LM 6 from Audit batch 0 by Auditor 0x042a63149117602129B6922ecFe3111168C2C323!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 138982
+Evaluating LM 5 from Audit batch 0 by Auditor 0x042a63149117602129B6922ecFe3111168C2C323!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 141372
+Evaluating LM 8 from Audit batch 0 by Auditor 0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 144220
+Evaluating LM 6 from Audit batch 0 by Auditor 0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 146610
+Evaluating LM 5 from Audit batch 0 by Auditor 0xa0EC9eE47802CeB56eb58ce80F3E41630B771b04!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 149000
+Evaluating LM 1 from Audit batch 1 by Auditor 0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 144645
+Evaluating LM 2 from Audit batch 1 by Auditor 0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 147035
+Evaluating LM 3 from Audit batch 1 by Auditor 0xe8B1ff302A740fD2C6e76B620d45508dAEc2DDFf!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 149425
+Evaluating LM 8 from Audit batch 0 by Auditor 0xAb707cb80e7de7C75d815B1A653433F3EEc44c74!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 127783
+Evaluating LM 6 from Audit batch 0 by Auditor 0xAb707cb80e7de7C75d815B1A653433F3EEc44c74!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 130173
+Evaluating LM 5 from Audit batch 0 by Auditor 0xAb707cb80e7de7C75d815B1A653433F3EEc44c74!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 132563
+Evaluating LM 0 from Audit batch 2 by Auditor 0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 125370
+Evaluating LM 7 from Audit batch 2 by Auditor 0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 127772
+Evaluating LM 4 from Audit batch 2 by Auditor 0x0d803cdeEe5990f22C2a8DF10A695D2312dA26CC!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 130162
+Evaluating LM 1 from Audit batch 1 by Auditor 0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 127795
+Evaluating LM 2 from Audit batch 1 by Auditor 0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 130185
+Evaluating LM 3 from Audit batch 1 by Auditor 0x1c87Bb9234aeC6aDc580EaE6C8B59558A4502220!
+⛽ Gas Used for submitting LMS evaluation by Auditor: 132575
+      ✔ should submit LMS evaluations (3259ms)
+    Show LMS Evaluations
+
+📊 Showing LMS Evaluation for GI 1
+────────────────────────────────────────────────────────────────────────────────
+📦 Auditor batches count: 3
+[90m┌────────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────┐[39m
+[90m│[39m[35m Model      [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Submitted At       [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Evaluat… [39m[90m│[39m[35m Approved [39m[90m│[39m[35m Final Avg  [39m[90m│[39m
+[90m│[39m[35m Index      [39m[90m│[39m[35m                                          [39m[90m│[39m[35m                                                [39m[90m│[39m[35m                    [39m[90m│[39m[35m          [39m[90m│[39m[35m          [39m[90m│[39m[35m          [39m[90m│[39m[35m            [39m[90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 0          [90m│[39m 0x3C44CdDd...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281592         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 1          [90m│[39m 0x90F79bf6...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281593         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 2          [90m│[39m 0x15d34AAf...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281594         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 3          [90m│[39m 0x9965507D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281595         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 4          [90m│[39m 0x976EA740...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281596         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 5          [90m│[39m 0x14dC7996...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281597         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 6          [90m│[39m 0x23618e81...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281598         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 7          [90m│[39m 0xa0Ee7A14...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281599         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m├────────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────┤[39m
+[90m│[39m 8          [90m│[39m 0xBcd4042D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1773281600         [90m│[39m ✓        [90m│[39m ✗        [90m│[39m ✗        [90m│[39m —          [90m│[39m
+[90m└────────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────┘[39m
+
+🔍 Auditor Evaluations for GI 1
+────────────────────────────────────────────────────────────────────────────────
+
+👤 Auditor: 0x042a6314...68c2c323
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 8        [90m│[39m 0xBcd4042D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 6        [90m│[39m 0x23618e81...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 5        [90m│[39m 0x14dC7996...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0x0d803cde...12da26cc
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 0        [90m│[39m 0x3C44CdDd...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 7        [90m│[39m 0xa0Ee7A14...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 4        [90m│[39m 0x976EA740...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0x145e2dc5...26a78544
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 0        [90m│[39m 0x3C44CdDd...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 7        [90m│[39m 0xa0Ee7A14...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 4        [90m│[39m 0x976EA740...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0x1c87bb92...a4502220
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 1        [90m│[39m 0x90F79bf6...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 2        [90m│[39m 0x15d34AAf...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 3        [90m│[39m 0x9965507D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0xa0ec9ee4...0b771b04
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 8        [90m│[39m 0xBcd4042D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 6        [90m│[39m 0x23618e81...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 5        [90m│[39m 0x14dC7996...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0xab707cb8...eec44c74
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 8        [90m│[39m 0xBcd4042D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 6        [90m│[39m 0x23618e81...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 5        [90m│[39m 0x14dC7996...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwG...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0xd6a098eb...77a34a51
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 0        [90m│[39m 0x3C44CdDd...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 7        [90m│[39m 0xa0Ee7A14...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 4        [90m│[39m 0x976EA740...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSdiTciKYBTxHKntjY3Pko8szD5D1nX...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0xe8b1ff30...aec2ddff
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 1        [90m│[39m 0x90F79bf6...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 2        [90m│[39m 0x15d34AAf...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 3        [90m│[39m 0x9965507D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+👤 Auditor: 0xee7f6a93...aecbeeff
+[90m┌──────────[39m[90m┬──────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬────────────────────────────────────────┐[39m
+[90m│[39m[35m ModelIdx [39m[90m│[39m[35m Client                                   [39m[90m│[39m[35m Model CID                                      [39m[90m│[39m[35m Batch ID   [39m[90m│[39m[35m Voted    [39m[90m│[39m[35m Eligible [39m[90m│[39m[35m Score    [39m[90m│[39m[35m Test CID                               [39m[90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 1        [90m│[39m 0x90F79bf6...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 2        [90m│[39m 0x15d34AAf...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m├──────────[39m[90m┼──────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼────────────────────────────────────────┤[39m
+[90m│[39m 3        [90m│[39m 0x9965507D...                            [90m│[39m QmXabcde1234567...                             [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCA...    [90m│[39m
+[90m└──────────[39m[90m┴──────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴────────────────────────────────────────┘[39m
+
+🤖 Per-Model Evaluations for GI 1
+────────────────────────────────────────────────────────────────────────────────
+
+📊 Model Index: 0
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x0d803cde...12da26cc                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x145e2dc5...26a78544                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xd6a098eb...77a34a51                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmSdiTciKYBTxHKntjY3Pko8szD5D1nXVLU2mVWrsZhWdE
+
+📊 Model Index: 1
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x1c87bb92...a4502220                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xe8b1ff30...aec2ddff                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xee7f6a93...aecbeeff                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCAnnLB9DqE7MTrAg
+
+📊 Model Index: 2
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x1c87bb92...a4502220                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xe8b1ff30...aec2ddff                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xee7f6a93...aecbeeff                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCAnnLB9DqE7MTrAg
+
+📊 Model Index: 3
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x1c87bb92...a4502220                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xe8b1ff30...aec2ddff                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xee7f6a93...aecbeeff                    [90m│[39m 1          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCAnnLB9DqE7MTrAg
+
+📊 Model Index: 4
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x0d803cde...12da26cc                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x145e2dc5...26a78544                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xd6a098eb...77a34a51                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmSdiTciKYBTxHKntjY3Pko8szD5D1nXVLU2mVWrsZhWdE
+
+📊 Model Index: 5
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x042a6314...68c2c323                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xa0ec9ee4...0b771b04                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xab707cb8...eec44c74                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwGuD6ebGZUxi34ea
+
+📊 Model Index: 6
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x042a6314...68c2c323                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xa0ec9ee4...0b771b04                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xab707cb8...eec44c74                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwGuD6ebGZUxi34ea
+
+📊 Model Index: 7
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x0d803cde...12da26cc                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x145e2dc5...26a78544                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xd6a098eb...77a34a51                    [90m│[39m 2          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmSdiTciKYBTxHKntjY3Pko8szD5D1nXVLU2mVWrsZhWdE
+
+📊 Model Index: 8
+[90m┌──────────────────────────────────────────[39m[90m┬────────────[39m[90m┬──────────[39m[90m┬──────────[39m[90m┬──────────┐[39m
+[90m│[39m[36m Auditor                                  [39m[90m│[39m[36m Batch ID   [39m[90m│[39m[36m Voted    [39m[90m│[39m[36m Eligible [39m[90m│[39m[36m Score    [39m[90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0x042a6314...68c2c323                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xa0ec9ee4...0b771b04                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m├──────────────────────────────────────────[39m[90m┼────────────[39m[90m┼──────────[39m[90m┼──────────[39m[90m┼──────────┤[39m
+[90m│[39m 0xab707cb8...eec44c74                    [90m│[39m 0          [90m│[39m ✓        [90m│[39m ✓        [90m│[39m 90       [90m│[39m
+[90m└──────────────────────────────────────────[39m[90m┴────────────[39m[90m┴──────────[39m[90m┴──────────[39m[90m┴──────────┘[39m
+   Test CID: QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwGuD6ebGZUxi34ea
+
+✅ LMS evaluations displayed successfully!
+      ✔ should display LMS evaluations for current GI (188ms)
+    Close LMS Evaluation
+⛽ Gas Used for closing LMS evaluation by ModelOwner: 504002
+      ✔ should close LMS evaluation
+    Create T1NT2 Batches
+Creating Tier 1 & Tier 2 batches
+⛽ Gas Used for creating T1NT2 batches by ModelOwner: 879045
+      ✔ should create T1NT2 batches (1284ms)
+    Start T1 Aggregation
+Starting T1 aggregation
+⛽ Gas Used for starting T1 aggregation by ModelOwner: 31320
+      ✔ should start T1 aggregation
+    Aggregate T1 Batches
+
+🔄 Aggregating T1 Batches for GI 1
+📦 T1 Batches Count: 3
+────────────────────────────────────────────────────────────────────────────────
+👤 Aggregator: 0x71bE63f3384f5fb98995898A86B02Fb2426c5788
+
+⚠️  No T1 batches found for aggregator 0x71bE63f3384f5fb98995898A86B02Fb2426c5788
+👤 Aggregator: 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a
+
+📋 Processing T1 Batch 2
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 104244
+
+✅ T1 batch aggregation completed successfully for 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a
+👤 Aggregator: 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec
+
+📋 Processing T1 Batch 0
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 101819
+
+✅ T1 batch aggregation completed successfully for 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec
+👤 Aggregator: 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097
+
+⚠️  No T1 batches found for aggregator 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097
+👤 Aggregator: 0xcd3B766CCDd6AE721141F452C550Ca635964ce71
+
+⚠️  No T1 batches found for aggregator 0xcd3B766CCDd6AE721141F452C550Ca635964ce71
+👤 Aggregator: 0x2546BcD3c84621e976D8185a91A922aE77ECEc30
+
+📋 Processing T1 Batch 2
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 89557
+
+✅ T1 batch aggregation completed successfully for 0x2546BcD3c84621e976D8185a91A922aE77ECEc30
+👤 Aggregator: 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E
+
+📋 Processing T1 Batch 1
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 106657
+
+✅ T1 batch aggregation completed successfully for 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E
+👤 Aggregator: 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
+
+📋 Processing T1 Batch 1
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 87144
+
+✅ T1 batch aggregation completed successfully for 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
+👤 Aggregator: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
+
+📋 Processing T1 Batch 0
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 87132
+
+✅ T1 batch aggregation completed successfully for 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
+👤 Aggregator: 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f
+
+📋 Processing T1 Batch 1
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 84731
+
+✅ T1 batch aggregation completed successfully for 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f
+👤 Aggregator: 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D
+
+📋 Processing T1 Batch 2
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 84731
+
+✅ T1 batch aggregation completed successfully for 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D
+👤 Aggregator: 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE
+
+📋 Processing T1 Batch 0
+⛽ Gas Used for submitting T1 aggregation by Aggregator: 89545
+
+✅ T1 batch aggregation completed successfully for 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE
+      ✔ should aggregate T1 batches (1071ms)
+    Close T1 Aggregation
+Closing T1 aggregation
+⛽ Gas Used for closing T1 aggregation by ModelOwner: 259379
+      ✔ should close T1 aggregation
+    Start T2 Aggregation
+Starting T2 aggregation
+⛽ Gas Used for starting T2 aggregation by ModelOwner: 31760
+      ✔ should start T2 aggregation
+    Aggregate T2 Batches
+
+🔄 Aggregating T2 Batches for GI 1
+📦 T2 Batches Count: 1
+────────────────────────────────────────────────────────────────────────────────
+👤 Aggregator: 0x71bE63f3384f5fb98995898A86B02Fb2426c5788
+
+📋 Processing T2 Batch 0
+⛽ Gas Used for submitting T2 aggregation by Aggregator: 104236
+
+✅ T2 batch aggregation completed successfully for 0x71bE63f3384f5fb98995898A86B02Fb2426c5788
+👤 Aggregator: 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a
+
+⚠️  No T2 batches found for aggregator 0xFABB0ac9d68B0B445fB7357272Ff202C5651694a
+👤 Aggregator: 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec
+
+⚠️  No T2 batches found for aggregator 0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec
+👤 Aggregator: 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097
+
+📋 Processing T2 Batch 0
+⛽ Gas Used for submitting T2 aggregation by Aggregator: 89549
+
+✅ T2 batch aggregation completed successfully for 0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097
+👤 Aggregator: 0xcd3B766CCDd6AE721141F452C550Ca635964ce71
+
+📋 Processing T2 Batch 0
+⛽ Gas Used for submitting T2 aggregation by Aggregator: 84723
+
+✅ T2 batch aggregation completed successfully for 0xcd3B766CCDd6AE721141F452C550Ca635964ce71
+👤 Aggregator: 0x2546BcD3c84621e976D8185a91A922aE77ECEc30
+
+⚠️  No T2 batches found for aggregator 0x2546BcD3c84621e976D8185a91A922aE77ECEc30
+👤 Aggregator: 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E
+
+⚠️  No T2 batches found for aggregator 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E
+👤 Aggregator: 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
+
+⚠️  No T2 batches found for aggregator 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
+👤 Aggregator: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
+
+⚠️  No T2 batches found for aggregator 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
+👤 Aggregator: 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f
+
+⚠️  No T2 batches found for aggregator 0x09DB0a93B389bEF724429898f539AEB7ac2Dd55f
+👤 Aggregator: 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D
+
+⚠️  No T2 batches found for aggregator 0x02484cb50AAC86Eae85610D6f4Bf026f30f6627D
+👤 Aggregator: 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE
+
+⚠️  No T2 batches found for aggregator 0x08135Da0A343E492FA2d4282F2AE34c6c5CC1BbE
+      ✔ should aggregate T2 batches (381ms)
+    Close T2 Aggregation
+Closing T2 aggregation
+⛽ Gas Used for closing T2 aggregation by ModelOwner: 109072
+      ✔ should close T2 aggregation
+    Slash Auditors
+Slashing Auditors
+⛽ Gas Used for slashing auditors by ModelOwner: 31694
+      ✔ should slash auditors
+    Slash Aggregators
+Slashing Aggregators
+⛽ Gas Used for slashing aggregators by ModelOwner: 163961
+      ✔ should slash aggregators
+
+
+  39 passing (22s)
+
