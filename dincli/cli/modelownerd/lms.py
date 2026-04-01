@@ -1,6 +1,8 @@
 
 import typer
 
+from dincli.services.cid_utils import get_cid_from_bytes32
+
 lms_app = typer.Typer(help="Local Model Submission commands")
 
 @lms_app.command()    
@@ -68,7 +70,8 @@ def show_models(
         console.print(f"[green]✓ {len(lm_submissions)} Local model submissions found![/green]")
         for i in range(len(lm_submissions)):
 
-            client_model_ipfs_hash = lm_submissions[i][1]
+            client_model_ipfs_hash_raw = lm_submissions[i][1]
+            client_model_ipfs_hash = get_cid_from_bytes32(client_model_ipfs_hash_raw.hex(), version=0)
             ClientAddresses.append(lm_submissions[i][0])
             client_model_ipfs_hashes.append(client_model_ipfs_hash)
             console.print(f"[green]✓ Client {ClientAddresses[i]} submitted model {client_model_ipfs_hash}![/green]")

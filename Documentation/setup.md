@@ -160,14 +160,6 @@ Obtain an API key from [Filebase](https://filebase.com/) and configure it:
 dincli system configure-ipfs --provider filebase --api-key <your_api_key>
 ```
 
-### Option C — Infura IPFS
+### Option C — Custom IPFS Provider
 
-Add the following to your `.env` file (credentials available from the [Infura dashboard](https://infura.io/dashboard/ipfs)):
-
-```bash
-INFURA_PROJECT_ID=your_project_id
-INFURA_PROJECT_SECRET=your_project_secret
-
-IPFS_API_URL_ADD=https://<INFURA_PROJECT_ID>:<INFURA_PROJECT_SECRET>@ipfs.infura.io:5001/api/v0/add?pin=true
-IPFS_API_URL_RETRIEVE=https://ipfs.infura.io:5001/api/v0/cat/
-```
+dincli system configure-ipfs --provider custom --api-key <your_api_key> --api-secret <your_api_secret> --ipfs-service-path <your_ipfs_service_path>

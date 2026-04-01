@@ -2,9 +2,11 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from web3 import Web3
 
 from dincli.cli.utils import CACHE_DIR, get_manifest_key
 from dincli.services.client import train_client_model_and_upload_to_ipfs
+from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 app = typer.Typer(help="Commands for DIN clients in DIN.")
 lms_app = typer.Typer(help="LMS related commands")
@@ -30,7 +32,8 @@ def train_lms(
     console.print("Training local model")
     console.print("Using DpMode: ", dpmode)
 
-    genesis_model_ipfs_hash = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
     console.print("Using Genesis Model IPFS Hash: ", genesis_model_ipfs_hash)
 
     initial_model_ipfs_hash = None
@@ -38,7 +41,8 @@ def train_lms(
     if current_GI > 1:
         t2_batches_count = 1
         for i in range(t2_batches_count):
-            (bid, val, fin, cid) = taskCoordinator_contract.functions.getTier2Batch(current_GI-1, i).call()
+            (bid, val, fin, cid_raw) = taskCoordinator_contract.functions.getTier2Batch(current_GI-1, i).call()
+            cid = get_cid_from_bytes32(cid_raw.hex(), version=0) if cid_raw and cid_raw != bytes(32) else None
             t2_list.append(Tier2Batch(batch_id=bid, validators=val, finalized=fin, final_cid=cid))
             t2_batch_gi_minus_1 = t2_list[0]
             initial_model_ipfs_hash = t2_batch_gi_minus_1.final_cid
@@ -82,7 +86,9 @@ def train_lms(
         console.print("Submitting local model with IPFS hash: ", client_model_ipfs_hash, "to task auditor")
 
         try:
-            tx = taskAuditor_contract.functions.submitLocalModel(client_model_ipfs_hash, current_GI).build_transaction({
+            client_model_ipfs_hash_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(client_model_ipfs_hash))
+
+            tx = taskAuditor_contract.functions.submitLocalModel(client_model_ipfs_hash_bytes32, current_GI).build_transaction({
                 "from": account.address,
                 "gas": 3000000,
                 "gasPrice": w3.to_wei("5", "gwei"),
@@ -133,6 +139,6 @@ def show_models(
 
     lm_submission = taskAuditor_contract.functions.lmSubmissions(ref_gi, has_index).call()
     
-    console.print(f"[green]✓ Client {lm_submission[0]} submitted model {lm_submission[1]}![/green]")
+    console.print(f"[green]✓ Client {lm_submission[0]} submitted model {get_cid_from_bytes32(lm_submission[1].hex(), version=0)}![/green]")
 
     console.print(f"[bold green]✓ Local model submissions shown![/bold green]")

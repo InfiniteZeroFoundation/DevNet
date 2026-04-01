@@ -2,9 +2,11 @@ from pathlib import Path
 
 import typer
 from rich.table import Table
+from web3 import Web3
 
 from dincli.cli.utils import CACHE_DIR, get_manifest_key
 from dincli.services.modelowner import create_audit_testDataCIDs
+from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 auditor_batches_app = typer.Typer(help="Auditor Batches commands")
 
@@ -83,7 +85,8 @@ def show(
             raw_audit_batches.append(taskauditor_contract.functions.getAuditorsBatch(ref_gi, i).call())
 
         for batch in raw_audit_batches:
-            batch_id, auditors, model_indexes, test_cid = batch
+            batch_id, auditors, model_indexes, test_cid_raw = batch
+            test_cid = get_cid_from_bytes32(test_cid_raw.hex(), version=0) if test_cid_raw and test_cid_raw != bytes(32) else None
             processed_audit_batches.append({"batch_id": batch_id, "auditors": auditors, "model_indexes": model_indexes, "test_cid": test_cid or "None"})
             
         if not processed_audit_batches:
@@ -153,7 +156,8 @@ def create_testdataset(
 
         try:
             for batch_id in range(audtor_batch_count):
-                tx = taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, audit_testDataCIDs[batch_id]).build_transaction({
+                test_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(audit_testDataCIDs[batch_id]))
+                tx = taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32).build_transaction({
                     "from": account.address,
                     "nonce": w3.eth.get_transaction_count(account.address),
                     "gas": 3000000,

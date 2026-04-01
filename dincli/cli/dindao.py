@@ -126,7 +126,7 @@ def din_validator_stake(
     
     DINCoordinator_Contract = ctx.obj.get_deployed_din_coordinator_contract()
     nonce = w3.eth.get_transaction_count(account.address)
-    tx = DINCoordinator_Contract.functions.add_dinvalidatorStakeContract(deployed_DINValidatorStake_Contract.address).build_transaction({
+    tx = DINCoordinator_Contract.functions.updateValidatorStakeContract(deployed_DINValidatorStake_Contract.address).build_transaction({
         "from": account.address,
         "gas": 3000000,
         "nonce": nonce,
@@ -242,7 +242,7 @@ def add_slasher(
 
     # Get nonce
     nonce = w3.eth.get_transaction_count(account.address)    
-    tx = DINCoordinator_Contract.functions.add_slasher_contract(contract_address).build_transaction({
+    tx = DINCoordinator_Contract.functions.addSlasherContract(contract_address).build_transaction({
         "from": account.address,        # ← MUST be string address,
         "nonce": nonce,
         "gas": 3000000,

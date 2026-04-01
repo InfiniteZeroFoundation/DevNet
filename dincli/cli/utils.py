@@ -16,6 +16,7 @@ from web3 import Web3
 
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger
+from dincli.services.cid_utils import get_cid_from_bytes32
 
 console = Console()
 
@@ -495,7 +496,9 @@ def cache_manifest(model_id: int, network: str, info: bool = False, update: bool
             console.print("[bold green]Model Info :[/bold green]")
             console.print("Model Owner :", model_info[0])
             console.print("Is Open Source :", model_info[1])
-            console.print("Manifest CID :", model_info[2])
+            console.print("Manifest CID (Bytes32) :", model_info[2])
+            console.print("Manifest CID (Bytes32) hex:", model_info[2].hex())
+            console.print("Manifest CID (Decoded) :", get_cid_from_bytes32(model_info[2].hex(), version=0))
             console.print("Created At :", model_info[3])
             console.print("Created At Human Readable :", datetime.fromtimestamp(model_info[3]).strftime("%Y-%m-%d %H:%M:%S %p"))  # am/pm
             console.print("Task Coordinator Address :", model_info[4])
@@ -503,17 +506,18 @@ def cache_manifest(model_id: int, network: str, info: bool = False, update: bool
             if genesis_model_info:
                 din_task_coordinator_abi = files("dincli").joinpath("abis", "DINTaskCoordinator.json")
                 taskCoordinator_contract = get_contract_instance(din_task_coordinator_abi, network, model_info[4])
-                genesis_model_ipfs_hash = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+                genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+                genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
                 console.print("Genesis Model IPFS Hash :", genesis_model_ipfs_hash)
 
         if  update or not manifest_path.exists():
 
             from dincli.services.ipfs import retrieve_from_ipfs
-            retrieve_from_ipfs(model_info[2], manifest_path)
+            retrieve_from_ipfs(get_cid_from_bytes32(model_info[2].hex(), version=0), manifest_path)
             
             # Save CID sidecar
             with open(cid_path, "w") as f:
-                f.write(model_info[2])
+                f.write(get_cid_from_bytes32(model_info[2].hex(), version=0))
         
 
 def get_manifest_key( network: str, key: str, model_id: int = None, task_coordinator_address: str = None):
@@ -542,7 +546,7 @@ def get_manifest_key( network: str, key: str, model_id: int = None, task_coordin
             din_registry_abi = files("dincli").joinpath("abis", "DINModelRegistry.json")
             din_registry_contract = get_contract_instance(din_registry_abi, network, din_registry_address)
             model_info = din_registry_contract.functions.getModel(int(model_id)).call()
-            on_chain_cid = model_info[2]
+            on_chain_cid = get_cid_from_bytes32(model_info[2].hex(), version=0)
             
             if manifest_path.exists() and cid_path.exists():
                 with open(cid_path, "r") as f:

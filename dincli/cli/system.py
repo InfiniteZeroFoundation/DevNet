@@ -910,7 +910,15 @@ def configure_ipfs(ctx: typer.Context,
         ctx.obj.console.print("[red]❌ Please specify a provider or delete config.[/red]")
         raise typer.Exit(1)
 
+    configured_providers = {"filebase", "custom"}
+
     if provider:
+        if provider not in configured_providers-{"custom"}:
+            if not ipfs_service_path:
+                ctx.obj.console.print("[red]❌ Please specify an IPFS service path for custom provider.[/red]")
+                raise typer.Exit(1)
+            ctx.obj.console.print(f"[red]❌ Invalid provider. Use {' , '.join(configured_providers-{"custom"})} , 'custom'.[/red]")
+            raise typer.Exit(1)
         config["ipfs_provider"] = provider
 
     if api_key:

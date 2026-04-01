@@ -12,7 +12,7 @@ contract DINTaskCoordinator is Ownable {
 
     GIstates public GIstate;
 
-    string public genesisModelIpfsHash; // genesis model ipfs hash
+    bytes32 public genesisModelIpfsHash; // genesis model ipfs hash
 
     uint256 public minStake = 1_000_000;
 
@@ -30,33 +30,35 @@ contract DINTaskCoordinator is Ownable {
         address[] aggregators; // Aggregators assigned
         uint[] modelIndexes; // Indexes into approvedModels[GI]
         bool finalized; // True after majority
-        string finalCID; // Majority‐agreed CID
+        bytes32 finalCID; // Majority‐agreed CID
     }
 
     mapping(uint => Tier1Batch[]) public tier1Batches;
+    mapping(uint => mapping(uint => mapping(address => bool))) isTier1Aggregator;
 
     // Audit & voting maps            GI  ➜  batchId ➜ validator  ➜  …
-    mapping(uint => mapping(uint => mapping(address => string)))
+    mapping(uint => mapping(uint => mapping(address => bytes32)))
         public t1SubmissionCID;
     mapping(uint => mapping(uint => mapping(address => bool)))
         public t1Submitted;
-    mapping(uint => mapping(uint => mapping(string => uint))) public t1Votes; // CID ➜ votes
+    mapping(uint => mapping(uint => mapping(bytes32 => uint))) public t1Votes; // CID ➜ votes
 
     struct Tier2Batch {
         uint batchId;
         address[] aggregators; // Tier‑2 aggregators
         bool finalized;
-        string finalCID;
+        bytes32 finalCID;
     }
 
     mapping(uint => Tier2Batch[]) public tier2Batches;
+    mapping(uint => mapping(uint => mapping(address => bool))) isTier2Aggregator;
     mapping(uint => uint) public tier2Score;
 
-    mapping(uint => mapping(uint => mapping(address => string)))
+    mapping(uint => mapping(uint => mapping(address => bytes32)))
         public t2SubmissionCID;
     mapping(uint => mapping(uint => mapping(address => bool)))
         public t2Submitted;
-    mapping(uint => mapping(uint => mapping(string => uint))) public t2Votes;
+    mapping(uint => mapping(uint => mapping(bytes32 => uint))) public t2Votes;
 
     modifier onlyCurrentGI(uint _GI) {
         if (_GI != GI) revert TC_WrongGI();
@@ -105,7 +107,7 @@ contract DINTaskCoordinator is Ownable {
     }
 
     function setGenesisModelIpfsHash(
-        string memory _genesisModelIpfsHash
+        bytes32 _genesisModelIpfsHash
     ) public onlyOwner {
         if (GIstate != GIstates.AwaitingGenesisModel)
             revert TC_GenesisModelHashCannotBeSet();
@@ -261,6 +263,7 @@ contract DINTaskCoordinator is Ownable {
 
             for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; k++) {
                 b.aggregators.push(valPool[vPtr + k]);
+                isTier1Aggregator[_GI][b.batchId][valPool[vPtr + k]] = true;
             }
 
             uint modelsToAssign = T1_MODELS_PER_BATCH;
@@ -284,6 +287,7 @@ contract DINTaskCoordinator is Ownable {
             t2.batchId = 0;
             for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; k++) {
                 t2.aggregators.push(valPool[vPtr + k]);
+                isTier2Aggregator[_GI][t2.batchId][valPool[vPtr + k]] = true;
             }
 
             emit Tier2BatchAuto(_GI, t2.batchId);
@@ -339,7 +343,7 @@ contract DINTaskCoordinator is Ownable {
             address[] memory validators,
             uint[] memory modelIndexes,
             bool finalized,
-            string memory finalCID
+            bytes32 finalCID
         )
     {
         if (_GI > GI) revert TC_WrongGI();
@@ -364,7 +368,7 @@ contract DINTaskCoordinator is Ownable {
             uint batchId,
             address[] memory validators,
             bool finalized,
-            string memory finalCID
+            bytes32 finalCID
         )
     {
         if (_id != 0) revert TC_OnlyOneTier2Batch();
@@ -384,23 +388,15 @@ contract DINTaskCoordinator is Ownable {
     function submitT1Aggregation(
         uint _GI,
         uint _batchId,
-        string memory _aggregationCID
+        bytes32 _aggregationCID
     ) external onlyCurrentGI(_GI) {
         if (GIstate != GIstates.T1AggregationStarted)
             revert TC_T1AggregationNotStarted();
         if (_batchId >= tier1Batches[_GI].length) revert TC_InvalidBatch();
 
-        Tier1Batch storage b = tier1Batches[_GI][_batchId];
-
         // Verify sender is an assigned aggregator
-        bool isAggregator = false;
-        for (uint i = 0; i < b.aggregators.length; i++) {
-            if (b.aggregators[i] == msg.sender) {
-                isAggregator = true;
-                break;
-            }
-        }
-        if (!isAggregator) revert TC_NotBatchAggregator();
+        if (!isTier1Aggregator[_GI][_batchId][msg.sender])
+            revert TC_NotBatchAggregator();
         if (t1Submitted[_GI][_batchId][msg.sender])
             revert TC_AlreadySubmitted();
 
@@ -423,15 +419,13 @@ contract DINTaskCoordinator is Ownable {
             Tier1Batch storage b = batches[i];
 
             // Determine the CID with the most votes
-            string memory winningCID = "";
+            bytes32 winningCID = "";
             uint maxVotes = 0;
 
             for (uint j = 0; j < b.aggregators.length; j++) {
                 address aggregator = b.aggregators[j];
                 if (t1Submitted[_GI][b.batchId][aggregator]) {
-                    string memory cid = t1SubmissionCID[_GI][b.batchId][
-                        aggregator
-                    ];
+                    bytes32 cid = t1SubmissionCID[_GI][b.batchId][aggregator];
                     uint votes = t1Votes[_GI][b.batchId][cid];
                     if (votes > maxVotes) {
                         maxVotes = votes;
@@ -440,7 +434,7 @@ contract DINTaskCoordinator is Ownable {
                 }
             }
 
-            if (bytes(winningCID).length == 0) revert TC_NoSubmissions();
+            if (winningCID == bytes32(0)) revert TC_NoSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
         }
@@ -459,23 +453,16 @@ contract DINTaskCoordinator is Ownable {
     function submitT2Aggregation(
         uint _GI,
         uint _batchId,
-        string memory _aggregationCID
+        bytes32 _aggregationCID
     ) external onlyCurrentGI(_GI) {
         if (GIstate != GIstates.T2AggregationStarted)
             revert TC_T2AggregationNotStarted();
         if (_batchId != 0) revert TC_OnlyOneTier2Batch();
 
-        Tier2Batch storage b = tier2Batches[_GI][_batchId];
-
         // Verify sender is an assigned aggregator
-        bool isAggregator = false;
-        for (uint i = 0; i < b.aggregators.length; i++) {
-            if (b.aggregators[i] == msg.sender) {
-                isAggregator = true;
-                break;
-            }
-        }
-        if (!isAggregator) revert TC_NotBatchAggregator();
+
+        if (!isTier2Aggregator[_GI][_batchId][msg.sender])
+            revert TC_NotBatchAggregator();
         if (t2Submitted[_GI][_batchId][msg.sender])
             revert TC_AlreadySubmitted();
 
@@ -498,15 +485,13 @@ contract DINTaskCoordinator is Ownable {
             Tier2Batch storage b = batches[i];
 
             // Determine the CID with the most votes
-            string memory winningCID = "";
+            bytes32 winningCID = "";
             uint maxVotes = 0;
 
             for (uint j = 0; j < b.aggregators.length; j++) {
                 address aggregator = b.aggregators[j];
                 if (t2Submitted[_GI][b.batchId][aggregator]) {
-                    string memory cid = t2SubmissionCID[_GI][b.batchId][
-                        aggregator
-                    ];
+                    bytes32 cid = t2SubmissionCID[_GI][b.batchId][aggregator];
                     uint votes = t2Votes[_GI][b.batchId][cid];
                     if (votes > maxVotes) {
                         maxVotes = votes;
@@ -515,7 +500,7 @@ contract DINTaskCoordinator is Ownable {
                 }
             }
 
-            if (bytes(winningCID).length == 0) revert TC_NoSubmissions();
+            if (winningCID == bytes32(0)) revert TC_NoSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
         }
@@ -546,11 +531,8 @@ contract DINTaskCoordinator is Ownable {
                 bool submitted = t1Submitted[_GI][b.batchId][aggregator];
                 bool submittedMatching = false;
                 if (submitted) {
-                    string memory cid = t1SubmissionCID[_GI][b.batchId][
-                        aggregator
-                    ];
-                    submittedMatching = (keccak256(bytes(cid)) ==
-                        keccak256(bytes(b.finalCID)));
+                    bytes32 cid = t1SubmissionCID[_GI][b.batchId][aggregator];
+                    submittedMatching = (cid == b.finalCID);
                 }
                 if (!submitted || !submittedMatching) {
                     dinvalidatorStakeContract.slash(aggregator, slashAmount);
@@ -568,11 +550,8 @@ contract DINTaskCoordinator is Ownable {
                 bool submitted = t2Submitted[_GI][b.batchId][aggregator];
                 bool submittedMatching = false;
                 if (submitted) {
-                    string memory cid = t2SubmissionCID[_GI][b.batchId][
-                        aggregator
-                    ];
-                    submittedMatching = (keccak256(bytes(cid)) ==
-                        keccak256(bytes(b.finalCID)));
+                    bytes32 cid = t2SubmissionCID[_GI][b.batchId][aggregator];
+                    submittedMatching = (cid == b.finalCID);
                 }
                 if (!submitted || !submittedMatching) {
                     dinvalidatorStakeContract.slash(aggregator, slashAmount);

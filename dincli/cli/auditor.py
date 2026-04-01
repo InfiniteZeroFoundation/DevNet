@@ -5,6 +5,7 @@ from rich.table import Table
 
 from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key
 from dincli.services.auditor import Score_model_by_auditor
+from dincli.services.cid_utils import get_cid_from_bytes32
 
 app = typer.Typer(help="Commands for Auditors in DIN.")
 
@@ -205,7 +206,8 @@ def show_batch(
             raw_audit_batches.append(task_auditor_contract.functions.getAuditorsBatch(ref_gi, i).call())
 
         for batch_data in raw_audit_batches:
-            batch_id, auditors, model_indexes, test_cid = batch_data
+            batch_id, auditors, model_indexes, test_cid_raw = batch_data
+            test_cid = get_cid_from_bytes32(test_cid_raw.hex(), version=0) if test_cid_raw and test_cid_raw != bytes(32) else None
 
             if account.address.lower() in [a.lower() for a in auditors]:
                 auditor_batch["raw_batches"].append({"batch_id": batch_id, "auditors": auditors, "model_indexes": model_indexes, "test_cid": test_cid})
@@ -231,7 +233,7 @@ def show_batch(
             str(batch["batch_id"]),
             ", ".join(batch["auditors"]) if batch["auditors"] else "—",
             ", ".join(map(str, batch["model_indexes"])) if batch["model_indexes"] else "—",
-            batch["test_cid"] if batch["test_cid"] != "None" else "—"
+            batch["test_cid"] if batch["test_cid"] else "—"
         )
     
         console.print(table)
@@ -247,7 +249,8 @@ def show_batch(
             if idx not in relevant_lm_submissions:
                 continue
             else:
-                client, model_cid, submitted_at, eligible, evaluated, approved, final_avg = sub
+                client, model_cid_raw, submitted_at, eligible, evaluated, approved, final_avg = sub
+                model_cid = get_cid_from_bytes32(model_cid_raw.hex(), version=0) if model_cid_raw and model_cid_raw != bytes(32) else str(model_cid_raw)
                 lm_submissions[idx] = {"model_index": idx, "client": client, "model_cid": model_cid, "submitted_at": submitted_at, "eligible": eligible, "evaluated": evaluated, "approved": approved, "final_avg": final_avg}
 
                 batch_id = model_idx_to_batch_id[idx]
@@ -352,7 +355,8 @@ def evaluate_lms(
     
     audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(curr_GI).call()
     
-    genesis_model_cid = task_coordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_cid_raw = task_coordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_cid = get_cid_from_bytes32(genesis_model_cid_raw.hex(), version=0)
     
     found_any = False
 
@@ -364,7 +368,8 @@ def evaluate_lms(
         audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
         auditors_in_batch = audit_batch[1]
         model_indexes = audit_batch[2]
-        testDataCID = audit_batch[3]
+        testDataCID_raw = audit_batch[3]
+        testDataCID = get_cid_from_bytes32(testDataCID_raw.hex(), version=0) if testDataCID_raw and testDataCID_raw != bytes(32) else None
 
         if account.address not in auditors_in_batch:
             # If user specifically requested this batch, warn them
@@ -381,7 +386,7 @@ def evaluate_lms(
             console.print(f"[bold green]Evaluating LM {model_index} from Audit batch {batch_id}![/bold green]")
 
             lms = task_auditor_contract.functions.lmSubmissions(curr_GI, model_index).call()
-            lm_cid = lms[1]
+            lm_cid = get_cid_from_bytes32(lms[1].hex(), version=0)
 
             model_base_dir = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
             manifest = get_manifest_key(effective_network, "Score_model_by_auditor", model_id)

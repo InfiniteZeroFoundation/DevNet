@@ -27,7 +27,7 @@ contract DINTaskAuditor is Ownable {
 
     struct LMSubmission {
         address client;
-        string modelCID;
+        bytes32 modelCID;
         uint40 submittedAt;
         bool eligible; // majority vote result (basic conformance)
         bool evaluated; // scoring quorum reached & avg computed
@@ -58,10 +58,16 @@ contract DINTaskAuditor is Ownable {
         uint batchId;
         address[] auditors;
         uint[] modelIndexes;
-        string testDataCID; // shared test data for this batch
+        bytes32 testDataCID; // shared test data for this batch
     }
 
     mapping(uint256 => AuditBatch[]) public auditBatches;
+
+    mapping(uint => mapping(uint => mapping(address => bool)))
+        public isBatchAuditor;
+
+    mapping(uint => mapping(uint => mapping(uint => bool)))
+        public isBatchModelIndex;
 
     mapping(uint256 => mapping(uint => mapping(address => mapping(uint => uint256)))) // GI // batchId // auditor // modelIndex // score
         public auditScores;
@@ -81,27 +87,13 @@ contract DINTaskAuditor is Ownable {
     ) {
         if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
 
-        AuditBatch storage batch = auditBatches[gi][batchId];
-
         // Check that the auditor is in the batch's auditors list
-        bool isAuditor = false;
-        for (uint i = 0; i < batch.auditors.length; i++) {
-            if (batch.auditors[i] == msg.sender) {
-                isAuditor = true;
-                break;
-            }
-        }
-        if (!isAuditor) revert TA_NotAssignedAuditor();
+        if (!isBatchAuditor[gi][batchId][msg.sender])
+            revert TA_NotAssignedAuditor();
 
         // Validate modelIndex is in the allowed list
-        bool validModelIndex = false;
-        for (uint i = 0; i < batch.modelIndexes.length; i++) {
-            if (batch.modelIndexes[i] == modelIndex) {
-                validModelIndex = true;
-                break;
-            }
-        }
-        if (!validModelIndex) revert TA_InvalidModelIndex();
+        if (!isBatchModelIndex[gi][batchId][modelIndex])
+            revert TA_InvalidModelIndex();
 
         _;
     }
@@ -211,7 +203,7 @@ contract DINTaskAuditor is Ownable {
     }
 
     function submitLocalModel(
-        string memory _clientModel,
+        bytes32 _clientModel,
         uint _GI
     ) public onlyCurrentGI(_GI) {
         if (dintaskcoordinatorContract.GIstate() != GIstates.LMSstarted)
@@ -310,6 +302,7 @@ contract DINTaskAuditor is Ownable {
 
             for (uint256 k = 0; k < params.auditorsPerBatch; k++) {
                 b.auditors.push(auditorPool[vPtr + k]);
+                isBatchAuditor[_GI][b.batchId][auditorPool[vPtr + k]] = true;
             }
 
             uint modelsToAssign = params.modelsPerBatch;
@@ -319,6 +312,7 @@ contract DINTaskAuditor is Ownable {
 
             for (uint256 k = 0; k < modelsToAssign; k++) {
                 b.modelIndexes.push(modelIdx[mPtr + k]);
+                isBatchModelIndex[_GI][b.batchId][modelIdx[mPtr + k]] = true;
             }
 
             emit AuditorsBatchAuto(_GI, b.batchId);
@@ -346,7 +340,7 @@ contract DINTaskAuditor is Ownable {
             uint batchId,
             address[] memory auditors,
             uint[] memory modelIndexes,
-            string memory testDataCID
+            bytes32 testDataCID
         )
     {
         if (_GI > dintaskcoordinatorContract.GI()) revert TA_WrongGI();
@@ -363,13 +357,12 @@ contract DINTaskAuditor is Ownable {
     function assignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
-        string calldata testDataCID
+        bytes32 testDataCID
     ) external onlyOwner onlyCurrentGI(gi) {
         if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
         if (auditBatches[gi][batchId].batchId != batchId)
             revert TA_BatchIDMismatch();
 
-        // Assign the testDataCID
         auditBatches[gi][batchId].testDataCID = testDataCID;
     }
 

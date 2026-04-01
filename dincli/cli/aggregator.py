@@ -2,9 +2,11 @@ from pathlib import Path
 
 import typer
 from rich.table import Table
+from web3 import Web3
 
 from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key
 from dincli.services.aggregator import get_aggregated_cid
+from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 app = typer.Typer(help="Commands for Aggregators in DIN.")
 
@@ -208,12 +210,14 @@ def show_t1_batches(
         for validator in validators:
             if validator == account.address:
 
+                cid_str = get_cid_from_bytes32(cid.hex()) if cid and any(cid) else ""
                 if not detailed:
-                    table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid or "")
-                
+                    table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid_str)
+
                 if detailed:
                     submission_cid = taskCoordinator_contract.functions.t1SubmissionCID(curr_GI, bid, validator).call()
-                    table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid or "", submission_cid)
+                    submission_cid_str = get_cid_from_bytes32(submission_cid.hex()) if submission_cid and any(submission_cid) else ""
+                    table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid_str, submission_cid_str)
                 found_batches = True
 
     if found_batches:
@@ -254,11 +258,13 @@ def show_t2_batches(
         bid, validators, finalized, cid = taskCoordinator_contract.functions.getTier2Batch(curr_GI, i).call()
         for validator in validators:
             if validator == account.address:
+                cid_str = get_cid_from_bytes32(cid.hex()) if cid and any(cid) else ""
                 if not detailed:
-                    table.add_row(str(bid), str(finalized), cid or "")
+                    table.add_row(str(bid), str(finalized), cid_str)
                 else:
                     submission_cid = taskCoordinator_contract.functions.t2SubmissionCID(curr_GI, bid, validator).call()
-                    table.add_row(str(bid), str(finalized), submission_cid or "", cid or "")
+                    submission_cid_str = get_cid_from_bytes32(submission_cid.hex()) if submission_cid and any(submission_cid) else ""
+                    table.add_row(str(bid), str(finalized), cid_str, submission_cid_str)
                 found_batches = True
 
     if found_batches:
@@ -286,7 +292,8 @@ def aggregate_t1(
 
     t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call() 
 
-    genesis_model_ipfs_hash = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
 
     found_batch = False
 
@@ -309,8 +316,8 @@ def aggregate_t1(
 
         model_cids = []
         for j in range(len(idxs)):
-            (client, modelCID, submittedAt, eligible,evaluated, approved, finalAvgScore) = taskAuditor_contract.functions.lmSubmissions(curr_GI, idxs[j]).call()
-            model_cids.append(modelCID)
+            (client, modelCID, submittedAt, eligible, evaluated, approved, finalAvgScore) = taskAuditor_contract.functions.lmSubmissions(curr_GI, idxs[j]).call()
+            model_cids.append(get_cid_from_bytes32(modelCID.hex(), version=0))
 
         console.print(f"Aggregating Assigned T1 batch {bid} for aggregator {account.address} with model cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 
@@ -335,7 +342,8 @@ def aggregate_t1(
 
             console.print(f"Submitting T1 aggregation CID for T1 batch {bid} with aggregated CID {aggregated_cid}")
             try:
-                tx = taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid).build_transaction({
+                aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
+                tx = taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32).build_transaction({
                     "from": account.address,
                     "gas": 3000000,
                     "gasPrice": w3.eth.gas_price,
@@ -378,7 +386,8 @@ def aggregate_t2(
     
     t2_batches_count = 1
 
-    genesis_model_ipfs_hash = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
+    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
     
     found_batch = False
     
@@ -406,7 +415,7 @@ def aggregate_t2(
 
         for j in range(t1_batches_count):
             (bid, val, idxs, fin, cid) = taskCoordinator_contract.functions.getTier1Batch(curr_GI, j).call()
-            model_cids.append(cid)
+            model_cids.append(get_cid_from_bytes32(cid.hex(), version=0))
 
         console.print(f"Aggregating T2 batch {bid} for aggregator {account.address} with T1 final cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 
@@ -428,8 +437,9 @@ def aggregate_t2(
 
         if submit:
             console.print(f"Submitting T2 aggregation CID for T2 batch {bid}  with aggregated CID {aggregated_cid}")
-            try:        
-                tx = taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid).build_transaction({
+            try:
+                aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
+                tx = taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32).build_transaction({
                     "from": account.address,
                     "gas": 3000000,
                     "gasPrice": w3.eth.gas_price,

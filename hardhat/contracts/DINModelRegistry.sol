@@ -33,10 +33,10 @@ contract DINModelRegistry {
         uint256 indexed modelId,
         address indexed owner,
         bool isOpenSource,
-        string manifestCID
+        bytes32 manifestCID
     );
 
-    event ManifestUpdated(uint256 indexed modelId, string newManifestCID);
+    event ManifestUpdated(uint256 indexed modelId, bytes32 newManifestCID);
 
     event ProprietaryFeeUpdated(uint256 newFee);
     event FeesWithdrawn(address indexed to, uint256 amount);
@@ -47,7 +47,7 @@ contract DINModelRegistry {
     struct Model {
         address owner;
         bool isOpenSource;
-        string manifestCID;
+        bytes32 manifestCID;
         address taskCoordinator;
         address taskAuditor;
         uint256 createdAt;
@@ -92,7 +92,7 @@ contract DINModelRegistry {
     /// @param isOpenSource Whether the model is open-source or proprietary
     /// @return modelId Assigned model ID (array index)
     function registerModel(
-        string calldata manifestCID,
+        bytes32 manifestCID,
         address taskCoordinator,
         address taskAuditor,
         bool isOpenSource
@@ -176,7 +176,7 @@ contract DINModelRegistry {
     /// @notice Update manifest CID (owner only)
     function updateManifest(
         uint256 modelId,
-        string calldata newManifestCID
+        bytes32 newManifestCID
     ) external onlyModelOwner(modelId) {
         models[modelId].manifestCID = newManifestCID;
 
@@ -195,7 +195,7 @@ contract DINModelRegistry {
         returns (
             address owner,
             bool isOpenSource,
-            string memory manifestoCID,
+            bytes32 manifestoCID,
             uint256 createdAt,
             address taskCoordinator,
             address taskAuditor

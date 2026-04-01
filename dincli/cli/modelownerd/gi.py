@@ -5,6 +5,7 @@ import typer
 
 from dincli.cli.utils import CACHE_DIR, GIstateToStr, get_manifest_key
 from dincli.services.modelowner import getscoreforGM
+from dincli.services.cid_utils import get_cid_from_bytes32
 
 gi_app = typer.Typer(help="Global iteration commands")
 reg_app = typer.Typer(help="Registration commands for a Global Iteration")
@@ -36,10 +37,12 @@ def start(
 
     # === 2. Latest GM CID Resolution ===
     if curr_gi == 0:
-        gmcid = task_coordinator.functions.genesisModelIpfsHash().call()
+        gmcid_raw = task_coordinator.functions.genesisModelIpfsHash().call()
+        gmcid = get_cid_from_bytes32(gmcid_raw.hex(), version=0)
         console.print(f"[dim]Using genesis model CID:[/dim] {gmcid}")
     else:
-        _, _, _, gmcid = task_coordinator.functions.getTier2Batch(curr_gi, 0).call()
+        _, _, _, gmcid_raw = task_coordinator.functions.getTier2Batch(curr_gi, 0).call()
+        gmcid = get_cid_from_bytes32(gmcid_raw.hex(), version=0)
         console.print(f"[dim]Using T2-aggregated model CID for GI {curr_gi}:[/dim] {gmcid}")
 
     # === 3. Path Setup (Consistent Path Handling) ===

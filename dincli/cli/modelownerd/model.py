@@ -2,9 +2,11 @@ import os
 from pathlib import Path
 
 import typer
+from web3 import Web3
 
 from dincli.cli.utils import get_env_key, get_manifest_key, set_env_key
 from dincli.services.ipfs import retrieve_from_ipfs
+from dincli.services.cid_utils import get_bytes32_from_cid
 from dincli.services.modelowner import getGenesisModelIpfs, getscoreforGM
 
 model_app = typer.Typer(help="Model-level commands")
@@ -150,7 +152,8 @@ def submit_genesis(
             accuracy = getscoreforGM(0, ipfs_hash, base_path=Path(os.getcwd()) / "tasks" / effective_network.lower() / task_coordinator_address)
 
     
-    setGenesisModelIpfsHash_tx = deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(ipfs_hash).build_transaction({
+    genesis_ipfs_hash_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(ipfs_hash))
+    setGenesisModelIpfsHash_tx = deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(genesis_ipfs_hash_bytes32).build_transaction({
         "from": account.address,
         "nonce": w3.eth.get_transaction_count(account.address),
         "gas": 200_000,

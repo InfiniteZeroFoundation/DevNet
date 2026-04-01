@@ -62,11 +62,11 @@ describe("Measure Gas Costs", function () {
             console.log(`Gas Used for DinValidatorStake.deploy: ${gas.toString()}`);
         });
 
-        it("should add DIN Validator Stake contract to DIN Coordinator contract", async function () {
-            const tx = await dinCoordinator.connect(DINRepresentative).add_dinvalidatorStakeContract(await dinValidatorStake.getAddress())
+        it("should update DIN Validator Stake contract in DIN Coordinator contract", async function () {
+            const tx = await dinCoordinator.connect(DINRepresentative).updateValidatorStakeContract(await dinValidatorStake.getAddress())
             const receipt = await tx.wait();
             const gas = receipt.gasUsed;
-            console.log(`Gas Used for DinCoordinator.add_dinvalidatorStakeContract: ${gas.toString()}`);
+            console.log(`Gas Used for DinCoordinator.updateValidatorStakeContract: ${gas.toString()}`);
         });
 
         it("should deploy DIN Model Registry contract", async function () {
@@ -316,7 +316,7 @@ describe("Measure Gas Costs", function () {
 
     describe("Add slashers ", function () {
         it("DINDAO - should add taskCoordinator as slasher", async function () {
-            const tx = await dinCoordinator.connect(DINRepresentative).add_slasher_contract(await dinTaskCoordinator.getAddress());
+            const tx = await dinCoordinator.connect(DINRepresentative).addSlasherContract(await dinTaskCoordinator.getAddress());
             const receipt = await tx.wait();
             console.log(`⛽ Gas Used for adding taskCoordinator to DINCoordinator as slasher by DINDAO: ${receipt.gasUsed.toString()}`);
 
@@ -330,7 +330,7 @@ describe("Measure Gas Costs", function () {
         });
 
         it("DINDAO - should add taskAuditor as slasher", async function () {
-            const tx = await dinCoordinator.connect(DINRepresentative).add_slasher_contract(await dinTaskAuditor.getAddress());
+            const tx = await dinCoordinator.connect(DINRepresentative).addSlasherContract(await dinTaskAuditor.getAddress());
             const receipt = await tx.wait();
             console.log(`⛽ Gas Used for adding taskAuditor to DINCoordinator as slasher by DINDAO: ${receipt.gasUsed.toString()}`);
 

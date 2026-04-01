@@ -4,10 +4,44 @@ from rich import console
 from pathlib import Path
 from urllib.parse import quote
 from dincli.cli.log import logger
-from dincli.cli.utils import resolve_ipfs_config, load_config
+from dincli.services.cid_utils import get_cidv1base32_from_cid
 
-config = load_config()
-ipfs_api_url_add, ipfs_api_url_retrieve = resolve_ipfs_config()
+def _get_config():
+    from dincli.cli.utils import load_config
+    return load_config()
+
+def _get_ipfs_urls():
+    from dincli.cli.utils import resolve_ipfs_config
+    return resolve_ipfs_config()
+
+def  _ensure_file_exists(file_path: Path):
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+def _load_custom_fn(module_path: Path, fn_name: str):
+    _ensure_file_exists(module_path)
+    spec = importlib.util.spec_from_file_location(
+        module_path.stem,
+        module_path
+    )
+
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, fn_name):
+        raise AttributeError(
+            f"{fn_name} not found in custom service {module_path}"
+            )
+
+    fn = getattr(module, fn_name)
+    if not callable(fn):
+        raise TypeError(
+            f"{fn_name} in {module_path} is not callable"
+        )
+
+    return fn
+
 console = console.Console()
 
 def _normalize_path(path: str) -> Path:
@@ -31,6 +65,8 @@ def upload_to_ipfs(file_path, msg=None):
     with open(file_path, 'rb') as f:
         file_content = f.read()
 
+    config = _get_config()
+    ipfs_api_url_add, _ = _get_ipfs_urls()
     provider = config.get("ipfs_provider", "ipfs node")
     cid = None
 
@@ -85,12 +121,19 @@ def upload_to_ipfs(file_path, msg=None):
                 logger.warning(f"Pinning failed for CID {cid} (status {pin_resp.status_code})")
                 # Note: Filebase auto-pins on upload, but explicit pin adds redundancy
             
+        elif provider == "custom":
+            ipfs_service_path = config.get("ipfs_service_path")
+            if not ipfs_service_path:
+                raise ValueError(f"IPFS service path missing in dincli config as ipfs_service_path ")
+            fn = _load_custom_fn(Path(ipfs_service_path), "upload_to_ipfs")
+            cid = fn(file_path, msg)
+            
         else:
             raise NotImplementedError(f"Unsupported IPFS provider: {provider}")
 
         if msg:
-            logger.info(f"{msg} uploaded to IPFS [{cid}]")
-        return cid
+            logger.info(f"{msg} uploaded to IPFS with CID: {cid}")
+        return cid  # get_cidv1base32_from_cid(cid)
 
     except requests.exceptions.RequestException as e:
         # NEVER log raw responses containing secrets
@@ -103,6 +146,8 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
     safe_path = _normalize_path(retrieved_file_path)
     safe_path.parent.mkdir(parents=True, exist_ok=True)
 
+    config = _get_config()
+    _, ipfs_api_url_retrieve = _get_ipfs_urls()
     provider = config.get("ipfs_provider", "ipfs node")
     response = None
 
@@ -131,6 +176,12 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
                 stream=True,
                 timeout=30
             )
+        elif provider == "custom":
+            ipfs_service_path = config.get("ipfs_service_path")
+            if not ipfs_service_path:
+                raise ValueError(f"IPFS service path missing in dincli config as ipfs_service_path ")
+            fn = _load_custom_fn(Path(ipfs_service_path), "retrieve_from_ipfs")
+            response = fn(hash_value, retrieved_file_path)
             
         else:
             raise NotImplementedError(f"Unsupported provider: {provider}")
@@ -149,3 +200,5 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
     except requests.exceptions.RequestException as e:
         logger.error(f"IPFS retrieval failed for {hash_value[:12]}: {e}")
         raise RuntimeError(f"Failed to retrieve CID {hash_value[:12]}") from e
+
+
