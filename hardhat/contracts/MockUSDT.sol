@@ -8,7 +8,7 @@ contract MockUSDT is ERC20 {
         _mint(msg.sender, initialSupply);
     }
 
-     // Override decimals to 6 (like real USDT)
+    // Override decimals to 6 (like real USDT)
     function decimals() public view virtual override returns (uint8) {
         return 6;
     }

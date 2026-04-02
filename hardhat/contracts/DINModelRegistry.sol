@@ -7,8 +7,8 @@ pragma solidity ^0.8.20;
 /// @dev Minimal, auditable, DAO-controlled primitive
 
 interface IDinValidatorStake {
-    function is_slasher_contract(
-        address slasher_contract
+    function isSlasherContract(
+        address slasherContract
     ) external view returns (bool);
 }
 
@@ -104,11 +104,11 @@ contract DINModelRegistry {
         modelId = models.length;
 
         require(
-            dinValidatorStake.is_slasher_contract(taskCoordinator),
+            dinValidatorStake.isSlasherContract(taskCoordinator),
             "Task Coordinator is not a slasher"
         );
         require(
-            dinValidatorStake.is_slasher_contract(taskAuditor),
+            dinValidatorStake.isSlasherContract(taskAuditor),
             "Task Auditor is not a slasher"
         );
 

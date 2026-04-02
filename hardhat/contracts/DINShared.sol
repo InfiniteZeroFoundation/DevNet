@@ -42,8 +42,8 @@ interface IDinValidatorStake {
 
     function slash(address validator, uint256 amount) external;
 
-    function is_slasher_contract(
-        address slasher_contract
+    function isSlasherContract(
+        address slasherContract
     ) external view returns (bool);
 }
 

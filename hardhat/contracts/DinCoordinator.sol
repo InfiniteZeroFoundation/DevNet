@@ -3,20 +3,20 @@ pragma solidity ^0.8.28;
 
 import "./DinToken.sol"; // Import the DINToken contract interface
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 interface IDinValidatorStake {
-    function add_slasher_contract(address _slasher_contract) external;
+    function addSlasherContract(address slasherContract) external;
 
-    function remove_slasher_contract(address _slasher_contract) external;
+    function removeSlasherContract(address slasherContract) external;
 }
 
-contract DinCoordinator is Ownable, ReentrancyGuard {
-    DinToken public immutable dintoken;
-    IDinValidatorStake public dinvalidatorStakeContract;
+contract DinCoordinator is Ownable, ReentrancyGuardTransient {
+    DinToken public immutable dinToken;
+    IDinValidatorStake public dinValidatorStakeContract;
 
     uint256 public dinPerEth = 1_000_000 * 1e18; // 1M DIN tokens (with 18 decimals)
-    event ethDepositAndDINminted(
+    event EthDepositAndDINminted(
         address indexed user,
         uint256 ethAmount,
         uint256 mintAmount
@@ -33,7 +33,7 @@ contract DinCoordinator is Ownable, ReentrancyGuard {
 
     constructor() Ownable(msg.sender) {
         // Deploy DINToken
-        dintoken = new DinToken(address(this));
+        dinToken = new DinToken(address(this));
     }
 
     /// @notice User deposits ETH → receives DIN tokens
@@ -41,9 +41,9 @@ contract DinCoordinator is Ownable, ReentrancyGuard {
         if (msg.value == 0) revert ZeroValue();
 
         uint256 mintAmount = (msg.value * dinPerEth) / 1e18; // ✅ Safe decimal math
-        dintoken.mint(msg.sender, mintAmount);
+        dinToken.mint(msg.sender, mintAmount);
 
-        emit ethDepositAndDINminted(msg.sender, msg.value, mintAmount);
+        emit EthDepositAndDINminted(msg.sender, msg.value, mintAmount);
     }
 
     function withdraw() external onlyOwner nonReentrant {
@@ -55,17 +55,17 @@ contract DinCoordinator is Ownable, ReentrancyGuard {
 
     function addSlasherContract(address slasherContract) external onlyOwner {
         if (slasherContract == address(0)) revert InvalidAddress();
-        if (address(dinvalidatorStakeContract) == address(0))
+        if (address(dinValidatorStakeContract) == address(0))
             revert ValidatorStakeContractNotSet();
-        dinvalidatorStakeContract.add_slasher_contract(slasherContract);
+        dinValidatorStakeContract.addSlasherContract(slasherContract);
         emit SlasherContractAdded(slasherContract);
     }
 
     function removeSlasherContract(address slasherContract) external onlyOwner {
         if (slasherContract == address(0)) revert InvalidAddress();
-        if (address(dinvalidatorStakeContract) == address(0))
+        if (address(dinValidatorStakeContract) == address(0))
             revert ValidatorStakeContractNotSet();
-        dinvalidatorStakeContract.remove_slasher_contract(slasherContract);
+        dinValidatorStakeContract.removeSlasherContract(slasherContract);
         emit SlasherContractRemoved(slasherContract);
     }
 
@@ -73,7 +73,7 @@ contract DinCoordinator is Ownable, ReentrancyGuard {
         address validatorStakeContract
     ) external onlyOwner {
         if (validatorStakeContract == address(0)) revert InvalidAddress();
-        dinvalidatorStakeContract = IDinValidatorStake(validatorStakeContract);
+        dinValidatorStakeContract = IDinValidatorStake(validatorStakeContract);
         emit ValidatorStakeContractUpdated(validatorStakeContract);
     }
 

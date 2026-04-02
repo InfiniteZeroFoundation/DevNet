@@ -90,7 +90,7 @@ contract DINTaskCoordinator is Ownable {
     function setDINTaskCoordinatorAsSlasher() public onlyOwner {
         if (GIstate != GIstates.AwaitingDINTaskCoordinatorAsSlasher)
             revert TC_CoordinatorCannotBeSetAsSlasher();
-        if (!dinvalidatorStakeContract.is_slasher_contract(address(this)))
+        if (!dinvalidatorStakeContract.isSlasherContract(address(this)))
             revert TC_CoordinatorIsNotSlasher();
         GIstate = GIstates.AwaitingDINTaskAuditorAsSlasher;
     }
@@ -99,7 +99,7 @@ contract DINTaskCoordinator is Ownable {
         if (GIstate != GIstates.AwaitingDINTaskAuditorAsSlasher)
             revert TC_AuditorCannotBeSetAsSlasher();
         if (
-            !dinvalidatorStakeContract.is_slasher_contract(
+            !dinvalidatorStakeContract.isSlasherContract(
                 address(dinTaskAuditorContract)
             )
         ) revert TC_AuditorIsNotSlasher();
