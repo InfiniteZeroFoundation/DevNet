@@ -1,16 +1,31 @@
-# overview
-This project consists of multiple components.
+# InfiniteZero Network — DevNet
 
-- **CLI**: dincli is a command line interface for interacting with the DIN P2 project
-- **Hardhat Node:**: hardhat node runs in a background for contracts compilation 
-- **IPFS Daemon:**: Runs in a background 
+> **Open infrastructure for training AI as a public good.**
 
+InfiniteZero is building the commons for AI — the way the internet itself is a public good. Millions of devices contribute quietly to shared AI models, with raw data never leaving the user's device. Only anonymised, encrypted patterns join the network.
 
-# how to install dincli
+This repository contains the DevNet setup and tooling for developers building on the InfiniteZero Network protocol.
+
+> Built on Ethereum. Governed by the community. Models belong to the commons.
+
+---
+
+## Overview
+
+This project consists of multiple components:
+
+- **CLI**: `dincli` is a command line interface for interacting with the InfiniteZero Network
+- **Hardhat Node**: Runs in the background for contracts compilation
+- **IPFS Daemon**: Runs in the background
+
+---
+
+## How to Install dincli
 
 1. Navigate to your project directory
 2. Activate your virtual environment
-3. Install dincli via pip 
+3. Install `dincli` via pip:
+
    ```bash
    pip install dincli
    ```
@@ -21,7 +36,8 @@ This project consists of multiple components.
    pip install git+https://github.com/InfiniteZeroFoundation/dincli.git
    ```
 
-4. Verify the installation
+4. Verify the installation:
+
    ```bash
    dincli --version
    ```
@@ -32,49 +48,74 @@ This project consists of multiple components.
    dincli system welcome
    ```
 
-# Configure Either Local or IPFS API
+---
 
-## Configure Local IPFS API
+## Configure Either Local or IPFS API
+
+### Configure Local IPFS API
+
 1. Install IPFS
 2. Start IPFS daemon
 3. Navigate to the project directory
-4. Add ipfs_api_url_add in .env. Example: 
+4. Add `ipfs_api_url_add` in `.env`:
+
    ```bash
    IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0/add
    ```
-5. Add ipfs_api_url_retrieve in .env. Example: 
+
+5. Add `ipfs_api_url_retrieve` in `.env`:
+
    ```bash
    IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0/cat/
    ```
 
-## Configure IPFS API
+### Configure IPFS API
+
 1. Navigate to the project directory
-2. Add ipfs_api_url_add in .env example 
+2. Add `ipfs_api_url_add` in `.env`:
+
    ```bash
    IPFS_API_URL_ADD=https://ipfs.infura.io:5001/api/v0/add
    ```
-3. Add ipfs_api_url_retrieve in .env example 
+
+3. Add `ipfs_api_url_retrieve` in `.env`:
+
    ```bash
    IPFS_API_URL_RETRIEVE=https://ipfs.infura.io:5001/api/v0/cat/
    ```
 
+---
 
-# set log level
+## Set Log Level
+
 1. Navigate to the project directory
-2. execute
+2. Execute:
+
    ```bash
    dincli system configure-logging --level info
    ```
 
-# Sample manifest_CID
+---
+
+## Sample manifest_CID
+
+```
 QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp
+```
 
-# ipfs upload
+---
 
+## IPFS Upload
+
+```bash
 python -m dincli.main ipfs upload -f /home/azureuser/projects/DINv1MVC/cache_model_0/manifest.json
+```
 
-# cp 
+---
 
+## Copy Commands
+
+```bash
 cp /home/azureuser/.cache/dincli/local/model_0/manifest.json /home/azureuser/projects/DINv1MVC/cache_model_0/manifest.json
 
 cp /home/azureuser/.cache/dincli/local/model_0/services/modelowner.py /home/azureuser/projects/DINv1MVC/cache_model_0/services/modelowner.py
@@ -89,51 +130,57 @@ cp /home/azureuser/.cache/dincli/local/model_0/services/model.py /home/azureuser
 
 mkdir -p /home/azureuser/projects/DINv1MVC/cache_model_0/dataset/test
 cp /home/azureuser/.cache/dincli/local/model_0/dataset/test/test_dataset.pt /home/azureuser/projects/DINv1MVC/cache_model_0/dataset/test/test_dataset.pt
+```
 
+---
 
+## DevNet Setup
 
+### Kill existing process on port 8545
 
-
-
-# DIN P2 Project Setup
+```bash
 lsof -ti:8545 | xargs kill -9
+```
 
+### Start IPFS Daemon
+
+```bash
 ipfs daemon
+```
 
+### 1. Navigate to the project directory
 
-1. **Navigate to the project directory:**
-   ```bash
-   cd /home/azureuser/projects/DINv1MVC
-   ```
+```bash
+cd /home/azureuser/projects/DINv1MVC
+```
 
-2. **Start the Hardhat Node:**
-   - **Directory:** `./hardhat`
-   - **Start Command:**
-     ```bash
-     cd ./hardhat
-     npx hardhat node
-     npx hardhat compile
-     ```
+### 2. Start the Hardhat Node
 
-3. running the dincli
+**Directory:** `./hardhat`
+
+```bash
+cd ./hardhat
+npx hardhat node
+npx hardhat compile
+```
+
+### 3. Run dincli
+
+```bash
 source /home/azureuser/projects/pyDIN/.pyDIN/bin/activate
 python -m dincli.main --help
 python -m dincli.main system configure-network --network local
+```
 
+---
 
-
-
-
-
-
-
-## How to Setup Project directories from scratch
+## How to Setup Project Directories from Scratch
 
 ```bash
 cd /home/dinsystems/projects/DINv1MVC
 ```
 
-### hardhat
+### Hardhat
 
 ```bash
 cd ./hardhat
@@ -142,7 +189,8 @@ npm install --save-dev hardhat
 npx hardhat init
 ```
 
-### ipfs
+### IPFS
+
 ```bash
 sudo apt update && sudo apt upgrade -y
 wget https://dist.ipfs.tech/kubo/latest/kubo-linux-amd64.tar.gz
@@ -152,87 +200,90 @@ ipfs --version
 ipfs init
 ipfs daemon
 ```
----
-
 
 ---
+
 ## Dependencies (Assuming Ubuntu OS)
 
-- **install python if needed**
-   ```bash
-   sudo apt-get install python3
-   ```
+### Install Python (if needed)
 
-- Installing NVM (Node Version Manager)
+```bash
+sudo apt-get install python3
+```
 
-    To install **NVM** (Node Version Manager), follow the steps below:
+### Installing NVM (Node Version Manager)
 
-    ### Step 1: Install NVM
+#### Step 1: Install NVM
 
-    Run one of the following commands in your terminal to download and install NVM:
+Using `curl`:
 
-    #### Using `curl`:
-    ```bash
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
-    ```
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+```
 
-    #### Or using `wget`:
-    ```bash
-    wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
-    ```
+Or using `wget`:
 
-    ### Step 2: Update Shell Configuration
+```bash
+wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+```
 
-    After running the installation script, you need to add the following lines to your shell configuration file (`~/.bashrc`, `~/.zshrc`, or `~/.bash_profile` depending on your shell):
+#### Step 2: Update Shell Configuration
 
-    ```bash
-    export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-    ```
+Add the following lines to your shell configuration file (`~/.bashrc`, `~/.zshrc`, or `~/.bash_profile`):
 
-    ### Example for `.bashrc` or `.zshrc`:
-    ```bash
-    echo 'export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"' >> ~/.bashrc
-    echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
-    ```
+```bash
+export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+```
 
-    Or for `zsh` users:
-    ```bash
-    echo 'export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"' >> ~/.zshrc
-    echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.zshrc
-    ```
+For `.bashrc` or `.zshrc`:
 
-    ### Step 3: Reload Your Shell Configuration
+```bash
+echo 'export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"' >> ~/.bashrc
+echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+```
 
-    Once you've added the necessary lines to your shell configuration file, reload it by running:
+Or for `zsh` users:
 
-    For `bash`:
-    ```bash
-    source ~/.bashrc
-    ```
+```bash
+echo 'export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"' >> ~/.zshrc
+echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.zshrc
+```
 
-    Or for `zsh`:
-    ```bash
-    source ~/.zshrc
-    ```
+#### Step 3: Reload Your Shell Configuration
 
-    ### Step 4: Verify Installation
+For `bash`:
 
-    Finally, verify that NVM was installed correctly by checking its version:
+```bash
+source ~/.bashrc
+```
 
-    ```bash
-    nvm --version
-    ```
+Or for `zsh`:
 
-    If everything went well, you should see the version number of NVM printed in your terminal.
+```bash
+source ~/.zshrc
+```
 
+#### Step 4: Verify Installation
 
-    You're now ready to use NVM to manage different versions of Node.js!
+```bash
+nvm --version
+```
 
-- **Install Node.js v20.18.1 via NVM**
-   ```bash
-   nvm install v20.18.1
-   node -v
-   ```
+If everything went well, you should see the version number of NVM printed in your terminal. You're now ready to use NVM to manage different versions of Node.js!
 
-   ---
+### Install Node.js v20.18.1 via NVM
+
+```bash
+nvm install v20.18.1
+node -v
+```
+
+---
+
+## Learn More
+
+- [White Paper](#)
+- [Documentation](#)
+- [API Reference](#)
+- [SDK](#)
