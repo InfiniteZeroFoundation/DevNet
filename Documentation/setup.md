@@ -24,7 +24,7 @@ source venv/bin/activate
 
 ```bash
 # Download the wheel file
-wget https://github.com/InfiniteZeroFoundation/DINv1MVC/raw/dincli/dist/dincli-0.1.0-py3-none-any.whl
+wget https://github.com/InfiniteZeroFoundation/devnet/raw/dincli/dist/dincli-0.1.0-py3-none-any.whl
 
 # Install it
 pip install dincli-0.1.0-py3-none-any.whl
@@ -33,7 +33,7 @@ pip install dincli-0.1.0-py3-none-any.whl
 ### Option B — Install Directly from GitHub
 
 ```bash
-pip install git+https://github.com/InfiniteZeroFoundation/DINv1MVC.git@dincli#subdirectory=dist
+pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@dincli#subdirectory=dist
 ```
 
 ### Verify Installation

@@ -85,7 +85,7 @@ The Model Owner must provide a set of service files tailored to the task. These 
 | `aggregator.py` | Aggregator |
 | `auditor.py` | Auditor |
 
-Sample service files are located in the `DINv1MVC/cache_model_0/services/` directory.
+Sample service files are located in the `devnet/cache_model_0/services/` directory.
 
 The service files must be uploaded to IPFS and the CID must be included in the manifest file at appropriate fields.
 

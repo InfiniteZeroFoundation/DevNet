@@ -108,7 +108,7 @@ QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp
 ## IPFS Upload
 
 ```bash
-python -m dincli.main ipfs upload -f /home/azureuser/projects/DINv1MVC/cache_model_0/manifest.json
+python -m dincli.main ipfs upload -f /home/azureuser/projects/devnet/cache_model_0/manifest.json
 ```
 
 ---
@@ -116,20 +116,20 @@ python -m dincli.main ipfs upload -f /home/azureuser/projects/DINv1MVC/cache_mod
 ## Copy Commands
 
 ```bash
-cp /home/azureuser/.cache/dincli/local/model_0/manifest.json /home/azureuser/projects/DINv1MVC/cache_model_0/manifest.json
+cp /home/azureuser/.cache/dincli/local/model_0/manifest.json /home/azureuser/projects/devnet/cache_model_0/manifest.json
 
-cp /home/azureuser/.cache/dincli/local/model_0/services/modelowner.py /home/azureuser/projects/DINv1MVC/cache_model_0/services/modelowner.py
+cp /home/azureuser/.cache/dincli/local/model_0/services/modelowner.py /home/azureuser/projects/devnet/cache_model_0/services/modelowner.py
 
-cp /home/azureuser/.cache/dincli/local/model_0/services/client.py /home/azureuser/projects/DINv1MVC/cache_model_0/services/client.py
+cp /home/azureuser/.cache/dincli/local/model_0/services/client.py /home/azureuser/projects/devnet/cache_model_0/services/client.py
 
-cp /home/azureuser/.cache/dincli/local/model_0/services/auditor.py /home/azureuser/projects/DINv1MVC/cache_model_0/services/auditor.py
+cp /home/azureuser/.cache/dincli/local/model_0/services/auditor.py /home/azureuser/projects/devnet/cache_model_0/services/auditor.py
 
-cp /home/azureuser/.cache/dincli/local/model_0/services/aggregator.py /home/azureuser/projects/DINv1MVC/cache_model_0/services/aggregator.py
+cp /home/azureuser/.cache/dincli/local/model_0/services/aggregator.py /home/azureuser/projects/devnet/cache_model_0/services/aggregator.py
 
-cp /home/azureuser/.cache/dincli/local/model_0/services/model.py /home/azureuser/projects/DINv1MVC/cache_model_0/services/model.py
+cp /home/azureuser/.cache/dincli/local/model_0/services/model.py /home/azureuser/projects/devnet/cache_model_0/services/model.py
 
-mkdir -p /home/azureuser/projects/DINv1MVC/cache_model_0/dataset/test
-cp /home/azureuser/.cache/dincli/local/model_0/dataset/test/test_dataset.pt /home/azureuser/projects/DINv1MVC/cache_model_0/dataset/test/test_dataset.pt
+mkdir -p /home/azureuser/projects/devnet/cache_model_0/dataset/test
+cp /home/azureuser/.cache/dincli/local/model_0/dataset/test/test_dataset.pt /home/azureuser/projects/devnet/cache_model_0/dataset/test/test_dataset.pt
 ```
 
 ---
@@ -151,7 +151,7 @@ ipfs daemon
 ### 1. Navigate to the project directory
 
 ```bash
-cd /home/azureuser/projects/DINv1MVC
+cd /home/azureuser/projects/devnet
 ```
 
 ### 2. Start the Hardhat Node
@@ -177,7 +177,7 @@ python -m dincli.main system configure-network --network local
 ## How to Setup Project Directories from Scratch
 
 ```bash
-cd /home/dinsystems/projects/DINv1MVC
+cd /home/dinsystems/projects/devnet
 ```
 
 ### Hardhat
