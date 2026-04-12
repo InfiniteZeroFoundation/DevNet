@@ -106,7 +106,7 @@ starlette==0.46.2
 sympy==1.13.1
 threadpoolctl==3.6.0
 toolz==1.1.0
-torch==2.6.0
+torch==2.8.0
 torchvision==0.21.0
 triton==3.2.0
 typer==0.20.0
