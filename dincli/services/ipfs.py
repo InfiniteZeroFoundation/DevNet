@@ -133,7 +133,7 @@ def upload_to_ipfs(file_path, msg=None):
 
         if msg:
             logger.info(f"{msg} uploaded to IPFS with CID: {cid}")
-        return cid  # get_cidv1base32_from_cid(cid)
+        return get_cidv1base32_from_cid(cid)
 
     except requests.exceptions.RequestException as e:
         # NEVER log raw responses containing secrets
