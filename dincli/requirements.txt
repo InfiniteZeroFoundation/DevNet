@@ -17,7 +17,7 @@ ckzg==2.1.5
 click==8.1.8
 coincurve==21.0.0
 crcmod==1.7
-cryptography==46.0.4
+cryptography==46.0.7
 cytoolz==1.1.0
 -e git+https://github.com/InfiniteZeroFoundation/devnet.git@3b8e3ef5db09914cc7159f15c692a827b8998200#egg=dincli
 ecdsa==0.19.1
