@@ -43,7 +43,7 @@ def main(
     network: str = typer.Option(
         None,
         "--network",
-        help="Specify network (local | sepolia_devnet | sepolia_testnet | mainnet)",
+        help="Specify network (local | sepolia_devnet | sepolia_op_devnet | mainnet)",
         callback=None,
         is_eager=True,
     ),

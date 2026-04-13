@@ -57,7 +57,9 @@ contract DINModelRegistry {
                             STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
     address public immutable daoAdmin;
-    uint256 public proprietaryFee;
+    // uint256 public proprietaryFee;
+    // Lower fees for L2 users to reflect cost savings
+    uint256 public proprietaryFeeL2; // 0.001 ETH instead of 0.01 ETH
     IDinValidatorStake public dinValidatorStake;
 
     Model[] private models;
@@ -79,7 +81,8 @@ contract DINModelRegistry {
     //////////////////////////////////////////////////////////////*/
     constructor(address _dinValidatorStake) {
         daoAdmin = msg.sender; // DIN DAO representative
-        proprietaryFee = 0.01 ether;
+        // proprietaryFee = 0.01 ether;
+        proprietaryFeeL2 = 0.001 ether;
         dinValidatorStake = IDinValidatorStake(_dinValidatorStake);
     }
 
@@ -97,7 +100,7 @@ contract DINModelRegistry {
         address taskAuditor,
         bool isOpenSource
     ) external payable returns (uint256 modelId) {
-        if (!isOpenSource && msg.value < proprietaryFee) {
+        if (!isOpenSource && msg.value < proprietaryFeeL2) {
             revert InsufficientProprietaryFee();
         }
 

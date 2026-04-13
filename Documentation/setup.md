@@ -33,7 +33,7 @@ pip install dincli-0.1.0-py3-none-any.whl
 ### Option B — Install Directly from GitHub
 
 ```bash
-pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@dincli#subdirectory=dist
+pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@main#subdirectory=dist
 ```
 
 ### Verify Installation
@@ -62,17 +62,16 @@ Creates the required `config` and `cache` directories and generates an empty con
 # Disable demo mode to use your own wallet and private keys
 dincli system configure-demo --mode no
 
-# Set the default network  [local | sepolia_devnet | sepolia_testnet | mainnet]
-dincli system configure-network --network sepolia_devnet
+# Set the default network  [local | sepolia_devnet | sepolia_op_devnet | mainnet]
+dincli system configure-network --network sepolia_op_devnet
+
+> [!NOTE]
+> Use `sepolia_op_devnet` for devnet. Testnet and Mainnet support will be rolled out in a future release.
 
 # Set the log level  [debug | info | warning | error | critical]
 dincli system configure-logging --level info
 ```
 
-> [!NOTE]
-> Use `sepolia_devnet` for testing. Mainnet support will be rolled out in a future release.
-
----
 
 ## 5. Environment Variables (`.env`)
 
@@ -96,11 +95,11 @@ You can obtain an RPC URL from providers such as [Alchemy](https://www.alchemy.c
 # Local network (e.g. a Hardhat node)
 LOCAL_RPC_URL=http://127.0.0.1:8545
 
-# Sepolia Devnet
-SEPOLIA_DEVNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
+# Sepolia - Optimism Devnet
+SEPOLIA_OP_DEVNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
 
-# Sepolia Testnet
-SEPOLIA_TESTNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
+# Sepolia - Optimism Testnet
+SEPOLIA_OP_TESTNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
 
 # Mainnet
 MAINNET_RPC_URL=https://mainnet.infura.io/v3/<auth_token>
@@ -111,8 +110,8 @@ MAINNET_RPC_URL=https://mainnet.infura.io/v3/<auth_token>
 Store private keys using the pattern `ETH_PRIVATE_KEY_<account_index>`. You can define as many accounts as needed by incrementing the index.
 
 ```bash
-ETH_PRIVATE_KEY_0=0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-ETH_PRIVATE_KEY_1=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+ETH_PRIVATE_KEY_0 = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+ETH_PRIVATE_KEY_1 = 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
 ```
 
 Connect a stored account with:
@@ -122,7 +121,7 @@ dincli system connect-wallet --account 0
 ```
 
 > [!IMPORTANT]
-> To use `dincli` with your own wallet (Non-Demo Mode), you must first disable demo mode:
+> To use `dincli` with your own wallet (Non-Demo Mode from .env file), you must first disable demo mode:
 
 ```bash
 dincli system configure-demo --mode no

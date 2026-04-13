@@ -10,3 +10,22 @@ dincli/dincli.egg-info/*
 dincli.egg-info/*
 
 tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
+
+# pycache
+/tests/__pycache__/*
+
+# for main # for dincli branch just comment below lines
+/changes/*  
+/bashscripts/*
+/tests/*
+/tasks/*
+/scripts/*
+/hardhat/ignition/*
+/hardhat/scripts/*
+/hardhat/test/*
+/hardhat/test-output.txt
+/dincli/config/accounts.json
+/dincli/config/din_info.json 
+/dincli/CliDOC.md
+/dincli/README.md
+

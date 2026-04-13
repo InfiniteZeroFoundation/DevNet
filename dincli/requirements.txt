@@ -19,7 +19,7 @@ coincurve==21.0.0
 crcmod==1.7
 cryptography==46.0.4
 cytoolz==1.1.0
--e git+https://github.com/InfiniteZeroFoundation/DINv1MVC.git@3b8e3ef5db09914cc7159f15c692a827b8998200#egg=dincli
+-e git+https://github.com/InfiniteZeroFoundation/devnet.git@3b8e3ef5db09914cc7159f15c692a827b8998200#egg=dincli
 ecdsa==0.19.1
 ed25519-blake2b==1.4.1
 eth-account==0.13.7

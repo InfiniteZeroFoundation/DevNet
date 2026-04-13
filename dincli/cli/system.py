@@ -869,7 +869,10 @@ def dump_abi(
     output_data = {"abi": data["abi"]}
     
     if include_bytecode and "bytecode" in data:
-        output_data["bytecode"] = data["bytecode"]
+        if isinstance(data["bytecode"], dict):
+            output_data["bytecode"] = data["bytecode"]["object"]
+        else:
+            output_data["bytecode"] = data["bytecode"]
     elif include_bytecode:
         console.print(f"[yellow]⚠️  'bytecode' not found in {artifact}, skipping.[/yellow]")
 

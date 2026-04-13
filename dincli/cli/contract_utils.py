@@ -147,7 +147,10 @@ def get_contract_instance(
         return w3.eth.contract(address=address, abi=abi)
     else:
         # Deployment mode: bytecode required
-        bytecode = data.get("bytecode")
+        if isinstance(data["bytecode"], dict):
+            bytecode = data["bytecode"].get("object")
+        else:
+            bytecode = data.get("bytecode")
         if not bytecode:
             raise ValueError(
                 f"Artifact {artifact_path} missing 'bytecode' — required for deployment.\n"

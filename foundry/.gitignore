@@ -16,3 +16,5 @@ docs/
 # foundry lib
 lib/*
 node_modules/*
+test/*
+script/*

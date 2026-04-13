@@ -18,7 +18,7 @@ dincli model-owner deploy task-coordinator --artifact <path_to_artifact>
 dincli model-owner deploy task-auditor --artifact <path_to_artifact>
 ```
 
-The `--artifact` flag must point to the compiled Hardhat JSON output (contains ABI and bytecode).
+The `--artifact` flag must point to the compiled Hardhat/Foundry JSON output (contains ABI and bytecode).
 
 ---
 
@@ -28,9 +28,9 @@ Fund the Task Auditor contract with USDT to be distributed as rewards.
 
 > **Prerequisites** — the following keys must be set in your `.env` file:
 > - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
->   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
+>   *(e.g. `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address`)*
 > - `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_DINTaskAuditor_Contract_Address`  
->   *(e.g. `SEPOLIA_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
+>   *(e.g. `SEPOLIA_OP_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
 
 ```bash
 dincli model-owner deposit-reward-in-dintask-auditor --amount <usdt_amount>
@@ -47,7 +47,7 @@ After the DIN DAO has authorized the contracts as slashers in the DIN Coordinato
 
 > **Prerequisite** — the following key must be set in your `.env` file:
 > - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
->   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
+>   *(e.g. `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address`)*
 
 ```bash
 # Confirm Task Coordinator as a slasher

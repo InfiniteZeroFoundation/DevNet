@@ -16,7 +16,7 @@ Clients contribute to the DIN network by training local models on their own data
 > | Placeholder | Description | Example |
 > |---|---|---|
 > | `<CACHE_DIR>` | The DIN CLI cache directory | `~/.cache/dincli` |
-> | `<network>` | The active network name | `local`, `sepolia_devnet` |
+> | `<network>` | The active network name | `local`, `sepolia_devnet`, `sepolia_op_devnet`, `mainnet` |
 > | `<model_id>` | The ID of the model you are participating in | `0` |
 > | `<account_address>` | Your Ethereum wallet address | `0xAbC...123` |
 >

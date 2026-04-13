@@ -9,7 +9,7 @@ The DIN DAO (Decentralized Autonomous Organization) administers the core infrast
 Deploy the core contracts in the order listed below. Each contract depends on the previous one being live.
 
 > [!NOTE]
-> The `--artifact` flag must point to the compiled JSON output from Hardhat (contains the ABI and bytecode).
+> The `--artifact` flag must point to the compiled JSON output from Hardhat/ Foundry (contains the ABI and bytecode).
 
 ### 1. DIN Coordinator
 
@@ -57,7 +57,7 @@ Slashers are contracts authorized to penalize misbehaving participants. The Task
 
 > **Prerequisite** — the following key must be set in your `.env` file:
 > - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
->   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
+>   *(e.g. `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address`)*
 
 ```bash
 dincli dindao add-slasher --taskCoordinator
@@ -67,9 +67,9 @@ dincli dindao add-slasher --taskCoordinator
 
 > **Prerequisite** — the following keys must be set in your `.env` file:
 > - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
->   *(e.g. `SEPOLIA_DEVNET_DINTaskCoordinator_Contract_Address`)*
+>   *(e.g. `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address`)*
 > - `<NETWORK>_<TASK_COORDINATOR_ADDRESS>_DINTaskAuditor_Contract_Address`  
->   *(e.g. `SEPOLIA_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
+>   *(e.g. `SEPOLIA_OP_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
 
 ```bash
 dincli dindao add-slasher --taskAuditor

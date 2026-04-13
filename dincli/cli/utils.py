@@ -28,7 +28,7 @@ WALLET_FILE = CONFIG_DIR / "wallet.json"
 
 MIN_STAKE = 1000000*10**18 
 
-ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_testnet", "mainnet"]
+ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_op_devnet", "mainnet"] # "sepolia_testnet"
 
 
 # Optional: only import dotenv if needed

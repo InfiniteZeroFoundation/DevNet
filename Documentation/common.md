@@ -10,7 +10,7 @@ These flags can be prepended to any command:
 
 | Option | Description |
 |---|---|
-| `--network <network>` | Override the default network (`local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet`) |
+| `--network <network>` | Override the default network (`local`, `sepolia_devnet`, `sepolia_op_devnet`, `mainnet`) |
 | `--help` | Display help for any command |
 
 **Check CLI version:**
@@ -35,12 +35,14 @@ The `system` command group manages configuration, wallet connections, and genera
 dincli system init
 ```
 
-**Set the default network:** (`local`, `sepolia_devnet`, `sepolia_testnet`, `mainnet`)
+**Set the default network:** (`local`, `sepolia_devnet`, `sepolia_op_devnet`, `mainnet`)
 
 ```bash
 dincli system configure-network --network <network>
 ```
 
+> [!NOTE]
+> Use `sepolia_op_devnet` for devnet. Testnet and Mainnet support will be rolled out in a future release.
 
 **Set the log level** (`debug`, `info`, `warning`, `error`, `critical`):
 
@@ -56,6 +58,12 @@ dincli system configure-demo --mode <yes|no>
 
 > [!WARNING]
 > Demo mode stores wallets in plaintext. **Do not use with real funds.**
+
+> [!NOTE]
+> To use your own wallet from .env file ensure demo mode is disabled first:
+> ```bash
+> dincli system configure-demo --mode no
+> ```
 
 ---
 
