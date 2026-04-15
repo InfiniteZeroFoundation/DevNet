@@ -1,0 +1,1 @@
+In this guide we will describe the workflow of the DIN Protocol for a model.

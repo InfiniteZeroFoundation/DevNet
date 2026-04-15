@@ -26,7 +26,7 @@ CACHE_DIR = Path(user_cache_dir("dincli"))
 CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 
-MIN_STAKE = 1000000*10**18 
+MIN_STAKE = 10*10**18 
 
 ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_op_devnet", "mainnet"] # "sepolia_testnet"
 
