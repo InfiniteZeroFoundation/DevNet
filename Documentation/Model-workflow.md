@@ -63,9 +63,12 @@ Reach out to the DIN-Representative through any of the following channels:
 
 | Channel  | Link / Handle |
 |----------|--------------|
-| Discord  | `#model-onboarding` channel on the DIN Discord server |
-| Telegram | [@DINProtocol](https://t.me/DINProtocol) |
-| Email    | devnet@dinprotocol.io |
+| Discord  | `#model-onboarding` channel on the [Infinte Zero Foundation* Discord](https://discord.gg/fSWPgdMA6) server 
+| Telegram | To be announced |
+| Email    | umermajeed.cto@gmail.com ** |
+
+> *DIN Protocol is developed and maintained by Infinite Zero Foundation
+> ** Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
 ### Required Information for Your Request
 

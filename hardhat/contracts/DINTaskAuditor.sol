@@ -2,14 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./DINShared.sol";
 
 contract DINTaskAuditor is Ownable {
-    using SafeERC20 for IERC20;
-    IERC20 public mockusdt;
-
     IDinValidatorStake public dinvalidatorStakeContract;
 
     IDINTaskCoordinator public dintaskcoordinatorContract;
@@ -136,11 +131,9 @@ contract DINTaskAuditor is Ownable {
     event PassScoreUpdated(uint256 oldScore, uint256 newScore);
 
     constructor(
-        address _mockusdt,
         address _dinvalidatorStakeContract_address,
         address _dintaskcoordinator_contract_address
     ) Ownable(msg.sender) {
-        mockusdt = IERC20(_mockusdt);
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
         );
@@ -157,15 +150,6 @@ contract DINTaskAuditor is Ownable {
             minAuditorStake: 1_000_000,
             MIN_MODELS_PER_BATCH: 2
         });
-    }
-
-    function depositReward(uint _amount) public onlyOwner {
-        if (_amount == 0) revert TA_AmountMustBePositive();
-
-        mockusdt.safeTransferFrom(msg.sender, address(this), _amount);
-
-        totalDepositedRewards += _amount;
-        emit RewardDeposited(msg.sender, _amount);
     }
 
     function updatePassScore(

@@ -142,7 +142,7 @@ def create_testdataset(
         ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "model owner service")
         fn = ctx.obj.load_custom_fn(modelowner_service_path, "create_audit_testDataCIDs")
         audit_testDataCIDs = fn(audtor_batch_count, curr_GI, str(model_base_path), test_data_path)
-        #audit_testDataCIDs = ['QmYHc4Y6pmMKFohYDJXkFCCrLAQBUhwGuD6ebGZUxi34ea', 'QmSvTuP4XmcNnaYAqYkv6ewUKU7v2PCAnnLB9DqE7MTrAg', 'QmSdiTciKYBTxHKntjY3Pko8szD5D1nXVLU2mVWrsZhWdE', 'QmcLCGEz9FDHti6c2PPUqAh8rzGpQSwFAZi4QifcYkQB49', 'QmRZydYdpcHTpSSNy7MsX2K29KuUwEsoRxDkT9NEHqu6CQ', 'QmfBeoeqxb3SecGj4qUWcYYZ5AtCsUPyBn8deUj4RQofxw']
+        #audit_testDataCIDs = ['bafybeietzura2l2q3tsx3qwjhm6ii2j3lzu7jthbalnsfjpti4ddqf6y54', 'bafybeicedbdpwlixgbgdrysreiv37s6eteq52sxq3uxaqj5p26gzvtykmu', 'bafybeib7zxoj4w4fvfbjbed5wp2roi5cpp3bnfvkmrwgeuhfbwot73tzre', 'bafybeigp4w3ol2unyph73c5lymj4amruoz2cyzddweueatjrhbxhpg2kqy', 'bafybeibp7uaxtd3sdonp53tpa24ayj3bljmimplorhaimnxscjpgydmxfe', 'bafybeih2jchqarg6kwaq6n2gr2mq4l3j5nhlebv76wbpcut5srxn3eohmq']
     else:
         audit_testDataCIDs = create_audit_testDataCIDs(audtor_batch_count, curr_GI)
     

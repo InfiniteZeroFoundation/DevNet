@@ -3,7 +3,7 @@ import os
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (get_env_key, load_din_info, load_usdt_config,
+from dincli.cli.utils import (get_env_key, load_din_info,
                               set_env_key)
 
 # Deploy sub-app (for 'dincli modelowner deploy ...')
@@ -66,12 +66,7 @@ def task_auditor(
     
     # Load contract instance
     DINTaskAuditor_contract = get_contract_instance(artifact_path, effective_network)
-    
-    # Resolve USDT contract address
-    usdt_config = load_usdt_config()
-    if effective_network in usdt_config and "usdt" in usdt_config[effective_network]:
-        usdt_contract_address = usdt_config[effective_network]["usdt"]
-    
+      
     din_info = load_din_info()
     if effective_network in din_info and "stake" in din_info[effective_network]:
         din_validator_stake_address = din_info[effective_network]["stake"]
@@ -87,7 +82,6 @@ def task_auditor(
             raise typer.Exit(1)
     
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
-    console.print(f"[cyan]Using USDT address:[/cyan] {usdt_contract_address}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
     console.print(f"[cyan]Using DINTaskCoordinator address:[/cyan] {task_coordinator_address}")
     
@@ -97,7 +91,6 @@ def task_auditor(
     
     # Build deployment transaction
     tx = DINTaskAuditor_contract.constructor(
-        usdt_contract_address,
         din_validator_stake_address,
         task_coordinator_address
     ).build_transaction({

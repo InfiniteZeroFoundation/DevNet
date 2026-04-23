@@ -63,11 +63,6 @@ def load_config():
 def get_config(key, default=None):
     config = load_config()
     return config.get(key, default)
-
-def load_usdt_config():
-    config_path = files("dincli") / "config" / "usdt_config.json"
-    with open(config_path, "r") as f:
-        return json.load(f)
     
 def resolve_network(cli_network: str | None = None, default: str = "local") -> str:
     """

@@ -16,7 +16,7 @@ For example:
 ```
 
 > [!NOTE]
-> If the manifest file is absent when the genesis setup (`dincli task model-owner create-genesis`) runs, it is automatically created with default values from the default manifest CID (`QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp`).
+> If the manifest file is absent when the genesis setup (`dincli task model-owner create-genesis`) runs, it is automatically created with default values from the default manifest CID (`bafybeibbhrefnamky7vmgcrhfx4ptxb3bdemh5dtnvwfkpualoganvnuve`).
 
 ---
 
@@ -90,56 +90,56 @@ The model owner can define any custom fields in the manifest file as per their r
     "description": "MNIST model to detect digits",
     "author": "Umer Majeed (infinite Zero)",
     "technical details": "",
-    "Genesis_Model_CID": "QmWetTBYPwgCJLJ9RbjHnubPVeHgApax8fNW1z1uUcrgoy",
+    "Genesis_Model_CID": "bafybeiabvfkm46yerhp6ramctwdiqixzs472hekj2tj34x2q4hrhu777va",
     "DINTaskCoordinator_Contract": "0x1e315573CE1b0A7c0De6d55f5A4858c98454b133",
     "DINTaskAuditor_Contract": "0x31D9FB450A313BDAe3aC0e512bCDfEab7297851a",
     "dp_mode": "disabled",
     "getGenesisModelIpfs": {
         "type": "custom",
         "path": "services/modelowner.py",
-        "ipfs": "QmWvssDTW1YpQjaVi6eZoMUuAUTxmKhkxKR1suJ4FNYWee",
+        "ipfs": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
         "stakeholders": ["modelowner"]
     },
     "getscoreforGM": {
         "type": "custom",
         "path": "services/modelowner.py",
-        "ipfs": "QmWvssDTW1YpQjaVi6eZoMUuAUTxmKhkxKR1suJ4FNYWee",
+        "ipfs": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
         "stakeholders": ["modelowner"]
     },
     "ModelArchitecture": {
         "type": "custom",
         "path": "services/model.py",
-        "ipfs": "QmXvkKtoHHBAMGNCLEqsvt6mPJS7G7shHKj6U1HZ8Ha4Ly",
+        "ipfs": "bafybeieoovd7dofejqvc6i5nxcpz5r4ux7o7oakpo2h3gxv4657otpxfpi",
         "stakeholders": ["modelowner", "auditors", "aggregators", "clients"]
     },
     "train_client_model_and_upload_to_ipfs": {
         "type": "custom",
         "path": "services/client.py",
-        "ipfs": "QmUcoG7w4CK8ZpcSNQnPV9ZUi9XmZo3CCK3CPrWReQcaTS",
+        "ipfs": "bafybeic5jekza5sxec2voknontekxfmz6snlhew3eb2nsyb6sb6qx6mhfe",
         "stakeholders": ["clients"]
     },
     "create_audit_testDataCIDs": {
         "type": "custom",
         "path": "services/modelowner.py",
-        "ipfs": "QmWvssDTW1YpQjaVi6eZoMUuAUTxmKhkxKR1suJ4FNYWee",
+        "ipfs": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
         "stakeholders": ["modelowner"]
     },
     "Score_model_by_auditor": {
         "type": "custom",
         "path": "services/auditor.py",
-        "ipfs": "QmbKu52v5Dkg9yi28BwTe5mfXRwaF1Dju9i5oikfNn2HAu",
+        "ipfs": "bafybeiga62lesy3aehs6ghuaen7nioxli5yzuwqqw3s4cbxs5okaixy6sy",
         "stakeholders": ["auditors"]
     },
     "get_aggregated_cid_t1": {
         "type": "custom",
         "path": "services/aggregator.py",
-        "ipfs": "QmP8Xhee2MT5gouPMohnR63xadyKEvnLsaKbqk7ZvoWrBZ",
+        "ipfs": "bafybeialydfrws6jozf64maz65h772ms6ukc364gjjwslr2jfhvk7r7j2a",
         "stakeholders": ["aggregators"]
     },
     "get_aggregated_cid_t2": {
         "type": "custom",
         "path": "services/aggregator.py",
-        "ipfs": "QmP8Xhee2MT5gouPMohnR63xadyKEvnLsaKbqk7ZvoWrBZ",
+        "ipfs": "bafybeialydfrws6jozf64maz65h772ms6ukc364gjjwslr2jfhvk7r7j2a",
         "stakeholders": ["aggregators"]
     }
 }

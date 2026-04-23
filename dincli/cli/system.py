@@ -18,8 +18,7 @@ from torchvision import datasets, transforms
 from dincli.cli.contract_utils import erc20_abi, router_abi
 from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, CONFIG_FILE,
                               _get_password, get_config, get_demo_private_key,
-                              get_env_key, load_config, load_din_info,
-                              load_usdt_config, save_config)
+                              get_env_key, load_config, load_din_info, save_config)
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
 
@@ -42,20 +41,10 @@ def initialize_directories():
 @app.callback(invoke_without_command=True)
 def system(
     ctx: typer.Context,
-    usdt_info: bool = typer.Option(
-        False,
-        "--usdt-info",
-        help="Display USDT, WETH, and Uniswap router addresses for the active network."
-    ),
     eth_balance: bool = typer.Option(
         False,
         "--eth-balance",
         help="Show ETH balance for your wallet or a given address."
-    ),
-    usdt_balance: bool = typer.Option(
-        False,
-        "--usdt-balance",
-        help="Show USDT balance for your wallet or a given address."
     ),
     address: str = typer.Option(
         None,
@@ -64,29 +53,14 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "buy-usdt", "dataset"]:
+    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
 
-    if usdt_info:
-        usdt_cfg = load_usdt_config()
-
-        if effective_network not in usdt_cfg:
-            console.print(f"[red]Network '{effective_network}' not found in usdt config![/red]")
-            raise typer.Exit()
-
-        data = usdt_cfg[effective_network]
-
-        console.print("\n[bold green]Displaying USDT, WETH, and Uniswap router addresses for the active network.[/bold green]")
-        console.print(f"[green]USDT Address:[/green] {data['usdt']}")
-        console.print(f"[blue]WETH Address:[/blue] {data['weth']}")
-        console.print(f"[cyan]Uniswap Router:[/cyan] {data['uniswap_router']}")
-
-
     
     # Early exit if neither balance flag is set
-    if not (eth_balance or usdt_balance):
+    if not (eth_balance):
         return  # let subcommands run, or do nothing
     
     if address:
@@ -102,19 +76,6 @@ def system(
         
         console.print(f"[green]ETH Balance:[/green] {balance_eth} ETH")    
         
-    # Fetch USDT balance if requested
-    if usdt_balance:
-        usdt_cfg = load_usdt_config()
-        if effective_network not in usdt_cfg:
-            print(f"[red]USDT config missing for network '{effective_network}'![/red]")
-            raise typer.Exit()
-        
-        usdt_address = w3.to_checksum_address(usdt_cfg[effective_network]["usdt"])    
-        usdt_contract = w3.eth.contract(address=usdt_address, abi=erc20_abi)
-        usdt_balance_raw = usdt_contract.functions.balanceOf(target_address).call()
-        usdt_balance_fmt = Decimal(usdt_balance_raw) / Decimal(10**6)
-
-        console.print(f"[green]USDT Balance:[/green] {usdt_balance_fmt} USDT")
 
 @app.command()
 def where(ctx: typer.Context):
@@ -140,124 +101,7 @@ def initialize():
         # Write an empty JSON object (valid JSON)
         CONFIG_FILE.write_text("{}\n", encoding="utf-8")
         console.print(f"[green]✅ Created empty config file at: {CONFIG_FILE}[/green]")
-
-@app.command("buy-usdt")
-def buy_usdt(
-    ctx: typer.Context,
-    amount: float = typer.Argument(..., help="Amount of USDT to buy"),
-    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
-):
-    """
-    Buy USDT tokens by swapping ETH via Uniswap.
-
-    Prompts user for confirmation within 1 minute after showing live exchange rate.
-    Aborts if not confirmed. Actual received USDT may vary due to slippage and volatility.
-    """
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    console.print(f"[bold green]Buying {amount} USDT:[/bold green]")
-    
-    
-     # Load USDT config
-    usdt_config = load_usdt_config()
-    if effective_network not in usdt_config:
-        print(f"[red]Network '{effective_network}' not configured for USDT![/red]")
-        raise typer.Exit(1)
-    
-    usdt_address = usdt_config[effective_network]["usdt"]
-    router_address = usdt_config[effective_network]["uniswap_router"]
-    weth_address = usdt_config[effective_network]["weth"]
-    
-    usdt_contract = w3.eth.contract(address=usdt_address, abi=erc20_abi)
-    router_contract = w3.eth.contract(address=router_address, abi=router_abi)
-    
-    try:
-        decimals = usdt_contract.functions.decimals().call()
-    except:
-        decimals = 6  # USDT standard
-        
-    amount_wei = int(amount * (10 ** decimals))
-    path = [weth_address, usdt_address]
-    
-     # Get required ETH
-    try:
-        amounts_in = router_contract.functions.getAmountsIn(amount_wei, path).call()
-        eth_required_wei = amounts_in[0]
-        eth_required = w3.from_wei(eth_required_wei, 'ether')
-    except Exception as e:
-        console.print(f"[red]Failed to fetch swap rate: {e}[/red]")
-        raise typer.Exit(1)
-
-    console.print(f"\n[bold cyan]Estimated ETH needed:[/bold cyan] {eth_required:.6f} ETH")
-    console.print(f"[bold yellow]⚠️  Disclaimer:[/bold yellow] Actual USDT received may differ due to price volatility and slippage.")
-    console.print(f"[bold yellow]You have 60 seconds to confirm.[/bold yellow]\n")
-
-    # Wait for confirmation with timeout
-    deadline = datetime.now() + timedelta(seconds=60)
-    confirmed = None
-    if yes:
-        confirmed = True
-        console.print("[green]Skipping confirmation prompt.[/green]")
-        console.print(f"Swapping...{eth_required:.6f} ETH for {amount} USDT")
-    else:
-        while datetime.now() < deadline:
-            try:
-                confirmed = Confirm.ask(f"Confirm swap of ~{eth_required:.6f} ETH for {amount} USDT?")
-                break
-            except KeyboardInterrupt:
-                console.print("\n[red]Cancelled by user.[/red]")
-                raise typer.Exit(1)
-            except Exception:
-                time.sleep(0.5)  # brief pause before retrying input
-
-    if confirmed is not True:
-        console.print("[red]Confirmation timeout or declined. Aborting.[/red]")
-        raise typer.Exit(1)
-
-    # Final balance & gas check
-    eth_balance = w3.eth.get_balance(account.address)
-    if eth_balance < eth_required_wei:
-        console.print(f"[red]Insufficient ETH. Have: {w3.from_wei(eth_balance, 'ether'):.6f}, Need: {eth_required:.6f}[/red]")
-        raise typer.Exit(1)
-
-    # Add 10% slippage on ETH input (i.e., allow up to 10% more ETH to ensure USDT amount is met)
-    eth_with_slippage = int(eth_required_wei * 1.10)
-    deadline_ts = w3.eth.get_block('latest')['timestamp'] + 300  # 5 min deadline
-    w3.provider.make_request("evm_mine", [])
-
-    # Build transaction
-    try:
-        swap_tx = router_contract.functions.swapETHForExactTokens(
-            amount_wei,
-            path,
-            account.address,
-            deadline_ts
-        ).build_transaction({
-            'from': account.address,
-            'value': eth_with_slippage,
-            'nonce': w3.eth.get_transaction_count(account.address),
-            'gas': 300000,
-            'gasPrice': w3.to_wei('5', 'gwei'),
-            'chainId': w3.eth.chain_id,
-        })
-
-        signed_tx = account.sign_transaction(swap_tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        console.print(f"[cyan]Transaction sent: {tx_hash.hex()}[/cyan]")
-
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        if receipt.status != 1:
-            console.print("[red]Transaction failed on-chain.[/red]")
-            raise typer.Exit(1)
-
-        final_usdt_balance = usdt_contract.functions.balanceOf(account.address).call()
-        final_formatted = final_usdt_balance / (10 ** decimals)
-        console.print(f"[bold green]✅ USDT purchase successful![/bold green]")
-        console.print(f"[cyan]Your USDT balance:[/cyan] {final_formatted:.6f} USDT")
-
-    except Exception as e:
-        console.print(f"[red]Transaction error: {e}[/red]")
-        raise typer.Exit(1)
-    
+ 
 @app.command("configure-network")
 def configure_network(ctx: typer.Context):
     """

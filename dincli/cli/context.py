@@ -143,7 +143,7 @@ class DinContext:
             load_custom_fn(
                 Path.cwd() / "services" / "modelowner.py",
                 "getGenesisModelIpfs",
-                "Qma2FMYTrf9Ec4rfMdWLnVWFUniGfi2iVyh3VVYHYKym9w"
+                "bafybeifnsvq2stiisi2xv3ocpqjmmmbccrvykq5v5ti62fyzz56vyyhl6y"
             )
         """
 

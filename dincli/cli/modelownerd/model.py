@@ -40,7 +40,7 @@ def create_genesis(
     target_manifest = os.path.join(task_dir, "manifest.json")
 
     if not os.path.exists(target_manifest):
-        default_manifest_CID = "QmQaPUfVAyQBrkRvHZWyH8tbNukmcgEmghYFGZA6LKo8tp"
+        default_manifest_CID = "bafybeibbhrefnamky7vmgcrhfx4ptxb3bdemh5dtnvwfkpualoganvnuve"
         console.print(f"[bold red]Manifest not found at {target_manifest}[/bold red]")
         console.print(f"[bold yellow]Using default manifest from IPFS CID: {default_manifest_CID}[/bold yellow]")
         retrieve_from_ipfs(default_manifest_CID, target_manifest)
@@ -133,7 +133,7 @@ def submit_genesis(
                 if not test_dataset_path.exists():
                     console.print(f"[bold red] X Test dataset not found at {test_dataset_path} [/bold red]")
                     if default_test_data:
-                        default_test_dataset_ipfs_hash = "QmbubfxPvdofjFCxkf5jtkAdjnXyfk1vGfv62GSp2y8yGy"
+                        default_test_dataset_ipfs_hash = "bafybeigjtcu2nzsffoy5pjmui25bnc43yduzn6aopi4wnrbtxfleqmw46y"
                         console.print(f"[bold yellow] Y Using default test dataset with IPFS CID {default_test_dataset_ipfs_hash} [/bold yellow]")
                         retrieve_from_ipfs(default_test_dataset_ipfs_hash, test_dataset_path)
                     else:
