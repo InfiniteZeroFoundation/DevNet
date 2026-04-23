@@ -21,7 +21,7 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "web3>=6.0.0",
   "requests>=2.31.0",
-  "torch==2.6.0",
+  "torch==2.8.0",
   "torchvision==0.21.0",
   "platformdirs==4.5.0",
   "numpy==2.2.5"
