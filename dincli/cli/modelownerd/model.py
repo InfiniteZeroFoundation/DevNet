@@ -40,7 +40,7 @@ def create_genesis(
     target_manifest = os.path.join(task_dir, "manifest.json")
 
     if not os.path.exists(target_manifest):
-        default_manifest_CID = "bafybeibbhrefnamky7vmgcrhfx4ptxb3bdemh5dtnvwfkpualoganvnuve"
+        default_manifest_CID = "bafybeihmnbzg27dbdny2qg2gn4kkhig3i7b2ep7vitw7maqpbrbj7k7aue"
         console.print(f"[bold red]Manifest not found at {target_manifest}[/bold red]")
         console.print(f"[bold yellow]Using default manifest from IPFS CID: {default_manifest_CID}[/bold yellow]")
         retrieve_from_ipfs(default_manifest_CID, target_manifest)

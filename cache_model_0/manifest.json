@@ -58,5 +58,11 @@
    },
    "guides": {
       "clients": "bafybeifk2hasvhwgjydfunvjzgxpoqhwadswet4xer54hv5ro5gvfqxna4"
+   },
+   "requirements.txt": {
+      "clients": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
+      "auditors": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
+      "aggregators": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
+      "modelowner": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm"
    }
 }
