@@ -131,9 +131,10 @@ def upload_to_ipfs(file_path, msg=None):
         else:
             raise NotImplementedError(f"Unsupported IPFS provider: {provider}")
 
+        cidv1base32_from_cid = get_cidv1base32_from_cid(cid)
         if msg:
-            logger.info(f"{msg} uploaded to IPFS with CID: {cid}")
-        return get_cidv1base32_from_cid(cid)
+            logger.info(f"{msg} uploaded to IPFS with CID: {cidv1base32_from_cid}")
+        return cidv1base32_from_cid
 
     except requests.exceptions.RequestException as e:
         # NEVER log raw responses containing secrets

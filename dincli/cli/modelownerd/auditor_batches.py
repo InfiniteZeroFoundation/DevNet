@@ -86,7 +86,7 @@ def show(
 
         for batch in raw_audit_batches:
             batch_id, auditors, model_indexes, test_cid_raw = batch
-            test_cid = get_cid_from_bytes32(test_cid_raw.hex(), version=0) if test_cid_raw and test_cid_raw != bytes(32) else None
+            test_cid = get_cid_from_bytes32(test_cid_raw.hex()) if test_cid_raw and test_cid_raw != bytes(32) else None
             processed_audit_batches.append({"batch_id": batch_id, "auditors": auditors, "model_indexes": model_indexes, "test_cid": test_cid or "None"})
             
         if not processed_audit_batches:

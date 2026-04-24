@@ -4,17 +4,52 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "dintoken_address",
+          "name": "dinToken",
           "type": "address"
         },
         {
           "internalType": "address",
-          "name": "_dincoordinator_address",
+          "name": "dinCoordinator",
           "type": "address"
         }
       ],
       "stateMutability": "nonpayable",
       "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "AmountLessThanMinStake",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InsufficientStake",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotDINCoordinator",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotEnoughStake",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotSlasherContract",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotValidator",
+      "type": "error"
     },
     {
       "inputs": [
@@ -36,6 +71,42 @@
         }
       ],
       "name": "OwnableUnauthorizedAccount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ReentrancyGuardReentrantCall",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "SafeERC20FailedOperation",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SlasherContractAlreadyAdded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SlasherContractNotAdded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TransferFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ValidatorIsBlacklisted",
       "type": "error"
     },
     {
@@ -63,6 +134,45 @@
         {
           "indexed": true,
           "internalType": "address",
+          "name": "slasher",
+          "type": "address"
+        }
+      ],
+      "name": "SlasherContractAdded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "slasher",
+          "type": "address"
+        }
+      ],
+      "name": "SlasherContractRemoved",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
+        }
+      ],
+      "name": "ValidatorBlacklisted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
           "name": "validator",
           "type": "address"
         },
@@ -71,6 +181,12 @@
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "slasher",
+          "type": "address"
         }
       ],
       "name": "ValidatorSlashed",
@@ -116,6 +232,32 @@
     },
     {
       "inputs": [],
+      "name": "DIN_COORDINATOR",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "DIN_TOKEN",
+      "outputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "MIN_STAKE",
       "outputs": [
         {
@@ -131,39 +273,26 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "_slasher_contract",
+          "name": "slasherContract",
           "type": "address"
         }
       ],
-      "name": "add_slasher_contract",
+      "name": "addSlasherContract",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "dincoordinator_address",
-      "outputs": [
+      "inputs": [
         {
           "internalType": "address",
-          "name": "",
+          "name": "validator",
           "type": "address"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "dintoken",
-      "outputs": [
-        {
-          "internalType": "contract IERC20",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "stateMutability": "view",
+      "name": "blacklistValidator",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {
@@ -189,11 +318,11 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "validator",
+          "name": "slasherContract",
           "type": "address"
         }
       ],
-      "name": "isValidatorStaked",
+      "name": "isSlasherContract",
       "outputs": [
         {
           "internalType": "bool",
@@ -208,11 +337,11 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "slasher_contract",
+          "name": "validator",
           "type": "address"
         }
       ],
-      "name": "is_slasher_contract",
+      "name": "isValidatorStaked",
       "outputs": [
         {
           "internalType": "bool",
@@ -240,11 +369,11 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "_slasher_contract",
+          "name": "slasherContract",
           "type": "address"
         }
       ],
-      "name": "remove_slasher_contract",
+      "name": "removeSlasherContract",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -282,7 +411,7 @@
           "type": "address"
         }
       ],
-      "name": "slasher_contracts",
+      "name": "slasherContracts",
       "outputs": [
         {
           "internalType": "bool",

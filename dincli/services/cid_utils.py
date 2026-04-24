@@ -67,4 +67,4 @@ def get_cidv1base32_from_cid(cid_str: str) -> str:
         return cid_str
 
     bytes32_hex = get_bytes32_from_cid(cid_str)
-    return get_cid_from_bytes32(bytes32_hex, version=1, encoding="base32")
+    return get_cid_from_bytes32(bytes32_hex)

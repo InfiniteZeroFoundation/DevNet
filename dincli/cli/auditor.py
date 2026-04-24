@@ -2,7 +2,7 @@ from pathlib import Path
 
 import typer
 from rich.table import Table
-
+from web3 import Web3
 from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key
 from dincli.services.auditor import Score_model_by_auditor
 from dincli.services.cid_utils import get_cid_from_bytes32
@@ -17,7 +17,7 @@ app.add_typer(lms_evaluation_app, name="lms-evaluation")
 
 @dintoken_app.command(help="Buy DINTokens where amouunt is ETh to exchange for DINTokens")
 def buy(ctx: typer.Context, 
-        amount: int = typer.Argument(..., help="Amount of ETH to exchange for DINTokens")
+        amount: float = typer.Argument(..., help="Amount of ETH to exchange for DINTokens")
     ):
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console() 
@@ -25,8 +25,8 @@ def buy(ctx: typer.Context,
     DinToken_contract = ctx.obj.get_deployed_din_token_contract()
     DinCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
         
-    console.print("Auditor ETH balance: ", w3.eth.get_balance(account.address))
-    console.print("Auditor DINToken balance: ", DinToken_contract.functions.balanceOf(account.address).call())
+    console.print("Auditor ETH balance: ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
+    console.print("Auditor DINToken balance: ", DinToken_contract.functions.balanceOf(account.address).call()/(10**18))
 
     console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
 
@@ -50,7 +50,7 @@ def buy(ctx: typer.Context,
     
         if tx_receipt.status == 1:
             console.print(f"[bold green]✓ DINTokens bought at:[/bold green] {tx_receipt.transactionHash.hex()}")
-            console.print("Auditor DINToken balance: ", DinToken_contract.functions.balanceOf(account.address).call())
+            console.print("Auditor DINToken balance: ", Web3.from_wei(DinToken_contract.functions.balanceOf(account.address).call(), "ether"))
         else:
             console.print(f"[bold red]✗ Transaction failed! Could not buy DINTokens {tx_receipt.transactionHash.hex()}[/bold red]")
     except Exception as e:
@@ -207,7 +207,7 @@ def show_batch(
 
         for batch_data in raw_audit_batches:
             batch_id, auditors, model_indexes, test_cid_raw = batch_data
-            test_cid = get_cid_from_bytes32(test_cid_raw.hex(), version=0) if test_cid_raw and test_cid_raw != bytes(32) else None
+            test_cid = get_cid_from_bytes32(test_cid_raw.hex()) if test_cid_raw and test_cid_raw != bytes(32) else None
 
             if account.address.lower() in [a.lower() for a in auditors]:
                 auditor_batch["raw_batches"].append({"batch_id": batch_id, "auditors": auditors, "model_indexes": model_indexes, "test_cid": test_cid})
@@ -250,7 +250,7 @@ def show_batch(
                 continue
             else:
                 client, model_cid_raw, submitted_at, eligible, evaluated, approved, final_avg = sub
-                model_cid = get_cid_from_bytes32(model_cid_raw.hex(), version=0) if model_cid_raw and model_cid_raw != bytes(32) else str(model_cid_raw)
+                model_cid = get_cid_from_bytes32(model_cid_raw.hex()) if model_cid_raw and model_cid_raw != bytes(32) else str(model_cid_raw)
                 lm_submissions[idx] = {"model_index": idx, "client": client, "model_cid": model_cid, "submitted_at": submitted_at, "eligible": eligible, "evaluated": evaluated, "approved": approved, "final_avg": final_avg}
 
                 batch_id = model_idx_to_batch_id[idx]
@@ -356,7 +356,7 @@ def evaluate_lms(
     audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(curr_GI).call()
     
     genesis_model_cid_raw = task_coordinator_contract.functions.genesisModelIpfsHash().call()
-    genesis_model_cid = get_cid_from_bytes32(genesis_model_cid_raw.hex(), version=0)
+    genesis_model_cid = get_cid_from_bytes32(genesis_model_cid_raw.hex())
     
     found_any = False
 
@@ -369,7 +369,7 @@ def evaluate_lms(
         auditors_in_batch = audit_batch[1]
         model_indexes = audit_batch[2]
         testDataCID_raw = audit_batch[3]
-        testDataCID = get_cid_from_bytes32(testDataCID_raw.hex(), version=0) if testDataCID_raw and testDataCID_raw != bytes(32) else None
+        testDataCID = get_cid_from_bytes32(testDataCID_raw.hex()) if testDataCID_raw and testDataCID_raw != bytes(32) else None
 
         if account.address not in auditors_in_batch:
             # If user specifically requested this batch, warn them
@@ -386,7 +386,7 @@ def evaluate_lms(
             console.print(f"[bold green]Evaluating LM {model_index} from Audit batch {batch_id}![/bold green]")
 
             lms = task_auditor_contract.functions.lmSubmissions(curr_GI, model_index).call()
-            lm_cid = get_cid_from_bytes32(lms[1].hex(), version=0)
+            lm_cid = get_cid_from_bytes32(lms[1].hex())
 
             model_base_dir = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
             manifest = get_manifest_key(effective_network, "Score_model_by_auditor", model_id)

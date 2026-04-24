@@ -565,7 +565,7 @@ def distribute_mnist(
     task_coordinator_address: str = typer.Option(None, "--task-coordinator", "-tc", help="TaskCoordinator address"),
     task: bool = typer.Option(False, "--task", "-t", help="get task dataset"),
     model_id: str = typer.Option(None, "--model-id", "-m", help="Model ID"),
-
+    start_client_index: int = typer.Option(2, "--start-client-index", "-sci", help="Start client index of ETH_PRIVATE_KEY_i"),
 ):
     """
     Download MNIST and distribute it across N clients (IID split).
@@ -637,8 +637,18 @@ def distribute_mnist(
 
         accounts_list = []
 
+        demo_mode = get_config("demo_mode")
+
+        if not start_client_index:
+            start_client_index = 2
+
         for i in range(num_clients):
-            private_key = get_demo_private_key(i+2)
+
+            if demo_mode:
+                private_key = get_demo_private_key(i+start_client_index)
+            else:
+                private_key = get_env_key("ETH_PRIVATE_KEY_"+str(i+start_client_index))
+                
             acct = Account.from_key(private_key)
             accounts_list.append(acct.address)
 

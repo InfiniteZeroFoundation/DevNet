@@ -6,7 +6,7 @@ from web3 import Web3
 
 from dincli.cli.utils import cache_manifest, get_env_key
 from dincli.services.ipfs import upload_to_ipfs
-from dincli.services.cid_utils import get_bytes32_from_cid
+from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 app = typer.Typer(help="Manage DIN tasks/models across networks.")
 
@@ -190,9 +190,19 @@ def register(
     console.print(f"[gray]Task Auditor: {taskAuditor}[/gray]")
     console.print(f"[gray]Is Open Source: {isOpenSource}[/gray]")
 
+
+    balance_wei = w3.eth.get_balance(account.address)
+    balance_eth = w3.from_wei(balance_wei, "ether")
+        
+    console.print(f"[green]ETH Balance:[/green] {balance_eth} ETH")    
+
     manifestCID_bytes32 = get_bytes32_from_cid(manifestCID)
 
     bytes32_value = Web3.to_bytes(hexstr=manifestCID_bytes32)
+
+    proprieteryFee = 0
+    if not isOpenSource:
+        proprieteryFee = Web3.to_wei(0.001, 'ether')
 
     tx = dinregistry_contract.functions.registerModel(
         bytes32_value,
@@ -200,7 +210,7 @@ def register(
         taskAuditor, 
         isOpenSource
     ).build_transaction({
-        'value':  w3.to_wei(0.01, 'ether'),
+        'value':  proprieteryFee,
         'from': account.address,
         'nonce': nonce,
         'gas': 1000000,
@@ -218,6 +228,11 @@ def register(
     if tx_receipt.status == 1:
         console.print(f"[green]Model registered successfully in DINRegistry[/green]")
 
+        balance_wei = w3.eth.get_balance(account.address)
+        balance_eth = w3.from_wei(balance_wei, "ether")
+        
+        console.print(f"[green]ETH Balance after registration:[/green] {balance_eth} ETH") 
+
         events = dinregistry_contract.events.ModelRegistered().process_receipt(tx_receipt)
 
         if events:
@@ -227,7 +242,7 @@ def register(
             console.print(f"  Model ID: {args['modelId']}")
             console.print(f"  Owner: {args['owner']}")
             console.print(f"  Is Open Source: {args['isOpenSource']}")
-            console.print(f"  Manifest CID: {get_cid_from_bytes32(args['manifestCID'].hex(), version=0)}")
+            console.print(f"  Manifest CID: {get_cid_from_bytes32(args['manifestCID'].hex())}")
             console.print(f"  Transaction Hash: {tx_hash.hex()}")
     else:
         console.print("[yellow]Warning: ModelRegistered event not found in receipt.[/yellow]")
@@ -265,7 +280,7 @@ def update_manifest(
             raise typer.Exit(1)
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
 
-    curr_manifestCID = get_cid_from_bytes32(model_data[2].hex(), version=0)
+    curr_manifestCID = get_cid_from_bytes32(model_data[2].hex())
 
     if curr_manifestCID == manifestCID:
         console.print("[yellow]Manifest CID is the same as the current manifest CID. No update needed.[/yellow]")
@@ -311,7 +326,7 @@ def update_manifest(
             args = event['args']
             console.print("[bold cyan]ManifestUpdated Event Emitted:[/bold cyan]")
             console.print(f"  Model ID: {args['modelId']}")
-            console.print(f"  New Manifest CID: {get_cid_from_bytes32(args['newManifestCID'].hex(), version=0)}")
+            console.print(f"  New Manifest CID: {get_cid_from_bytes32(args['newManifestCID'].hex())}")
             console.print(f"  Transaction Hash: {tx_hash.hex()}")
         else:
             console.print("[yellow]Warning: ManifestUpdated event not found in receipt.[/yellow]")

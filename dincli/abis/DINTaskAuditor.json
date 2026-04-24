@@ -4,11 +4,6 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "_mockusdt",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
           "name": "_dinvalidatorStakeContract_address",
           "type": "address"
         },
@@ -44,17 +39,6 @@
       "type": "error"
     },
     {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "token",
-          "type": "address"
-        }
-      ],
-      "name": "SafeERC20FailedOperation",
-      "type": "error"
-    },
-    {
       "inputs": [],
       "name": "TA_AlreadySubmitted",
       "type": "error"
@@ -62,11 +46,6 @@
     {
       "inputs": [],
       "name": "TA_AlreadyVoted",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "TA_AmountMustBePositive",
       "type": "error"
     },
     {
@@ -642,19 +621,6 @@
       "inputs": [
         {
           "internalType": "uint256",
-          "name": "_amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "depositReward",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
           "name": "",
           "type": "uint256"
         },
@@ -1012,19 +978,6 @@
           "internalType": "uint256",
           "name": "",
           "type": "uint256"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "mockusdt",
-      "outputs": [
-        {
-          "internalType": "contract IERC20",
-          "name": "",
-          "type": "address"
         }
       ],
       "stateMutability": "view",

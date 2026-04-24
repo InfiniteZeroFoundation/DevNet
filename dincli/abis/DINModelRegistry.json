@@ -238,7 +238,7 @@
     },
     {
       "inputs": [],
-      "name": "proprietaryFee",
+      "name": "proprietaryFeeL2",
       "outputs": [
         {
           "internalType": "uint256",

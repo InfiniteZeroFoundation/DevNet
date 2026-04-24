@@ -16,7 +16,7 @@ app.add_typer(dintoken_app, name="dintoken")
 
 @dintoken_app.command(help="Buy DINTokens where amount is ETh to exchange for DINTokens")
 def buy(ctx: typer.Context, 
-        amount: int = typer.Argument(..., help="Amount of ETH to exchange for DINTokens")
+        amount: float = typer.Argument(..., help="Amount of ETH to exchange for DINTokens")
     ):
     
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -24,8 +24,8 @@ def buy(ctx: typer.Context,
     DINToken_contract = ctx.obj.get_deployed_din_token_contract()
     DinCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
     
-    console.print("[bold green]Aggregator ETH balance:[/bold green] ", w3.eth.get_balance(account.address))
-    console.print("[bold green]Aggregator DINToken balance:[/bold green] ", DINToken_contract.functions.balanceOf(account.address).call())
+    console.print("[bold green]Aggregator ETH balance:[/bold green] ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
+    console.print("[bold green]Aggregator DINToken balance:[/bold green] ", DINToken_contract.functions.balanceOf(account.address).call()/(10**18))
 
     console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
 
@@ -50,7 +50,7 @@ def buy(ctx: typer.Context,
     
         if tx_receipt.status == 1:
             console.print(f"[bold green]✓ DINTokens bought at:[/bold green] {tx_receipt.transactionHash.hex()}")
-            console.print("Aggregator DINToken balance: ", DINToken_contract.functions.balanceOf(account.address).call())
+            console.print("Aggregator DINToken balance: ", Web3.from_wei(DINToken_contract.functions.balanceOf(account.address).call(), "ether"))
         else:
             console.print(f"[bold red]✗ Transaction failed! Could not buy DINTokens {tx_receipt.transactionHash.hex()}[/bold red]")
     except Exception as e:
@@ -293,7 +293,7 @@ def aggregate_t1(
     t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call() 
 
     genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
-    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
+    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex())
 
     found_batch = False
 
@@ -317,7 +317,7 @@ def aggregate_t1(
         model_cids = []
         for j in range(len(idxs)):
             (client, modelCID, submittedAt, eligible, evaluated, approved, finalAvgScore) = taskAuditor_contract.functions.lmSubmissions(curr_GI, idxs[j]).call()
-            model_cids.append(get_cid_from_bytes32(modelCID.hex(), version=0))
+            model_cids.append(get_cid_from_bytes32(modelCID.hex()))
 
         console.print(f"Aggregating Assigned T1 batch {bid} for aggregator {account.address} with model cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 
@@ -387,7 +387,7 @@ def aggregate_t2(
     t2_batches_count = 1
 
     genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
-    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
+    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex())
     
     found_batch = False
     
@@ -415,7 +415,7 @@ def aggregate_t2(
 
         for j in range(t1_batches_count):
             (bid, val, idxs, fin, cid) = taskCoordinator_contract.functions.getTier1Batch(curr_GI, j).call()
-            model_cids.append(get_cid_from_bytes32(cid.hex(), version=0))
+            model_cids.append(get_cid_from_bytes32(cid.hex()))
 
         console.print(f"Aggregating T2 batch {bid} for aggregator {account.address} with T1 final cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 

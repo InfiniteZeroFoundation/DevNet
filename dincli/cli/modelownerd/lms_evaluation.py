@@ -109,7 +109,7 @@ def show(
     lm_submissions = {}
     for idx, sub in enumerate(raw_lm_submissions):
         client, model_cid_raw, submitted_at, eligible, evaluated, approved, final_avg = sub
-        model_cid = get_cid_from_bytes32(model_cid_raw.hex(), version=0) if model_cid_raw and model_cid_raw != bytes(32) else str(model_cid_raw)
+        model_cid = get_cid_from_bytes32(model_cid_raw.hex()) if model_cid_raw and model_cid_raw != bytes(32) else str(model_cid_raw)
         lm_submissions[idx] = {
             "model_index": idx,
             "client": client,
@@ -137,7 +137,7 @@ def show(
 
         for batch_data in raw_audit_batches:
             batch_id, batch_auditors, model_indexes, test_cid_raw = batch_data
-            test_cid = get_cid_from_bytes32(test_cid_raw.hex(), version=0) if test_cid_raw and test_cid_raw != bytes(32) else None
+            test_cid = get_cid_from_bytes32(test_cid_raw.hex()) if test_cid_raw and test_cid_raw != bytes(32) else None
             batch_id_to_auditors[batch_id] = list(batch_auditors)
             for m_idx in model_indexes:
                 model_idx_to_batch_id[m_idx] = batch_id

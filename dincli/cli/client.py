@@ -33,7 +33,7 @@ def train_lms(
     console.print("Using DpMode: ", dpmode)
 
     genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
-    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex(), version=0)
+    genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex())
     console.print("Using Genesis Model IPFS Hash: ", genesis_model_ipfs_hash)
 
     initial_model_ipfs_hash = None
@@ -42,7 +42,7 @@ def train_lms(
         t2_batches_count = 1
         for i in range(t2_batches_count):
             (bid, val, fin, cid_raw) = taskCoordinator_contract.functions.getTier2Batch(current_GI-1, i).call()
-            cid = get_cid_from_bytes32(cid_raw.hex(), version=0) if cid_raw and cid_raw != bytes(32) else None
+            cid = get_cid_from_bytes32(cid_raw.hex()) if cid_raw and cid_raw != bytes(32) else None
             t2_list.append(Tier2Batch(batch_id=bid, validators=val, finalized=fin, final_cid=cid))
             t2_batch_gi_minus_1 = t2_list[0]
             initial_model_ipfs_hash = t2_batch_gi_minus_1.final_cid
@@ -139,6 +139,6 @@ def show_models(
 
     lm_submission = taskAuditor_contract.functions.lmSubmissions(ref_gi, has_index).call()
     
-    console.print(f"[green]✓ Client {lm_submission[0]} submitted model {get_cid_from_bytes32(lm_submission[1].hex(), version=0)}![/green]")
+    console.print(f"[green]✓ Client {lm_submission[0]} submitted model {get_cid_from_bytes32(lm_submission[1].hex())}![/green]")
 
     console.print(f"[bold green]✓ Local model submissions shown![/bold green]")

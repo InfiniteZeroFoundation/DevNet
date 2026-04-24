@@ -6,6 +6,66 @@
       "type": "constructor"
     },
     {
+      "inputs": [],
+      "name": "InvalidAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "name": "OwnableInvalidOwner",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "OwnableUnauthorizedAccount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ReentrancyGuardReentrantCall",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TransferFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ValidatorStakeContractNotSet",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroValue",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newRate",
+          "type": "uint256"
+        }
+      ],
+      "name": "DinPerEthUpdated",
+      "type": "event"
+    },
+    {
       "anonymous": false,
       "inputs": [
         {
@@ -27,44 +87,76 @@
           "type": "uint256"
         }
       ],
-      "name": "DepositAndMint",
+      "name": "EthDepositAndDINminted",
       "type": "event"
     },
     {
-      "inputs": [],
-      "name": "DIN_PER_ETH",
-      "outputs": [
+      "anonymous": false,
+      "inputs": [
         {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
+          "indexed": true,
+          "internalType": "address",
+          "name": "previousOwner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "name": "OwnershipTransferred",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "slasher",
+          "type": "address"
+        }
+      ],
+      "name": "SlasherContractAdded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "slasher",
+          "type": "address"
+        }
+      ],
+      "name": "SlasherContractRemoved",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorStakeContract",
+          "type": "address"
+        }
+      ],
+      "name": "ValidatorStakeContractUpdated",
+      "type": "event"
     },
     {
       "inputs": [
         {
           "internalType": "address",
-          "name": "_dinvalidatorStakeContract",
+          "name": "slasherContract",
           "type": "address"
         }
       ],
-      "name": "add_dinvalidatorStakeContract",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "_slasher_contract",
-          "type": "address"
-        }
-      ],
-      "name": "add_slasher_contract",
+      "name": "addSlasherContract",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -78,7 +170,20 @@
     },
     {
       "inputs": [],
-      "name": "dintoken",
+      "name": "dinPerEth",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "dinToken",
       "outputs": [
         {
           "internalType": "contract DinToken",
@@ -91,7 +196,7 @@
     },
     {
       "inputs": [],
-      "name": "dinvalidatorStakeContract",
+      "name": "dinValidatorStakeContract",
       "outputs": [
         {
           "internalType": "contract IDinValidatorStake",
@@ -119,11 +224,57 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "_slasher_contract",
+          "name": "slasherContract",
           "type": "address"
         }
       ],
-      "name": "remove_slasher_contract",
+      "name": "removeSlasherContract",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "renounceOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "transferOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "newRate",
+          "type": "uint256"
+        }
+      ],
+      "name": "updateDinPerEth",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "validatorStakeContract",
+          "type": "address"
+        }
+      ],
+      "name": "updateValidatorStakeContract",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"

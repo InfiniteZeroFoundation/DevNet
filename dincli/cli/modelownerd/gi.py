@@ -38,11 +38,11 @@ def start(
     # === 2. Latest GM CID Resolution ===
     if curr_gi == 0:
         gmcid_raw = task_coordinator.functions.genesisModelIpfsHash().call()
-        gmcid = get_cid_from_bytes32(gmcid_raw.hex(), version=0)
+        gmcid = get_cid_from_bytes32(gmcid_raw.hex())
         console.print(f"[dim]Using genesis model CID:[/dim] {gmcid}")
     else:
         _, _, _, gmcid_raw = task_coordinator.functions.getTier2Batch(curr_gi, 0).call()
-        gmcid = get_cid_from_bytes32(gmcid_raw.hex(), version=0)
+        gmcid = get_cid_from_bytes32(gmcid_raw.hex())
         console.print(f"[dim]Using T2-aggregated model CID for GI {curr_gi}:[/dim] {gmcid}")
 
     # === 3. Path Setup (Consistent Path Handling) ===
