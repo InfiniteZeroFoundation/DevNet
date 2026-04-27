@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import typer
 from rich.table import Table
@@ -31,15 +32,11 @@ def buy(ctx: typer.Context,
     console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
 
     try:
-        nonce = w3.eth.get_transaction_count(account.address)
-        tx = DinCoordinator_contract.functions.depositAndMint().build_transaction({
-            "from": account.address,
-            "nonce": nonce,
-            "gas": int(3000000),  # Match FastAPI route
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-            "value": w3.to_wei(amount, "ether"),
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["value"] = w3.to_wei(amount, "ether")
+        tx_params["gas"] = int(w3.eth.estimate_gas(DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        
+        tx = DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)
     
         # Sign transaction
         signed_tx = account.sign_transaction(tx)
@@ -65,21 +62,19 @@ def stake(ctx: typer.Context, amount: int):
     
     validator_Din_token_balance = DinToken_contract.functions.balanceOf(account.address).call()
     
-    console.print("[bold green]Auditor ETH balance:[/bold green] ", w3.eth.get_balance(account.address))
-    console.print("[bold green]Auditor DINToken balance:[/bold green] ", validator_Din_token_balance)
+    console.print("[bold green]Auditor ETH balance:[/bold green] ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
+    console.print("[bold green]Auditor DINToken balance:[/bold green] ", Web3.from_wei(validator_Din_token_balance, "ether"))
     
     if validator_Din_token_balance < MIN_STAKE:
         console.print(f"[bold red]✗ Could not stake DINTokens. Not enough DINTokens.[/bold red]")
+        raise typer.Exit()
     else:
         console.print(f"[bold green]✓ Enough DINTokens to stake. [bold green]\n [bold green]Staking...[/bold green]")
 
         try:
-            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction({"from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": int(3000000),  
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-            })
+            tx_params = ctx.obj.get_tx_params()
+            tx_params["gas"] = int(w3.eth.estimate_gas(DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)
 
             signed_tx_approve = account.sign_transaction(tx_approve)
             tx_hash_approve = w3.eth.send_raw_transaction(signed_tx_approve.raw_transaction)
@@ -89,13 +84,13 @@ def stake(ctx: typer.Context, amount: int):
                 console.print(f"[bold green]✓ DINTokens approved for staking.[/bold green]")
             else:
                 console.print(f"[bold red]✗ Could not approve DINTokens for staking.[/bold red]")
+                raise typer.Exit()
 
-            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction({"from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": int(3000000),  
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-            })
+            time.sleep(5)
+
+            tx_params = ctx.obj.get_tx_params()
+            tx_params["gas"] = int(w3.eth.estimate_gas(DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)
 
             signed_tx_stake = account.sign_transaction(tx_stake)
             tx_hash_stake = w3.eth.send_raw_transaction(signed_tx_stake.raw_transaction)
@@ -113,7 +108,7 @@ def read_stake(ctx: typer.Context):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
 
-    console.print("Auditor DIN token stake: ", DinStake_contract.functions.getStake(account.address).call())
+    console.print("Auditor DIN token stake: ", Web3.from_wei(DinStake_contract.functions.getStake(account.address).call(), "ether"))
 
 
 @app.command(help="Register as Auditor")
@@ -151,18 +146,11 @@ def register(
             console.print(f"[bold green]✓ Auditor has enough stake.[/bold green]")
 
             try:
-                tx_register = taskAuditor_contract.functions.registerDINAuditor(curr_GI).build_transaction({
-                    "from": account.address,
-                    "nonce": w3.eth.get_transaction_count(account.address),
-                    "gas": int(3000000),  
-                    "gasPrice": w3.to_wei("5", "gwei"),
-                    "chainId": w3.eth.chain_id,
-                })
+                tx_params = ctx.obj.get_tx_params()
+                tx_params["gas"] = int(w3.eth.estimate_gas(taskAuditor_contract.functions.registerDINAuditor(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+                tx_register = taskAuditor_contract.functions.registerDINAuditor(curr_GI).build_transaction(tx_params)
 
-                # Sign transaction
                 signed_tx_register = account.sign_transaction(tx_register)
-            
-                # Send raw transaction
                 tx_hash_register = w3.eth.send_raw_transaction(signed_tx_register.raw_transaction)
                 tx_receipt_register = w3.eth.wait_for_transaction_receipt(tx_hash_register)
             
@@ -170,6 +158,7 @@ def register(
                     console.print(f"[bold green]✓ Auditor registered.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
+                raise typer.Exit()
 
 @lms_evaluation_app.command("show-batch", help="Show LMS evaluation batch")
 def show_batch(
@@ -204,6 +193,7 @@ def show_batch(
     else:
         for i in range(audtor_batch_count):
             raw_audit_batches.append(task_auditor_contract.functions.getAuditorsBatch(ref_gi, i).call())
+            time.sleep(1)
 
         for batch_data in raw_audit_batches:
             batch_id, auditors, model_indexes, test_cid_raw = batch_data
@@ -257,14 +247,17 @@ def show_batch(
 
                 try:
                     has_voted = task_auditor_contract.functions.hasAuditedLM(curr_GI, batch_id, account.address, idx).call()
+                    time.sleep(0.5)
                 except:
                     has_voted = False
                 try:
                     is_eligible = task_auditor_contract.functions.LMeligibleVote(curr_GI, batch_id, account.address, idx).call()
+                    time.sleep(0.5)
                 except:
                     is_eligible = False
                 try:
                     has_auditScores = task_auditor_contract.functions.auditScores(curr_GI, batch_id, account.address, idx).call()
+                    time.sleep(0.5)
                 except:
                     has_auditScores = False
 
@@ -365,6 +358,8 @@ def evaluate_lms(
         if batch is not None and batch != batch_id:
             continue
 
+        time.sleep(0.5)
+
         audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
         auditors_in_batch = audit_batch[1]
         model_indexes = audit_batch[2]
@@ -384,6 +379,8 @@ def evaluate_lms(
 
             found_any = True
             console.print(f"[bold green]Evaluating LM {model_index} from Audit batch {batch_id}![/bold green]")
+
+            time.sleep(0.5)
 
             lms = task_auditor_contract.functions.lmSubmissions(curr_GI, model_index).call()
             lm_cid = get_cid_from_bytes32(lms[1].hex())
@@ -412,13 +409,12 @@ def evaluate_lms(
 
             if submit:
                 try:
-                    tx = task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).build_transaction({
-                        'from': account.address,
-                        "gas": int(3000000),
-                        "gasPrice": w3.to_wei("5", "gwei"),
-                        'nonce': w3.eth.get_transaction_count(account.address),
-                        "chainId": w3.eth.chain_id})
+                    time.sleep(0.5)
+                    tx_params = ctx.obj.get_tx_params()
+                    tx_params["gas"] = int(w3.eth.estimate_gas(task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+                    tx = task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).build_transaction(tx_params)
                     signed_tx = account.sign_transaction(tx)
+                    
                     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
                     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)

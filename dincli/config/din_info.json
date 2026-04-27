@@ -1,17 +1,17 @@
 {
   "local": {
-    "coordinator": "0xBbd10dd596dD346581E9e213cbF08827c7C01C02",
-    "token": "0xd667AC70cd6B39F2f0311270D1FB9323f5Cb1153",
-    "stake": "0x762925962B86A242b2C59B4a0415133174e48154",
+    "coordinator": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "token": "0xa16E02E87b7454126E5E10d957A927A7F5B5d2be",
+    "stake": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
     "representative": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    "registry": "0x91aaB8548253dFebb6202E46a0b6D29D4BD5829f"
+    "registry": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
   },
-  "sepolia": {
-    "coordinator": "0x...",
-    "token": "0x...",
-    "stake": "0x...",
-    "representative": "0x...",
-    "registry": "0x..."
+  "sepolia_op_devnet": {
+    "coordinator": "0xC5B5B125dcF5d51190f78e2685F7Bc97923Ad46a",
+    "token": "0x22d38a1965d35478941060dbf39847f36AD443d6",
+    "stake": "0x5088D7a568E79c6bec0795258591f2435649139a",
+    "representative": "0xc4508FC34298075Ef0c67C49a791844406a3a5d6",
+    "registry": "0xFd2A91E787b4bAa35F83aB63748d01eaa5214Ec6"
   },
   "mainnet": {
     "coordinator": "0x...",

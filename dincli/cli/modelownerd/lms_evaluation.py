@@ -25,13 +25,10 @@ def start(
     console.print(f"[bold green]Starting LMS evaluation[/bold green]")
 
     try:
-        tx = task_coordinator_Contract.functions.startLMsubmissionsEvaluation(ref_gi).build_transaction({
-            "from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.startLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+        tx = task_coordinator_Contract.functions.startLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)
 
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
@@ -64,13 +61,10 @@ def close(
     console.print(f"[bold green]Closing LMS evaluation![/bold green]")
 
     try:        
-        tx = task_coordinator_Contract.functions.closeLMsubmissionsEvaluation(ref_gi).build_transaction({
-            "from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.closeLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+        tx = task_coordinator_Contract.functions.closeLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)
 
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)

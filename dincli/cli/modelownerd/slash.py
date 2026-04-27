@@ -20,13 +20,9 @@ def slash_auditors(
 
     console.print(f"[bold green]Slashing Auditors ...[/bold green]")
     try:
-        tx = task_coordinator_Contract.functions.slashAuditors(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": w3.eth.chain_id,
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.slashAuditors(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.slashAuditors(ref_gi).build_transaction(tx_params)
     
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -62,14 +58,10 @@ def slash_aggregators(
     console.print(f"[bold green]Slashing Aggregators ...[/bold green]")
 
     try:
-        tx = task_coordinator_Contract.functions.slashAggregators(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.slashAggregators(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.slashAggregators(ref_gi).build_transaction(tx_params)
+
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 

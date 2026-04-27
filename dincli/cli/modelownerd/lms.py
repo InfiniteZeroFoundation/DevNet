@@ -21,15 +21,10 @@ def open(
     console.print(f"[bold green]Opening local model submissions[/bold green]")
 
     try:
-    
-        tx = task_coordinator.functions.startLMsubmissions(curr_GI).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startLMsubmissions(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator.functions.startLMsubmissions(curr_GI).build_transaction(tx_params)
+
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -97,14 +92,10 @@ def close(
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSstarted", "Local model submissions not yet started")
 
     try:
-        tx = taskCoordinator_contract.functions.closeLMsubmissions(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.closeLMsubmissions(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = taskCoordinator_contract.functions.closeLMsubmissions(ref_gi).build_transaction(tx_params)
+
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)

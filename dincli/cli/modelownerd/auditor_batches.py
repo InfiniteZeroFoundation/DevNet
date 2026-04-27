@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import time
 import typer
 from rich.table import Table
 from web3 import Web3
@@ -29,15 +29,10 @@ def create(
     console.print(f"[bold green]Creating auditor batches [/bold green]")
 
     try:
-    
-        tx = taskCoordinator_contract.functions.createAuditorsBatches(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.createAuditorsBatches(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = taskCoordinator_contract.functions.createAuditorsBatches(ref_gi).build_transaction(tx_params)
+
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
@@ -141,8 +136,19 @@ def create_testdataset(
     if manifest["type"] == "custom":
         ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "model owner service")
         fn = ctx.obj.load_custom_fn(modelowner_service_path, "create_audit_testDataCIDs")
-        audit_testDataCIDs = fn(audtor_batch_count, curr_GI, str(model_base_path), test_data_path)
-        #audit_testDataCIDs = ['bafybeietzura2l2q3tsx3qwjhm6ii2j3lzu7jthbalnsfjpti4ddqf6y54', 'bafybeicedbdpwlixgbgdrysreiv37s6eteq52sxq3uxaqj5p26gzvtykmu', 'bafybeib7zxoj4w4fvfbjbed5wp2roi5cpp3bnfvkmrwgeuhfbwot73tzre', 'bafybeigp4w3ol2unyph73c5lymj4amruoz2cyzddweueatjrhbxhpg2kqy', 'bafybeibp7uaxtd3sdonp53tpa24ayj3bljmimplorhaimnxscjpgydmxfe', 'bafybeih2jchqarg6kwaq6n2gr2mq4l3j5nhlebv76wbpcut5srxn3eohmq']
+
+        if test_data_path is None:
+            test_data_path = model_base_path / "dataset" / "test" / "test_dataset.pt"
+        else:
+            test_data_path = Path(test_data_path)
+
+        if not test_data_path.exists():
+            raise FileNotFoundError(
+                f"Test dataset not found at {test_data_path.resolve()}"
+            )
+        
+        audit_testDataCIDs = fn(audtor_batch_count, curr_GI, str(model_base_path), str(test_data_path))
+
     else:
         audit_testDataCIDs = create_audit_testDataCIDs(audtor_batch_count, curr_GI)
     
@@ -157,13 +163,11 @@ def create_testdataset(
         try:
             for batch_id in range(audtor_batch_count):
                 test_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(audit_testDataCIDs[batch_id]))
-                tx = taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32).build_transaction({
-                    "from": account.address,
-                    "nonce": w3.eth.get_transaction_count(account.address),
-                    "gas": 3000000,
-                    "gasPrice": w3.to_wei("5", "gwei"),
-                    "chainId": w3.eth.chain_id
-                })
+
+                time.sleep(5)
+                tx_params = ctx.obj.get_tx_params()
+                tx_params["gas"] = int(w3.eth.estimate_gas(taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+                tx = taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32).build_transaction(tx_params)
 
                 signed_tx = account.sign_transaction(tx)
                 tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
@@ -172,15 +176,15 @@ def create_testdataset(
                     console.print("[green]✓ Test dataset assigned for auditor batch :", batch_id)
                 else:
                     console.print("[red]Error:[/red] Failed to assign test dataset for auditor batch :", batch_id)
+                    raise typer.Exit(1)
 
-            tx = taskCoordinator_contract.functions.setTestDataAssignedFlag(curr_GI, True).build_transaction({
-                "from": account.address,
-                "nonce": w3.eth.get_transaction_count(account.address),
-                "gas": 3000000,
-                "gasPrice": w3.to_wei("5", "gwei"),
-                "chainId": w3.eth.chain_id
-            })
+
+            time.sleep(5)
+            tx_params = ctx.obj.get_tx_params()
+            tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.setTestDataAssignedFlag(curr_GI, True).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+            tx = taskCoordinator_contract.functions.setTestDataAssignedFlag(curr_GI, True).build_transaction(tx_params)
             signed_tx = account.sign_transaction(tx)
+            
             tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -191,6 +195,6 @@ def create_testdataset(
                 console.print("[red]Error:[/red] Failed to set test dataset assigned flag")
                 raise typer.Exit(1)
         except Exception as e:
-            console.print("[red]Error:[/red] Failed to assign test dataset for auditor batches")
+            console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")
             raise typer.Exit(1)
             

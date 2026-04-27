@@ -64,11 +64,14 @@ Reach out to the DIN-Representative through any of the following channels:
 | Channel  | Link / Handle |
 |----------|--------------|
 | Discord  | `#model-onboarding` channel on the Infinte Zero Foundation* Discord server: https://discord.gg/fSWPgdMA6 
-| Telegram | https://t.me/+I4Tl7foCVwwwM2Vk |
-| Email    | umermajeed.cto@gmail.com ** |
+| Telegram Group| https://t.me/+h46VS3AnO384ZGI8 |
+| Email    | umermajeed.cto@gmail.com ** abrahamnash@protonmail.com *** |
 
 > *DIN Protocol is developed and maintained by Infinite Zero Foundation
+
 > ** Dr. Umer Majeed is the CTO of Infinite Zero Foundation , Please mention "DIN Protocol Model Registration Request" in the subject of the email
+
+> *** Dr. Abraham Nash is the CEO of Infinite Zero Foundation , Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
 ### Required Information for Your Request
 
@@ -179,7 +182,7 @@ The model owner can submit the genesis model to the TaskCoordinator contract usi
 dincli model-owner model submit-genesis
 ```
 
-> make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command. These test data will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
+> make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command. The test dataset will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
 
 ## 8. Register Model - Model Owner
 
@@ -334,7 +337,7 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 ```
 
 > [NOTE]
-> The test dataset maybe located at `<CACHE_DIR>/sepolia_op_devnet/model_<model_id>/dataset/test/test_dataset.pt`
+> The test dataset  must be located at `<CACHE_DIR>/sepolia_op_devnet/model_<model_id>/dataset/test/test_dataset.pt` for model owner.
 > where `CACHE_DIR` is the path to the cache directory of the dincli.
 > and can be found by running the command `dincli system cache-dir`.
 

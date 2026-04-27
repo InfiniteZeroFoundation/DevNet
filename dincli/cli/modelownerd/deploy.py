@@ -1,5 +1,5 @@
 import os
-
+import time
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
@@ -30,18 +30,10 @@ def task_coordinator(
     console.print(f"[bold green]Deploying DINTaskCoordinator on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake:[/cyan] {din_validator_stake_address}")
     
-    # Get nonce
-    nonce = w3.eth.get_transaction_count(account.address)
-    
-    # Build deployment transaction
-    tx = DINTaskCoordinator_contract.constructor(din_validator_stake_address).build_transaction({
-        "from": account.address,
-        "nonce": nonce,
-        "gas": int(2.5 * 3000000),  # Match FastAPI route
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
-    
+    tx_params = ctx.obj.get_tx_params()
+    tx_params["gas"] = int(w3.eth.estimate_gas(DINTaskCoordinator_contract.constructor(din_validator_stake_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+    tx = DINTaskCoordinator_contract.constructor(din_validator_stake_address).build_transaction(tx_params)
     signed_tx = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -85,26 +77,11 @@ def task_auditor(
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
     console.print(f"[cyan]Using DINTaskCoordinator address:[/cyan] {task_coordinator_address}")
     
-     
-    # Get nonce
-    nonce = w3.eth.get_transaction_count(account.address)
+    tx_params = ctx.obj.get_tx_params()
+    tx_params["gas"] = int(w3.eth.estimate_gas(DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
-    # Build deployment transaction
-    tx = DINTaskAuditor_contract.constructor(
-        din_validator_stake_address,
-        task_coordinator_address
-    ).build_transaction({
-        "from": account.address,
-        "nonce": nonce,
-        "gas": int(2.5 * 3000000),  # Match FastAPI route
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
-    
-    # Sign transaction
+    tx = DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address).build_transaction(tx_params)
     signed_tx = account.sign_transaction(tx)
-    
-    # Send raw transaction
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     
@@ -119,19 +96,15 @@ def task_auditor(
     console.print(f"[cyan]Setting DINTaskAuditor in DINTaskCoordinator...[/cyan]")
     
     DINTaskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(verbose=True, model_id=None, taskCoordinator_address=task_coordinator_address)
+
+    time.sleep(10)
+
+    tx_params = ctx.obj.get_tx_params()
+    tx_params["gas"] = int(w3.eth.estimate_gas(DINTaskCoordinator_contract.functions.setDINTaskAuditorContract(dintaskauditor_contract_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
-    nonce = w3.eth.get_transaction_count(account.address)
-    
-    tx = DINTaskCoordinator_contract.functions.setDINTaskAuditorContract(dintaskauditor_contract_address).build_transaction({
-        "from": account.address,
-        "nonce": nonce,
-        "gas": int(2.5 * 3000000),
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
-    
+    tx = DINTaskCoordinator_contract.functions.setDINTaskAuditorContract(dintaskauditor_contract_address).build_transaction(tx_params)
+
     signed_tx = account.sign_transaction(tx)
-    
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     

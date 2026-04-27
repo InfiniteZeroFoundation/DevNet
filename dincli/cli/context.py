@@ -1,4 +1,5 @@
 from __future__ import annotations
+from urllib.parse import urlparse
 
 import json
 
@@ -16,6 +17,19 @@ from dincli.cli.utils import (GIstatestrToIndex, GIstateToStr, get_config,
                               get_manifest_key, get_w3, load_account,
                               load_config, load_din_info, resolve_network)
 from dincli.services.ipfs import retrieve_from_ipfs
+
+def sanitize_rpc_url(url: str) -> str:
+    parsed = urlparse(url)
+
+    # Remove last path segment if it looks like an API key
+    path_parts = parsed.path.rstrip("/").split("/")
+    
+    if len(path_parts) > 1:
+        path_parts[-1] = "****"
+    
+    safe_path = "/".join(path_parts)
+
+    return f"{parsed.scheme}://{parsed.netloc}{safe_path}"
 
 
 class DinContext:
@@ -67,10 +81,22 @@ class DinContext:
 
     def get_en_w3_account_console(self, model_id: Optional[int] = None):
         self.console.print(f"[bold green]✓ Active Account Address:[/bold green] {self.account.address}")
-        self.console.print(f"[bold green]✓ Active Web3:[/bold green] {self.w3.provider.endpoint_uri}")
+        endpoint = self.w3.provider.endpoint_uri
+        if endpoint:
+            safe_endpoint = sanitize_rpc_url(endpoint)
+        self.console.print(f"[bold green]✓ Active Web3:[/bold green] {safe_endpoint}")
         if model_id is not None:
             self.console.print(f"[bold blue]✓ Model ID:[/bold blue] {model_id}")
         return self.network, self.w3, self.account, self.console
+    
+    def get_tx_params(self):
+        return {
+            "from": self.account.address,  
+            "maxFeePerGas": self.w3.eth.gas_price * 2, # Strategy to ensure inclusion
+            "maxPriorityFeePerGas": self.w3.eth.max_priority_fee, # The "tip" to the miner/validator
+            "chainId": self.w3.eth.chain_id,
+            "nonce": self.w3.eth.get_transaction_count(self.account.address),
+        } 
     
     def select_network(self, network: Optional[str]):
         """Update network selection and invalidate w3 cache if changed."""

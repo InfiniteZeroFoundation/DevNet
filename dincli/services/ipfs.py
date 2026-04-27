@@ -195,7 +195,7 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
                 if chunk:
                     f.write(chunk)
         
-        logger.info(f"Retrieved to: {safe_path.name}")
+        logger.info(f"Retrieved to: {safe_path}")
         return response.status_code
 
     except requests.exceptions.RequestException as e:

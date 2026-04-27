@@ -7,53 +7,12 @@ import * as path from "path";
 import { task } from "hardhat/config";
 import { HardhatRuntimeEnvironment } from "hardhat/types";
 
-
-// ✅ Import from ethers v6
-import { Wallet, HDNodeWallet } from "ethers";
-
-interface DevAccount {
-  address: string;
-  private_key: string;
-}
-
-task("export-accounts", "Exports Hardhat default accounts")
-  .addParam("output", "Output JSON file path", "./accounts.json")
-  .setAction(async ({ output }: { output: string }, hre: HardhatRuntimeEnvironment) => {
-    const accounts: DevAccount[] = [];
-    const count = 70;
-    const MNEMONIC = "test test test test test test test test test test test junk";
-
-    // You no longer need a 'baseNode' variable defined outside the loop if using Option B
-
-    for (let i = 0; i < count; i++) {
-      // Define the FULL absolute path for the specific child account
-      const pathStr = `m/44'/60'/0'/0/${i}`;
-
-      // ✅ Use HDNodeWallet.fromPhrase with the full path in the third argument
-      // This function internally handles generating the root node and then deriving the absolute path
-      const wallet = HDNodeWallet.fromPhrase(MNEMONIC, undefined, pathStr);
-
-      accounts.push({
-        address: wallet.address,
-        private_key: wallet.privateKey,
-      });
-      console.log(`Account #${i}: ${wallet.address} using path: ${pathStr}`);
-    }
-
-
-    const data = { hardhat: accounts };
-    const outputPath = path.resolve(output);
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, JSON.stringify(data, null, 2));
-
-    console.log(`\n✅ Saved ${count} accounts to: ${outputPath}`);
-  });
-
 // Load base .env
 dotenv.config({ path: "../.env" });
 
 // Load network-specific .env
 const network = process.env.NETWORK || "local";
+const sepolia_op_devnet_rpc_url = process.env.SEPOLIA_OP_DEVNET_RPC_URL;
 const envFile = `../.env.${network}`;
 
 if (fs.existsSync(envFile)) {
@@ -96,9 +55,33 @@ const config: HardhatUserConfig = {
       chainId: 1337,
       allowUnlimitedContractSize: true,
     },
+    sepolia_op_devnet: {
+      url: sepolia_op_devnet_rpc_url,
+      accounts: [process.env.ETH_PRIVATE_KEY_0!, process.env.ETH_PRIVATE_KEY_1!],
+      chainId: 11155420,
+    },
+
     localhost: {
       url: "http://127.0.0.1:8545",
     },
+  },
+  etherscan: {
+    apiKey: {
+      sepolia_op_devnet: process.env.ETHERSCAN_API_KEY!,
+    },
+    customChains: [
+      {
+        network: "sepolia_op_devnet",
+        chainId: 11155420,
+        urls: {
+          apiURL: "https://api.etherscan.io/v2/api?chainid=11155420",
+          browserURL: "https://sepolia-optimism.etherscan.io",
+        }
+      }
+    ]
+  },
+  sourcify: {
+    enabled: false
   },
   mocha: {
     timeout: 100000000 // Set a very high timeout for tests

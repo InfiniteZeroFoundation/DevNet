@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import time
 import typer
 from rich.table import Table
 from web3 import Web3
@@ -30,16 +30,11 @@ def buy(ctx: typer.Context,
     console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
 
     try:
-        nonce = w3.eth.get_transaction_count(account.address)
-    
-        tx = DinCoordinator_contract.functions.depositAndMint().build_transaction({
-            "from": account.address,
-            "nonce": nonce,
-            "gas": int(3000000),  # Match FastAPI route
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-            "value": w3.to_wei(amount, "ether"),
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params['value'] = w3.to_wei(amount, "ether")
+        tx_params["gas"] = int(w3.eth.estimate_gas(DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+        tx = DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)
     
         # Sign transaction
         signed_tx = account.sign_transaction(tx)
@@ -65,22 +60,20 @@ def stake(ctx: typer.Context, amount: int):
 
     aggregator_Din_token_balance = DinToken_contract.functions.balanceOf(account.address).call()
 
-    console.print(f"[bold green]Aggregator ETH balance:[/bold green] {w3.eth.get_balance(account.address)}")
-    console.print(f"[bold green]Aggregator DINToken balance:[/bold green] {aggregator_Din_token_balance}")
+    console.print(f"[bold green]Aggregator ETH balance:[/bold green] {Web3.from_wei(w3.eth.get_balance(account.address), "ether")}")
+    console.print(f"[bold green]Aggregator DINToken balance:[/bold green] {Web3.from_wei(aggregator_Din_token_balance, "ether")}")
     
     if aggregator_Din_token_balance < MIN_STAKE:
         console.print(f"[bold red]✗ Could not stake DINTokens. Not enough DINTokens.[/bold red]")
+        raise typer.Exit()
     else:
         console.print(f"[bold green]✓ Enough DINTokens to stake. [bold green]\n [bold green]Staking...[/bold green]")
 
         try:
+            tx_params = ctx.obj.get_tx_params()
+            tx_params["gas"] = int(w3.eth.estimate_gas(DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
 
-            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction({"from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": int(3000000),  
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-            })
+            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)
 
             signed_tx_approve = account.sign_transaction(tx_approve)
             tx_hash_approve = w3.eth.send_raw_transaction(signed_tx_approve.raw_transaction)
@@ -90,13 +83,14 @@ def stake(ctx: typer.Context, amount: int):
                 console.print(f"[bold green]✓ DINTokens approved for staking.[/bold green]")
             else:
                 console.print(f"[bold red]✗ Could not approve DINTokens for staking.[/bold red]")
+                raise typer.Exit()
 
-            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction({"from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": int(3000000),  
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-            })
+            time.sleep(5)
+
+            tx_params = ctx.obj.get_tx_params()
+            tx_params["gas"] = int(w3.eth.estimate_gas(DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)
 
             signed_tx_stake = account.sign_transaction(tx_stake)
         
@@ -118,7 +112,7 @@ def read_stake(ctx: typer.Context):
 
     DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
 
-    console.print("Aggregator staked DIN tokens : ", DinStake_contract.functions.getStake(account.address).call())
+    console.print("Aggregator staked DIN tokens : ", Web3.from_wei(DinStake_contract.functions.getStake(account.address).call(), "ether"))
 
 @app.command(help="Register as aggregator")
 def register(
@@ -155,13 +149,10 @@ def register(
             console.print(f"[bold green]✓ Aggregator has enough stake.[/bold green]")
 
             try:
+                tx_params = ctx.obj.get_tx_params()
+                tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.registerDINaggregator(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
-                tx = taskCoordinator_contract.functions.registerDINaggregator(curr_GI).build_transaction({
-                    "from": account.address, 
-                    "nonce": w3.eth.get_transaction_count(account.address), 
-                    "gas": int(3000000), 
-                    "gasPrice": w3.to_wei("5", "gwei"), 
-                    "chainId": w3.eth.chain_id})
+                tx = taskCoordinator_contract.functions.registerDINaggregator(curr_GI).build_transaction(tx_params)
                 
                 # Sign transaction
                 signed_tx = account.sign_transaction(tx)
@@ -206,6 +197,7 @@ def show_t1_batches(
 
     found_batches = False
     for i in range(t1_count):
+        time.sleep(0.2)
         bid, validators, model_idxs, finalized, cid = taskCoordinator_contract.functions.getTier1Batch(curr_GI, i).call()
         for validator in validators:
             if validator == account.address:
@@ -215,6 +207,7 @@ def show_t1_batches(
                     table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid_str)
 
                 if detailed:
+                    time.sleep(0.2)
                     submission_cid = taskCoordinator_contract.functions.t1SubmissionCID(curr_GI, bid, validator).call()
                     submission_cid_str = get_cid_from_bytes32(submission_cid.hex()) if submission_cid and any(submission_cid) else ""
                     table.add_row(str(bid), ", ".join(map(str, model_idxs)), str(finalized), cid_str, submission_cid_str)
@@ -255,6 +248,7 @@ def show_t2_batches(
 
     found_batches = False
     for i in range(t2_count):
+        time.sleep(0.2)
         bid, validators, finalized, cid = taskCoordinator_contract.functions.getTier2Batch(curr_GI, i).call()
         for validator in validators:
             if validator == account.address:
@@ -262,6 +256,7 @@ def show_t2_batches(
                 if not detailed:
                     table.add_row(str(bid), str(finalized), cid_str)
                 else:
+                    time.sleep(0.2)
                     submission_cid = taskCoordinator_contract.functions.t2SubmissionCID(curr_GI, bid, validator).call()
                     submission_cid_str = get_cid_from_bytes32(submission_cid.hex()) if submission_cid and any(submission_cid) else ""
                     table.add_row(str(bid), str(finalized), cid_str, submission_cid_str)
@@ -316,6 +311,7 @@ def aggregate_t1(
 
         model_cids = []
         for j in range(len(idxs)):
+            time.sleep(0.1)
             (client, modelCID, submittedAt, eligible, evaluated, approved, finalAvgScore) = taskAuditor_contract.functions.lmSubmissions(curr_GI, idxs[j]).call()
             model_cids.append(get_cid_from_bytes32(modelCID.hex()))
 
@@ -343,13 +339,12 @@ def aggregate_t1(
             console.print(f"Submitting T1 aggregation CID for T1 batch {bid} with aggregated CID {aggregated_cid}")
             try:
                 aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
-                tx = taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32).build_transaction({
-                    "from": account.address,
-                    "gas": 3000000,
-                    "gasPrice": w3.eth.gas_price,
-                    "chainId": w3.eth.chain_id,
-                    "nonce": w3.eth.get_transaction_count(account.address),
-                })
+
+                tx_params = ctx.obj.get_tx_params()
+                tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+                time.sleep(2)
+
+                tx = taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32).build_transaction(tx_params)
                 signed_tx = account.sign_transaction(tx)
                 tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
                 receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -414,6 +409,7 @@ def aggregate_t2(
         t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call()
 
         for j in range(t1_batches_count):
+            time.sleep(0.1)
             (bid, val, idxs, fin, cid) = taskCoordinator_contract.functions.getTier1Batch(curr_GI, j).call()
             model_cids.append(get_cid_from_bytes32(cid.hex()))
 
@@ -439,13 +435,11 @@ def aggregate_t2(
             console.print(f"Submitting T2 aggregation CID for T2 batch {bid}  with aggregated CID {aggregated_cid}")
             try:
                 aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
-                tx = taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32).build_transaction({
-                    "from": account.address,
-                    "gas": 3000000,
-                    "gasPrice": w3.eth.gas_price,
-                    "chainId": w3.eth.chain_id,
-                    "nonce": w3.eth.get_transaction_count(account.address),
-                })
+
+                tx_params = ctx.obj.get_tx_params()
+                tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+                tx = taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32).build_transaction(tx_params)
 
                 signed_tx = account.sign_transaction(tx)
                 tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)

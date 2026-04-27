@@ -182,8 +182,7 @@ def register(
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
        
     dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
-    # Get nonce
-    nonce = w3.eth.get_transaction_count(account.address)
+
     console.print(f"[green]Registering model in DINRegistry[/green]")
     console.print(f"[gray]Manifest CID: {manifestCID}[/gray]")
     console.print(f"[gray]Task Coordinator: {taskCoordinator}[/gray]")
@@ -202,21 +201,18 @@ def register(
 
     proprieteryFee = 0
     if not isOpenSource:
-        proprieteryFee = Web3.to_wei(0.001, 'ether')
+        proprieteryFee = dinregistry_contract.functions.proprietaryFeeL2().call()
+
+    tx_params = ctx.obj.get_tx_params()
+    tx_params["value"] = proprieteryFee
+    tx_params["gas"] = int(w3.eth.estimate_gas(dinregistry_contract.functions.registerModel(bytes32_value, taskCoordinator, taskAuditor, isOpenSource).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
 
     tx = dinregistry_contract.functions.registerModel(
         bytes32_value,
         taskCoordinator, 
         taskAuditor, 
         isOpenSource
-    ).build_transaction({
-        'value':  proprieteryFee,
-        'from': account.address,
-        'nonce': nonce,
-        'gas': 1000000,
-        'gasPrice': w3.eth.gas_price,
-        'chainId': w3.eth.chain_id
-    })
+    ).build_transaction(tx_params)
 
     signed_tx = account.sign_transaction(tx)
 
@@ -291,21 +287,17 @@ def update_manifest(
         console.print(f"[gray]Current manifest CID: {curr_manifestCID}[/gray]")
         console.print(f"[gray]New manifest CID: {manifestCID}[/gray]")
 
-        nonce = w3.eth.get_transaction_count(account.address)
-
         manifestCID_bytes32 = get_bytes32_from_cid(manifestCID)
         bytes32_value = Web3.to_bytes(hexstr=manifestCID_bytes32)
+
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(dinregistry_contract.functions.updateManifest(model_id, bytes32_value).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        
 
         tx = dinregistry_contract.functions.updateManifest(
             model_id, 
             bytes32_value
-        ).build_transaction({
-            'from': account.address,
-            'nonce': nonce,
-            'gas': 1000000,
-            'gasPrice': w3.eth.gas_price,
-            'chainId': w3.eth.chain_id
-        })
+        ).build_transaction(tx_params)
 
         signed_tx = account.sign_transaction(tx)
 

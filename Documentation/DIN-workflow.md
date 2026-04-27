@@ -55,7 +55,7 @@ DinModelRegistry is a contract that allows users to register their models with t
 2. The models have two types: 
     a. Open-source models
     b. Proprietary models
-3. Proprietary models have a proprietaryFee which is paid by the model-owner to the DIN Protocol, for now it is set to 0.001 ETH. The fee is used to improve the ecosystem of the DIN Protocol. The trained proprietary models are owned by the model-owner and can be used for commercial purposes.
+3. Proprietary models have a proprietaryFee which is paid by the model-owner to the DIN Protocol, for now it is set to 0.000001 ETH. The fee is used to improve the ecosystem of the DIN Protocol. The trained proprietary models are owned by the model-owner and can be used for commercial purposes.
 4. It allows DIN-Representative to update the proprietaryFee.
 5. Open-source models do not have any proprietaryFee. They are free to be trained using DIN Protocol. The trained open-source models may be free for universal usage.
 6. It allows model-owners to update the manifestCID of their models, potentially changing the model training logic, parameters, etc.

@@ -41,7 +41,7 @@
    "Score_model_by_auditor":{
       "type": "custom",
       "path": "services/auditor.py",
-      "ipfs": "bafybeiga62lesy3aehs6ghuaen7nioxli5yzuwqqw3s4cbxs5okaixy6sy",
+      "ipfs": "bafybeif4q2tfaexdflj3bd746ylrkwpprhsw4ozqayowrqtako72ij3zqa",
       "stakeholders": ["auditors"]
    },
    "get_aggregated_cid_t1":{

@@ -803,6 +803,16 @@ def configure_ipfs(ctx: typer.Context,
     if ipfs_service_path:
         ctx.obj.console.print(f"[green] with service path {ipfs_service_path}[/green]")
 
+@app.command("get-proprietary-fee")
+def get_proprietary_fee(ctx: typer.Context):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    
+    DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
+    
+    proprietary_fee = DINModelRegistry_Contract.functions.proprietaryFeeL2().call()
+
+    wei_to_eth = w3.from_wei(proprietary_fee, 'ether')
+    console.print(f"[bold green]Proprietary fee: {wei_to_eth} ETH[/bold green]")
 
 
 

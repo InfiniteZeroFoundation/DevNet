@@ -68,7 +68,6 @@ def start(
         # Validate test dataset
         if not test_data_path.exists():
             console.print(f"[red]❌ Test dataset missing:[/red] {test_data_path}")
-            console.print("[yellow]💡 Hint:[/yellow] Generate with: [bold]din dataset prepare --model-id {model_id}[/bold]")
             raise typer.Exit(1)
 
 
@@ -89,12 +88,10 @@ def start(
 
      # === 6. Transaction Execution ===
     try:
-        tx = task_coordinator.functions.startGI(target_gi, pass_score).build_transaction({
-            "from": account.address,
-            "gas": 3_000_000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startGI(target_gi, pass_score).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+        tx = task_coordinator.functions.startGI(target_gi, pass_score).build_transaction(tx_params)
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
@@ -129,25 +126,21 @@ def aggregators_open(
     console.print(f"[bold green]Opening aggregators registration [/bold green]")
     
     try:
-        tx = task_coordinator.functions.startDINaggregatorsRegistration(curr_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startDINaggregatorsRegistration(curr_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+        tx = task_coordinator.functions.startDINaggregatorsRegistration(curr_gi).build_transaction(tx_params)
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status == 1:
-            console.print(f"[dim]Aggregators opened registration tx:[/dim] {tx_hash.hex()}")
-            console.print("[green]✓ Aggregators registration opened![/green]")
-        else:
-            console.print("[red]Error:[/red] Aggregators registration opening failed")
+        if receipt.status != 1:
+            console.print(f"[red]❌ Transaction reverted:[/red] {tx_hash.hex()}")
             raise typer.Exit(1)
+        
+        console.print(f"[dim]Transaction hash:[/dim] {tx_hash.hex()}")
+        console.print("[green]✓ Aggregators registration opened![/green]")
+
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -168,18 +161,14 @@ def aggregators_close(
     console.print(f"[bold green]Closing aggregators registration[/bold green]")
 
     try:
+
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
-        tx = task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx = task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI).build_transaction(tx_params)
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
+    
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
         if receipt.status == 1:
@@ -208,18 +197,13 @@ def auditors_open(
     console.print(f"[bold green]Opening auditors registration[/bold green]")
 
     try:
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startDINauditorsRegistration(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
-        tx = task_coordinator.functions.startDINauditorsRegistration(curr_GI).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx = task_coordinator.functions.startDINauditorsRegistration(curr_GI).build_transaction(tx_params)
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    
+
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     
         if receipt.status == 1:
@@ -315,14 +299,10 @@ def auditors_close(
     console.print(f"[bold green]Closing auditors registration[/bold green]")
 
     try:    
-        tx = task_coordinator.functions.closeDINauditorsRegistration(curr_GI).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.closeDINauditorsRegistration(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
+        tx = task_coordinator.functions.closeDINauditorsRegistration(curr_GI).build_transaction(tx_params)
         signed_tx = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
@@ -355,16 +335,12 @@ def end(
     
     console.print(f"[bold green]Ending GI {curr_GI}...[/bold green]")   
     try:
-        tx = task_coordinator.functions.endGI(curr_GI).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": w3.eth.chain_id,
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.endGI(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
     
-        signed = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        tx = task_coordinator.functions.endGI(curr_GI).build_transaction(tx_params)
+        signed_tx = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 

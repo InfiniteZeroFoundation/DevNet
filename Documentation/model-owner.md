@@ -43,6 +43,21 @@ dincli model-owner add-slasher --taskAuditor [--contract <task_coordinator_addre
 
 ---
 
+### Protocol Fee for Proprietary Models
+
+The DIN protocol trains two types of models - open source and proprietary. 
+
+For proprietary models, there is a fee for using the protocol. This fee is paid by the model owner at the registration of the model  in DIN Registry contract. This fee is used to fund the development of the protocol. 
+The fee is paid by the model owner in ETH (at the time of registration) to the DIN Registry contract. The current fee is 0.000001 ETH.
+
+The fee can be displayed using the dincli command
+
+```bash
+dincli system get-proprietary-fee
+```
+
+---
+
 ### Manifest File & Service Files
 
 **Manifest file**

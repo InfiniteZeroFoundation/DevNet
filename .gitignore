@@ -2,7 +2,7 @@ ReadMe_local.md
 .keystore
 .env
 .env.local
-.env.sepolia
+.env.sepolia_op_devnet
 .env.mainnet
 tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/dataset/*
 tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/models/*

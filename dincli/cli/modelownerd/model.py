@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import time
 
 import typer
 from web3 import Web3
@@ -40,7 +41,7 @@ def create_genesis(
     target_manifest = os.path.join(task_dir, "manifest.json")
 
     if not os.path.exists(target_manifest):
-        default_manifest_CID = "bafybeihmnbzg27dbdny2qg2gn4kkhig3i7b2ep7vitw7maqpbrbj7k7aue"
+        default_manifest_CID = "bafybeigqmarrtpgzezzsjp4zfnsogtfajnebllvhmbg23h2l3muxj6kntq"
         console.print(f"[bold red]Manifest not found at {target_manifest}[/bold red]")
         console.print(f"[bold yellow]Using default manifest from IPFS CID: {default_manifest_CID}[/bold yellow]")
         retrieve_from_ipfs(default_manifest_CID, target_manifest)
@@ -103,10 +104,10 @@ def submit_genesis(
     if not ipfs_hash:
         ipfs_hash = get_env_key(effective_network.upper() + "_" + task_coordinator_address + "_GENESIS_MODEL_IPFS_HASH")
 
-    if not ipfs_hash:
-        console.print("[bold red]Genesis model IPFS hash not found![/bold red]")
-        console.print(f"[yellow]Please set {effective_network.upper() + '_' + task_coordinator_address + '_GENESIS_MODEL_IPFS_HASH'} in {os.getcwd()}/.env[/yellow]")
-        raise typer.Exit(1)
+        if not ipfs_hash:
+            console.print("[bold red]Genesis model IPFS hash not found![/bold red]")
+            console.print(f"[yellow]Please set {effective_network.upper() + '_' + task_coordinator_address + '_GENESIS_MODEL_IPFS_HASH'} in {os.getcwd()}/.env[/yellow]")
+            raise typer.Exit(1)
     
     console.print(f"[bold green]Submitting genesis model to DIN Task Coordinator![/bold green]")
     console.print(f"[cyan]Genesis model IPFS hash:[/cyan] {ipfs_hash}")
@@ -153,33 +154,39 @@ def submit_genesis(
 
     
     genesis_ipfs_hash_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(ipfs_hash))
-    setGenesisModelIpfsHash_tx = deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(genesis_ipfs_hash_bytes32).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 200_000,
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
+
+    tx_params = ctx.obj.get_tx_params()
+    tx_params["gas"] = int(w3.eth.estimate_gas(deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(genesis_ipfs_hash_bytes32).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+    setGenesisModelIpfsHash_tx = deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(genesis_ipfs_hash_bytes32).build_transaction(tx_params)
 
     signed = account.sign_transaction(setGenesisModelIpfsHash_tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     console.print(f"[dim]Submitting genesis model tx:[/dim] {tx_hash.hex()}")
-    w3.eth.wait_for_transaction_receipt(tx_hash)
-    console.print("[green]✓ Genesis model submitted![/green]")
-         
-    console.print("Genesis model accuracy:", accuracy)
-    nonce = w3.eth.get_transaction_count(account.address)
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    if tx_receipt.status != 1:
+        console.print("[bold red] X Failed to submit genesis model![/bold red]")
+        raise typer.Exit(1)
+    else:
+        console.print("[green]✓ Genesis model submitted![/green]")
+
+    if tx_receipt.status == 1:
+        time.sleep(10)
         
-    tx = deployed_DINTaskCoordinatorContract.functions.setTier2Score(0, int(accuracy)).build_transaction({
-        "from": account.address,
-        "nonce": nonce,
-        "gas": 3000000,
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
+        console.print("Genesis model accuracy:", accuracy)
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(deployed_DINTaskCoordinatorContract.functions.setTier2Score(0, int(accuracy)).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+    
+        tx = deployed_DINTaskCoordinatorContract.functions.setTier2Score(0, int(accuracy)).build_transaction(tx_params)
         
-    signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    console.print(f"[dim]Submitting genesis model tier 2 score tx:[/dim] {tx_hash.hex()}")
-    w3.eth.wait_for_transaction_receipt(tx_hash)
-    console.print("[green]✓ Genesis model tier 2 score set![/green]")
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        console.print(f"[dim]Submitting genesis model tier 2 score tx:[/dim] {tx_hash.hex()}")
+        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+        if tx_receipt.status != 1:
+            console.print("[bold red] X Failed to submit genesis model tier 2 score![/bold red]")
+            raise typer.Exit(1)
+        else:
+            console.print("[green]✓ Genesis model tier 2 score set![/green]")
+

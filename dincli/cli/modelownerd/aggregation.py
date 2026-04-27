@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import time
 import typer
 from rich.table import Table
 
@@ -32,14 +32,10 @@ def create_tier1_tier2_batches(
     console.print(f"[bold green]Creating Tier 1 & Tier 2 batches[/bold green]")
     
     try:
-        tx = task_coordinator_Contract.functions.autoCreateTier1AndTier2(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": w3.eth.chain_id
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.autoCreateTier1AndTier2(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.autoCreateTier1AndTier2(ref_gi).build_transaction(tx_params)
+        
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Tx hash: {tx_hash.hex()}[/dim]")
@@ -178,14 +174,9 @@ def start_t1_aggregation(
     console.print(f"[bold green]Starting Tier 1 Aggregation[/bold green]")
 
     try:
-        tx = task_coordinator_Contract.functions.startT1Aggregation(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.startT1Aggregation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.startT1Aggregation(ref_gi).build_transaction(tx_params)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Tx hash: {tx_hash.hex()}[/dim]")
@@ -220,14 +211,9 @@ def close_t1_aggregation(
     console.print(f"[bold green]Finalizing Tier 1 Aggregation[/bold green]")
 
     try:
-        tx = task_coordinator_Contract.functions.finalizeT1Aggregation(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": w3.eth.chain_id,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.finalizeT1Aggregation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.finalizeT1Aggregation(ref_gi).build_transaction(tx_params)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Tx hash: {tx_hash.hex()}[/dim]")
@@ -260,13 +246,9 @@ def start_t2_aggregation(
 
     console.print(f"[bold green]Starting Tier 2 Aggregation[/bold green]")
     try:
-        tx = task_coordinator_Contract.functions.startT2Aggregation(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.startT2Aggregation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.startT2Aggregation(ref_gi).build_transaction(tx_params)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Tx hash: {tx_hash.hex()}[/dim]")
@@ -299,13 +281,9 @@ def close_t2_aggregation(
 
     console.print(f"[bold green]Finalizing Tier 2 Aggregation[/bold green]")
     try:
-        tx = task_coordinator_Contract.functions.finalizeT2Aggregation(ref_gi).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": w3.eth.get_transaction_count(account.address),
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.finalizeT2Aggregation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.finalizeT2Aggregation(ref_gi).build_transaction(tx_params)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Tx hash: {tx_hash.hex()}[/dim]")
@@ -318,6 +296,7 @@ def close_t2_aggregation(
             raise typer.Exit(1)
 
         # 2. Get Tier 2 batch to find final CID
+        time.sleep(10)
         tier2_batch = task_coordinator_Contract.functions.getTier2Batch(ref_gi, 0).call()
         # (bid, validators, finalized, cid)
         finalCID_raw = tier2_batch[3]
@@ -355,14 +334,9 @@ def close_t2_aggregation(
 
         # 4. Set Tier 2 score
         console.print("[cyan]Setting Tier 2 score...[/cyan]")
-        nonce = w3.eth.get_transaction_count(account.address)
-        tx = task_coordinator_Contract.functions.setTier2Score(curr_GI, int(accuracy)).build_transaction({
-            "from": account.address,
-            "gas": 3000000,
-            "gasPrice": w3.to_wei("5", "gwei"),
-            "nonce": nonce,
-        })
-    
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.setTier2Score(curr_GI, int(accuracy)).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        tx = task_coordinator_Contract.functions.setTier2Score(curr_GI, int(accuracy)).build_transaction(tx_params)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Score Tx hash: {tx_hash.hex()}[/dim]")

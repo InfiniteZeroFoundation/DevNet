@@ -40,14 +40,11 @@ def add_slasher(
 
     if task_coordinator_flag:
         console.print("[cyan]Confirming DIN Task Coordinator as slasher...[/cyan]")
-        nonce = w3.eth.get_transaction_count(account.address)
-        add_slasher_tx = deployed_DINTaskCoordinatorContract.functions.setDINTaskCoordinatorAsSlasher().build_transaction({
-        "from": account.address,
-        "nonce": nonce,
-        "gas": 200_000,
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-        })
+
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(deployed_DINTaskCoordinatorContract.functions.setDINTaskCoordinatorAsSlasher().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+
+        add_slasher_tx = deployed_DINTaskCoordinatorContract.functions.setDINTaskCoordinatorAsSlasher().build_transaction(tx_params)
         signed = account.sign_transaction(add_slasher_tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Confirming DIN Task Coordinator as slasher tx:[/dim] {tx_hash.hex()}")
@@ -56,14 +53,9 @@ def add_slasher(
 
     if task_auditor_flag:
         console.print("[cyan]Confirming DIN Task Auditor as slasher...[/cyan]")
-        nonce = w3.eth.get_transaction_count(account.address)
-        add_slasher_tx = deployed_DINTaskCoordinatorContract.functions.setDINTaskAuditorAsSlasher().build_transaction({
-        "from": account.address,
-        "nonce": nonce,
-        "gas": 200_000,
-        "gasPrice": w3.to_wei("5", "gwei"),
-        "chainId": w3.eth.chain_id,
-        })
+        tx_params = ctx.obj.get_tx_params()
+        tx_params["gas"] = int(w3.eth.estimate_gas(deployed_DINTaskCoordinatorContract.functions.setDINTaskAuditorAsSlasher().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+        add_slasher_tx = deployed_DINTaskCoordinatorContract.functions.setDINTaskAuditorAsSlasher().build_transaction(tx_params)
         signed = account.sign_transaction(add_slasher_tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         console.print(f"[dim]Confirming DIN Task Auditor as slasher tx:[/dim] {tx_hash.hex()}")

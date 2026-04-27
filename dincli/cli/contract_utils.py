@@ -154,6 +154,6 @@ def get_contract_instance(
         if not bytecode:
             raise ValueError(
                 f"Artifact {artifact_path} missing 'bytecode' — required for deployment.\n"
-                "Tip: Use `dincli dindao dump-abi --bytecode` to include it."
+                "Tip: Use `dincli system dump-abi --bytecode` to include it."
             )
         return w3.eth.contract(abi=abi, bytecode=bytecode)

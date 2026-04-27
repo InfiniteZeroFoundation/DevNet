@@ -28,8 +28,6 @@ def Score_model_by_auditor(gi, genesis_model_cid, batch_id, model_index, auditor
 
         testdata = torch.load(batch_test_data_path, weights_only=False)
 
-        os.makedirs(f"{CONFIG_DIR}/auditor/{auditor_address}/models", exist_ok=True) 
-
         genesis_model_path = f"{model_base_dir}/models/genesis_model.pth"
 
         retrieve_from_ipfs(genesis_model_cid, genesis_model_path)
