@@ -35,6 +35,8 @@ pip install dincli-0.1.0-py3-none-any.whl
 pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@main#subdirectory=dist
 ```
 
+> for any missing dependency please install it using pip. Please see a complete dependency list in [requirements.txt](../cache_model_0/requirements.txt)
+
 ### Verify Installation
 
 ```bash
@@ -91,17 +93,15 @@ The CLI needs an RPC endpoint to communicate with the blockchain. The variable n
 You can obtain an RPC URL from providers such as [Alchemy](https://www.alchemy.com/), [Infura](https://infura.io/), or [Ankr](https://www.ankr.com/).
 
 ```bash
+
+# Sepolia - Optimism Devnet
+# must set this for devnet usage
+SEPOLIA_OP_DEVNET_RPC_URL=https://optimism-sepolia.infura.io/v3/<auth_token>
+
+
 # Local network (e.g. a Hardhat node)
 LOCAL_RPC_URL=http://127.0.0.1:8545
 
-# Sepolia - Optimism Devnet
-SEPOLIA_OP_DEVNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
-
-# Sepolia - Optimism Testnet
-SEPOLIA_OP_TESTNET_RPC_URL=https://sepolia.infura.io/v3/<auth_token>
-
-# Mainnet
-MAINNET_RPC_URL=https://mainnet.infura.io/v3/<auth_token>
 ```
 
 ### Private Key
@@ -132,25 +132,8 @@ dincli system configure-demo --mode no
 
 `dincli` requires an IPFS provider to store and retrieve model data. Choose one of the options below.
 
-### Option A — Local IPFS Node
 
-Install the [IPFS CLI](https://docs.ipfs.tech/install/) and start the daemon:
-
-```bash
-ipfs daemon
-```
-
-Then add the following to your `.env` file:
-
-```bash
-IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0/add
-IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0/cat/
-```
-
-> [!IMPORTANT]
-> Your local IPFS node must be running continuously to keep your data available on the network.
-
-### Option B — Filebase (Managed IPFS)
+### Option A — Filebase (Managed IPFS)
 
 Obtain an API key from [Filebase](https://filebase.com/) and configure it:
 
@@ -158,6 +141,22 @@ Obtain an API key from [Filebase](https://filebase.com/) and configure it:
 dincli system configure-ipfs --provider filebase --api-key <your_api_key>
 ```
 
-### Option C — Custom IPFS Provider
+> [!NOTE]
+> Please create a bucket on Filebase and get bucket's IPFS RPC API token from [Filebase Console](https://console.filebase.com/keys). Use that as `your_api_key` in the command above.
+> IPFS RPC API token dashboard is located at bottom of the page.
 
-dincli system configure-ipfs --provider custom --api-key <your_api_key> --api-secret <your_api_secret> --ipfs-service-path <your_ipfs_service_path>
+### Option B — Custom IPFS Provider
+
+You may use `ipfs daemon` or any other provider. ust  add the following in `.env` file at root of your project folder.
+
+```bash
+IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0/add
+IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0/cat/
+```
+> Ensure your IPFS provider is configured to pin uploaded artifacts. If using a local node, garbage collection must be managed to prevent the loss of registered artifacts. 
+
+also configure IPFS provider in dincli using `dincli system configure-ipfs` command.
+
+```bash
+dincli system configure-ipfs --provider custom
+```

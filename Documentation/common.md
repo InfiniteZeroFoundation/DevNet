@@ -122,3 +122,10 @@ dincli system reset-all [--force]
 ```bash
 dincli system where
 ```
+
+**Check cache dir:**
+
+```bash
+dincli system cache-dir
+```
+

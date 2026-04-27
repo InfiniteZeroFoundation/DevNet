@@ -63,15 +63,15 @@ Reach out to the DIN-Representative through any of the following channels:
 
 | Channel  | Link / Handle |
 |----------|--------------|
-| Discord  | `#model-onboarding` channel on the Infinte Zero Foundation* Discord server: https://discord.gg/fSWPgdMA6 
+| Discord  | `#model-onboarding` channel on the Infinte Zero Foundation Discord server: https://discord.gg/fSWPgdMA6 
 | Telegram Group| https://t.me/+h46VS3AnO384ZGI8 |
-| Email    | umermajeed.cto@gmail.com ** abrahamnash@protonmail.com *** |
+| Email    | umermajeed.cto@gmail.com abrahamnash@protonmail.com |
 
-> *DIN Protocol is developed and maintained by Infinite Zero Foundation
+> DIN Protocol is developed and maintained by Infinite Zero Foundation
 
-> ** Dr. Umer Majeed is the CTO of Infinite Zero Foundation , Please mention "DIN Protocol Model Registration Request" in the subject of the email
+> Dr. Umer Majeed is the Founding Member of Infinite Zero Foundation. He is the Technical Architecture & Implementation Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
-> *** Dr. Abraham Nash is the CEO of Infinite Zero Foundation , Please mention "DIN Protocol Model Registration Request" in the subject of the email
+> Dr. Abraham Nash is the Founding Member of Infinite Zero Foundation. He is Vision, Strategy & Ecosystem Development Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
 ### Required Information for Your Request
 

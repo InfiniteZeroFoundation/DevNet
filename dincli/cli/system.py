@@ -760,27 +760,25 @@ def dump_abi(
 # dincli system
 @app.command("configure-ipfs")
 def configure_ipfs(ctx: typer.Context,
-    provider: str = typer.Option(None, "--provider", "-p", help="IPFS application name [filebase, pinata]"),
-    ipfs_service_path: str = typer.Option(None, "--ipfs-service-path", "-p", help="Path to IPFS service"),
+    provider: str = typer.Option(None, "--provider", "-p", help="IPFS application name [filebase, custom]"),
     api_key: str = typer.Option(None, "--api-key", "-k", help="API key"),
     api_secret: str = typer.Option(None, "--api-secret", "-s", help="API secret"),
-    delete_config: bool = typer.Option(False, "--delete", "-d", help="Delete IPFS config"),
-):
+   ):
 
     config = load_config()
     
-    if not delete_config and not provider: 
-        ctx.obj.console.print("[red]❌ Please specify a provider or delete config.[/red]")
+    if not provider: 
+        ctx.obj.console.print("[red]❌ Please specify a provider.[/red]")
         raise typer.Exit(1)
 
     configured_providers = {"filebase", "custom"}
 
     if provider:
-        if provider not in configured_providers-{"custom"}:
-            if not ipfs_service_path:
-                ctx.obj.console.print("[red]❌ Please specify an IPFS service path for custom provider.[/red]")
-                raise typer.Exit(1)
-            ctx.obj.console.print(f"[red]❌ Invalid provider. Use {' , '.join(configured_providers-{"custom"})} , 'custom'.[/red]")
+        if provider not in configured_providers:
+            ctx.obj.console.print(f"[red]❌ Invalid provider. Use {' , '.join(configured_providers)}.[/red]")
+            raise typer.Exit(1)
+        if provider == "filebase" and not api_key:
+            ctx.obj.console.print("[red]❌ Please specify an API key for filebase provider.[/red]")
             raise typer.Exit(1)
         config["ipfs_provider"] = provider
 
@@ -789,20 +787,10 @@ def configure_ipfs(ctx: typer.Context,
     if api_secret:
         config["ipfs_api_secret"] = api_secret
 
-    if ipfs_service_path:
-        config["ipfs_service_path"] = ipfs_service_path
-
-    if delete_config:
-        config.pop("ipfs_provider", None)
-        config.pop("ipfs_api_key", None)
-        config.pop("ipfs_api_secret", None)
-        config.pop("ipfs_service_path", None)
     save_config(config)
 
     ctx.obj.console.print(f"[green]IPFS configured successfully: {provider} [/green]")
-    if ipfs_service_path:
-        ctx.obj.console.print(f"[green] with service path {ipfs_service_path}[/green]")
-
+   
 @app.command("get-proprietary-fee")
 def get_proprietary_fee(ctx: typer.Context):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
