@@ -21,7 +21,7 @@ You are invited to participate in **Global Iteration 2 and beyond** by taking on
 ## 🌐 Community Channels
 
 ### 📢 Telegram Group
-Join the Telegram group for:
+Join the Telegram group [https://t.me/+I4Tl7foCVwwwM2Vk](https://t.me/+I4Tl7foCVwwwM2Vk) for:
 - Announcements  
 - Guidance  
 - Community discussions  
