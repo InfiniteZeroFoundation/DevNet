@@ -16,6 +16,9 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
+>[!NOTE]
+> Recommended python version is 3.12.3
+
 ---
 
 ## 2. Install `dincli`
