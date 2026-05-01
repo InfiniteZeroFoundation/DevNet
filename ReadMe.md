@@ -4,7 +4,7 @@
 
 InfiniteZero is building the commons for AI — the way the internet itself is a public good. Millions of devices contribute quietly to shared AI models, with raw data never leaving the user's device. Only anonymised, encrypted patterns join the network.
 
-This repository contains the DevNet setup and tooling for developers building on the InfiniteZero Network protocol.
+This repository contains the DevNet setup and tooling for developers and validators building on the InfiniteZero Network protocol.
 
 > Built on Ethereum. Governed by the community. Models belong to the commons.
 
@@ -14,9 +14,16 @@ This repository contains the DevNet setup and tooling for developers building on
 
 This project consists of multiple components:
 
-- **CLI**: `dincli` is a command line interface for interacting with the InfiniteZero Network 
-- **Hardhat / Foundry** (Optional): Run for contracts compilation
-- **IPFS Provider** : To fetch and upload artifacts
+- **CLI**: `dincli` is a command line interface for interacting with the InfiniteZero Network  
+- **Hardhat / Foundry (Optional)**: Used for smart contract compilation and development  
+- **IPFS Provider**: Handles uploading and fetching of network artifacts  
+
+---
+
+## Aggregator / Validator Setup
+
+For step-by-step guidance on how to register as an aggregator (validator), please refer to the following documentation:  
+https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md
 
 ---
 
@@ -28,7 +35,7 @@ To install `dincli`, please see [dincli Documentation](Documentation/setup.md).
 
 ## Configure IPFS API
 
-To configure IPFS API, please see [dincli Documentation](Documentation/setup.md).
+To configure the IPFS API, please see [dincli Documentation](Documentation/setup.md).
 
 ---
 
