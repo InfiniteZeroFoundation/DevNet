@@ -93,7 +93,7 @@ DIN_WALLET_PASSWORD=your_secure_password
 
 The CLI needs an RPC endpoint to communicate with the blockchain. The variable name follows the pattern `[NETWORK]_RPC_URL` (uppercase).
 
-You can obtain an RPC URL from providers such as [Alchemy](https://www.alchemy.com/), [Infura](https://infura.io/), or [Ankr](https://www.ankr.com/).
+You can obtain an RPC URL from providers such as [Alchemy](https://www.alchemy.com/), [Infura](https://infura.io/), or [Ankr](https://www.ankr.com/). You must set the RPC URL for `optimism-sepolia` network as `SEPOLIA_OP_DEVNET_RPC_URL` in `.env` file at root of your project.
 
 ```bash
 
@@ -102,19 +102,22 @@ You can obtain an RPC URL from providers such as [Alchemy](https://www.alchemy.c
 SEPOLIA_OP_DEVNET_RPC_URL=https://optimism-sepolia.infura.io/v3/<auth_token>
 
 
-# Local network (e.g. a Hardhat node)
-LOCAL_RPC_URL=http://127.0.0.1:8545
+# Local network (e.g. a Hardhat node) - OPTIONAL
+# LOCAL_RPC_URL=http://127.0.0.1:8545
 
 ```
 
 ### Private Key
 
-Store private keys using the pattern `ETH_PRIVATE_KEY_<account_index>`. You can define as many accounts as needed by incrementing the index.
+Store private keys using the pattern `ETH_PRIVATE_KEY_<account_index>` in `.env` file at root of your project. You can define as many accounts as needed by incrementing the index.
 
 ```bash
 ETH_PRIVATE_KEY_0 = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 ETH_PRIVATE_KEY_1 = 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
 ```
+
+>[!NOTE]
+> Be sure to use your own private keys, as the private keys provided in the example are for demonstration purposes only.
 
 Connect a stored account with:
 
@@ -150,7 +153,7 @@ dincli system configure-ipfs --provider filebase --api-key <your_api_key>
 
 ### Option B — Custom IPFS Provider
 
-You may use `ipfs daemon` or any other provider. ust  add the following in `.env` file at root of your project folder.
+You may use `ipfs daemon` or any other provider. Just  add the following in `.env` file at root of your project folder.
 
 ```bash
 IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0/add
