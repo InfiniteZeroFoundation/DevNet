@@ -31,7 +31,7 @@ Join the Telegram group [https://t.me/+I4Tl7foCVwwwM2Vk](https://t.me/+I4Tl7foCV
 ---
 
 ### 🔐 Signal Group
-Join the Signal group for:
+Join the Signal group: https://signal.group/#CjQKICVqJ0Ri3KGCZOsf8A3dhmg8GC_vc1MBmBrq0JV7lIr6EhBCOwElVHvE0swjO8kSk7ky
 - Announcements  
 - Guidance  
 - Community discussions  
