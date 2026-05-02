@@ -20,7 +20,7 @@ This project consists of multiple components:
 
 ---
 
-## Aggregator / Validator Setup
+## Validator Setup
 
 For step-by-step guidance on how to register as an aggregator (validator), please refer to the documentation:  
 https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md
