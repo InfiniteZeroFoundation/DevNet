@@ -84,7 +84,7 @@ https://signal.group/#CjQKICVqJ0Ri3KGCZOsf8A3dhmg8GC_vc1MBmBrq0JV7lIr6EhBCOwElVH
 
 ## ⚙️ DIN CLI Installation and Setup
 
-Before participating, ensure your environment is correctly configured. Please read `setup.md` for comprehensive setup instructions.
+Before participating, ensure your environment is correctly configured. Please read `[setup.md](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/setup.md)` for comprehensive setup instructions.
 
 ```bash
 # Initialize DIN CLI
