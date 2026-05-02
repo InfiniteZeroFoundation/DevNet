@@ -41,15 +41,17 @@ Running a node is lightweight — no specialized hardware required.
 
 ## ❓ Validator vs Miner (Important Clarification)
 
-This system does **not** use traditional mining.
+This system does **not** use mining.
 
-Instead, it uses **role-based participation**:
+Instead, it uses **role-based participation**, where different roles together function similarly to validators:
 
 * **Aggregators** → Aggregate model updates
-* **Auditors** → Evaluate and validate models
-* **Clients** → Train and submit local models
+* **Auditors** → Evaluate and validate results
+* **Clients** → Train and submit models
 
-> 💡 These roles collectively function similarly to **validators** in other networks.
+> 💡 **Aggregators + Auditors collectively act as validators**.
+
+You are not mining blocks — you are contributing to **training and validating the model**.
 
 ---
 
@@ -82,7 +84,7 @@ https://signal.group/#CjQKICVqJ0Ri3KGCZOsf8A3dhmg8GC_vc1MBmBrq0JV7lIr6EhBCOwElVH
 
 ## ⚙️ DIN CLI Installation and Setup
 
-Before participating, ensure your environment is correctly configured. Please read `setup.md` for full setup instructions.
+Before participating, ensure your environment is correctly configured. Please read `setup.md` for comprehensive setup instructions.
 
 ```bash
 # Initialize DIN CLI
@@ -110,8 +112,7 @@ ETH_PRIVATE_KEY_1=...
 
 ### ✅ Recommended
 
-* Use **Filebase** as your IPFS provider
-* See `setup.md` for detailed configuration
+* Use **Filebase** as your IPFS provider (see `setup.md` for details)
 
 ---
 
@@ -132,11 +133,22 @@ dincli task gi show-state 0
 ### Step 3: Register (if state = `DINaggregatorsRegistrationStarted`)
 
 ```bash
+# Connect wallet (example: account index 0)
 dincli system connect-wallet --account 0
+
+# Check ETH balance
 dincli system --eth-balance
+
+# Buy DIN tokens
 dincli aggregator dintoken buy 0.00001
+
+# Stake tokens
 dincli aggregator dintoken stake 10
+
+# Verify stake
 dincli aggregator dintoken read-stake
+
+# Register as aggregator
 dincli aggregator register 0
 ```
 
@@ -151,7 +163,10 @@ dincli task gi show-state 0
 ### Step 5: Check your Aggregation Batch (if state = `T1nT2Bcreated`)
 
 ```bash
+# Check T1 batch assigned to you
 dincli model-owner aggregation show-t1-batches 0 --detailed
+
+# Check T2 batch assigned to you
 dincli model-owner aggregation show-t2-batches 0 --detailed
 ```
 
@@ -166,7 +181,10 @@ dincli task gi show-state 0
 ### Step 7: Aggregate your T1 Batch (if state = `T1AggregationStarted`)
 
 ```bash
+# show the aggregator its assigned t1 batches
 dincli aggregator show-t1-batches 0 --detailed
+
+# aggregate the assigned t1 batches
 dincli aggregator aggregate-t1 0 --submit
 ```
 
@@ -175,7 +193,10 @@ dincli aggregator aggregate-t1 0 --submit
 ### Step 8: Aggregate your T2 Batch (if state = `T2AggregationStarted`)
 
 ```bash
+# show the aggregator its assigned t2 batches
 dincli aggregator show-t2-batches 0 --detailed
+
+# aggregate the assigned t2 batches
 dincli aggregator aggregate-t2 0 --submit
 ```
 
@@ -198,11 +219,22 @@ dincli task gi show-state 0
 ### Step 3: Register (if state = `DINauditorsRegistrationStarted`)
 
 ```bash
+# Connect wallet
 dincli system connect-wallet --account 0
+
+# Check ETH balance
 dincli system --eth-balance
+
+# Buy DIN tokens
 dincli auditor dintoken buy 0.00001
+
+# Stake tokens
 dincli auditor dintoken stake 10
+
+# Verify stake
 dincli auditor dintoken read-stake
+
+# Register as auditor
 dincli auditor register 0
 ```
 
@@ -220,7 +252,7 @@ dincli task gi show-state 0
 dincli auditor lms-evaluation show-batch 0
 ```
 
-> 💡 If a batch appears, you will soon be required to evaluate it.
+If a batch is shown, you will soon be required to audit it.
 
 ---
 
@@ -233,7 +265,10 @@ dincli task gi show-state 0
 ### Step 7: Audit your assigned batch (if state = `LMSevaluationStarted`)
 
 ```bash
+# check your assigned batch
 dincli auditor lms-evaluation show-batch 0
+
+# audit your batch (scripts run automatically)
 dincli auditor lms-evaluation evaluate 0 --submit
 ```
 
@@ -256,9 +291,16 @@ dincli task gi show-state 0
 ### Step 3: Submit Local Model (if state = `LMSstarted`)
 
 ```bash
+# Connect wallet
 dincli system connect-wallet --account 0
+
+# Check ETH balance
 dincli system --eth-balance
+
+# Train and submit local model
 dincli client train-lms 0 --submit
+
+# Show submitted models
 dincli client lms show-models 0
 ```
 
@@ -267,6 +309,7 @@ dincli client lms show-models 0
 ### 💡 Optional (Recommended First Step)
 
 ```bash
+# Train locally without submitting 
 dincli client train-lms 0
 ```
 
@@ -274,13 +317,13 @@ dincli client train-lms 0
 
 ## 📂 Dataset Requirements
 
-Dataset must be located at:
+Ensure your dataset is located at:
 
 ```
 <CACHE_DIR>/sepolia_op_devnet/model_0/dataset/clients/<account_address>/data.pt
 ```
 
-Find cache directory:
+Find your cache directory:
 
 ```bash
 dincli system get-cache-dir
@@ -335,7 +378,7 @@ dincli system dataset distribute-mnist \
 
 ## ⚠️ Account Indexing Requirement
 
-Ensure sufficient keys in `.env`.
+Ensure sufficient private keys in `.env`.
 
 ### Formal Requirement
 
@@ -345,8 +388,8 @@ MAX_INDEX ≥ start-client-index + num-clients - 1
 
 ### Interpretation
 
-* Clients are assigned sequentially
-* Total required keys = `num-clients`
+* Clients are assigned sequentially and inclusively
+* Total keys required = `num-clients`
 
 ### Example
 
@@ -365,8 +408,8 @@ ETH_PRIVATE_KEY_2 → ETH_PRIVATE_KEY_10
 
 ## 🧠 Final Notes
 
-* Always verify **Global Iteration State** before acting
-* You can run multiple roles and accounts
+* Always verify the **Global Iteration State** before taking action
+* Use multiple accounts strategically
 * Stay active in community channels for updates
 
 ---
