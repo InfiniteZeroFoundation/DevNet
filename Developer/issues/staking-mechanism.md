@@ -140,6 +140,20 @@ Recommended `v1` contract rules:
 - a validator in `Exiting` state should remain slashable until withdrawal claim finalization
 - only one pending withdrawal should exist per validator in `v1` unless partial-withdrawal queuing is deliberately implemented
 - minimum stake and unbonding period should be configurable storage if governance tuning is expected soon, or constants only if the team accepts another migration later
+- if a validator is blacklisted, funds may remain trapped in `v1` until governance introduces a dedicated confiscation and treasury-routing flow
+
+### Future Governance Extension
+
+Once DAO governance is in place, the staking system should add a governance-only confiscation path for permanently blacklisted funds:
+
+- `confiscateBlacklistedStake(address validator, uint256 amount, bytes32 reason)`
+- callable only through accepted DAO governance execution, not by the interim admin directly
+- usable only when the validator is currently `Blacklisted`
+- should move confiscated DIN from the staking contract to the protocol treasury
+- should execute only after a governance proposal to confiscate the trapped blacklisted stake is accepted
+- should emit a dedicated event so indexers can distinguish confiscation from ordinary slashing
+
+This should be treated as a separate governance action from blacklisting itself. Blacklisting freezes validator funds and participation immediately; confiscation is the later treasury-transfer step that happens only if governance approves it.
 
 ### Registry Integration Requirements
 
@@ -163,6 +177,14 @@ Unit tests should cover:
 - slash against pending withdrawals
 - blacklisted validator restrictions
 - status transitions after stake drops below threshold
+
+When DAO governance is implemented, governance-path tests should also cover:
+
+- rejection of confiscation for non-blacklisted validators
+- rejection of confiscation outside governance execution
+- partial and full confiscation of trapped blacklisted stake
+- treasury receipt of confiscated DIN
+- event emission and post-confiscation stake accounting
 
 ## WP 1.2: Validator Selection Logic
 
@@ -247,6 +269,8 @@ This keeps the initial implementation compatible with the current codebase while
 - should the randomness source remain pseudo-random for devnet, or should the interface already prepare for a stronger source later?
 - should minimum stake and unbonding period be governance-controlled parameters?
 - should validator rotation be hard-enforced on-chain or left to coordinator policy plus observable fairness tests?
+- once DAO governance is live, should `confiscateBlacklistedStake(...)` permit partial confiscation, full confiscation only, or both?
+- which treasury address should receive confiscated blacklisted stake after a successful governance proposal?
 
 ## Done Criteria
 
