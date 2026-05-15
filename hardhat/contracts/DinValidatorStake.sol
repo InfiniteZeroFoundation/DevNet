@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
     error NotDINCoordinator();
     error ValidatorIsBlacklisted();
+    error ValidatorNotBlacklisted();
     error InvalidAddress();
     error NotSlasherContract();
     error AmountLessThanMinStake();
@@ -60,6 +61,7 @@ contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
     );
     event ValidatorWithdrawalClaimed(address indexed validator, uint256 amount);
     event ValidatorBlacklisted(address indexed validator);
+    event ValidatorUnblacklisted(address indexed validator);
     event SlasherContractAdded(address indexed slasher);
     event SlasherContractRemoved(address indexed slasher);
 
@@ -200,10 +202,28 @@ contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
         emit ValidatorWithdrawalClaimed(msg.sender, pendingAmount);
     }
 
-    function blacklistValidator(address validator) external onlyDinCoordinator {
+    function blacklistValidator(address validator) external onlyOwner {
         if (validator == address(0)) revert InvalidAddress();
         validators[validator].status = ValidatorStatus.Blacklisted;
         emit ValidatorBlacklisted(validator);
+    }
+
+    function unblacklistValidator(address validator) external onlyOwner {
+        if (validator == address(0)) revert InvalidAddress();
+
+        ValidatorInfo storage info = validators[validator];
+        if (info.status != ValidatorStatus.Blacklisted) {
+            revert ValidatorNotBlacklisted();
+        }
+
+        if (info.jailedUntil > block.timestamp) {
+            info.status = ValidatorStatus.Jailed;
+        } else {
+            info.status = ValidatorStatus.None;
+        }
+        _syncValidatorStatus(info);
+
+        emit ValidatorUnblacklisted(validator);
     }
 
     function minStake() external pure returns (uint256) {

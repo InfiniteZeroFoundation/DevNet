@@ -15,6 +15,8 @@
 
 At deployment, `DinCoordinator` itself deploys `DinToken` and becomes its immutable minting authority.
 
+
+
 ---
 
 ## 2. Inheritance & Dependencies
@@ -188,6 +190,7 @@ The ETH collected accumulates in this contract and is withdrawable by `owner()` 
    └── DinToken is deployed automatically (DinCoordinator becomes its OWNER)
 
 2. Deploy DinValidatorStake (requires dinToken address and DinCoordinator address)
+   └── owner should be the DIN admin / DAO representative, or ownership should be transferred immediately after deployment
 
 3. Call DinCoordinator.updateValidatorStakeContract(dinValidatorStakeAddress)
 
@@ -216,4 +219,6 @@ DinCoordinator
   ├── calls   → DinToken.mint(user, amount)       [on depositAndMint]
   ├── calls   → DinValidatorStake.addSlasherContract()
   └── calls   → DinValidatorStake.removeSlasherContract()
+
+
 ```

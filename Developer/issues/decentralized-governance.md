@@ -60,13 +60,14 @@ Examples include:
 
 ### `DinValidatorStake.sol`
 
-- blacklist validators through coordinator-mediated authority
+- blacklist and unblacklist validators through direct owner authority
 - control slasher authorization indirectly via the coordinator
 
 Important note:
 
 - there is currently a blacklist path
-- there is not currently a matching unblacklist path in the contract
+- there is now a matching unblacklist path in the contract
+- both are currently centralized under the stake contract owner and should later move under DAO governance by ownership transfer or equivalent governance control
 
 If DIN wants governance around validator rehabilitation or appeal, that should be added deliberately rather than assumed.
 

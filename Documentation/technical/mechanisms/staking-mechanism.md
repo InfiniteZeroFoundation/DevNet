@@ -19,7 +19,7 @@ The key architectural principle is simple:
 
 > validator participation should be controlled by lifecycle state, not only by token balance.
 
-That matters especially for exits, slashing, blacklisting, and future unblacklisting.
+That matters especially for exits, slashing, blacklisting, and controlled unblacklisting.
 
 ---
 
@@ -34,7 +34,7 @@ The core staking and validator-lifecycle contract. It:
 - enforces delayed withdrawals with an unbonding period;
 - keeps pending withdrawals slashable;
 - exposes `isValidatorActive()` for downstream eligibility checks;
-- allows emergency blacklist enforcement through coordinator authority.
+- allows emergency blacklist and restoration through direct owner authority.
 
 ### `DINTaskCoordinator.sol`
 
@@ -56,21 +56,19 @@ The coordinator is the admin-facing control point for staking-related policy wir
 - mints DIN against ETH deposits;
 - registers or removes authorized slasher contracts on `DinValidatorStake`.
 
-For a complete blacklist lifecycle, it should also become the governance-controlled forwarding layer for:
-- `blacklistValidator()`
-- `unblacklistValidator()` in a future contract revision
+Blacklist and unblacklist actions are not routed through `DinCoordinator` in the current implementation. They are direct `owner()` actions on `DinValidatorStake`.
 
 ### Governance / DAO Admin
 
 Governance should not directly act as a slasher for routine faults. Routine faults belong in task contracts via `slash()`.
 
-Governance is the likely authority for blacklist and unblacklist decisions because those are not normal scoring penalties. They are exceptional trust and safety interventions affecting protocol admission and exit rights.
+Governance is the likely long-term authority for blacklist and unblacklist decisions because those are not normal scoring penalties. They are exceptional trust and safety interventions affecting protocol admission and exit rights.
 
-In practice, this authority is likely implemented as:
+In the current contracts, this authority is represented by the `owner()` of `DinValidatorStake`. In practice that owner can later be:
 - a DAO-owned multisig;
 - a security council;
 - a timelocked governance executor;
-- or a staged model where emergency actors can blacklist immediately and governance later confirms or reverses.
+- or another governance-controlled owner after ownership transfer.
 
 ---
 
@@ -149,7 +147,7 @@ Those role contracts should:
 1. An exceptional risk is identified.
 2. Governance-authorized actor initiates blacklist action.
 3. Stake contract marks validator `Blacklisted`.
-4. Validator becomes permanently ineligible unless governance later restores them through a dedicated unblacklist path.
+4. Validator becomes ineligible until the stake contract owner later restores them through `unblacklistValidator()`.
 5. Existing in-contract funds remain trapped and still slashable unless governance policy explicitly allows a later release path.
 
 ---
@@ -185,32 +183,27 @@ Blacklisting is an emergency governance action, not a routine scoring penalty.
 
 ## Current Contract Reality
 
-The current codebase partially supports blacklist behavior but does not yet implement a full blacklist lifecycle.
+The current codebase now supports a basic blacklist lifecycle, but governance process and policy are still incomplete.
 
 ### What Exists Today
 
 In `DinValidatorStake.sol`:
 - `blacklistValidator(address)` exists;
-- it is restricted by `onlyDinCoordinator`;
+- `unblacklistValidator(address)` exists;
+- both are restricted by `onlyOwner`;
 - blacklisted validators cannot `stake()`, `unstake()`, or `claimUnstaked()`;
-- `_syncValidatorStatus()` preserves `Blacklisted` and never clears it;
+- `_syncValidatorStatus()` preserves `Blacklisted` until `unblacklistValidator()` clears it;
 - slashing can still reduce blacklisted funds.
 
 ### What Does Not Exist Today
 
-- no `unblacklistValidator(address)` function;
 - no governance review flow on-chain;
 - no public jail-to-blacklist escalation path;
-- no dedicated blacklisting interface in `DinCoordinator.sol`;
 - no release policy for funds locked under blacklist status.
 
-### Important Architecture Gap
+### Important Architecture Note
 
-`DinValidatorStake` expects the `DIN_COORDINATOR` address to be the caller of `blacklistValidator()`, but the current `DinCoordinator.sol` does not expose a forwarding method for blacklist management.
-
-So today, blacklist logic exists in the stake contract, but the currently documented coordinator path is incomplete.
-
-That should be treated as a design gap, not hand-waved away in the docs.
+`DinValidatorStake` still uses `DIN_COORDINATOR` for slasher management, but blacklist and unblacklist authority now lives directly on the stake contract owner. This is the intended current model: DIN admin now, DAO-governed owner later.
 
 ---
 
@@ -234,61 +227,14 @@ This separation is useful because blacklisting is too powerful to leave inside r
 
 ### Recommended Access Model
 
-#### Blacklist
-
-Blacklisting should be callable only through governance-controlled coordinator logic.
+Blacklist and unblacklist should remain `onlyOwner` on `DinValidatorStake` for now, with ownership held by the DIN admin and later transferred to a DAO-controlled owner.
 
 Recommended authority:
-- `DinCoordinator` owned by DAO multisig or governance executor
-- optional emergency sub-role for a security council
+- current phase: DIN admin / DIN-Representative as stake contract owner;
+- later phase: DAO multisig, timelock, or governance executor as stake contract owner;
+- optional emergency process layered off-chain before the owner executes blacklist or restoration.
 
-#### Unblacklist
-
-Unblacklisting should be harder than blacklisting.
-
-Recommended authority:
-- DAO governance only, or
-- coordinator owner subject to timelock, or
-- security council proposal followed by DAO confirmation
-
-The reason is that restoring a malicious validator is usually more dangerous than temporarily freezing one.
-
-### Recommended Contract Additions
-
-At minimum:
-
-#### In `DinValidatorStake.sol`
-
-Add:
-
-```solidity
-function unblacklistValidator(address validator) external onlyDinCoordinator;
-```
-
-Recommended behavior:
-- revert on zero address;
-- require current status is `Blacklisted`;
-- clear blacklist state;
-- call `_syncValidatorStatus()` so validator resumes as:
-  - `Active` if `activeStake >= MIN_STAKE` and no pending withdrawal;
-  - `Exiting` if stake remains but is below threshold or exit is pending;
-  - `None` if nothing remains.
-
-Optional but recommended:
-- emit `ValidatorUnblacklisted(address indexed validator)`.
-
-#### In `DinCoordinator.sol`
-
-Add governance-forwarding functions:
-
-```solidity
-function blacklistValidator(address validator) external onlyOwner;
-function unblacklistValidator(address validator) external onlyOwner;
-```
-
-Those should delegate to the stake contract.
-
-This makes coordinator the explicit governance gate instead of embedding governance policy in the stake contract itself.
+The reason is that blacklist and unblacklist are governance-grade trust and safety decisions, not routine validator-liveness operations.
 
 ---
 
@@ -298,7 +244,7 @@ This makes coordinator the explicit governance gate instead of embedding governa
 
 1. Risk is detected by monitoring, community reports, or protocol operators.
 2. Evidence is reviewed off-chain by the authorized governance or security actor.
-3. Coordinator calls `blacklistValidator(validator)`.
+3. Stake contract owner calls `blacklistValidator(validator)`.
 4. Stake contract sets status to `Blacklisted`.
 5. Validator instantly becomes ineligible for new work.
 6. Task contracts naturally stop accepting the validator because `isValidatorActive()` becomes false.
@@ -316,7 +262,7 @@ After emergency action, governance should decide one of:
 If governance decides to restore the validator:
 
 1. Governance or DAO admin approves restoration.
-2. Coordinator calls `unblacklistValidator(validator)`.
+2. Stake contract owner calls `unblacklistValidator(validator)`.
 3. Stake contract removes blacklist status.
 4. `_syncValidatorStatus()` recalculates the right state.
 5. Validator becomes:
@@ -355,12 +301,11 @@ Should follow the same pattern:
 
 ### `DinCoordinator.sol`
 
-Should become the explicit governance bridge for:
+Should remain responsible for:
 - slasher authorization;
-- blacklist initiation;
-- unblacklist restoration.
+- validator stake contract wiring.
 
-This keeps the stake contract focused on state transitions while governance policy lives in the coordinator layer.
+Blacklist and unblacklist do not currently pass through `DinCoordinator`.
 
 ### Off-Chain Monitoring / DAO Operations
 
@@ -371,7 +316,7 @@ Off-chain systems are likely to initiate blacklist proposals because they can ag
 - key-compromise reports;
 - community or governance disputes.
 
-That means blacklist decisions will often begin off-chain and end on-chain through the coordinator.
+That means blacklist decisions will often begin off-chain and end on-chain through the stake contract owner.
 
 ---
 
@@ -389,8 +334,8 @@ Use case: routine liveness enforcement.
 
 - Validator repeatedly submits bad work across rounds.
 - Task contracts apply normal slashes.
-- Governance determines behavior is no longer tolerable.
-- Coordinator blacklists validator.
+- Governance or DIN admin determines behavior is no longer tolerable.
+- Stake contract owner blacklists validator.
 
 Use case: escalation from economic penalties to governance exclusion.
 
@@ -443,20 +388,18 @@ Without those rules, blacklist power becomes governance ambiguity rather than a 
 
 ## Recommended Next Steps
 
-1. Add coordinator-level blacklist forwarding so the current blacklist path is actually reachable.
-2. Add `unblacklistValidator()` to `DinValidatorStake.sol`.
-3. Emit explicit blacklist and unblacklist events.
-4. Make all role contracts rely on `isValidatorActive()` rather than raw balance checks for access control.
-5. Define governance policy for emergency blacklist, review, and restoration.
-6. Decide whether blacklisted pending withdrawals remain forever frozen or can later be released by governance.
+1. Make all role contracts rely on `isValidatorActive()` rather than raw balance checks for access control.
+2. Define governance policy for emergency blacklist, review, and restoration.
+3. Decide whether blacklisted pending withdrawals remain forever frozen or can later be released by governance.
+4. Plan ownership transfer of `DinValidatorStake` from the current admin to a DAO-controlled owner or timelock.
 
 ---
 
 ## Summary
 
-The DIN staking mechanism already has the right direction on unbonding and slashability, but blacklist logic is still incomplete as a governance system.
+The DIN staking mechanism now has a working owner-controlled blacklist and unblacklist path alongside unbonding and slashability.
 
-A production-grade approach should treat:
+A production-grade approach should continue to treat:
 - slashing as routine automated enforcement;
 - blacklisting as exceptional governance isolation;
 - unblacklisting as a stricter, review-based restoration path.

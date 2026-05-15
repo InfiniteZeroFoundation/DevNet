@@ -15,6 +15,7 @@ It is responsible for:
 - enforcing delayed withdrawals through an unbonding period;
 - keeping unbonding funds slashable until they are actually claimed;
 - allowing authorized slasher contracts to penalize validators;
+- allowing the contract owner to blacklist and unblacklist validators;
 - exposing validator eligibility to other protocol contracts.
 
 This contract is the source of truth for validator activity. Other contracts should treat `isValidatorActive(address)` as the canonical eligibility check.
@@ -97,7 +98,7 @@ enum ValidatorStatus {
 | `Active` | Eligible for new validator work |
 | `Exiting` | Stake is below active threshold or an unbonding withdrawal is pending |
 | `Jailed` | Temporarily ineligible; reserved for future lifecycle enforcement |
-| `Blacklisted` | Permanently blocked by coordinator action |
+| `Blacklisted` | Blocked by owner action until explicitly restored |
 
 ### 4.3 ValidatorInfo
 
@@ -144,14 +145,21 @@ Any address can:
 - `unstake(uint256 amount)`
 - `claimUnstaked()`
 
-### 5.2 DIN Coordinator
+### 5.2 Owner
+
+Only `owner()` can:
+- blacklist validators;
+- unblacklist validators.
+
+In the current deployment model this owner is the DIN admin / DIN-Representative. Later, ownership can be transferred to a DAO governance executor or timelocked admin.
+
+### 5.3 DIN Coordinator
 
 Only `DIN_COORDINATOR` can:
 - add slasher contracts;
-- remove slasher contracts;
-- blacklist validators.
+- remove slasher contracts.
 
-### 5.3 Authorized Slasher Contracts
+### 5.4 Authorized Slasher Contracts
 
 Only registered slasher contracts can:
 - call `slash(address validator, uint256 amount, bytes32 reason)`.
@@ -178,13 +186,15 @@ Exiting
 Any non-blacklisted status
   -> blacklist
 Blacklisted
+  -> owner unblacklist
+Active / Exiting / None / Jailed
 ```
 
 ### 6.2 Status Semantics
 
 - `Active` means the validator is currently eligible for new work.
 - `Exiting` means the validator is leaving or already below active threshold.
-- `Blacklisted` is terminal in the current implementation.
+- `Blacklisted` blocks stake, unstake, and withdrawal claims until the owner explicitly clears it.
 - `Jailed` exists in the storage model and sync logic but is not yet set by a public function.
 
 ### 6.3 Status Synchronization
@@ -286,10 +296,10 @@ Important:
 
 ### 7.5 `blacklistValidator(address validator)`
 
-Marks a validator as permanently blocked.
+Marks a validator as blocked.
 
 Behavior:
-- only callable by `DIN_COORDINATOR`;
+- only callable by `owner()`;
 - sets status to `Blacklisted`.
 
 Effects:
@@ -300,7 +310,25 @@ Effects:
 
 ---
 
-### 7.6 View Functions
+### 7.6 `unblacklistValidator(address validator)`
+
+Restores a previously blacklisted validator to its normal lifecycle state.
+
+Behavior:
+- only callable by `owner()`;
+- reverts on zero address;
+- reverts if the validator is not currently blacklisted;
+- clears `Blacklisted` status;
+- preserves `Jailed` if `jailedUntil` is still active, otherwise falls back to normal status sync;
+- emits `ValidatorUnblacklisted`.
+
+Effects:
+- validator returns to `Active`, `Exiting`, `None`, or `Jailed` depending on remaining stake, pending withdrawals, and jail timing;
+- validator does not bypass `MIN_STAKE` or exit state checks.
+
+---
+
+### 7.7 View Functions
 
 | Function | Meaning |
 |----------|---------|
@@ -310,7 +338,7 @@ Effects:
 | `slashableStakeOf(address)` | Returns `activeStake + pendingWithdrawals` |
 | `isSlasherContract(address)` | Returns whether the address is an authorized slasher |
 
-### 7.7 Internal Function: `_syncValidatorStatus(ValidatorInfo storage validator)`
+### 7.8 Internal Function: `_syncValidatorStatus(ValidatorInfo storage validator)`
 
 This is the internal lifecycle reconciliation function used by the contract to keep validator status aligned with stake state.
 
@@ -395,6 +423,7 @@ Start
 #### Key Behavior
 
 - `Blacklisted` is sticky. Normal stake changes cannot restore another status.
+- `unblacklistValidator()` is the only path that can clear `Blacklisted`.
 - `Jailed` is time-protected. The contract will not override it early while the jail window is still active.
 - A pending withdrawal always forces `Exiting`.
 - A validator cannot remain `Active` while unbonding.
@@ -515,7 +544,7 @@ Result: the validator receives whatever remains after slashing, not the original
 
 ### Scenario 6: Blacklisted Validator
 
-- Coordinator blacklists validator
+- Stake contract owner blacklists validator
 - validator attempts `stake()`
 - validator attempts `unstake()`
 - validator attempts `claimUnstaked()`
@@ -546,8 +575,9 @@ These contracts should:
 
 `DINCoordinator` is the administrative control point for:
 - adding slashers;
-- removing slashers;
-- blacklisting validators.
+- removing slashers.
+
+Blacklist and unblacklist actions are not routed through `DINCoordinator` in the current architecture. They are direct `owner()` actions on `DinValidatorStake`.
 
 ### 10.3 With Frontends and Off-Chain Services
 
@@ -556,6 +586,12 @@ Off-chain systems should distinguish:
 - total slashable stake: `slashableStakeOf()`;
 - validator eligibility: `isValidatorActive()`;
 - exit maturity: `validators[addr].withdrawAvailableAt`.
+
+### 10.4 With Governance
+
+DinValidatorStake owner
+  ├── calls   → DinValidatorStake.blacklistValidator()
+  └── calls   → DinValidatorStake.unblacklistValidator()
 
 ---
 
@@ -568,6 +604,7 @@ Off-chain systems should distinguish:
 | `ValidatorWithdrawalClaimed` | Matured pending withdrawal is paid out |
 | `ValidatorSlashed` | A slash succeeds |
 | `ValidatorBlacklisted` | Validator is blacklisted |
+| `ValidatorUnblacklisted` | Validator blacklist is removed |
 | `SlasherContractAdded` | Slasher is authorized |
 | `SlasherContractRemoved` | Slasher is de-authorized |
 
@@ -579,6 +616,7 @@ Off-chain systems should distinguish:
 |-------|---------|
 | `NotDINCoordinator()` | Caller is not the configured coordinator |
 | `ValidatorIsBlacklisted()` | Validator is blacklisted and action is blocked |
+| `ValidatorNotBlacklisted()` | Unblacklist was requested for a validator that is not blacklisted |
 | `InvalidAddress()` | Zero address provided |
 | `NotSlasherContract()` | Caller is not an authorized slasher |
 | `AmountLessThanMinStake()` | Stake amount is below minimum |
@@ -590,6 +628,7 @@ Off-chain systems should distinguish:
 | `PendingWithdrawalExists()` | Validator already has an open unbonding request |
 | `NoPendingWithdrawal()` | Nothing is available to claim |
 | `WithdrawalNotReady()` | Unbonding period has not ended |
+| `OwnableUnauthorizedAccount(address)` | Caller is not the stake contract owner for owner-gated actions |
 
 ---
 
