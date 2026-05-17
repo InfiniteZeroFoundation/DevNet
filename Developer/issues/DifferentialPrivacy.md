@@ -6,6 +6,62 @@ This issue covers improvements to the differential privacy pipeline used by Infi
 
 The current implementation already introduces basic clipping and Gaussian noise, but it is still closer to a proof of concept than a production-ready privacy layer. The next step is to make differential privacy a configurable capability exposed through `dincli`, so model owners can choose a privacy strategy, tune its parameters, and generate service artifacts that match their deployment needs.
 
+## manifest
+
+The model manifest at [manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json) can be used to define differential privacy parameters for a task.
+
+That means DP behavior should not be limited to hardcoded values inside `client.py`. A model owner should be able to place DP-related settings in the manifest and let services read them at runtime.
+
+Example manifest fields:
+
+```json
+{
+  "dp_mode": "afterTraining",
+  "dp_sigma": 0.5,
+  "dp_clipping_norm": 1.0,
+  "dp_mechanism": "post_training_gaussian"
+}
+```
+
+These parameters can be accessed inside services through the injected service runtime context:
+
+```python
+
+# Example of how to access DP parameters in a service from manifest:
+
+def train_client_model_and_upload_to_ipfs(
+    genesis_model_ipfs_hash,
+    account_address,
+    effective_network="local",
+    initial_model_ipfs_hash=None,
+    dp_mode=None,
+    model_base_dir="",
+    gi=None,
+    runtime=None,
+):
+    if dp_mode is None and runtime is not None:
+        dp_mode = runtime.get_manifest_key("dp_mode", "disabled")
+    if dp_mode is None:
+        dp_mode = "disabled"
+
+    sigma = runtime.get_manifest_key("dp_sigma", 0.5) if runtime else 0.5
+    clipping_norm = runtime.get_manifest_key("dp_clipping_norm", 1.0) if runtime else 1.0
+    dp_mechanism = runtime.get_manifest_key("dp_mechanism", "post_training_gaussian") if runtime else "post_training_gaussian"
+```
+
+For example, a client service can resolve manifest-driven DP settings from `runtime` instead of hardcoding them or reloading manifest state manually:
+
+```python
+if dp_mode == "afterTraining" and dp_mechanism == "post_training_gaussian":
+    noisy_state_dict = add_noise_and_clip_state_dict(
+        original_state_dict,
+        sigma,
+        clipping_norm,
+    )
+```
+
+This is why the runtime context was added: `dincli` resolves the manifest once for a service run, injects it into the service call, and lets service code read DP configuration through `runtime.get_manifest_key(...)`. That keeps privacy configuration in the manifest, makes service behavior easier to tune per model, and avoids coupling service code to CLI-side manifest lookup details.
+
 ## Why This Matters
 
 Differential privacy helps reduce the risk that sensitive information can be inferred from model updates shared during federated learning.
@@ -94,7 +150,7 @@ Without this, privacy claims are not measurable.
 
 ### 3. Static Hyperparameters
 
-Parameters such as `sigma = 0.5` and `S = 1.0` are effectively hardcoded in the implementation. Those values should be configurable through code, config, or CLI inputs.
+Parameters such as `sigma = 0.5` and `S = 1.0` are effectively hardcoded in the implementation. Those values should be configurable through the model manifest, code, config, or CLI inputs.
 
 ### 4. No Strategy Selection For Model Owners
 
@@ -137,6 +193,7 @@ Useful directions include:
 
 - defining a `dincli` interface for selecting DP mechanisms during service generation
 - replacing or extending post-training noise with a more principled DP method
+- reading DP parameters from the model manifest in client services
 - making parameters configurable through `dincli` and config files
 - making those selections visible in generated service artifacts and manifests
 - adding privacy accounting outputs
@@ -150,7 +207,7 @@ The intended workflow for a model owner should look roughly like this:
 1. Define the model and service requirements.
 2. Choose whether differential privacy is enabled.
 3. Select a DP mechanism.
-4. Set mechanism-specific parameters.
+4. Set mechanism-specific parameters in the manifest.
 5. Generate service artifacts with `dincli`.
 6. Reference the generated artifacts in the model-owner manifest.
 

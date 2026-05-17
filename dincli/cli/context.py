@@ -1,4 +1,6 @@
 from __future__ import annotations
+import functools
+import inspect
 from urllib.parse import urlparse
 
 import json
@@ -6,7 +8,7 @@ import json
 import importlib.util
 from importlib.resources import files
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import typer
 from rich.console import Console
@@ -17,6 +19,7 @@ from dincli.cli.utils import (GIstatestrToIndex, GIstateToStr, get_config,
                               get_manifest_key, get_w3, load_account,
                               load_config, load_din_info, resolve_network)
 from dincli.services.ipfs import retrieve_from_ipfs
+from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
 
 def sanitize_rpc_url(url: str) -> str:
     parsed = urlparse(url)
@@ -160,8 +163,28 @@ class DinContext:
         artifact_path = files("dincli").joinpath("abis", "DINTaskAuditor.json")
         return get_contract_instance(str(artifact_path), self.network, taskAuditor_address)
 
+    def build_service_runtime(
+        self,
+        *,
+        role: Optional[str] = None,
+        model_id: Optional[int] = None,
+        task_coordinator_address: Optional[str] = None,
+    ) -> ServiceRuntimeContext:
+        return build_service_runtime_context(
+            self.network,
+            model_id=model_id,
+            task_coordinator_address=task_coordinator_address,
+            role=role,
+        )
+
     
-    def load_custom_fn(self, module_path: Path, fn_name: str, ipfs_hash: str = None) -> Callable:
+    def load_custom_fn(
+        self,
+        module_path: Path,
+        fn_name: str,
+        ipfs_hash: str = None,
+        runtime: Optional[ServiceRuntimeContext] = None,
+    ) -> Callable:
         """
         Dynamically load a function from a project-local service file.
 
@@ -197,7 +220,27 @@ class DinContext:
                 f"{fn_name} in {module_path} is not callable"
             )
 
-        return fn 
+        if runtime is None:
+            return fn
+
+        signature = inspect.signature(fn)
+        accepts_runtime = (
+            "runtime" in signature.parameters
+            or any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            )
+        )
+
+        if not accepts_runtime:
+            return fn
+
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            kwargs.setdefault("runtime", runtime)
+            return fn(*args, **kwargs)
+
+        return wrapped
 
     
     def get_current_gi_and_state(self, task_coordinator_contract, verbose_gi: bool = True, verbose_state: bool = False, verbose_state_name: bool = False) -> tuple[int, int]:

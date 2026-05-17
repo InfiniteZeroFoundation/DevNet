@@ -4,7 +4,7 @@ from typing import Optional
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import CACHE_DIR, get_manifest_key
+from dincli.cli.utils import CACHE_DIR
 from dincli.services.client import train_client_model_and_upload_to_ipfs
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
@@ -22,8 +22,8 @@ def train_lms(
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
     taskCoordinator_contract, taskAuditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
-
-    dpmode = get_manifest_key(effective_network, "dp_mode", model_id)
+    runtime = ctx.obj.build_service_runtime(role="client", model_id=model_id)
+    dpmode = runtime.get_manifest_key("dp_mode", "disabled")
 
     current_GI, current_GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
 
@@ -50,36 +50,38 @@ def train_lms(
     console.print("Using Latest Global Model IPFS Hash: ", initial_model_ipfs_hash)
 
     model_base_dir = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
-    manifest = get_manifest_key(effective_network, "train_client_model_and_upload_to_ipfs", model_id)
+    manifest = runtime.require_manifest_key("train_client_model_and_upload_to_ipfs")
+    model_manifest = runtime.require_manifest_key("ModelArchitecture")
     client_service_path = model_base_dir / Path(manifest["path"])
-    model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+    model_service_path = model_base_dir / Path(model_manifest["path"])
 
     if manifest["type"] == "custom":
 
         ctx.obj.ensure_file_exists(client_service_path, manifest["ipfs"], "client service") 
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service")
+        ctx.obj.ensure_file_exists(model_service_path, model_manifest["ipfs"], "model architecture service")
 
         fn = ctx.obj.load_custom_fn(
             client_service_path,
-            "train_client_model_and_upload_to_ipfs")
+            "train_client_model_and_upload_to_ipfs",
+            runtime=runtime,
+        )
 
         client_model_ipfs_hash = fn(
             genesis_model_ipfs_hash,
             account.address,
             effective_network,
             initial_model_ipfs_hash=initial_model_ipfs_hash,
-            dp_mode=dpmode,
             model_base_dir=model_base_dir,
             gi=current_GI,
         )
     else:
         client_model_ipfs_hash = train_client_model_and_upload_to_ipfs(
-        genesis_model_ipfs_hash,
-        account.address,
-        effective_network,
-        initial_model_ipfs_hash=initial_model_ipfs_hash,
-        dp_mode=dpmode, 
-        base_path=model_base_dir
+            genesis_model_ipfs_hash,
+            account.address,
+            effective_network,
+            initial_model_ipfs_hash=initial_model_ipfs_hash,
+            runtime=runtime,
+            base_path=model_base_dir,
         )
 
     if submit:

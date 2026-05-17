@@ -37,9 +37,14 @@ def train_client_model_and_upload_to_ipfs(
     account_address,
     effective_network="local",
     initial_model_ipfs_hash=None,
-    dp_mode="disabled",
-    base_path=None
+    dp_mode=None,
+    base_path=None,
+    runtime=None,
 ):
+    if dp_mode is None and runtime is not None:
+        dp_mode = runtime.get_manifest_key("dp_mode", "disabled")
+    if dp_mode is None:
+        dp_mode = "disabled"
 
     if not base_path /"model"/"genesis_model.pth".exists():
         retrieve_from_ipfs(genesis_model_ipfs_hash,base_path/"model"/"genesis_model.pth")

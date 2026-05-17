@@ -6,8 +6,6 @@ from rich.console import Console
 import torch.optim as optim
 import os
 import torch
-import torch.nn.functional as F
-from dincli.cli.utils import CONFIG_DIR, get_w3, get_config
 import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -41,10 +39,15 @@ def train_client_model_and_upload_to_ipfs(
     account_address,
     effective_network="local",
     initial_model_ipfs_hash=None,
-    dp_mode="disabled",
+    dp_mode=None,
     model_base_dir="",
     gi=None,
+    runtime=None,
 ):
+    if dp_mode is None and runtime is not None:
+        dp_mode = runtime.get_manifest_key("dp_mode", "disabled")
+    if dp_mode is None:
+        dp_mode = "disabled"
 
     retrieve_from_ipfs(genesis_model_ipfs_hash,model_base_dir /"models"/"genesis_model.pth")
 
@@ -53,8 +56,6 @@ def train_client_model_and_upload_to_ipfs(
     # Step 1: Load the model architecture
     model_architecture = torch.load(model_base_dir /"models"/"genesis_model.pth", weights_only=False)
     console.print("Genesis model with IPFS hash " + genesis_model_ipfs_hash + " loaded from path :  " + str(model_base_dir /"models"/"genesis_model.pth"))
-
-    w3 = get_w3(effective_network)
    
 
     # Step 2: Load the client dataset
