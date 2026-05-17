@@ -39,6 +39,15 @@ To configure the IPFS API, please see [dincli Documentation](Documentation/setup
 
 ---
 
+## Contributing
+
+We use the `develop` branch for open-source contributions. Please review the contribution guide before opening a pull request:  
+https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/CONTRIBUTING.md
+
+If you want a place to start, check the [Good first issues](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/GOOD_FIRST_ISSUES.md).
+
+---
+
 ## Learn More
 
 - [White Paper](https://github.com/InfiniteZeroFoundation/White-Paper)
