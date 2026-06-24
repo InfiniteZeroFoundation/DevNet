@@ -1,5 +1,6 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import "@openzeppelin/hardhat-upgrades";
 import * as dotenv from "dotenv";
 import * as fs from "fs";
 import "hardhat-contract-sizer";
@@ -55,11 +56,20 @@ const config: HardhatUserConfig = {
       chainId: 1337,
       allowUnlimitedContractSize: true,
     },
-    sepolia_op_devnet: {
-      url: sepolia_op_devnet_rpc_url,
-      accounts: [process.env.ETH_PRIVATE_KEY_0!, process.env.ETH_PRIVATE_KEY_1!],
-      chainId: 11155420,
-    },
+    ...(sepolia_op_devnet_rpc_url &&
+    process.env.ETH_PRIVATE_KEY_0 &&
+    process.env.ETH_PRIVATE_KEY_1
+      ? {
+          sepolia_op_devnet: {
+            url: sepolia_op_devnet_rpc_url,
+            accounts: [
+              process.env.ETH_PRIVATE_KEY_0,
+              process.env.ETH_PRIVATE_KEY_1,
+            ],
+            chainId: 11155420,
+          },
+        }
+      : {}),
 
     localhost: {
       url: "http://127.0.0.1:8545",
