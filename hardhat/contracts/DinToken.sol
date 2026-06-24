@@ -1,40 +1,42 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
-/// @title DIN Token
-/// @notice ERC20-compliant token for the DIN Protocol ecosystem.
-/// @dev Minting is restricted to the owner (DinCoordinator), which can be updated through transfer of ownership.
-
-contract DinToken is ERC20 {
+contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
     error InvalidAddress();
     error Unauthorized();
+    error CoordinatorAlreadySet();
 
-    // Event for off-chain indexing
+    address public coordinator;
+
     event TokensMinted(address indexed to, uint256 amount);
+    event CoordinatorSet(address indexed coordinator);
 
-    /// @notice Immutable owner - DinCoordinator, set once at deployment
-    address public immutable OWNER;
-
-    /// @notice Constructor initializes the token with name and symbol.
-    constructor(address owner_) ERC20("DIN Token", "DIN") {
-        OWNER = owner_;
-        // Optionally mint initial supply to the deployer if needed
-        // _mint(owner_, initialSupply * 10 ** decimals());
+    constructor() {
+        _disableInitializers();
     }
 
-    /// @notice Modifier: restricts to immutable owner (gas-efficient, no SLOAD)
-    modifier onlyOwner() {
-        if (msg.sender != OWNER) revert Unauthorized();
+    function initialize() public initializer {
+        __ERC20_init("DIN Token", "DIN");
+        __Ownable_init(msg.sender);
+    }
+
+    function setCoordinator(address coordinator_) external onlyOwner {
+        if (coordinator != address(0)) revert CoordinatorAlreadySet();
+        if (coordinator_ == address(0)) revert InvalidAddress();
+        coordinator = coordinator_;
+        emit CoordinatorSet(coordinator_);
+    }
+
+    modifier onlyCoordinator() {
+        if (msg.sender != coordinator) revert Unauthorized();
         _;
     }
 
-    /// @notice Mint new tokens — callable only by the contract owner.
-    /// @param to The address to receive minted tokens.
-    /// @param amount The number of tokens to mint (18 decimals).
-    function mint(address to, uint256 amount) external onlyOwner {
+    function mint(address to, uint256 amount) external onlyCoordinator {
         if (to == address(0)) revert InvalidAddress();
         _mint(to, amount);
         emit TokensMinted(to, amount);
