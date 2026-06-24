@@ -23,8 +23,6 @@ tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
 /tasks/*
 /scripts/*
 /hardhat/ignition/*
-/hardhat/scripts/*
-/hardhat/test/*
 /hardhat/test-output.txt
 /dincli/config/accounts.json
 /dincli/config/din_info.json 

@@ -37,6 +37,7 @@ contract DinCoordinator is
     error ZeroValue();
     error TransferFailed();
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }

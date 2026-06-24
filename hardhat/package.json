@@ -4,7 +4,9 @@
   "main": "index.js",
   "scripts": {
     "compile": "hardhat compile",
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "deploy:platform": "hardhat run scripts/deploy-platform.ts",
+    "upgrade:platform": "hardhat run scripts/upgrade-platform.ts"
   },
   "keywords": [],
   "author": "",

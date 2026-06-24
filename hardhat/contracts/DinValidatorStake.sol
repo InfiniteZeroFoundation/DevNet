@@ -72,6 +72,7 @@ contract DinValidatorStake is
 
     mapping(address => ValidatorInfo) public validators;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }

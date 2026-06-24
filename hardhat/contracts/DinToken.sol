@@ -15,6 +15,7 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
     event TokensMinted(address indexed to, uint256 amount);
     event CoordinatorSet(address indexed coordinator);
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }

@@ -107,6 +107,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     mapping(address => uint256) private _modelIdByTaskAuditor;
     mapping(uint256 => bool) public modelDisabled;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
