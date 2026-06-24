@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
-contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
+contract DinValidatorStake is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardTransient
+{
     error NotDINCoordinator();
     error ValidatorIsBlacklisted();
     error ValidatorNotBlacklisted();
@@ -22,8 +27,8 @@ contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
     error NoPendingWithdrawal();
     error WithdrawalNotReady();
 
-    IERC20 public immutable DIN_TOKEN;
-    address public immutable DIN_COORDINATOR;
+    IERC20 public DIN_TOKEN;
+    address public DIN_COORDINATOR;
 
     using SafeERC20 for IERC20;
 
@@ -67,10 +72,18 @@ contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
 
     mapping(address => ValidatorInfo) public validators;
 
-    constructor(address dinToken, address dinCoordinator) Ownable(msg.sender) {
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address dinToken,
+        address dinCoordinator
+    ) external initializer {
         if (dinToken == address(0) || dinCoordinator == address(0)) {
             revert InvalidAddress();
         }
+        __Ownable_init(msg.sender);
         DIN_TOKEN = IERC20(dinToken);
         DIN_COORDINATOR = dinCoordinator;
     }
