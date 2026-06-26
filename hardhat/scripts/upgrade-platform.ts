@@ -3,14 +3,13 @@ import hre, { ethers, upgrades } from "hardhat";
 import { PLATFORM_CONTRACTS } from "../deploy/constants";
 import {
   loadPlatformAddresses,
+  savePlatformAddresses,
   upgradeTransparentProxy,
 } from "../deploy/helpers";
-import type { PlatformAddresses } from "../deploy/types";
 
-const PROXY_KEYS: Record<
-  (typeof PLATFORM_CONTRACTS)[number],
-  keyof PlatformAddresses
-> = {
+type ContractProxyKey = "dinToken" | "dinCoordinator" | "dinValidatorStake" | "dinModelRegistry";
+
+const PROXY_KEYS: Record<(typeof PLATFORM_CONTRACTS)[number], ContractProxyKey> = {
   DinToken: "dinToken",
   DinCoordinator: "dinCoordinator",
   DinValidatorStake: "dinValidatorStake",
@@ -55,6 +54,12 @@ async function main() {
 
   console.log("Proxy:", proxyAddress);
   console.log("Implementation:", implementationAddress);
+
+  addresses.implementations = {
+    ...addresses.implementations,
+    [proxyKey]: implementationAddress,
+  };
+  savePlatformAddresses(hre.network.name, addresses);
 }
 
 main().catch((error) => {

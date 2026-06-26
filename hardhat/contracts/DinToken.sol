@@ -20,7 +20,7 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         _disableInitializers();
     }
 
-    function initialize() public initializer {
+    function initialize() external initializer {
         __ERC20_init("DIN Token", "DIN");
         __Ownable_init(msg.sender);
     }

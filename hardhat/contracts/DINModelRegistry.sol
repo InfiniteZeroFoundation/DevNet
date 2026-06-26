@@ -31,6 +31,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     error AuditorNoLongerSlasher();
     error CoordinatorOwnershipChanged();
     error AuditorOwnershipChanged();
+    error TransferFailed();
 
     event ModelRegistrationRequested(
         uint256 indexed requestId,
@@ -401,7 +402,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
 
     function withdrawFees(address payable to) external onlyOwner {
         uint256 balance = address(this).balance;
-        to.transfer(balance);
+        (bool success, ) = to.call{value: balance}("");
+        if (!success) revert TransferFailed();
         emit FeesWithdrawn(to, balance);
     }
 }
