@@ -22,6 +22,9 @@ contract DinCoordinator is
 
     uint256 public dinPerEth;
 
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
+
     event EthDepositAndDINminted(
         address indexed user,
         uint256 ethAmount,

@@ -113,4 +113,14 @@ describe("DINModelRegistry upgrade", function () {
     await dinModelRegistry.connect(deployer).approveModel(0);
     expect(await dinModelRegistry.totalModels()).to.equal(1);
   });
+
+  it("implementation contract cannot be initialized directly", async function () {
+    const DINModelRegistry = await ethers.getContractFactory("DINModelRegistry");
+    const impl = await DINModelRegistry.deploy();
+    await impl.waitForDeployment();
+    const [signer] = await ethers.getSigners();
+    await expect(
+      impl.initialize(signer.address)
+    ).to.be.revertedWithCustomError(impl, "InvalidInitialization");
+  });
 });

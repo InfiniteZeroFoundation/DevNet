@@ -83,4 +83,14 @@ describe("DinValidatorStake upgrade", function () {
       "OwnableUnauthorizedAccount"
     );
   });
+
+  it("implementation contract cannot be initialized directly", async function () {
+    const DinValidatorStake = await ethers.getContractFactory("DinValidatorStake");
+    const impl = await DinValidatorStake.deploy();
+    await impl.waitForDeployment();
+    const [s1, s2] = await ethers.getSigners();
+    await expect(
+      impl.initialize(s1.address, s2.address)
+    ).to.be.revertedWithCustomError(impl, "InvalidInitialization");
+  });
 });

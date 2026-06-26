@@ -12,6 +12,9 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
 
     address public coordinator;
 
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
+
     event TokensMinted(address indexed to, uint256 amount);
     event CoordinatorSet(address indexed coordinator);
 
@@ -25,6 +28,10 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         __Ownable_init(msg.sender);
     }
 
+    // One-shot: coordinator is set to the proxy address once and never changed.
+    // DinCoordinator is behind a Transparent Proxy so its address is stable
+    // across implementation upgrades; a coordinator address change would require
+    // deploying a new proxy, which is an intentional design constraint.
     function setCoordinator(address coordinator_) external onlyOwner {
         if (coordinator != address(0)) revert CoordinatorAlreadySet();
         if (coordinator_ == address(0)) revert InvalidAddress();

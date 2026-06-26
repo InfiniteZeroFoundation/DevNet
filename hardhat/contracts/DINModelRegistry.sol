@@ -62,6 +62,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         uint256 proprietaryUpdateFee
     );
     event FeesWithdrawn(address indexed to, uint256 amount);
+    event DAOAdminUpdated(address indexed oldAdmin, address indexed newAdmin);
 
     struct Model {
         address owner;
@@ -108,6 +109,9 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     mapping(address => uint256) private _modelIdByTaskAuditor;
     mapping(uint256 => bool) public modelDisabled;
 
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -143,14 +147,10 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         uint256 requiredFee = isOpenSource ? openSourceFee : proprietaryFee;
         if (msg.value < requiredFee) revert InsufficientFee();
 
-        require(
-            dinValidatorStake.isSlasherContract(taskCoordinator),
-            "Invalid Coordinator"
-        );
-        require(
-            dinValidatorStake.isSlasherContract(taskAuditor),
-            "Invalid Auditor"
-        );
+        if (!dinValidatorStake.isSlasherContract(taskCoordinator))
+            revert CoordinatorNoLongerSlasher();
+        if (!dinValidatorStake.isSlasherContract(taskAuditor))
+            revert AuditorNoLongerSlasher();
 
         if (taskCoordinator == taskAuditor)
             revert TaskCoordinatorEqualsTaskAuditor();
@@ -405,5 +405,17 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         (bool success, ) = to.call{value: balance}("");
         if (!success) revert TransferFailed();
         emit FeesWithdrawn(to, balance);
+    }
+
+    // Backward-compat shims — dincli calls daoAdmin() / setDAOAdmin().
+    // Underlying auth model is OwnableUpgradeable; these are read-through facades.
+    function daoAdmin() external view returns (address) {
+        return owner();
+    }
+
+    function setDAOAdmin(address newAdmin) external onlyOwner {
+        address old = owner();
+        transferOwnership(newAdmin);
+        emit DAOAdminUpdated(old, newAdmin);
     }
 }

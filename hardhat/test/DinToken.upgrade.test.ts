@@ -51,4 +51,14 @@ describe("DinToken upgrade", function () {
       dinToken.connect(other).setCoordinator(await dinCoordinator.getAddress())
     ).to.be.revertedWithCustomError(dinToken, "OwnableUnauthorizedAccount");
   });
+
+  it("implementation contract cannot be initialized directly", async function () {
+    const DinToken = await ethers.getContractFactory("DinToken");
+    const impl = await DinToken.deploy();
+    await impl.waitForDeployment();
+    await expect(impl.initialize()).to.be.revertedWithCustomError(
+      impl,
+      "InvalidInitialization"
+    );
+  });
 });

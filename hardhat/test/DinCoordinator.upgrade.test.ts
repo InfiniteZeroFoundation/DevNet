@@ -67,4 +67,15 @@ describe("DinCoordinator upgrade", function () {
       await dinValidatorStake.isSlasherContract(await slasher.getAddress())
     ).to.equal(true);
   });
+
+  it("implementation contract cannot be initialized directly", async function () {
+    const DinCoordinator = await ethers.getContractFactory("DinCoordinator");
+    const impl = await DinCoordinator.deploy();
+    await impl.waitForDeployment();
+    const [signer] = await ethers.getSigners();
+    await expect(impl.initialize(signer.address)).to.be.revertedWithCustomError(
+      impl,
+      "InvalidInitialization"
+    );
+  });
 });

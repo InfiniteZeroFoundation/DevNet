@@ -72,6 +72,9 @@ contract DinValidatorStake is
 
     mapping(address => ValidatorInfo) public validators;
 
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
