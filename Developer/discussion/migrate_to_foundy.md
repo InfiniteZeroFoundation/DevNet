@@ -94,12 +94,24 @@ Hardhat 3 upgrade is only worth pursuing if the OZ upgrade blocker is unresolvab
 
 ## Open Items
 
-- [ ] Robbert: investigate upgradeable contract compatibility with `openzeppelin-foundry-upgrades` (primary blocker)
-- [ ] Robbert: audit `hardhat/test/` — test count and rewrite estimate
-- [ ] Robbert: verify Optimism Sepolia Blockscout verification via `forge verify-contract`
-- [ ] Robbert: check Hardhat 3 plugin ecosystem status (fallback path)
-- [ ] Robbert: deliver written recommendation with rationale
+- [ ] Robbert: investigate upgradeable contract compatibility with `openzeppelin-foundry-upgrades` (primary blocker) — **not yet done**, see Findings below. This is the single gating item before a final call.
+- [x] Robbert: audit `hardhat/test/` — test count and rewrite estimate
+- [ ] Robbert: verify Optimism Sepolia Blockscout verification via `forge verify-contract` — needs a live deployment, not yet run
+- [ ] Robbert: check Hardhat 3 plugin ecosystem status (fallback path) — low priority, only matters if Option 1 is blocked
+- [x] Robbert: deliver written recommendation with rationale
 - [ ] Umer: review Robbert's recommendation and make final call
+
+---
+
+## Findings (Robbert — 2026-06-30)
+
+**Test inventory (Key Question 2).** `hardhat/test/` has full, passing coverage of the platform contracts — 30+ tests across core contract behavior and the new upgrade-safety suite added for PR #13 (`DinToken.upgrade.test.ts`, `DinCoordinator.upgrade.test.ts`, `DinValidatorStake.upgrade.test.ts`, `DINModelRegistry.upgrade.test.ts`), plus a previously-broken `DinValidatorStake.test.ts` that I rewrote (16 tests) to work with the `_disableInitializers()` pattern. `foundry/src/` by contrast holds 7 stale contracts that have already diverged from `hardhat/contracts/` (pre-upgrade, non-proxy versions), and there are **zero `.t.sol` test files** anywhere in `foundry/`. Rewrite cost is real but the Hardhat side is the only side with working coverage today.
+
+**Foundry's current state.** Only `forge-std` v1.15.0 and `openzeppelin-contracts` v5.6.1 (non-upgradeable) are installed. `openzeppelin-foundry-upgrades` is **not installed**, so Forge currently has zero storage-layout-safety tooling for the Transparent Proxy pattern PR #13 ships. This is the actual gate on Option 1 — until I install the plugin and run a dry-run upgrade-safety simulation against the PR #13 contracts (mirroring what `upgrades.validateUpgrade` already does on the Hardhat side), I can't confirm Forge can catch a bad storage layout change the way Hardhat does today.
+
+**Typechain consumers (Key Question 5).** Audited `dincli`, the only real downstream consumer of these contracts. It does **not** depend on Hardhat or TypeChain at runtime — it bundles its own 6 ABI JSON files under `dincli/abis/` (loaded via `importlib.resources`), with manifest-level CID override and bundled fallback. The only references to `hardhat/artifacts` are in a dev-only `dump-abi` helper, not a runtime dependency. So `typechain-types` going away is a non-issue for the actual product.
+
+**Net read:** nothing found so far contradicts the Foundry-only direction, and the typechain finding removes one of the two risks listed under Option 1's blockers. But the storage-layout-safety gate (Q1) and the Blockscout verification check (Q3) are still open — I'd treat this as "Foundry-only, conditional on Q1 passing" rather than a final answer yet.
 
 ---
 
@@ -107,4 +119,4 @@ Hardhat 3 upgrade is only worth pursuing if the OZ upgrade blocker is unresolvab
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| — | — | Pending Robbert's investigation |
+| 2026-06-30 | **Conditional recommendation: Foundry-only**, pending storage-layout validation gate (Q1) | Anvil is already the devnet chain; fuzz testing is a stated priority gap; Robbert has Foundry experience; `dincli` (the real consumer) has zero TypeChain dependency, so that risk is removed. Final call deferred until `openzeppelin-foundry-upgrades` is installed and a dry-run upgrade simulation against PR #13's Transparent Proxy contracts is verified — if it can't reliably validate storage layout, fall back to keeping a thin Hardhat-only slice for upgrade validation, or revisit Hardhat 3. |
