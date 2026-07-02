@@ -4,6 +4,10 @@ pragma solidity ^0.8.28;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import "./DINShared.sol";
 
+/// @title DIN Task Auditor
+/// @notice Handles auditor registration, local model submission, scoring, eligibility
+///         determination, and auditor slashing for a single federated-learning model.
+///         Deployed once per model alongside its paired DINTaskCoordinator.
 contract DINTaskAuditor is Ownable {
     IDinValidatorStake public dinvalidatorStakeContract;
 
@@ -135,6 +139,12 @@ contract DINTaskAuditor is Ownable {
         uint256 actual
     );
 
+    /// @notice Deploys the auditor, wiring it to the validator stake and coordinator contracts.
+    /// @dev Batch parameters are set to demo defaults (3 auditors/batch, 3 models/batch,
+    ///      quorum of 2, pass score of 50). The model owner can adjust pass score via
+    ///      updatePassScore.
+    /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
+    /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
     constructor(
         address _dinvalidatorStakeContract_address,
         address _dintaskcoordinator_contract_address
@@ -156,6 +166,10 @@ contract DINTaskAuditor is Ownable {
         });
     }
 
+    /// @notice Updates the minimum average score a model must achieve to be approved.
+    /// @dev Restricted to the paired DINTaskCoordinator. Called during startGI when
+    ///      the two-argument overload is used.
+    /// @param newPassScore New pass score in the range [0, 100].
     function updatePassScore(
         uint256 newPassScore
     ) external onlyTaskCoordinator {
@@ -167,6 +181,10 @@ contract DINTaskAuditor is Ownable {
         emit PassScoreUpdated(oldScore, newPassScore);
     }
 
+    /// @notice Registers the caller as an auditor for the current GI.
+    /// @dev Caller must be an active validator; duplicate registrations revert.
+    ///      The coordinator's GI state must be DINauditorsRegistrationStarted.
+    /// @param _GI Current GI index.
     function registerDINAuditor(uint _GI) public onlyCurrentGI(_GI) {
         if (
             dintaskcoordinatorContract.GIstate() !=
@@ -185,12 +203,20 @@ contract DINTaskAuditor is Ownable {
         emit DINAuditorRegistered(_GI, msg.sender);
     }
 
+    /// @notice Returns the list of auditors registered for the given GI.
+    /// @param _GI GI index to query.
+    /// @return Ordered array of auditor addresses in registration order.
     function getDINtaskAuditors(
         uint _GI
     ) public view returns (address[] memory) {
         return dinAuditors[_GI];
     }
 
+    /// @notice Submits a local model CID for the current GI.
+    /// @dev Each address may submit at most once per GI. Reverts if the global
+    ///      submission cap (MAX_LM_SUBMISSIONS) has been reached.
+    /// @param _clientModel IPFS CID of the locally trained model weights, encoded as bytes32.
+    /// @param _GI Current GI index.
     function submitLocalModel(
         bytes32 _clientModel,
         uint _GI
@@ -218,6 +244,9 @@ contract DINTaskAuditor is Ownable {
         clientHasSubmitted[_GI][msg.sender] = true;
     }
 
+    /// @notice Returns all local model submissions for the given GI.
+    /// @param _GI GI index to query.
+    /// @return Array of LMSubmission structs in submission order.
     function getClientModels(
         uint _GI
     ) public view returns (LMSubmission[] memory) {
@@ -278,6 +307,12 @@ contract DINTaskAuditor is Ownable {
         }
     }
 
+    /// @notice Partitions active auditors and submitted models into audit batches.
+    /// @dev Called by the paired DINTaskCoordinator. Auditors are filtered to those
+    ///      still Active at call time, then shuffled with blockhash-based entropy.
+    ///      Returns false is never reached; reverts on any failure condition.
+    /// @param _GI Current GI index.
+    /// @return True on success.
     function createAuditorsBatches(
         uint _GI
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
@@ -339,11 +374,21 @@ contract DINTaskAuditor is Ownable {
         return true;
     }
 
+    /// @notice Returns the number of audit batches created for the given GI.
+    /// @param _GI GI index to query.
+    /// @return Number of audit batches.
     function AuditorsBatchCount(uint _GI) external view returns (uint) {
         if (_GI > dintaskcoordinatorContract.GI()) revert TA_WrongGI();
         return auditBatches[_GI].length;
     }
 
+    /// @notice Returns the full details of an audit batch.
+    /// @param _GI GI index.
+    /// @param _batchId Batch index within that GI.
+    /// @return batchId Canonical batch identifier.
+    /// @return auditors Auditors assigned to this batch.
+    /// @return modelIndexes Indexes into lmSubmissions[_GI] assigned to this batch.
+    /// @return testDataCID IPFS CID of the test dataset for this batch.
     function getAuditorsBatch(
         uint _GI,
         uint _batchId
@@ -368,6 +413,11 @@ contract DINTaskAuditor is Ownable {
         );
     }
 
+    /// @notice Records the test dataset CID for a specific audit batch.
+    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked.
+    /// @param gi Current GI index.
+    /// @param batchId Batch index to assign the test dataset to.
+    /// @param testDataCID IPFS CID of the test dataset, encoded as bytes32.
     function assignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
@@ -380,6 +430,12 @@ contract DINTaskAuditor is Ownable {
         auditBatches[gi][batchId].testDataCID = testDataCID;
     }
 
+    /// @notice Marks test dataset distribution as complete for the given GI.
+    /// @dev Restricted to the paired DINTaskCoordinator. flag must be true;
+    ///      can only be set once per GI.
+    /// @param _GI Current GI index.
+    /// @param flag Must be true.
+    /// @return True on success.
     function setTestDataAssignedFlag(
         uint _GI,
         bool flag
@@ -447,12 +503,21 @@ contract DINTaskAuditor is Ownable {
         );
     }
 
+    /// @notice Submits an audit score and eligibility vote for a specific model.
+    /// @dev Caller must be the assigned auditor for this batch and model index.
+    ///      Each auditor may vote at most once per model. If the eligibility quorum
+    ///      is reached after this vote, eligibility is finalised immediately.
+    /// @param gi Current GI index.
+    /// @param batchId Batch index containing this model.
+    /// @param modelIndex Index into lmSubmissions[gi] for the model being scored.
+    /// @param score Audit score in the range [0, 100].
+    /// @param vote True if the auditor deems the model eligible, false otherwise.
     function setAuditScorenEligibility(
         uint256 gi,
         uint batchId,
         uint modelIndex,
         uint256 score,
-        bool vote // true = eligible, false = not eligible
+        bool vote
     ) public onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
         if (
             dintaskcoordinatorContract.GIstate() !=
@@ -478,6 +543,12 @@ contract DINTaskAuditor is Ownable {
         _tryFinalizeEligibility(gi, batchId, modelIndex);
     }
 
+    /// @notice Computes final average scores and approval status for all submitted models.
+    /// @dev Iterates all batches and models; a model is approved if eligible and its
+    ///      average score meets or exceeds passScore. Returns true if at least one
+    ///      model was finalised; reverts if GI state is not LMSevaluationStarted.
+    /// @param _GI Current GI index.
+    /// @return True if at least one model reached score quorum and was finalised.
     function finalizeEvaluation(
         uint _GI
     ) public onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
@@ -540,6 +611,12 @@ contract DINTaskAuditor is Ownable {
         return finalizedCount > 0;
     }
 
+    /// @notice Slashes any auditor who failed to vote on at least one model in their batch.
+    /// @dev Slash amount equals minStake() at call time. Each slashed auditor emits an
+    ///      AuditorSlashed event. Always returns true; individual slash failures do not
+    ///      halt the loop.
+    /// @param _GI Current GI index.
+    /// @return True on completion.
     function slashAuditors(
         uint _GI
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
@@ -581,6 +658,10 @@ contract DINTaskAuditor is Ownable {
         return true;
     }
 
+    /// @notice Returns the indexes of all models approved for aggregation in the given GI.
+    /// @dev A model is approved when both eligible == true and finalAvgScore >= passScore.
+    /// @param _GI GI index to query.
+    /// @return Array of approved model indexes into lmSubmissions[_GI].
     function approvedModelIndexes(
         uint _GI
     ) public view returns (uint[] memory) {

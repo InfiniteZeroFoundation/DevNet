@@ -5,6 +5,9 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
+/// @title DIN Token
+/// @notice ERC-20 token minted exclusively by the DinCoordinator in exchange
+///         for ETH deposits. Deployed behind a Transparent Proxy.
 contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
     error InvalidAddress();
     error Unauthorized();
@@ -23,15 +26,17 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         _disableInitializers();
     }
 
+    /// @notice Initialises the proxy, registering the token as "DIN Token" (DIN).
     function initialize() external initializer {
         __ERC20_init("DIN Token", "DIN");
         __Ownable_init(msg.sender);
     }
 
-    // One-shot: coordinator is set to the proxy address once and never changed.
-    // DinCoordinator is behind a Transparent Proxy so its address is stable
-    // across implementation upgrades; a coordinator address change would require
-    // deploying a new proxy, which is an intentional design constraint.
+    /// @notice Wires the DinCoordinator proxy as the sole authorised minter.
+    /// @dev One-shot: reverts if called a second time. The coordinator sits behind
+    ///      a Transparent Proxy so its address is stable across upgrades; changing
+    ///      it would require deploying a new proxy, which is an intentional constraint.
+    /// @param coordinator_ Address of the DinCoordinator proxy.
     function setCoordinator(address coordinator_) external onlyOwner {
         if (coordinator != address(0)) revert CoordinatorAlreadySet();
         if (coordinator_ == address(0)) revert InvalidAddress();
@@ -44,6 +49,10 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         _;
     }
 
+    /// @notice Mints DIN tokens to the specified address.
+    /// @dev Restricted to the coordinator. Called by DinCoordinator.depositAndMint.
+    /// @param to Recipient address.
+    /// @param amount Token amount in wei (18 decimals).
     function mint(address to, uint256 amount) external onlyCoordinator {
         if (to == address(0)) revert InvalidAddress();
         _mint(to, amount);

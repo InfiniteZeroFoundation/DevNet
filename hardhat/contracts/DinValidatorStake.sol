@@ -7,6 +7,9 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
+/// @title DIN Validator Stake
+/// @notice Manages validator staking, unbonding, slashing, and blacklisting for
+///         the DIN protocol. Deployed once per network behind a Transparent Proxy.
 contract DinValidatorStake is
     Initializable,
     OwnableUpgradeable,
@@ -80,6 +83,9 @@ contract DinValidatorStake is
         _disableInitializers();
     }
 
+    /// @notice Initialises the proxy with the token and coordinator addresses.
+    /// @param dinToken Address of the DinToken proxy.
+    /// @param dinCoordinator Address of the DinCoordinator proxy.
     function initialize(
         address dinToken,
         address dinCoordinator
@@ -102,6 +108,8 @@ contract DinValidatorStake is
         _;
     }
 
+    /// @notice Stakes DIN tokens and registers the caller as an active validator.
+    /// @param amount Token amount to stake, must be at least MIN_STAKE.
     function stake(uint256 amount) external nonReentrant {
         if (amount < MIN_STAKE) revert AmountLessThanMinStake();
 
@@ -117,6 +125,9 @@ contract DinValidatorStake is
         emit ValidatorStaked(msg.sender, amount);
     }
 
+    /// @notice Registers a contract as authorised to call slash().
+    /// @dev Restricted to the DIN_COORDINATOR address. Called via DinCoordinator.addSlasherContract.
+    /// @param slasherContract Address of the task contract to authorise.
     function addSlasherContract(
         address slasherContract
     ) external onlyDinCoordinator {
@@ -129,6 +140,8 @@ contract DinValidatorStake is
         emit SlasherContractAdded(slasherContract);
     }
 
+    /// @notice Removes a contract's slasher authorisation.
+    /// @param slasherContract Address of the task contract to deauthorise.
     function removeSlasherContract(
         address slasherContract
     ) external onlyDinCoordinator {
@@ -141,6 +154,14 @@ contract DinValidatorStake is
         emit SlasherContractRemoved(slasherContract);
     }
 
+    /// @notice Slashes a validator's stake by the requested amount.
+    /// @dev Active stake is consumed first; any remainder is taken from pending
+    ///      withdrawals. If total slashable stake is less than amount, the actual
+    ///      slashed amount is capped and returned rather than reverting.
+    /// @param validator Address of the validator to slash.
+    /// @param amount Maximum token amount to slash.
+    /// @param reason Arbitrary identifier for the slash event, emitted on-chain.
+    /// @return The actual amount slashed (may be less than amount if stake is insufficient).
     function slash(
         address validator,
         uint256 amount,
@@ -176,6 +197,10 @@ contract DinValidatorStake is
         return actualAmount;
     }
 
+    /// @notice Moves stake into a pending withdrawal subject to the unbonding period.
+    /// @dev Only one pending withdrawal can exist at a time. The withdrawn amount
+    ///      remains slashable during the unbonding window.
+    /// @param amount Token amount to unstake.
     function unstake(uint256 amount) external nonReentrant {
         ValidatorInfo storage validator = validators[msg.sender];
         if (validator.status == ValidatorStatus.Blacklisted) {
@@ -199,6 +224,8 @@ contract DinValidatorStake is
         );
     }
 
+    /// @notice Transfers a matured pending withdrawal back to the caller.
+    /// @dev Reverts if the unbonding period has not elapsed since unstake() was called.
     function claimUnstaked() external nonReentrant {
         ValidatorInfo storage validator = validators[msg.sender];
         if (validator.status == ValidatorStatus.Blacklisted) {
@@ -219,12 +246,18 @@ contract DinValidatorStake is
         emit ValidatorWithdrawalClaimed(msg.sender, pendingAmount);
     }
 
+    /// @notice Permanently prevents a validator from staking or unstaking.
+    /// @param validator Address to blacklist.
     function blacklistValidator(address validator) external onlyOwner {
         if (validator == address(0)) revert InvalidAddress();
         validators[validator].status = ValidatorStatus.Blacklisted;
         emit ValidatorBlacklisted(validator);
     }
 
+    /// @notice Lifts a blacklist, restoring the validator's prior status.
+    /// @dev If the validator was jailed before being blacklisted and the jail
+    ///      period has not expired, status is restored to Jailed, not Active.
+    /// @param validator Address to unblacklist.
     function unblacklistValidator(address validator) external onlyOwner {
         if (validator == address(0)) revert InvalidAddress();
 
@@ -243,24 +276,39 @@ contract DinValidatorStake is
         emit ValidatorUnblacklisted(validator);
     }
 
+    /// @notice Returns the minimum token amount required to become an active validator.
+    /// @return The MIN_STAKE constant in wei.
     function minStake() external pure returns (uint256) {
         return MIN_STAKE;
     }
 
+    /// @notice Returns true if the validator's status is Active.
+    /// @param validator Address to query.
+    /// @return True if the validator is currently in the Active state.
     function isValidatorActive(address validator) public view returns (bool) {
         ValidatorInfo storage info = validators[validator];
         return info.status == ValidatorStatus.Active;
     }
 
+    /// @notice Returns a validator's current active stake.
+    /// @param validator Address to query.
+    /// @return Active stake balance in wei.
     function getStake(address validator) public view returns (uint256) {
         return validators[validator].activeStake;
     }
 
+    /// @notice Returns the total amount that can be slashed from a validator,
+    ///         including both active stake and any pending withdrawals.
+    /// @param validator Address to query.
+    /// @return Sum of activeStake and pendingWithdrawals in wei.
     function slashableStakeOf(address validator) public view returns (uint256) {
         ValidatorInfo storage info = validators[validator];
         return info.activeStake + info.pendingWithdrawals;
     }
 
+    /// @notice Returns true if the given address is a registered slasher contract.
+    /// @param slasherContract Address to query.
+    /// @return True if the address has slasher authorisation.
     function isSlasherContract(
         address slasherContract
     ) public view returns (bool) {

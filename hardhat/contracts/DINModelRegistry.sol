@@ -14,6 +14,9 @@ interface IOwnable {
     function owner() external view returns (address);
 }
 
+/// @title DIN Model Registry
+/// @notice Manages model registration requests, manifest updates, and per-model
+///         lifecycle controls. Deployed once per network behind a Transparent Proxy.
 contract DINModelRegistry is Initializable, OwnableUpgradeable {
     error NotModelOwner();
     error InvalidModelId();
@@ -117,6 +120,9 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         _disableInitializers();
     }
 
+    /// @notice Initialises the proxy, wires the validator stake contract, and sets
+    ///         default registration and update fees.
+    /// @param dinValidatorStake_ Address of the DinValidatorStake proxy.
     function initialize(address dinValidatorStake_) external initializer {
         if (dinValidatorStake_ == address(0)) revert ZeroAddress();
         __Ownable_init(msg.sender);
@@ -138,6 +144,14 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         _;
     }
 
+    /// @notice Submits a model registration request for DIN-Representative review.
+    /// @dev Both task contracts must be registered slashers and owned by msg.sender
+    ///      at submission time. These conditions are re-validated at approval.
+    /// @param manifestCID IPFS CID of the model manifest.
+    /// @param taskCoordinator Address of the model's DINTaskCoordinator contract.
+    /// @param taskAuditor Address of the model's DINTaskAuditor contract.
+    /// @param isOpenSource True for open-source fee tier; false for proprietary.
+    /// @return requestId Index of the created request in the modelRequests array.
     function requestModelRegistration(
         bytes32 manifestCID,
         address taskCoordinator,
@@ -179,6 +193,10 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit ModelRegistrationRequested(requestId, msg.sender);
     }
 
+    /// @notice Approves a pending registration request and adds the model to the registry.
+    /// @dev Re-validates slasher status and ownership at approval time to guard against
+    ///      state changes between submission and approval.
+    /// @param requestId Index into the modelRequests array.
     function approveModel(uint256 requestId) external onlyOwner {
         if (requestId >= modelRequests.length) revert InvalidRequestId();
 
@@ -221,6 +239,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit ModelApproved(requestId, modelId);
     }
 
+    /// @notice Rejects a pending registration request without adding a model.
+    /// @param requestId Index into the modelRequests array.
     function rejectModel(uint256 requestId) external onlyOwner {
         if (requestId >= modelRequests.length) revert InvalidRequestId();
 
@@ -233,6 +253,10 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit ModelRejected(requestId);
     }
 
+    /// @notice Submits a manifest update request for an existing model.
+    /// @param modelId ID of the model to update.
+    /// @param newManifestCID IPFS CID of the new manifest.
+    /// @return requestId Index of the created request in the manifestRequests array.
     function requestManifestUpdate(
         uint256 modelId,
         bytes32 newManifestCID
@@ -267,6 +291,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit ManifestUpdateRequested(requestId, modelId);
     }
 
+    /// @notice Approves a manifest update and writes the new CID to the model record.
+    /// @param requestId Index into the manifestRequests array.
     function approveManifestUpdate(uint256 requestId) external onlyOwner {
         if (requestId >= manifestRequests.length) revert InvalidRequestId();
 
@@ -283,6 +309,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit ManifestUpdated(requestId, req.modelId, req.newManifestCID);
     }
 
+    /// @notice Rejects a pending manifest update request.
+    /// @param requestId Index into the manifestRequests array.
     function rejectManifestUpdate(uint256 requestId) external onlyOwner {
         if (requestId >= manifestRequests.length) revert InvalidRequestId();
 
@@ -295,6 +323,14 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit ManifestUpdateRejected(requestId);
     }
 
+    /// @notice Returns the full record for a registered model.
+    /// @param modelId ID of the model to query.
+    /// @return owner Address of the model owner.
+    /// @return isOpenSource True if the model is open-source.
+    /// @return manifestCID IPFS CID of the current manifest.
+    /// @return createdAt Block timestamp at registration.
+    /// @return taskCoordinator Address of the model's DINTaskCoordinator.
+    /// @return taskAuditor Address of the model's DINTaskAuditor.
     function getModel(
         uint256 modelId
     )
@@ -321,18 +357,28 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         );
     }
 
+    /// @notice Returns the total number of approved models in the registry.
+    /// @return Count of registered models.
     function totalModels() external view returns (uint256) {
         return models.length;
     }
 
+    /// @notice Returns the total number of model registration requests submitted.
+    /// @return Count of entries in the modelRequests array.
     function totalModelRequests() external view returns (uint256) {
         return modelRequests.length;
     }
 
+    /// @notice Returns the total number of manifest update requests submitted.
+    /// @return Count of entries in the manifestRequests array.
     function totalManifestRequests() external view returns (uint256) {
         return manifestRequests.length;
     }
 
+    /// @notice Looks up the model ID associated with a given task coordinator address.
+    /// @param taskCoordinator Address to query.
+    /// @return exists True if a model is registered for this coordinator.
+    /// @return modelId The model's ID (only meaningful if exists is true).
     function getModelIdByTaskCoordinator(
         address taskCoordinator
     ) external view returns (bool exists, uint256 modelId) {
@@ -341,6 +387,10 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         return (true, val - 1);
     }
 
+    /// @notice Looks up the model ID associated with a given task auditor address.
+    /// @param taskAuditor Address to query.
+    /// @return exists True if a model is registered for this auditor.
+    /// @return modelId The model's ID (only meaningful if exists is true).
     function getModelIdByTaskAuditor(
         address taskAuditor
     ) external view returns (bool exists, uint256 modelId) {
@@ -349,38 +399,55 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         return (true, val - 1);
     }
 
+    /// @notice Disables a model, blocking manifest updates and new GI registrations.
+    /// @param modelId ID of the model to disable.
     function disableModel(uint256 modelId) external onlyOwner {
         if (modelId >= models.length) revert InvalidModelId();
         modelDisabled[modelId] = true;
         emit ModelDisabled(modelId);
     }
 
+    /// @notice Re-enables a previously disabled model.
+    /// @param modelId ID of the model to enable.
     function enableModel(uint256 modelId) external onlyOwner {
         if (modelId >= models.length) revert InvalidModelId();
         modelDisabled[modelId] = false;
         emit ModelEnabled(modelId);
     }
 
+    /// @notice Updates the registration fee for open-source models.
+    /// @param newFee New fee in wei.
     function setOpenSourceFee(uint256 newFee) external onlyOwner {
         openSourceFee = newFee;
         emit OpenSourceFeeUpdated(newFee);
     }
 
+    /// @notice Updates the registration fee for proprietary models.
+    /// @param newFee New fee in wei.
     function setProprietaryFee(uint256 newFee) external onlyOwner {
         proprietaryFee = newFee;
         emit ProprietaryFeeUpdated(newFee);
     }
 
+    /// @notice Updates the manifest update fee for open-source models.
+    /// @param newFee New fee in wei.
     function setOpenSourceUpdateFee(uint256 newFee) external onlyOwner {
         openSourceUpdateFee = newFee;
         emit OpenSourceUpdateFeeUpdated(newFee);
     }
 
+    /// @notice Updates the manifest update fee for proprietary models.
+    /// @param newFee New fee in wei.
     function setProprietaryUpdateFee(uint256 newFee) external onlyOwner {
         proprietaryUpdateFee = newFee;
         emit ProprietaryUpdateFeeUpdated(newFee);
     }
 
+    /// @notice Updates all four fee tiers in a single transaction.
+    /// @param _openSourceFee Open-source registration fee in wei.
+    /// @param _proprietaryFee Proprietary registration fee in wei.
+    /// @param _openSourceUpdateFee Open-source manifest update fee in wei.
+    /// @param _proprietaryUpdateFee Proprietary manifest update fee in wei.
     function setFees(
         uint256 _openSourceFee,
         uint256 _proprietaryFee,
@@ -400,6 +467,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         );
     }
 
+    /// @notice Transfers the contract's entire ETH balance to the specified address.
+    /// @param to Destination address for the fee withdrawal.
     function withdrawFees(address payable to) external onlyOwner {
         uint256 balance = address(this).balance;
         (bool success, ) = to.call{value: balance}("");
@@ -409,10 +478,17 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
 
     // Backward-compat shims — dincli calls daoAdmin() / setDAOAdmin().
     // Underlying auth model is OwnableUpgradeable; these are read-through facades.
+
+    /// @notice Returns the current admin address. Delegates to OwnableUpgradeable.owner().
+    /// @dev Compatibility shim preserving the pre-upgrade daoAdmin() ABI surface.
+    /// @return The current owner address.
     function daoAdmin() external view returns (address) {
         return owner();
     }
 
+    /// @notice Transfers ownership and emits DAOAdminUpdated for off-chain indexers.
+    /// @dev Compatibility shim preserving the pre-upgrade setDAOAdmin() ABI surface.
+    /// @param newAdmin Address to transfer ownership to.
     function setDAOAdmin(address newAdmin) external onlyOwner {
         address old = owner();
         transferOwnership(newAdmin);

@@ -12,6 +12,9 @@ interface IDinValidatorStake {
     function removeSlasherContract(address slasherContract) external;
 }
 
+/// @title DIN Coordinator
+/// @notice Central hub for ETH-to-DIN token exchange and slasher contract
+///         administration. Deployed once per network behind a Transparent Proxy.
 contract DinCoordinator is
     Initializable,
     OwnableUpgradeable,
@@ -45,6 +48,9 @@ contract DinCoordinator is
         _disableInitializers();
     }
 
+    /// @notice Initialises the proxy with the DIN token address and sets the
+    ///         default exchange rate to 1,000,000 DIN per ETH.
+    /// @param dinToken_ Address of the DinToken proxy.
     function initialize(address dinToken_) external initializer {
         if (dinToken_ == address(0)) revert InvalidAddress();
         __Ownable_init(msg.sender);
@@ -52,6 +58,9 @@ contract DinCoordinator is
         dinPerEth = 1_000_000 * 1e18;
     }
 
+    /// @notice Deposits ETH and mints the equivalent amount of DIN tokens to
+    ///         the caller at the current exchange rate.
+    /// @dev Rate is a fixed-point value scaled by 1e18.
     function depositAndMint() external payable nonReentrant {
         if (msg.value == 0) revert ZeroValue();
 
@@ -61,6 +70,7 @@ contract DinCoordinator is
         emit EthDepositAndDINminted(msg.sender, msg.value, mintAmount);
     }
 
+    /// @notice Withdraws the contract's entire ETH balance to the owner address.
     function withdraw() external onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
         if (balance == 0) return;
@@ -68,6 +78,9 @@ contract DinCoordinator is
         if (!success) revert TransferFailed();
     }
 
+    /// @notice Registers a task contract as an authorised slasher on the
+    ///         validator stake contract.
+    /// @param slasherContract Address of the task contract to authorise.
     function addSlasherContract(address slasherContract) external onlyOwner {
         if (slasherContract == address(0)) revert InvalidAddress();
         if (address(dinValidatorStakeContract) == address(0))
@@ -76,6 +89,8 @@ contract DinCoordinator is
         emit SlasherContractAdded(slasherContract);
     }
 
+    /// @notice Removes a task contract's slasher authorisation.
+    /// @param slasherContract Address of the task contract to deauthorise.
     function removeSlasherContract(address slasherContract) external onlyOwner {
         if (slasherContract == address(0)) revert InvalidAddress();
         if (address(dinValidatorStakeContract) == address(0))
@@ -84,6 +99,10 @@ contract DinCoordinator is
         emit SlasherContractRemoved(slasherContract);
     }
 
+    /// @notice Points the coordinator at the DinValidatorStake proxy address.
+    /// @dev Called once during initial deployment wiring. No guard prevents a
+    ///      second call; the owner is responsible for operational safety.
+    /// @param validatorStakeContract Address of the DinValidatorStake proxy.
     function updateValidatorStakeContract(
         address validatorStakeContract
     ) external onlyOwner {
@@ -92,6 +111,8 @@ contract DinCoordinator is
         emit ValidatorStakeContractUpdated(validatorStakeContract);
     }
 
+    /// @notice Updates the DIN-per-ETH exchange rate used by depositAndMint.
+    /// @param newRate New rate scaled by 1e18 (e.g. 1_000_000 * 1e18 = 1 M DIN per ETH).
     function updateDinPerEth(uint256 newRate) external onlyOwner {
         if (newRate == 0) revert ZeroValue();
         dinPerEth = newRate;
