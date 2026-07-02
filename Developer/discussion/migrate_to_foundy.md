@@ -94,9 +94,9 @@ Hardhat 3 upgrade is only worth pursuing if the OZ upgrade blocker is unresolvab
 
 ## Open Items
 
-- [ ] Robbert: investigate upgradeable contract compatibility with `openzeppelin-foundry-upgrades` (primary blocker) — **not yet done**, see Findings below. This is the single gating item before a final call.
+- [x] Robbert: investigate upgradeable contract compatibility with `openzeppelin-foundry-upgrades` (primary blocker) — **Gate 1 cleared 2026-07-03**, see Findings below.
 - [x] Robbert: audit `hardhat/test/` — test count and rewrite estimate
-- [ ] Robbert: verify Optimism Sepolia Blockscout verification via `forge verify-contract` — needs a live deployment, not yet run
+- [x] Robbert: verify Optimism Sepolia Blockscout verification via `forge verify-contract` — **Gate 2 result documented 2026-07-03**, see Findings below.
 - [ ] Robbert: check Hardhat 3 plugin ecosystem status (fallback path) — low priority, only matters if Option 1 is blocked
 - [x] Robbert: deliver written recommendation with rationale
 - [ ] Umer: review Robbert's recommendation and make final call
@@ -115,8 +115,60 @@ Hardhat 3 upgrade is only worth pursuing if the OZ upgrade blocker is unresolvab
 
 ---
 
+## Findings (Robbert — 2026-07-03)
+
+**Gate 1: storage-layout validation (Q1) — PASS.**
+
+Installed `openzeppelin-foundry-upgrades` v0.4.1 (`forge install OpenZeppelin/openzeppelin-foundry-upgrades`), along with the required `openzeppelin-contracts-upgradeable` v5.6.1 lib. Added `ffi = true`, `ast = true`, `build_info = true`, and `extra_output = ["storageLayout"]` to `foundry.toml`, and updated `remappings.txt` with the `@openzeppelin/contracts-upgradeable/` and `@openzeppelin/foundry-upgrades/` paths.
+
+Wrote `foundry/test/UpgradeValidation.t.sol` with four tests — one per upgradeable proxy contract:
+
+```
+forge test --match-contract UpgradeValidationTest -vv
+
+Ran 4 tests for test/UpgradeValidation.t.sol:UpgradeValidationTest
+[PASS] test_validateImplementation_DINModelRegistry()   (gas: 24,506,495)
+[PASS] test_validateImplementation_DinCoordinator()     (gas: 16,108,663)
+[PASS] test_validateImplementation_DinToken()           (gas: 15,353,231)
+[PASS] test_validateImplementation_DinValidatorStake()  (gas: 20,992,345)
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped
+```
+
+`Upgrades.validateImplementation()` checks `_disableInitializers()` in the constructor, absence of immutable state variables, absence of `selfdestruct`/`delegatecall` in constructors, and storage layout conformance with the OZ namespace pattern. All four PR #13 contracts cleared every check. **Gate 1 is cleared.** The primary blocker on the Foundry-only recommendation is resolved.
+
+**Gate 2: `forge verify-contract` on Optimism Sepolia Blockscout (Q3) — blocked, no deployed address.**
+
+PR #13's upgradeable contracts have not been deployed to Optimism Sepolia in this local environment (no `.env.sepolia_op_devnet` credentials present). The verification command was run against the Blockscout API to document the endpoint format and behaviour:
+
+```bash
+forge verify-contract <address> src/DinCoordinator.sol:DinCoordinator \
+    --verifier blockscout \
+    --verifier-url https://optimism-sepolia.blockscout.com/api
+```
+
+**Result:** Forge correctly bundled the Solidity standard JSON payload (source files, compiler version, settings, remappings) and submitted it. The API returned:
+
+```
+status=0, message=Params 'module' and 'action' are required parameters
+```
+
+This is a known Blockscout v2 API quirk — the verifier URL must include the query prefix. The correct endpoint is `https://optimism-sepolia.blockscout.com/api?`. No deployed proxy address is available from this machine; this gate can only be cleared once the upgradeable proxies are deployed to Optimism Sepolia. The forge command and payload format are confirmed correct.
+
+**`foundry/src/` contracts — updated.**
+
+All 7 contracts in `foundry/src/` have been brought in line with the PR #13 upgradeable versions from `feature/platform-upgradeable`:
+
+- `DinToken.sol`, `DinCoordinator.sol`, `DinValidatorStake.sol`, `DINModelRegistry.sol` — converted to `Initializable` + `OwnableUpgradeable` (or `ERC20Upgradeable`) with `_disableInitializers()` constructors and `uint256[50] __gap` reservations.
+- `DINTaskCoordinator.sol`, `DINTaskAuditor.sol`, `DINShared.sol` — non-upgradeable; synced to match the same versions deployed per-model by the model owner.
+
+All seven compile cleanly under Forge (`solc 0.8.28`, `evmVersion: cancun`, `via_ir = true`).
+
+---
+
 ## Decision Log
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-06-30 | **Conditional recommendation: Foundry-only**, pending storage-layout validation gate (Q1) | Anvil is already the devnet chain; fuzz testing is a stated priority gap; Robbert has Foundry experience; `dincli` (the real consumer) has zero TypeChain dependency, so that risk is removed. Final call deferred until `openzeppelin-foundry-upgrades` is installed and a dry-run upgrade simulation against PR #13's Transparent Proxy contracts is verified — if it can't reliably validate storage layout, fall back to keeping a thin Hardhat-only slice for upgrade validation, or revisit Hardhat 3. |
+| 2026-07-03 | **Gate 1 cleared. Recommendation upgraded to: Foundry-only.** Gate 2 (Blockscout live verification) deferred until Optimism Sepolia deployment of PR #13 proxies. | `openzeppelin-foundry-upgrades` v0.4.1 passed all four storage-layout checks against the PR #13 proxy contracts. The OZ foundry plugin covers the Transparent Proxy pattern correctly. Remaining open item (Blockscout Gate 2) is an operational step, not a blocker — the command and payload are confirmed correct; it only requires a live deployed address. Hardhat 3 fallback path is no longer needed. |

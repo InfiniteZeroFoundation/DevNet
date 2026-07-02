@@ -40,7 +40,15 @@ enum GIstates {
 interface IDinValidatorStake {
     function getStake(address validator) external view returns (uint256);
 
-    function slash(address validator, uint256 amount) external;
+    function minStake() external view returns (uint256);
+
+    function isValidatorActive(address validator) external view returns (bool);
+
+    function slash(
+        address validator,
+        uint256 amount,
+        bytes32 reason
+    ) external returns (uint256);
 
     function isSlasherContract(
         address slasherContract
@@ -60,6 +68,8 @@ interface IDINTaskAuditor {
 
     function finalizeEvaluation(uint _GI) external returns (bool);
 
+    function slashAuditors(uint _GI) external returns (bool);
+
     function approvedModelIndexes(
         uint _GI
     ) external view returns (uint[] memory);
@@ -70,72 +80,145 @@ interface IDINTaskAuditor {
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskAuditor
 // ─────────────────────────────────────────────────────────────────────────────
-error TA_NotTaskCoordinator(); // "Audit: Not task coordinator"
-error TA_AmountMustBePositive(); // "Audit: Amount must be positive"
-error TA_InvalidPassScore(); // "Audit: Invalid pass score, Pass score must be between 0 and 100"
-error TA_AuditorRegistrationNotOpen(); // "Audit: Auditor registration not open"
-error TA_WrongGI(); // "Audit: Invalid Global Iteration"
-error TA_AuditorAlreadyRegistered(); // "Audit: Auditor already registered"
-error TA_InsufficientStake(); // "Audit: Insufficient stake"
-error TA_LMSubmissionsNotOpen(); // "Audit: LM submissions not open"
-error TA_AlreadySubmitted(); // "Audit: Already submitted"
-error TA_MaxLMSubmissionsReached(); // "Audit: Max LM submissions reached"
-error TA_NotEnoughAuditors(); // "Audit: Not enough auditors"
-error TA_CannotCreateAuditorsBatches(); // "Audit: Cannot create auditors batches"
-error TA_BatchNotFound(); // "AuditBatch: Batch not found"
-error TA_BatchDoesNotExist(); // "AuditBatch: Batch does not exist"
-error TA_BatchIDMismatch(); // "AuditBatch: Batch ID mismatch"
-error TA_CannotSetTestDataAssignedFlag(); // "AuditBatch: Cannot set test data assigned flag"
-error TA_FlagMustBeTrue(); // " Flag must be true"
-error TA_FlagAlreadySet(); // "Flag already set"
-error TA_NotAssignedAuditor(); // "Audit: Not assigned auditor"
-error TA_InvalidModelIndex(); // "Audit: Invalid model index"
-error TA_CannotSetAuditScore(); // "Audit: Cannot set audit score"
-error TA_ScoreOutOfRange(); // "Audit: Score out of range"
-error TA_AlreadyVoted(); // "Audit: Already voted"
-error TA_CannotFinalizeEvaluation(); // "Audit: Cannot finalize evaluation"
+
+/// @dev Caller is not the DINTaskCoordinator contract paired with this auditor.
+error TA_NotTaskCoordinator();
+/// @dev Slash or fee amount must be greater than zero.
+error TA_AmountMustBePositive();
+/// @dev Pass score must be in the range [0, 100].
+error TA_InvalidPassScore();
+/// @dev Auditor registration phase is not currently open.
+error TA_AuditorRegistrationNotOpen();
+/// @dev The supplied GI index does not match the contract's current GI.
+error TA_WrongGI();
+/// @dev This address has already registered as an auditor for the current GI.
+error TA_AuditorAlreadyRegistered();
+/// @dev Caller's active stake is below the minimum required to register.
+error TA_InsufficientStake();
+/// @dev Local model submission phase is not currently open.
+error TA_LMSubmissionsNotOpen();
+/// @dev This client has already submitted a local model for the current GI.
+error TA_AlreadySubmitted();
+/// @dev The maximum number of local model submissions for the current GI has been reached.
+error TA_MaxLMSubmissionsReached();
+/// @dev Fewer auditors registered than the minimum required to proceed.
+error TA_NotEnoughAuditors();
+/// @dev GI state does not permit auditor batch creation at this time.
+error TA_CannotCreateAuditorsBatches();
+/// @dev The specified auditor batch index does not exist.
+error TA_BatchNotFound();
+/// @dev Batch lookup returned an uninitialised entry.
+error TA_BatchDoesNotExist();
+/// @dev The provided batch ID does not match the stored batch ID.
+error TA_BatchIDMismatch();
+/// @dev GI state does not permit setting the test data assigned flag.
+error TA_CannotSetTestDataAssignedFlag();
+/// @dev The flag value supplied must be true; false is not accepted here.
+error TA_FlagMustBeTrue();
+/// @dev The test data assigned flag for this batch has already been set.
+error TA_FlagAlreadySet();
+/// @dev Caller is not assigned to the target auditor batch.
+error TA_NotAssignedAuditor();
+/// @dev The supplied model index is outside the range of submitted models.
+error TA_InvalidModelIndex();
+/// @dev GI state does not permit setting an audit score at this time.
+error TA_CannotSetAuditScore();
+/// @dev Audit score must be in the range [0, 100].
+error TA_ScoreOutOfRange();
+/// @dev This auditor has already cast a vote for the specified model.
+error TA_AlreadyVoted();
+/// @dev Evaluation cannot be finalised; not all batches have been scored.
+error TA_CannotFinalizeEvaluation();
+/// @dev Auditor's validator status is not Active.
+error TA_AuditorNotActive();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator
 // ─────────────────────────────────────────────────────────────────────────────
-error TC_TaskAuditorContractCannotBeSet(); // "Task Coordinator: Task auditor contract cannot be set"
-error TC_CoordinatorCannotBeSetAsSlasher(); // "Task Coordinator cannot be set as slasher"
-error TC_CoordinatorIsNotSlasher(); // "Task Coordinator is not slasher"
-error TC_AuditorCannotBeSetAsSlasher(); // "Task Auditor cannot be set as slasher"
-error TC_AuditorIsNotSlasher(); // "Task Auditor is not slasher"
-error TC_GenesisModelHashCannotBeSet(); // "Task Coordinator: Genesis model hash cannot be set"
-error TC_GICannotBeStarted(); // "Task Coordinator: GI cannot be started"
-error TC_WrongGI(); // "Task Coordinator: Wrong GI"
-error TC_AggregatorsRegistrationCannotBeStarted(); // "Task Coordinator: Aggregators registration cannot be started"
-error TC_AggregatorsRegistrationNotOpen(); // "Task Coordinator: Aggregators registration not open"
-error TC_InsufficientStake(); // "Task Coordinator: Insufficient stake"
-error TC_ValidatorAlreadyRegistered(); // "Task Coordinator: Validator already registered"
-error TC_AggregatorsRegistrationCannotBeFinished(); // "Task Coordinator: Aggregators registration cannot be finished"
-error TC_AuditorsRegistrationCannotBeStarted(); // "Task Coordinator: Auditors registration cannot be started"
-error TC_AuditorsRegistrationCannotBeFinished(); // "Task Coordinator: Auditors registration cannot be finished"
-error TC_LMSubmissionsCannotBeStarted(); // "Task Coordinator: LM submissions cannot be started"
-error TC_LMSubmissionsNotStarted(); // "Task Coordinator: LM submissions not started"
-error TC_LMEvalCannotBeStarted(); // "Task Coordinator: LM eval cannot be started"
-error TC_LMEvalCannotBeFinished(); // "Task Coordinator: LM eval cannot be finished"
-error TC_FailedToCreateAuditorsBatches(); // "Task Coordinator: Failed to create auditors batches"
-error TC_CannotSetTestDataAssignedFlag(); // "Task Coordinator: Cannot set test data assigned flag"
-error TC_EvalPhaseNotClosed(); // "Task Coordinator: Eval phase not closed"
-error TC_NotEnoughValidators(); // "Task Coordinator: Not enough validators"
-error TC_NotEnoughApprovedModels(); // "Task Coordinator: Not enough approved models"
-error TC_BatchNotFound(); // "Task Coordinator: Batch not found"
-error TC_OnlyOneTier2Batch(); // "Task Coordinator: Only one tier 2 batch"
-error TC_NotReadyForT1Aggregation(); // "Task Coordinator: Not ready for T1 aggregation"
-error TC_T1AggregationNotStarted(); // "Task Coordinator: T1 aggregation not started"
-error TC_InvalidBatch(); // "Task Coordinator: Invalid batch"
-error TC_NotBatchAggregator(); // "Task Coordinator: Not batch aggregator"
-error TC_AlreadySubmitted(); // "Task Coordinator: Already submitted"
-error TC_NoSubmissions(); // "Task Coordinator: No submissions"
-error TC_NotReadyToFinalizeT1(); // "Task Coordinator: Not ready to finalize T1"
-error TC_NotReadyForT2Aggregation(); // "Task Coordinator: Not ready for T2 aggregation"
-error TC_T2AggregationNotStarted(); // "Task Coordinator: T2 aggregation not started"
-error TC_NotReadyToFinalizeT2(); // "Task Coordinator: Not ready to finalize T2"
-error TC_NotReadyToSlashAuditors(); // "Task Coordinator: Not ready to slash auditors"
-error TC_NotReadyToSlashAggregators(); // "Task Coordinator: Not ready to slash Aggregators"
-error TC_NotReadyToSetTier2Score(); // "Task Coordinator: Not ready to set tier 2 score"
-error TC_NotReadyToEndGI(); // "Task Coordinator: Not ready to end GI"
-error TC_FailedToFinalizeEvaluation(); // "Task Coordinator: Failed to finalize LMS evaluation"
+
+/// @dev The task auditor contract has already been set for this deployment.
+error TC_TaskAuditorContractCannotBeSet();
+/// @dev GI state does not permit registering the coordinator as a slasher.
+error TC_CoordinatorCannotBeSetAsSlasher();
+/// @dev The coordinator contract is not yet registered as a slasher.
+error TC_CoordinatorIsNotSlasher();
+/// @dev GI state does not permit registering the auditor as a slasher.
+error TC_AuditorCannotBeSetAsSlasher();
+/// @dev The auditor contract is not yet registered as a slasher.
+error TC_AuditorIsNotSlasher();
+/// @dev GI state does not permit setting the genesis model hash.
+error TC_GenesisModelHashCannotBeSet();
+/// @dev GI state does not permit starting a new Global Iteration.
+error TC_GICannotBeStarted();
+/// @dev The supplied GI index does not match the contract's current GI.
+error TC_WrongGI();
+/// @dev GI state does not permit opening aggregator registration.
+error TC_AggregatorsRegistrationCannotBeStarted();
+/// @dev Aggregator registration phase is not currently open.
+error TC_AggregatorsRegistrationNotOpen();
+/// @dev Caller's active stake is below the minimum required to register.
+error TC_InsufficientStake();
+/// @dev This address has already registered as an aggregator for the current GI.
+error TC_AggregatorAlreadyRegistered();
+/// @dev GI state does not permit closing aggregator registration.
+error TC_AggregatorsRegistrationCannotBeFinished();
+/// @dev GI state does not permit opening auditor registration.
+error TC_AuditorsRegistrationCannotBeStarted();
+/// @dev GI state does not permit closing auditor registration.
+error TC_AuditorsRegistrationCannotBeFinished();
+/// @dev GI state does not permit opening local model submissions.
+error TC_LMSubmissionsCannotBeStarted();
+/// @dev Local model submission phase has not been opened.
+error TC_LMSubmissionsNotStarted();
+/// @dev GI state does not permit starting the LMS evaluation phase.
+error TC_LMEvalCannotBeStarted();
+/// @dev GI state does not permit closing the LMS evaluation phase.
+error TC_LMEvalCannotBeFinished();
+/// @dev The call to DINTaskAuditor.createAuditorsBatches() returned false.
+error TC_FailedToCreateAuditorsBatches();
+/// @dev GI state does not permit setting the test data assigned flag.
+error TC_CannotSetTestDataAssignedFlag();
+/// @dev LMS evaluation phase has not been closed yet.
+error TC_EvalPhaseNotClosed();
+/// @dev Fewer active validators registered than required to form T1 batches.
+error TC_NotEnoughValidators();
+/// @dev Fewer models passed evaluation than the minimum required for T2 aggregation.
+error TC_NotEnoughApprovedModels();
+/// @dev The requested batch index does not exist.
+error TC_BatchNotFound();
+/// @dev T2 always produces exactly one batch; index must be 0.
+error TC_OnlyOneTier2Batch();
+/// @dev GI state does not permit starting T1 aggregation.
+error TC_NotReadyForT1Aggregation();
+/// @dev T1 aggregation phase has not been started.
+error TC_T1AggregationNotStarted();
+/// @dev The batch index or aggregator assignment is invalid.
+error TC_InvalidBatch();
+/// @dev Caller is not the assigned aggregator for this batch.
+error TC_NotBatchAggregator();
+/// @dev This aggregator has already submitted a result for this batch.
+error TC_AlreadySubmitted();
+/// @dev No aggregation submissions have been received for this batch.
+error TC_NoSubmissions();
+/// @dev Not all T1 batches have been finalised; cannot close T1 phase.
+error TC_NotReadyToFinalizeT1();
+/// @dev GI state does not permit starting T2 aggregation.
+error TC_NotReadyForT2Aggregation();
+/// @dev T2 aggregation phase has not been started.
+error TC_T2AggregationNotStarted();
+/// @dev The T2 batch has not received its submission yet.
+error TC_NotReadyToFinalizeT2();
+/// @dev GI state does not permit slashing auditors.
+error TC_NotReadyToSlashAuditors();
+/// @dev GI state does not permit slashing aggregators.
+error TC_NotReadyToSlashAggregators();
+/// @dev GI state does not permit recording the tier-2 score.
+error TC_NotReadyToSetTier2Score();
+/// @dev GI state does not permit ending the Global Iteration.
+error TC_NotReadyToEndGI();
+/// @dev The call to DINTaskAuditor.finalizeEvaluation() returned false.
+error TC_FailedToFinalizeEvaluation();
+/// @dev Aggregator's validator status is not Active.
+error TC_AggregatorNotActive();
+/// @dev The call to DINTaskAuditor.slashAuditors() returned false.
+error TC_FailedToSlashAuditors();
