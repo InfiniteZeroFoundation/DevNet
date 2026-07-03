@@ -108,3 +108,107 @@ def test_custom_provider_delegates_upload_and_retrieve(monkeypatch, tmp_path):
     assert cid == "normalized-custom-cid"
     assert status == 204
     assert output.read_text(encoding="utf-8") == "retrieved:abc123"
+
+
+def test_resolve_ipfs_config_returns_lighthouse_provider(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+
+    _write_config(config_file, {
+        "ipfs_provider": "lighthouse",
+        "ipfs_api_key_lighthouse": "lh-test-key",
+    })
+
+    resolved = utils.resolve_ipfs_config()
+
+    assert resolved.provider == "lighthouse"
+    assert resolved.api_key == "lh-test-key"
+
+
+def test_resolve_ipfs_config_uses_ipfs_provider_env_var(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "IPFS_PROVIDER=lighthouse\n"
+        "LIGHTHOUSE_API_KEY=lh-env-key\n",
+        encoding="utf-8",
+    )
+
+    _write_config(config_file, {})
+
+    resolved = utils.resolve_ipfs_config()
+
+    assert resolved.provider == "lighthouse"
+    assert resolved.api_key == "lh-env-key"
+
+
+def test_config_provider_wins_over_env_var(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("IPFS_PROVIDER=lighthouse\n", encoding="utf-8")
+
+    _write_config(config_file, {"ipfs_provider": "filebase"})
+
+    resolved = utils.resolve_ipfs_config()
+
+    assert resolved.provider == "filebase"
+
+
+def test_filebase_legacy_flat_api_key_still_resolves(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+
+    _write_config(config_file, {
+        "ipfs_provider": "filebase",
+        "ipfs_api_key": "legacy-flat-key",
+    })
+
+    resolved = utils.resolve_ipfs_config()
+
+    assert resolved.provider == "filebase"
+    assert resolved.api_key == "legacy-flat-key"
+
+
+def test_cross_provider_isolation_filebase_key_not_reused_for_lighthouse(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+
+    _write_config(config_file, {
+        "ipfs_provider": "lighthouse",
+        "ipfs_api_key_filebase": "fb-key",
+    })
+
+    resolved = utils.resolve_ipfs_config()
+
+    assert resolved.provider == "lighthouse"
+    assert resolved.api_key is None
+
+
+def test_env_provider_tests_still_pass_unchanged(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+
+    _write_config(config_file, {"ipfs_provider": "ipfs node"})
+    (tmp_path / ".env").write_text(
+        "IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0\n"
+        "IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0\n",
+        encoding="utf-8",
+    )
+
+    resolved = utils.resolve_ipfs_config()
+
+    assert resolved.provider == "env"
+    assert resolved.api_url_add == "http://127.0.0.1:5001/api/v0"
+    assert resolved.api_url_retrieve == "http://127.0.0.1:5001/api/v0"
