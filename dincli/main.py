@@ -49,10 +49,19 @@ def main(
         callback=None,
         is_eager=True,
     ),
+    wallet: str = typer.Option(
+        None,
+        "--wallet",
+        help="Select a named keystore (default: 'default')",
+        callback=None,
+        is_eager=True,
+    ),
     
 ):
     ctx.obj = DinContext()
     console = ctx.obj.console
+
+    ctx.obj.select_wallet(wallet)
 
     configured_network  = ctx.obj.select_network(network).network
     if configured_network:
