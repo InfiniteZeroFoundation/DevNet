@@ -31,3 +31,11 @@ tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
 /dincli/CliDOC.md
 /dincli/README.md
 foundry/.github/*
+
+# stray plaintext key/keystore files accidentally generated at repo root during
+# manual testing (dincli's real wallet state lives outside the repo, under
+# CONFIG_DIR e.g. ~/.config/dincli/wallets/ — these patterns are just a guard
+# against something like a wallet.json with a raw private key landing in a commit)
+/wallet.json
+/keystore.json
+/*.keystore.json
