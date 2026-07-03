@@ -236,6 +236,10 @@ SEPOLIA_OP_DEVNET_RPC_URL=<your_rpc_url>
 
 Add Ethereum private keys:
 
+> **⚠️ Local development only.** The `ETH_PRIVATE_KEY_<n>` pattern stores raw
+> private keys in plaintext. Production validators: use the encrypted keystore
+> instead — see [wallet-setup.md](./guides/wallet-setup.md).
+
 ```env
 ETH_PRIVATE_KEY_0=...
 ETH_PRIVATE_KEY_1=...

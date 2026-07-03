@@ -1,5 +1,7 @@
 # IPFS Configuration Guide
 
+**Prerequisite:** [Wallet Setup](./wallet-setup.md) — set up a production keystore before configuring IPFS and connecting to the network.
+
 `dincli` supports three IPFS modes:
 
 1. `env`: use URLs from the current shell or project `.env`
