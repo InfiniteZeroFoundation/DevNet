@@ -15,6 +15,10 @@ from platformdirs import user_cache_dir, user_config_dir
 from rich.console import Console
 from web3 import Web3
 
+_ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_PASSWORD_TTL_DEFAULT = 900
+_PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
+
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger
 from dincli.services.cid_utils import get_cid_from_bytes32
@@ -31,8 +35,82 @@ WORKER_CACHE_DIR = Path(user_cache_dir("dincli-worker"))
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
+WALLETS_DIR = CONFIG_DIR / "wallets"
 
-MIN_STAKE = 10*10**18 
+LEGACY_WALLET_FILE = WALLET_FILE
+
+MIN_STAKE = 10*10**18
+
+def validate_account_name(name: str) -> str:
+    name = name.strip()
+    if not _ACCOUNT_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid account name '{name}'. Must be 1-64 chars of A-Z, a-z, 0-9, '-', '_'."
+        )
+    return name
+
+
+def wallet_path_for_name(name: str) -> Path:
+    resolved = validate_account_name(name)
+    return WALLETS_DIR / f"wallet_{resolved}.json"
+
+
+def resolve_wallet_path(name: str) -> tuple[Path, bool]:
+    named_path = wallet_path_for_name(name)
+    if named_path.exists():
+        return named_path, True
+    if name == "default" and LEGACY_WALLET_FILE.exists():
+        return LEGACY_WALLET_FILE, True
+    return named_path, False
+
+
+def ensure_wallets_dir() -> None:
+    WALLETS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(WALLETS_DIR, 0o700)
+    except OSError:
+        pass
+
+
+def atomic_write_wallet(path: Path, data: dict) -> None:
+    ensure_wallets_dir()
+    tmp_path = path.with_suffix(".json.tmp")
+    try:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _extract_keystore(data: dict) -> dict:
+    if isinstance(data, dict) and "keystore" in data:
+        inner = data["keystore"]
+        if isinstance(inner, dict) and "crypto" in inner:
+            return inner
+    if isinstance(data, dict) and "crypto" in data:
+        return data
+    raise ValueError("Data is not a recognised keystore (wrapper, bare, or demo).")
+
+
+def _cleanup_stale_session() -> None:
+    session_file = CONFIG_DIR / ".session"
+    if session_file.exists():
+        try:
+            session_file.unlink()
+            console.print("[dim]Removed stale .session cache from previous dincli version.[/dim]")
+        except OSError:
+            pass
+
 
 ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_op_devnet", "mainnet"] # "sepolia_testnet"
 SUPPORTED_IPFS_PROVIDERS = ("env", "filebase", "custom")
@@ -303,104 +381,141 @@ def get_demo_account_index(address: str) -> int:
     raise ValueError(f"Address {address} not found in demo accounts.")
 
 
-def load_account() -> Account:
-    """Load wallet from ~/.din/wallet.json (handles demo + encrypted modes)."""
+def load_account(name: str = "default") -> Account:
+    """Load a named wallet, falling back to legacy wallet.json for 'default'."""
 
+    wallet_path, exists = resolve_wallet_path(name)
+    if not exists:
+        raise FileNotFoundError(
+            f"No wallet found for name '{name}' at {wallet_path}. "
+            f"Run `dincli system connect-wallet --name {name}` first."
+        )
 
-    if not WALLET_FILE.exists():
-        raise FileNotFoundError(f"No wallet found at {WALLET_FILE}. Run `dincli system connect-wallet` first.")
-
-    with open(WALLET_FILE) as f:
+    with open(wallet_path) as f:
         data = json.load(f)
 
-    # Demo mode: plaintext private key
     if data.get("demo_mode") is True:
         private_key = data["private_key"]
         return Account.from_key(private_key)
 
-    # Encrypted mode: check for cached password or env var
-    password = _get_password()
+    keystore_data = _extract_keystore(data)
+
+    password = _get_password(name)
     try:
-        private_key = Account.decrypt(data, password)
-        # Verify strict permissions and save to cache if successful and not from env
-        _cache_password_if_needed(password)
+        private_key = Account.decrypt(keystore_data, password)
+        _cache_password_in_memory(name, password)
+        _cleanup_stale_session()
         return Account.from_key(private_key)
     except ValueError:
-        # If decryption fails, clear cache and retry once if it was a cached/env password
-        if _clear_session_cache():
-             print("[yellow]Cached password failed, prompting...[/yellow]")
-             password = getpass("Enter wallet password: ")
-             try:
-                private_key = Account.decrypt(data, password)
-                _cache_password_if_needed(password)
+        if _clear_memory_cache(name):
+            console.print("[yellow]Cached password failed, prompting...[/yellow]")
+            password = getpass("Enter wallet password: ")
+            try:
+                private_key = Account.decrypt(keystore_data, password)
+                _cache_password_in_memory(name, password)
+                _cleanup_stale_session()
                 return Account.from_key(private_key)
-             except ValueError:
-                 pass
+            except ValueError:
+                pass
         raise ValueError("Invalid password or corrupted keystore.")
 
-def _get_password(prompt: bool = True) -> str:
+
+def _get_password(name: str = "default", prompt: bool = True) -> str:
     """
     Get password from:
     1. DIN_WALLET_PASSWORD env var
-    2. Session cache file (~/.dincli/.session)
+    2. In-memory cache (keyed by name)
     3. Interactive prompt
     """
+    _cleanup_stale_session()
 
-
-    # 1. Environment variable
     env_pass = get_env_key("DIN_WALLET_PASSWORD")
     if env_pass:
-        console.print(f"[green]Got Wallet Password DIN_WALLET_PASSWORD from {os.getcwd()}/.env[/green]")
         return env_pass
 
-    # 2. Session cache
-    session_file = CONFIG_DIR / ".session"
-    if session_file.exists():
-        try:
-            # Check file permissions (must be 600)
-            st = session_file.stat()
-            if st.st_mode & 0o777 != 0o600:
-                print("[yellow]Session file permissions unsafe (should be 600). Ignoring.[/yellow]")
-            # Check timeout (default 15 mins)
-            elif (time.time() - st.st_mtime) < (15 * 60):
-                with open(session_file, "r") as f:
-                    console.print(f"[green]Got Wallet Password from session cache {session_file}[/green]")
-                    return f.read().strip()
-        except Exception:
-            pass # ignore errors, fall back to prompt
+    now = time.time()
+    entry = _PASSWORD_CACHE.get(name)
+    if entry is not None:
+        cached_pw, expiry = entry
+        if now < expiry:
+            return cached_pw
+        del _PASSWORD_CACHE[name]
 
-    # 3. Prompt
     if prompt:
         return getpass("Enter wallet password: ")
-    else:
-        return ""
+    return ""
 
-def _cache_password_if_needed(password: str):
-    """Save password to session cache if not from env var."""
+
+def _cache_password_in_memory(name: str, password: str) -> None:
     if get_env_key("DIN_WALLET_PASSWORD"):
         return
+    ttl = int(os.environ.get("DIN_PASSWORD_TTL", _PASSWORD_TTL_DEFAULT))
+    _PASSWORD_CACHE[name] = (password, time.time() + ttl)
 
-    session_file = CONFIG_DIR / ".session"
-    try:
-        # Create with strict permissions
-        # Remove if exists to ensure permissions are reset
-        if session_file.exists():
-            session_file.unlink()
-        
-        fd = os.open(session_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(password)
-            console.print("[green]Password cached successfully.[/green]")
-    except Exception as e:
-        console.print(f"[yellow]Failed to cache password: {e}[/yellow]")
 
-def _clear_session_cache() -> bool:
-    """Remove session cache file. Returns True if a file was removed."""
-    session_file = CONFIG_DIR / ".session"
-    if session_file.exists():
-        session_file.unlink()
-        return True
-    return False 
+def _clear_memory_cache(name: str | None = None) -> bool:
+    if name is not None:
+        return _PASSWORD_CACHE.pop(name, None) is not None
+    _PASSWORD_CACHE.clear()
+    return True
+
+
+def list_accounts(active_name: str = "default") -> list[dict]:
+    entries: list[dict] = []
+    seen_names: set[str] = set()
+    has_named_default = False
+
+    if WALLETS_DIR.exists():
+        for f in sorted(WALLETS_DIR.iterdir()):
+            if not f.suffix == ".json":
+                continue
+            stem = f.stem
+            if stem.startswith("wallet_"):
+                name = stem[len("wallet_"):]
+                if not name:
+                    continue
+                try:
+                    with open(f) as fh:
+                        data = json.load(fh)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if name == "default":
+                    has_named_default = True
+                entries.append({
+                    "name": name,
+                    "address": data.get("address", "unknown"),
+                    "source": data.get("source", "unknown"),
+                    "active": name == active_name,
+                })
+                seen_names.add(name)
+
+    if not has_named_default and "default" not in seen_names and LEGACY_WALLET_FILE.exists():
+        try:
+            with open(LEGACY_WALLET_FILE) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        label = "default (legacy)"
+        entries.append({
+            "name": label,
+            "address": data.get("address", "unknown"),
+            "source": data.get("demo_mode") and "demo" or "legacy",
+            "active": active_name == "default",
+        })
+
+    return entries
+
+
+def get_active_account_name(ctx_obj=None) -> str:
+    if ctx_obj is not None and hasattr(ctx_obj, "wallet_name") and ctx_obj.wallet_name:
+        return validate_account_name(ctx_obj.wallet_name)
+    env_name = os.environ.get("DIN_WALLET_NAME", "").strip()
+    if env_name:
+        return validate_account_name(env_name)
+    config_name = get_config("wallet_name", "")
+    if config_name:
+        return validate_account_name(config_name.strip())
+    return "default"
     
     
 def load_din_info() -> dict:

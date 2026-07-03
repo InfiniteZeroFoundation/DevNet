@@ -25,7 +25,11 @@ from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
                               get_env_key, load_cid_services, load_config,
                               load_din_info, normalize_ipfs_provider,
                               resolve_ipfs_config, resolve_task_coordinator_address,
-                              save_config)
+                              save_config,
+                              validate_account_name, wallet_path_for_name,
+                              atomic_write_wallet, resolve_wallet_path,
+                              list_accounts, get_active_account_name,
+                              _extract_keystore, ensure_wallets_dir)
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
 
@@ -67,7 +71,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting"]:
+    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read-wallet", "show-index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -218,6 +222,20 @@ def configure_network(ctx: typer.Context):
 
     console.print(f"[green]Network configured successfully: {effective_network}[/green]")
 
+@app.command("set-wallet")
+def set_wallet(ctx: typer.Context, name: str = typer.Argument(..., help="Wallet name to set as the persistent default")):
+    """Persist a default named wallet for this machine (config wallet_name)."""
+    console = ctx.obj.console
+    try:
+        resolved = validate_account_name(name)
+    except ValueError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
+    config = load_config()
+    config["wallet_name"] = resolved
+    save_config(config)
+    console.print(f"[green]Default wallet set to '{resolved}'.[/green]")
+
 @app.command("configure-demo")
 def configure_demo(ctx: typer.Context,
     mode: str = typer.Option("yes", "--mode", help="Set demo mode: yes or no")
@@ -263,6 +281,8 @@ def connect_wallet(ctx: typer.Context,
     privatekey: Optional[str] = typer.Argument(None, help="Your Ethereum private key (0x...)"),
     key_file: Optional[Path] = typer.Option(None, "--key-file", "-f", help="Path to file containing private key"),
     account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),
+    keystore: Optional[Path] = typer.Option(None, "--keystore", help="Import a standard Ethereum JSON keystore file"),
+    name: Optional[str] = typer.Option("default", "--name", "-n", help="Label for the saved keystore (default 'default')"),
 ):
     """
     Connect a wallet to DIN CLI.
@@ -270,6 +290,9 @@ def connect_wallet(ctx: typer.Context,
     Usage:
       # Interactive prompt (Recommended)
       dincli system connect-wallet
+
+      # Import a standard keystore file (Production)
+      dincli system connect-wallet --keystore ./keystore.json --name validator
 
       # Connect using a key file (Secure)
       dincli system connect-wallet --key-file ~/.dincli/wallet.key
@@ -284,13 +307,17 @@ def connect_wallet(ctx: typer.Context,
     In demo mode (--yes), stores plaintext key for Hardhat testing.
     """
 
+    # Validate account name
+    resolved_name = validate_account_name(name or "default")
+
     # Validate mutual exclusivity
     auth_methods = [
         (privatekey, "private key argument"),
         (key_file, "key file"),
-        (account, "account index")
+        (account, "account index"),
+        (keystore, "keystore file"),
     ]
-    provided_methods = [name for val, name in auth_methods if val is not None]
+    provided_methods = [n for val, n in auth_methods if val is not None]
     console = ctx.obj.console
     
     if len(provided_methods) > 1:
@@ -298,12 +325,40 @@ def connect_wallet(ctx: typer.Context,
         raise typer.Exit(1)
 
     console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
+    console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
     
     demo_mode = get_config("demo_mode")
+    source = "created"
 
-    
-    if account is not None and demo_mode:
-        # Load from demo accounts
+    # --- keystore import path ---
+    if keystore is not None:
+        keystore = keystore.expanduser()
+        if not keystore.exists():
+            console.print(f"[red]❌ Keystore file not found: {keystore}[/red]")
+            raise typer.Exit(1)
+        try:
+            with open(keystore, 'r') as f:
+                imported_ks = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            console.print(f"[red]❌ Failed to read keystore file: {e}[/red]")
+            raise typer.Exit(1)
+        passphrase = getpass("Keystore passphrase: ")
+        try:
+            inner_ks = _extract_keystore(imported_ks)
+        except ValueError:
+            console.print("[red]❌ File does not contain a recognisable keystore.[/red]")
+            raise typer.Exit(1)
+        try:
+            decrypted_key = Account.decrypt(inner_ks, passphrase)
+        except ValueError:
+            console.print("[red]❌ Wrong passphrase or corrupted keystore.[/red]")
+            raise typer.Exit(1)
+        acct = Account.from_key(decrypted_key)
+        address = acct.address
+        inner_keystore = inner_ks
+        source = "imported"
+
+    elif account is not None and demo_mode:
         try:
             privatekey = get_demo_private_key(account)
         except (FileNotFoundError, IndexError) as e:
@@ -315,7 +370,6 @@ def connect_wallet(ctx: typer.Context,
             raise typer.Exit(1)
             
     elif key_file is not None:
-        # Load from file
         key_file = key_file.expanduser() 
         if not key_file.exists():
             console.print(f"[red]❌ Key file not found: {key_file}[/red]")
@@ -330,94 +384,124 @@ def connect_wallet(ctx: typer.Context,
             raise typer.Exit(1)
             
     elif privatekey is not None:
-        # Explicit argument
         console.print("[yellow]⚠️  Warning: Providing private key as argument is insecure (saved in shell history). Use interactive mode or --key-file instead.[/yellow]")
         config = load_config()
         demo_mode = config.get("demo_mode", False)
         
     else:
-        # Interactive prompt
         console.print("[cyan]Enter your Ethereum private key (input will be hidden):[/cyan]")
         privatekey = getpass("Private Key: ").strip()
         config = load_config()
         demo_mode = config.get("demo_mode", False)
 
-    # Validate format (for all methods)
-    if not privatekey.startswith("0x") or len(privatekey) != 66:
-        console.print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
-        raise typer.Exit(1)
+    # For non-keystore paths: validate key format and derive address
+    if keystore is None:
+        if not privatekey.startswith("0x") or len(privatekey) != 66:
+            console.print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
+            raise typer.Exit(1)
     
-    # Ensure config dir exists
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Derive address
-    acct = Account.from_key(privatekey)
-
-
-    if demo_mode:
-        # Save plaintext private key (for Hardhat/local testing ONLY)
+    if keystore is None:
+        acct = Account.from_key(privatekey)
+        address = acct.address
+    if demo_mode and keystore is None:
         wallet_data = {
-            "address": acct.address,
-            "private_key": privatekey,  # ⚠️ PLAINTEXT — ONLY FOR MOCK!
+            "address": address,
+            "private_key": privatekey,
             "demo_mode": True
         }
-        with open(WALLET_FILE, "w") as f:
+        ensure_wallets_dir()
+        wallet_path = wallet_path_for_name(resolved_name)
+        with open(wallet_path, "w") as f:
             json.dump(wallet_data, f, indent=4)
         console.print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
-        console.print(f"[yellow]Address:[/yellow] {acct.address}")
-        console.print(f"[cyan]Wallet File:[/cyan] {WALLET_FILE}")
+        console.print(f"[yellow]Address:[/yellow] {address}")
+        console.print(f"[cyan]Wallet File:[/cyan] {wallet_path}")
         
     else:
+        if keystore is not None:
+            ks_payload = inner_keystore
+        else:
+            password = _get_password(resolved_name, False)
+            if password == "":
+                password = getpass("Create wallet password: ")
+                confirm = getpass("Confirm password: ")
+                if password != confirm:
+                    console.print("[red]Passwords do not match![/red]")
+                    raise typer.Exit()
+            ks_payload = Account.encrypt(privatekey, password)
 
-        password = _get_password(False)
+        wrapper = {
+            "version": 1,
+            "address": address,
+            "keystore": ks_payload,
+            "source": source,
+            "name": resolved_name,
+        }
 
-        if password == "":
-            # Ask for encryption password
-            password = getpass("Create wallet password: ")
-            confirm = getpass("Confirm password: ")
-
-            if password != confirm:
-                console.print("[red]Passwords do not match![/red]")
-                raise typer.Exit()
-
-        # Use eth-account to create an encrypted keystore
-        keystore = Account.encrypt(privatekey, password)
-
-        # Save encrypted wallet locally
-        with open(WALLET_FILE, "w") as f:
-            json.dump(keystore, f, indent=4)
+        wallet_path = wallet_path_for_name(resolved_name)
+        atomic_write_wallet(wallet_path, wrapper)
 
         console.print(f"[green]Wallet connected successfully![/green]")
-        console.print(f"[green] Active Account Address:[/green] {acct.address}")
-        console.print(f"[green]Encrypted keystore saved at:[/green] {WALLET_FILE}")
+        console.print(f"[green] Active Account Address:[/green] {address}")
+        console.print(f"[green]Encrypted keystore saved at:[/green] {wallet_path}")
     
 @app.command()
 def read_wallet(ctx: typer.Context):
     """
-    Read and display wallet info.
+    Read and display wallet info for the active named wallet.
     In demo mode, shows private key. Otherwise, shows only address (after decrypting).
     """
     console = ctx.obj.console
-    if not WALLET_FILE.exists():
-        console.print("[red]No wallet found. Run `dincli system connect-wallet` first.[/red]")
+    active_name = ctx.obj.resolved_wallet_name
+    wallet_path, exists = resolve_wallet_path(active_name)
+
+    if not exists:
+        console.print(f"[red]No wallet found for '{active_name}'. Run `dincli system connect-wallet` first.[/red]")
         raise typer.Exit(1)
 
-    with open(WALLET_FILE) as f:
+    with open(wallet_path) as f:
         data = json.load(f)
 
-    # Check if it's demo mode (plaintext)
     if isinstance(data, dict) and data.get("demo_mode") is True:
         console.print("[bold green]🔐 Wallet (Demo Mode - Plaintext)[/bold green]")
+        console.print(f"[green]Name:[/green] {active_name}")
         console.print(f"[yellow]Address:[/yellow] {data['address']}")
         console.print(f"[red]Private Key:[/red] {data['private_key']}")
         console.print("[cyan]⚠️  This key is stored in plaintext — for local testing only![/cyan]")
         return
+
+    console.print(f"[green]Name:[/green] {active_name}")
     try:
         console.print(f"[yellow]Address:[/yellow] {ctx.obj.account.address}")
         console.print("[green]✅ Wallet decrypted successfully.[/green]")
     except Exception as e:
         console.print(f"[red]❌ {e}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("list-accounts")
+def list_managed_accounts(ctx: typer.Context):
+    """
+    List all named wallet accounts and their addresses (no decrypt needed).
+    Marks the currently active wallet.
+    """
+    console = ctx.obj.console
+    active_name = ctx.obj.resolved_wallet_name
+    accounts = list_accounts(active_name)
+
+    if not accounts:
+        console.print("[yellow]No wallets found. Run `dincli system connect-wallet` to create one.[/yellow]")
+        return
+
+    console.print("[bold cyan]Named wallets:[/bold cyan]")
+    for e in accounts:
+        marker = "[green](active)[/green]" if e["active"] else ""
+        source_tag = f" [{e['source']}]" if e.get("source") not in ("unknown",) else ""
+        console.print(f"  [bold]{e['name']}[/bold] → {e['address']}{source_tag} {marker}")
+
+    console.print(f"\n[dim]Active wallet name:[/dim] {active_name}")
 
 
 @app.command("send-eth")
@@ -638,10 +722,19 @@ def todo(
         else:
             console.print(f"[green]✅ Config file contains a demo mode: {config.get('demo_mode')}[/green]")
 
-    if not WALLET_FILE.exists():
-        console.print(f"[red]❌ Wallet file does not exist: {WALLET_FILE}[/red], run 'dincli system connect-wallet' to create it.")
+    active_name = ctx.obj.resolved_wallet_name
+    wallet_path, wallet_exists = resolve_wallet_path(active_name)
+    if not wallet_exists:
+        console.print(f"[red]❌ No wallet found for '{active_name}' at {wallet_path}.[/red]\n  Run 'dincli system connect-wallet' to create one.")
     else:
-        console.print(f"[green]✅ Wallet file exists: {WALLET_FILE}[/green]")
+        console.print(f"[green]✅ Wallet exists for '{active_name}': {wallet_path}[/green]")
+
+    accounts = list_accounts(active_name)
+    if len(accounts) > 1:
+        console.print("[cyan]Named wallets:[/cyan]")
+        for e in accounts:
+            marker = " ✓" if e["active"] else ""
+            console.print(f"  {e['name']} → {e['address']}{marker}")
 
     env_key = "DIN_WALLET_PASSWORD"
     cwd = os.getcwd()
@@ -688,8 +781,8 @@ def todo(
                 f"[dim]💡 You can get free RPC URLs from services like Infura, Alchemy, or QuickNode.[/dim]\n"
                 f"[dim]🔒 Remember: Never commit [.env] to version control.[/dim]"
             )
-        else:
-            console.print(f"[green]✅ RPC URL found in environment variable: {rpc_env_key} in {cwd}/.env file[/green]")
+            else:
+                console.print(f"[green]✅ RPC URL found in environment variable: {rpc_env_key} in {cwd}/.env file[/green]")
 
     ipfs_config = resolve_ipfs_config()
     console.print(f"[green]✅ Active IPFS provider: {ipfs_config.provider}[/green]")
