@@ -307,8 +307,14 @@ def connect_wallet(ctx: typer.Context,
     In demo mode (--yes), stores plaintext key for Hardhat testing.
     """
 
+    console = ctx.obj.console
+
     # Validate account name
-    resolved_name = validate_account_name(name or "default")
+    try:
+        resolved_name = validate_account_name(name or "default")
+    except ValueError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
 
     # Validate mutual exclusivity
     auth_methods = [
@@ -318,7 +324,6 @@ def connect_wallet(ctx: typer.Context,
         (keystore, "keystore file"),
     ]
     provided_methods = [n for val, n in auth_methods if val is not None]
-    console = ctx.obj.console
     
     if len(provided_methods) > 1:
         console.print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
