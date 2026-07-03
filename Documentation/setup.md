@@ -158,7 +158,19 @@ dincli system configure-ipfs --provider filebase --api-key <your_api_key>
 > Please create a bucket on Filebase and get bucket's IPFS RPC API token from [Filebase Console](https://console.filebase.com/keys). Use that as `your_api_key` in the command above.
 > IPFS RPC API token dashboard is located at bottom of the page.
 
-### Option B — `.env` provider (default)
+### Option B — Lighthouse (Filecoin-backed IPFS)
+
+Obtain an API key from [Lighthouse](https://files.lighthouse.storage/) and configure it:
+
+```bash
+dincli system configure-ipfs --provider lighthouse --api-key <your_api_key>
+```
+
+> [!NOTE]
+> API keys are created via [files.lighthouse.storage](https://files.lighthouse.storage) or the `lighthouse-web3` CLI (requires a wallet signature). Uploads are pinned to Filecoin via Lighthouse's pinning service; retrieval uses Lighthouse's IPFS gateway.
+> Alternatively, set `LIGHTHOUSE_API_KEY=<key>` in your `.env` file as a fallback.
+
+### Option C — `.env` provider (default)
 
 If you do not configure a provider, `dincli` uses the `env` provider automatically.
 
@@ -177,9 +189,9 @@ dincli system configure-ipfs --provider env
 
 > Ensure your IPFS backend retains uploaded artifacts. If using a local node, manage pinning and garbage collection carefully.
 
-### Option C — Custom IPFS service
+### Option D — Custom IPFS service
 
-When the built-in `env` and `filebase` providers are not enough, point `dincli` at your own Python module:
+When the built-in `env`, `filebase`, and `lighthouse` providers are not enough, point `dincli` at your own Python module:
 
 ```bash
 dincli system configure-ipfs --provider custom --service-path /abs/path/to/custom_ipfs.py

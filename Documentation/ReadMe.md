@@ -8,7 +8,7 @@ This guide walks you through setting up the `dincli` environment. It includes in
 
 ## [IPFS Configuration Guide](./guides/ipfs.md)
 
-This guide explains the three supported IPFS modes in `dincli`: `.env`-backed, Filebase, and fully custom Python services.
+This guide explains the four supported IPFS modes in `dincli`: `.env`-backed, Filebase, Lighthouse (Filecoin), and fully custom Python services.
 
 ## [Common Commands](./common.md)
 

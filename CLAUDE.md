@@ -64,7 +64,7 @@ Differential privacy is opt-in per model via a nested `dp` block in the manifest
 
 ### IPFS abstraction
 
-`dincli/services/ipfs.py` supports three interchangeable upload/retrieve backends (env-var-configured IPFS node, Filebase, or a fully custom Python provider) selected via `resolve_ipfs_config()`/`ipfs_provider` config — see `Documentation/guides/ipfs.md`. All CID-bearing artifacts (services, manifests, model weights, ABIs) flow through this layer rather than direct HTTP calls scattered through the CLI.
+`dincli/services/ipfs.py` supports four interchangeable upload/retrieve backends (env-var-configured IPFS node, Filebase, Lighthouse (Filecoin), or a fully custom Python provider) selected via `resolve_ipfs_config()`/`ipfs_provider` config — see `Documentation/guides/ipfs.md`. All CID-bearing artifacts (services, manifests, model weights, ABIs) flow through this layer rather than direct HTTP calls scattered through the CLI.
 
 ### Networks
 

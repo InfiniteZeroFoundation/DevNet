@@ -2,11 +2,12 @@
 
 **Prerequisite:** [Wallet Setup](./wallet-setup.md) — set up a production keystore before configuring IPFS and connecting to the network.
 
-`dincli` supports three IPFS modes:
+`dincli` supports four IPFS modes:
 
 1. `env`: use URLs from the current shell or project `.env`
 2. `filebase`: use Filebase's managed IPFS RPC
-3. `custom`: load a Python module that implements the IPFS operations
+3. `lighthouse`: use Lighthouse's Filecoin-backed IPFS pinning service
+4. `custom`: load a Python module that implements the IPFS operations
 
 ## Default behavior
 
@@ -34,6 +35,7 @@ Set the provider explicitly:
 ```bash
 dincli system configure-ipfs --provider env
 dincli system configure-ipfs --provider filebase --api-key <filebase_rpc_token>
+dincli system configure-ipfs --provider lighthouse --api-key <lighthouse_api_key>
 dincli system configure-ipfs --provider custom --service-path /abs/path/to/custom_ipfs.py
 ```
 
@@ -70,6 +72,22 @@ Notes:
 - the token is stored in the user-level `dincli` config
 - `dincli` uploads through Filebase's RPC API and issues a pin request after upload
 - `api_secret` is optional metadata only; the built-in Filebase flow uses the API key
+
+## `lighthouse` provider
+
+Use Lighthouse when you want Filecoin-backed IPFS pinning:
+
+```bash
+dincli system configure-ipfs --provider lighthouse --api-key <lighthouse_api_key>
+# or: export LIGHTHOUSE_API_KEY=<key>   (fallback if no key is configured)
+```
+
+Notes:
+
+- uploads go to Filecoin via Lighthouse's pinning service; retrieval uses Lighthouse's IPFS gateway
+- API keys are created via [files.lighthouse.storage](https://files.lighthouse.storage) or the `lighthouse-web3` CLI (requires a wallet signature)
+- the API key is stored per-provider (`ipfs_api_key_lighthouse`), so switching from Filebase does not silently reuse its key
+- `LIGHTHOUSE_API_KEY` env var is honored as a fallback when no key is configured
 
 ## `custom` provider
 
@@ -115,5 +133,6 @@ dincli system configure-ipfs --provider custom --service-path /abs/path/to/custo
 ## Migration notes
 
 - legacy config values such as `"ipfs node"` are treated as `env`
+- API keys are now stored per-provider (`ipfs_api_key_<provider>`) instead of one flat `ipfs_api_key` field; existing Filebase configs keep working unchanged via a legacy fallback
 - existing call sites do not need to change; `dincli.services.ipfs.upload_to_ipfs` and `retrieve_from_ipfs` still provide the shared interface used across the codebase
 - system diagnostics now validate only the active provider instead of always requiring `.env` IPFS URLs
