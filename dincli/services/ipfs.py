@@ -12,6 +12,10 @@ from dincli.cli.utils import (
     resolve_ipfs_config,
 )
 from dincli.services.cid_utils import get_cidv1base32_from_cid
+from dincli.services.ipfs_lighthouse import (
+    upload_via_lighthouse,
+    retrieve_via_lighthouse,
+)
 
 console = Console()
 
@@ -54,6 +58,7 @@ def _provider_label(provider: str) -> str:
     return {
         "env": "environment-backed IPFS",
         "filebase": "Filebase",
+        "lighthouse": "Lighthouse (Filecoin)",
         "custom": "custom IPFS service",
     }.get(provider, provider)
 
@@ -170,6 +175,9 @@ def upload_to_ipfs(file_path, msg=None):
         elif provider == "filebase":
             console.print("[bold green]Uploading via Filebase...[/bold green]")
             cid = _upload_via_filebase(config, normalized_path)
+        elif provider == "lighthouse":
+            console.print("[bold green]Uploading via Lighthouse (Filecoin)...[/bold green]")
+            cid = upload_via_lighthouse(config, normalized_path)
         elif provider == "custom":
             console.print("[bold green]Uploading via Custom IPFS provider...[/bold green]")
             cid = _upload_via_custom(config, normalized_path, msg)
@@ -238,6 +246,10 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
             status_code = response.status_code
         elif provider == "filebase":
             response = _retrieve_via_filebase(config, hash_value)
+            _write_response_to_file(response, safe_path)
+            status_code = response.status_code
+        elif provider == "lighthouse":
+            response = retrieve_via_lighthouse(config, hash_value)
             _write_response_to_file(response, safe_path)
             status_code = response.status_code
         elif provider == "custom":

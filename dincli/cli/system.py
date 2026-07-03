@@ -20,7 +20,7 @@ from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
                               CONFIG_FILE, WORKER_CACHE_DIR,
                               print_tx_info,
                               SUPPORTED_IPFS_PROVIDERS, _get_password,
-                              _confirm_or_exit,
+                              _confirm_or_exit, _clean_optional_string,
                               get_config, get_demo_private_key,
                               get_env_key, load_cid_services, load_config,
                               load_din_info, normalize_ipfs_provider,
@@ -818,6 +818,11 @@ def todo(
             console.print("[red]❌ Filebase API key not found in dincli config. Run `dincli system configure-ipfs --provider filebase --api-key <token>`.[/red]")
         else:
             console.print("[green]✅ Filebase API key found in dincli config.[/green]")
+    elif ipfs_config.provider == "lighthouse":
+        if ipfs_config.api_key is None:
+            console.print("[red]❌ Lighthouse API key not found. Run `dincli system configure-ipfs --provider lighthouse --api-key <token>` or set LIGHTHOUSE_API_KEY env var.[/red]")
+        else:
+            console.print("[green]✅ Lighthouse API key found.[/green]")
     elif ipfs_config.provider == "custom":
         if ipfs_config.service_path is None:
             console.print("[red]❌ Custom IPFS service path not found in dincli config. Run `dincli system configure-ipfs --provider custom --service-path <path>`.[/red]")
@@ -1045,7 +1050,7 @@ def dump_abi(
 # dincli system
 @app.command("configure-ipfs")
 def configure_ipfs(ctx: typer.Context,
-    provider: str = typer.Option(None, "--provider", "-p", help="IPFS provider [env, filebase, custom]"),
+    provider: str = typer.Option(None, "--provider", "-p", help="IPFS provider [env, filebase, lighthouse, custom]"),
     api_key: str = typer.Option(None, "--api-key", "-k", help="API key for the selected provider"),
     api_secret: str = typer.Option(None, "--api-secret", "-s", help="Optional API secret for the selected provider"),
     service_path: Path = typer.Option(None, "--service-path", help="Python module implementing upload_to_ipfs and retrieve_from_ipfs for the custom provider"),
@@ -1061,6 +1066,8 @@ def configure_ipfs(ctx: typer.Context,
             ctx.obj.console.print("[cyan]Source:[/cyan] `IPFS_API_URL_ADD` and `IPFS_API_URL_RETRIEVE` from the current shell or .env")
         elif active.provider == "filebase":
             ctx.obj.console.print("[cyan]Source:[/cyan] Filebase token stored in dincli config")
+        elif active.provider == "lighthouse":
+            ctx.obj.console.print("[cyan]Source:[/cyan] Lighthouse token stored in dincli config (`ipfs_api_key_lighthouse`) or LIGHTHOUSE_API_KEY env var")
         elif active.provider == "custom":
             ctx.obj.console.print(f"[cyan]Source:[/cyan] {active.service_path}")
         raise typer.Exit()
@@ -1070,11 +1077,15 @@ def configure_ipfs(ctx: typer.Context,
         ctx.obj.console.print(f"[red]❌ Invalid provider. Use {', '.join(SUPPORTED_IPFS_PROVIDERS)}.[/red]")
         raise typer.Exit(1)
 
-    existing_api_key = config.get("ipfs_api_key")
+    resolved_existing_key = _clean_optional_string(config.get(f"ipfs_api_key_{selected_provider}"))
+    if not resolved_existing_key and selected_provider == "filebase":
+        resolved_existing_key = _clean_optional_string(config.get("ipfs_api_key"))
+    if not resolved_existing_key and selected_provider == "lighthouse":
+        resolved_existing_key = _clean_optional_string(get_env_key("LIGHTHOUSE_API_KEY", verbose=False))
     existing_service_path = config.get("ipfs_service_path")
 
-    if selected_provider == "filebase" and not (api_key or existing_api_key):
-        ctx.obj.console.print("[red]❌ Please specify an API key for the Filebase provider.[/red]")
+    if selected_provider in ("filebase", "lighthouse") and not (api_key or resolved_existing_key):
+        ctx.obj.console.print(f"[red]❌ Please specify an API key for the {selected_provider} provider.[/red]")
         raise typer.Exit(1)
     if selected_provider == "custom" and not (service_path or existing_service_path):
         ctx.obj.console.print("[red]❌ Please specify --service-path for the custom provider.[/red]")
@@ -1083,7 +1094,9 @@ def configure_ipfs(ctx: typer.Context,
     config["ipfs_provider"] = selected_provider
 
     if api_key is not None:
-        config["ipfs_api_key"] = api_key.strip()
+        config[f"ipfs_api_key_{selected_provider}"] = api_key.strip()
+        if selected_provider == "filebase":
+            config["ipfs_api_key"] = api_key.strip()
     if api_secret is not None:
         config["ipfs_api_secret"] = api_secret.strip()
     if service_path is not None:
@@ -1096,6 +1109,8 @@ def configure_ipfs(ctx: typer.Context,
         ctx.obj.console.print("[cyan] IPFS Runtime source:[/cyan] `IPFS_API_URL_ADD` and `IPFS_API_URL_RETRIEVE` from the current shell or .env")
     elif selected_provider == "filebase":
         ctx.obj.console.print("[cyan]Runtime source:[/cyan] Filebase RPC API token stored in dincli config")
+    elif selected_provider == "lighthouse":
+        ctx.obj.console.print("[cyan]Runtime source:[/cyan] Lighthouse token stored in dincli config (`ipfs_api_key_lighthouse`) or LIGHTHOUSE_API_KEY env var")
     elif selected_provider == "custom":
         ctx.obj.console.print(f"[cyan]Runtime source:[/cyan] {config['ipfs_service_path']}")
    

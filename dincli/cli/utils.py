@@ -113,7 +113,7 @@ def _cleanup_stale_session() -> None:
 
 
 ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_op_devnet", "mainnet"] # "sepolia_testnet"
-SUPPORTED_IPFS_PROVIDERS = ("env", "filebase", "custom")
+SUPPORTED_IPFS_PROVIDERS = ("env", "filebase", "lighthouse", "custom")
 
 LEGACY_IPFS_PROVIDER_ALIASES = {
     "": "env",
@@ -211,14 +211,21 @@ def resolve_ipfs_config():
     Resolve the effective IPFS runtime configuration.
     """
     config = load_config()
-    provider = normalize_ipfs_provider(config.get("ipfs_provider"))
+    configured_provider = config.get("ipfs_provider")
+    provider = normalize_ipfs_provider(configured_provider) if configured_provider else normalize_ipfs_provider(get_env_key("IPFS_PROVIDER", verbose=False))
     raw_service_path = _clean_optional_string(config.get("ipfs_service_path"))
+
+    api_key = _clean_optional_string(config.get(f"ipfs_api_key_{provider}"))
+    if not api_key and provider == "filebase":
+        api_key = _clean_optional_string(config.get("ipfs_api_key"))
+    if not api_key and provider == "lighthouse":
+        api_key = _clean_optional_string(get_env_key("LIGHTHOUSE_API_KEY", verbose=False))
 
     return IPFSConfig(
         provider=provider,
         api_url_add=_clean_optional_string(get_env_key("IPFS_API_URL_ADD", verbose=False)),
         api_url_retrieve=_clean_optional_string(get_env_key("IPFS_API_URL_RETRIEVE", verbose=False)),
-        api_key=_clean_optional_string(config.get("ipfs_api_key")),
+        api_key=api_key,
         api_secret=_clean_optional_string(config.get("ipfs_api_secret")),
         service_path=Path(raw_service_path).expanduser().resolve() if raw_service_path else None,
     )
