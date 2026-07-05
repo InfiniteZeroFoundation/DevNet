@@ -18,7 +18,8 @@ from dincli.cli.log import logger, logging
 from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
                               get_config, get_manifest, get_manifest_key, get_w3,
                               load_account, load_config, load_din_info,
-                              resolve_network)
+                              resolve_network, get_active_account_name,
+                              validate_account_name)
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
 
@@ -41,7 +42,9 @@ class DinContext:
         self.console = Console()
         self._logger = logger
         self.network_arg = network_arg
+        self.wallet_name: Optional[str] = None
         self._resolved_network: Optional[str] = None
+        self._resolved_wallet_name: Optional[str] = None
         self._w3 = None
         self._account = None
         self._config = None
@@ -72,7 +75,8 @@ class DinContext:
     def account(self):
         if self._account is None:
             try:
-                self._account = load_account()
+                name = self.resolved_wallet_name
+                self._account = load_account(name=name)
             except Exception as e:
                 self.console.print(f"[red]Error loading account: {e}[/red]")
                 import sys
@@ -80,11 +84,22 @@ class DinContext:
         return self._account
 
     @property
+    def resolved_wallet_name(self) -> str:
+        if self._resolved_wallet_name is None:
+            try:
+                self._resolved_wallet_name = get_active_account_name(self)
+            except ValueError as e:
+                self.console.print(f"[red]Error loading account: {e}[/red]")
+                import sys
+                sys.exit(1)
+        return self._resolved_wallet_name
+
+    @property
     def din_logger(self):
         return self._logger
 
     def get_en_w3_account_console(self, model_id: Optional[int] = None):
-        self.console.print(f"[bold green]✓ Active Account Address:[/bold green] {self.account.address}")
+        self.console.print(f"[bold green]✓ Active Wallet:[/bold green] {self.resolved_wallet_name} ({self.account.address})")
         endpoint = self.w3.provider.endpoint_uri
         if endpoint:
             safe_endpoint = sanitize_rpc_url(endpoint)
@@ -110,7 +125,19 @@ class DinContext:
             self._w3 = None
         return self
 
-
+    def select_wallet(self, name: Optional[str]):
+        """Update wallet selection and invalidate account cache if changed."""
+        if name:
+            try:
+                validate_account_name(name)
+            except ValueError as e:
+                self.console.print(f"[red]{e}[/red]")
+                raise typer.Exit(1)
+            self.wallet_name = name
+            self._resolved_wallet_name = None
+            self._account = None
+        return self
+    
     def get_deployed_din_coordinator_contract(self, verbose: bool = True):
         dincoordinator_address = load_din_info()[self.network]["coordinator"]
         if verbose:

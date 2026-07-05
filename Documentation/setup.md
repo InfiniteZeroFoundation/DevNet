@@ -109,6 +109,11 @@ SEPOLIA_OP_DEVNET_RPC_URL=https://optimism-sepolia.infura.io/v3/<auth_token>
 
 ### Private Key
 
+> **⚠️ Local development only.** The `ETH_PRIVATE_KEY_<n>` pattern stores raw
+> private keys in plaintext. If you are running a **production validator node**,
+> use the encrypted keystore instead — see
+> [wallet-setup.md](./guides/wallet-setup.md).
+
 Store private keys using the pattern `ETH_PRIVATE_KEY_<account_index>` in `.env` file at root of your project. You can define as many accounts as needed by incrementing the index.
 
 ```bash

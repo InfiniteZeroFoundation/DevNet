@@ -244,16 +244,32 @@ identical path inside the container**.
 
 ```
 $DIN_STATE_DIR/
-├── config/dincli/            → CONFIG_DIR        wallet.json, config.json, .session
+├── config/dincli/            → CONFIG_DIR        wallets/, config.json, (legacy) .session
 ├── cache/dincli/             → CACHE_DIR         manifests, downloaded models, job files
 └── cache/dincli-worker/      → WORKER_CACHE_DIR  pip-installed worker packages (can be large)
 ```
+
+> **`.session` removed.** Earlier versions of `dincli` wrote a plaintext password
+> cache at `config/dincli/.session`. This file is no longer created — if it still
+> exists from an older version, `dincli` deletes it automatically on first run.
+> The file is safe to remove manually.
 
 | Directory | Survives upgrade? | Safe to delete? |
 | --- | --- | --- |
 | `config/dincli/` | **Yes — and you must keep it** | ❌ **No.** This is your **wallet and config.** Losing it loses your keys. Back it up. |
 | `cache/dincli/` | Yes | ⚠️ Mostly. Re-downloaded from chain/IPFS on next use. Don't delete mid-job. |
 | `cache/dincli-worker/` | Yes | ✅ **Yes.** Worker package cache; reclaim disk freely. Reinstalled on next job. |
+
+### Dev vs production key management
+
+- **Development/testing:** Configure demo mode (`dincli system configure-demo --mode yes`)
+  or use `ETH_PRIVATE_KEY_<n>` in `.env`. These are plaintext paths — convenient,
+  but **not for production**.
+- **Production:** Import an **encrypted keystore** using `--keystore` into a named
+  account, then select it via `--wallet` or `DIN_WALLET_NAME`. See
+  [wallet-setup.md](../../../Documentation/guides/wallet-setup.md) and
+  [keystore-migration.md](../../../Documentation/guides/keystore-migration.md).
+
 
 > The commands below use `$DIN_STATE_DIR`. `docker compose` reads `.env`
 > internally, but your shell does not — so in a fresh shell run `source .env`

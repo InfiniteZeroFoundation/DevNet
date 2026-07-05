@@ -2,6 +2,8 @@
 
 This file is the minimal setup entrypoint for contributors working on DevNet.
 
+**Prerequisite:** [Wallet Setup](../Documentation/guides/wallet-setup.md) — for development, use demo mode or `ETH_PRIVATE_KEY_<n>` in `.env`. Never commit real keys.
+
 ## Local Python Setup
 
 ```bash

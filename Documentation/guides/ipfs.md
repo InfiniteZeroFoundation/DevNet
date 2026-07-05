@@ -113,5 +113,6 @@ dincli system configure-ipfs --provider custom --service-path /abs/path/to/custo
 ## Migration notes
 
 - legacy config values such as `"ipfs node"` are treated as `env`
+- API keys are now stored per-provider (`ipfs_api_key_<provider>`) instead of one flat `ipfs_api_key` field; existing Filebase configs keep working unchanged via a legacy fallback
 - existing call sites do not need to change; `dincli.services.ipfs.upload_to_ipfs` and `retrieve_from_ipfs` still provide the shared interface used across the codebase
 - system diagnostics now validate only the active provider instead of always requiring `.env` IPFS URLs
