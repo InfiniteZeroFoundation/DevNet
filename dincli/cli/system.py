@@ -283,6 +283,7 @@ def connect_wallet(ctx: typer.Context,
     account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),
     keystore: Optional[Path] = typer.Option(None, "--keystore", help="Import a standard Ethereum JSON keystore file"),
     name: Optional[str] = typer.Option("default", "--name", "-n", help="Label for the saved keystore (default 'default')"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt when overwriting an existing named wallet"),
 ):
     """
     Connect a wallet to DIN CLI.
@@ -304,10 +305,14 @@ def connect_wallet(ctx: typer.Context,
       dincli system connect-wallet --account 3
     
     Encrypt and store the user's wallet for DIN CLI.
-    In demo mode (--yes), stores plaintext key for Hardhat testing.
+    In configured demo mode, stores plaintext key for Hardhat testing.
     """
 
     console = ctx.obj.console
+    # Direct callers (e.g. tests) may omit --yes; Typer then passes an OptionInfo
+    # object (truthy), which would silently bypass the overwrite guard below.
+    # Normalize to a real bool so the guard behaves the same on direct calls.
+    yes = yes if isinstance(yes, bool) else False
 
     # Validate account name
     try:
@@ -324,18 +329,19 @@ def connect_wallet(ctx: typer.Context,
         (keystore, "keystore file"),
     ]
     provided_methods = [n for val, n in auth_methods if val is not None]
-    
+
     if len(provided_methods) > 1:
         console.print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
-    console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
-    
     demo_mode = get_config("demo_mode")
     source = "created"
 
-    # --- keystore import path ---
+    # --- keystore import: non-secret validation only ---
+    # Runs before the overwrite guard so a missing/malformed keystore fails fast
+    # without prompting, and so no secret (passphrase) is requested before the
+    # overwrite decision. The passphrase/decrypt happen after the guard, below.
+    inner_keystore = None
     if keystore is not None:
         keystore = keystore.expanduser()
         if not keystore.exists():
@@ -347,21 +353,38 @@ def connect_wallet(ctx: typer.Context,
         except (json.JSONDecodeError, OSError) as e:
             console.print(f"[red]❌ Failed to read keystore file: {e}[/red]")
             raise typer.Exit(1)
-        passphrase = getpass("Keystore passphrase: ")
         try:
-            inner_ks = _extract_keystore(imported_ks)
+            inner_keystore = _extract_keystore(imported_ks)
         except ValueError:
             console.print("[red]❌ File does not contain a recognisable keystore.[/red]")
             raise typer.Exit(1)
+        source = "imported"
+
+    # --- overwrite guard ---
+    # Confirm before overwriting an existing named keystore, and before any secret
+    # prompt. Keys on the exact file to be written (a legacy wallet.json for the
+    # 'default' name is a non-destructive migration and intentionally not guarded).
+    target_path = wallet_path_for_name(resolved_name)
+    if target_path.exists() and not yes:
+        console.print(f"[yellow]A wallet named '{resolved_name}' already exists at {target_path}.[/yellow]")
+        if not typer.confirm("Overwrite it?"):
+            console.print("[yellow]Aborted. Existing wallet left unchanged.[/yellow]")
+            raise typer.Exit(0)
+
+    console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
+    console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
+
+    # --- resolve secret material ---
+    if keystore is not None:
+        # Uses the keystore already extracted above — no re-read/re-parse.
+        passphrase = getpass("Keystore passphrase: ")
         try:
-            decrypted_key = Account.decrypt(inner_ks, passphrase)
+            decrypted_key = Account.decrypt(inner_keystore, passphrase)
         except ValueError:
             console.print("[red]❌ Wrong passphrase or corrupted keystore.[/red]")
             raise typer.Exit(1)
         acct = Account.from_key(decrypted_key)
         address = acct.address
-        inner_keystore = inner_ks
-        source = "imported"
 
     elif account is not None and demo_mode:
         try:
@@ -428,7 +451,10 @@ def connect_wallet(ctx: typer.Context,
         if keystore is not None:
             ks_payload = inner_keystore
         else:
-            password = _get_password(resolved_name, False)
+            # is_new_wallet=True: never reuse a stale in-memory-cached password when
+            # creating/overwriting a wallet; force the create/confirm flow (env var
+            # DIN_WALLET_PASSWORD is still honored for automation).
+            password = _get_password(resolved_name, False, is_new_wallet=True)
             if password == "":
                 password = getpass("Create wallet password: ")
                 confirm = getpass("Confirm password: ")
