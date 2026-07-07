@@ -244,7 +244,7 @@ identical path inside the container**.
 
 ```
 $DIN_STATE_DIR/
-├── config/dincli/            → CONFIG_DIR        wallets/, config.json, (legacy) .session/
+├── config/dincli/            → CONFIG_DIR        wallets/, config.json, (legacy) .session
 ├── cache/dincli/             → CACHE_DIR         manifests, downloaded models, job files
 └── cache/dincli-worker/      → WORKER_CACHE_DIR  pip-installed worker packages (can be large)
 ```

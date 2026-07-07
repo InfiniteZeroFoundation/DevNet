@@ -503,7 +503,7 @@ def list_managed_accounts(ctx: typer.Context):
     console.print("[bold cyan]Named wallets:[/bold cyan]")
     for e in accounts:
         marker = "[green](active)[/green]" if e["active"] else ""
-        source_tag = f" [{e['source']}]" if e.get("source") not in ("unknown",) else ""
+        source_tag = f" ({e['source']})" if e.get("source") not in ("unknown",) else ""
         console.print(f"  [bold]{e['name']}[/bold] → {e['address']}{source_tag} {marker}")
 
     console.print(f"\n[dim]Active wallet name:[/dim] {active_name}")
