@@ -17,4 +17,6 @@ docs/
 lib/*
 node_modules/*
 test/*
+!test/dao/
+!test/dao/**
 script/*
