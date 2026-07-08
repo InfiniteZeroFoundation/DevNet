@@ -134,7 +134,7 @@ Relevant code paths:
 **Difficulty:** Intermediate → Advanced  
 **Area:** Client Services & Tooling  
 **Detailed issue:** [issues/client-data-labeling.md](issues/client-data-labeling.md)  
-**Detailed tooling:** [tooling/client-labeling.md](tooling/client-labeling.md)
+**Detailed tooling:** [tooling/client-labeling.md](proposals/client-labeling.md)
 
 Address the challenge of client-side data labeling where raw edge data is unlabeled but federated learning requires high-quality labeled datasets.
 
@@ -145,7 +145,7 @@ Current focus areas:
 
 #### Curated Review Packet
 - [Developer/issues/client-data-labeling.md](/home/azureuser/projects/devnet/Developer/issues/client-data-labeling.md)
-- [Developer/tooling/client-labeling.md](/home/azureuser/projects/devnet/Developer/tooling/client-labeling.md)
+- [Developer/proposals/client-labeling.md](/home/azureuser/projects/devnet/Developer/proposals/client-labeling.md)
 - [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py)
 - [dincli/services/client.py](/home/azureuser/projects/devnet/dincli/services/client.py)
 
@@ -172,5 +172,5 @@ Open a discussion or issue if you need onboarding help, architecture clarificati
 We welcome contributors from AI/ML, cryptography, distributed systems, blockchain, privacy-preserving computing, and open-source communities.
 
 [Contribution Guide →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/CONTRIBUTING.md)  
-[Getting Started →](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md)  
+[Getting Started →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)  
 [Say hello →](mailto:abrahamnash@protonmail.com)

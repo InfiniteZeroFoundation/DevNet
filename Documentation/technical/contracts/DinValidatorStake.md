@@ -1,6 +1,6 @@
 # DinValidatorStake — Technical Documentation
 
-Technical documentation for [`hardhat/contracts/DinValidatorStake.sol`](hardhat/contracts/DinValidatorStake.sol).
+Technical documentation for [`hardhat/contracts/DinValidatorStake.sol`](../../../hardhat/contracts/DinValidatorStake.sol).
 
 ## Overview
 

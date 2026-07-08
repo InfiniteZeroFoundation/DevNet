@@ -38,7 +38,7 @@ The tool should let a model owner:
 5. connect a wallet and deploy them
 6. surface the deployed addresses as manifest-ready outputs
 
-The generated workflow should stay compatible with the current deployment path documented in `Documentation/model-owner.md`.
+The generated workflow should stay compatible with the current deployment path documented in `Documentation/public/roles/model-owner.md`.
 
 ## Current Contract Model
 

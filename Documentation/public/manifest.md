@@ -1,7 +1,7 @@
 # Manifest
 
 For a lower-level explanation of runtime resolution, service loading, and the
-new nested `dp` configuration block, see [technical/manifest.md](technical/manifest.md).
+new nested `dp` configuration block, see [technical/manifest.md](../technical/manifest.md).
 
 The manifest is a JSON file containing the metadata for your model and task. It serves as the central configuration that ties together the model, its services, and contract addresses.
 
@@ -111,7 +111,7 @@ pip3 install -r requirements.txt
 
 ## Example Manifest
 
-Please find the example/template manifest file at [cache_model_0/manifest.json](../cache_model_0/manifest.json)
+Please find the example/template manifest file at [cache_model_0/manifest.json](../../cache_model_0/manifest.json)
 
 
 ---

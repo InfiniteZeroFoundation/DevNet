@@ -26,10 +26,10 @@ dincli system connect-wallet --account <account_id>
 > [!WARNING]
 > `--account <index>` (using `ETH_PRIVATE_KEY_<n>` from `.env`) is
 > **local development only**. Production validators should use the encrypted
-> keystore — see [wallet-setup.md](guides/wallet-setup.md).
+> keystore — see [wallet-setup.md](../guides/wallet-setup.md).
 
 > [!NOTE]
-> More on wallet configuration can be found in the [DIN CLI Documentation](common.md).
+> More on wallet configuration can be found in the [DIN CLI Documentation](../cli-reference.md).
 
 
 In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model. 
@@ -155,7 +155,7 @@ The Model Owner must provide Python service files that implement task-specific l
 
 Each service file must be uploaded and pinned to IPFS. The resulting CID is referenced in the manifest file.
 
-> For detailed documentation on each service file and required function signatures, see [services.md](services.md).
+> For detailed documentation on each service file and required function signatures, see [services.md](../services.md).
 
 ### 6.2. Create Manifest File
 
@@ -165,7 +165,7 @@ The manifest is a JSON file containing model metadata, contract addresses, and s
 <root_dir>/tasks/<network>/task_<coordinator_address>/manifest.json
 ```
 
-> For the full manifest schema, field descriptions, and an example manifest, see [manifest.md](manifest.md).
+> For the full manifest schema, field descriptions, and an example manifest, see [manifest.md](../manifest.md).
 
   
 ## 7. Create and Submit Genesis Model - Model Owner

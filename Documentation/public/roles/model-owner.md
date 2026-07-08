@@ -66,11 +66,11 @@ dincli system get-fees
 
 **Manifest file**
 
-The manifest is a JSON file containing the metadata for your model and task. For the full schema, field descriptions, and an example, see [manifest.md](manifest.md).
+The manifest is a JSON file containing the metadata for your model and task. For the full schema, field descriptions, and an example, see [manifest.md](../manifest.md).
 
 **Service files**
 
-The Model Owner must provide a set of service files tailored to the task. For detailed documentation on each service file and the required function signatures, see [services.md](services.md).
+The Model Owner must provide a set of service files tailored to the task. For detailed documentation on each service file and the required function signatures, see [services.md](../services.md).
 
 ---
 

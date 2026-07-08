@@ -38,7 +38,7 @@ pip install dincli-0.1.0-py3-none-any.whl
 pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@main#subdirectory=dist
 ```
 
-> for any missing dependency please install it using pip. Please see a complete dependency list in [requirements.txt](../cache_model_0/requirements.txt)
+> for any missing dependency please install it using pip. Please see a complete dependency list in [requirements.txt](../../cache_model_0/requirements.txt)
 
 ### Verify Installation
 

@@ -23,7 +23,7 @@ Make the task’s scoring scenario explicit and machine-readable.
 
 - `Documentation/technical/manifest.md`
 - `cache_model_0/manifest.json`
-- optionally `Documentation/auditors.md`, `Documentation/model-owner.md`, and `Developer/tooling/model-owner-services.md`
+- optionally `Documentation/public/roles/auditors.md`, `Documentation/public/roles/model-owner.md`, and `Developer/proposals/model-owner-services.md`
 
 ### Changes
 
@@ -280,12 +280,12 @@ Make the new scenario-driven model understandable for contributors and model own
 
 ### Files To Update
 
-- `Documentation/technical/DINTaskAuditor.md`
+- `Documentation/technical/contracts/DINTaskAuditor.md`
 - `Documentation/technical/manifest.md`
-- `Documentation/auditors.md`
-- `Documentation/model-owner.md`
-- `Developer/tooling/model-owner-services.md`
-- optionally `Developer/tooling/model-owner-contracts.md`
+- `Documentation/public/roles/auditors.md`
+- `Documentation/public/roles/model-owner.md`
+- `Developer/proposals/model-owner-services.md`
+- optionally `Developer/proposals/model-owner-contracts.md`
 
 ### Changes
 

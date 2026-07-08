@@ -101,7 +101,7 @@ DIN tokens are obtained by depositing ETH through the `DinCoordinator` contract
 dincli aggregator dintoken buy 0.00001
 ```
 
-See [DIN-workflow.md](../DIN-workflow.md) for the complete token workflow.
+See [DIN-workflow.md](../workflows/din-workflow.md) for the complete token workflow.
 
 ---
 

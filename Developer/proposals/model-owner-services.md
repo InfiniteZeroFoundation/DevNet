@@ -38,7 +38,7 @@ The tool should let a model owner:
 4. generate the final Python artifacts
 5. surface the generated artifact paths and manifest-ready entries
 
-The output should remain compatible with the existing service and manifest model documented in `Documentation/services.md` and `Documentation/manifest.md`.
+The output should remain compatible with the existing service and manifest model documented in `Documentation/public/services.md` and `Documentation/public/manifest.md`.
 
 ## Expected Inputs
 

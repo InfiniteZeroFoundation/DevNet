@@ -21,6 +21,8 @@ Create a feature branch, commit your changes, and open a pull request to `develo
 
 The materials in `/Developer` are working design input, not fixed specifications. They represent current thinking, not final decisions.
 
+**Where documents live:** `Documentation/` describes what exists in the code on `develop` (`public/` for network participants, `technical/` for people modifying the code); `Developer/` holds plans, designs, proposals, tasks, and process docs. Before adding a document, read "Where does a new document go?" in [README.md](README.md).
+
 Good contributors challenge assumptions, question tradeoffs, and propose alternatives. If you see a better path, say so. The goal is the right architecture, not defending the existing one.
 
 ## Ways To Contribute

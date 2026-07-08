@@ -218,7 +218,7 @@ Before participating, ensure dincli is correctly installed and configured.
 
 Please read:
 
-https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/setup.md
+https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/setup.md
 
 ### Initialize DIN CLI
 

@@ -8,6 +8,8 @@ InfiniteZero / DIN Protocol DevNet: a federated-learning network coordinated by 
 
 The Solidity tree at `hardhat/contracts/` (Hardhat workflow) is used for deployment/verification tooling. 
 
+Docs convention: `Documentation/` describes what exists in the code on `develop` (not the live Sepolia deployment) — `Documentation/public/` for network participants, `Documentation/technical/` for code readers. `Developer/` holds forward-looking material: `design/` (planned mechanism designs), `issues/` (backlog), `proposals/` (tooling proposals), `tasks/` (contributor task specs), `discussion/`, `rejected-ideas/`, plus ROADMAP.md and process docs. Placement rules: `Developer/README.md`.
+
 ## Commands
 
 ### Python / dincli
@@ -44,8 +46,8 @@ dincli system connect-wallet --account <account_id>
 
 ### Two layers: protocol contracts vs. per-model task contracts
 
-- **Platform-level contracts** (deployed once by the DIN-Representative): `DinCoordinator` (ETH<->DIN exchange, slasher registry admin), `DinToken` (ERC20, minted on ETH deposit), `DinValidatorStake` (validator staking/slashing), `DinModelRegistry` (model registration, open-source vs proprietary fee). See `Documentation/DIN-workflow.md`.
-- **Task-level contracts** (deployed per model by the model owner): `DINTaskCoordinator` and `DINTaskAuditor`. These must be authorized as "slashers" on `DinValidatorStake` (via `DinCoordinator`, only callable by the DIN-Representative) *before* the model owner can register the model in `DinModelRegistry`. See `Documentation/Model-workflow.md` for the full step-by-step (deploy → slasher auth request → genesis model → register → global iterations).
+- **Platform-level contracts** (deployed once by the DIN-Representative): `DinCoordinator` (ETH<->DIN exchange, slasher registry admin), `DinToken` (ERC20, minted on ETH deposit), `DinValidatorStake` (validator staking/slashing), `DinModelRegistry` (model registration, open-source vs proprietary fee). See `Documentation/public/workflows/din-workflow.md`.
+- **Task-level contracts** (deployed per model by the model owner): `DINTaskCoordinator` and `DINTaskAuditor`. These must be authorized as "slashers" on `DinValidatorStake` (via `DinCoordinator`, only callable by the DIN-Representative) *before* the model owner can register the model in `DinModelRegistry`. See `Documentation/public/workflows/model-workflow.md` for the full step-by-step (deploy → slasher auth request → genesis model → register → global iterations).
 
 A model's lifecycle runs in **Global Iterations (GI)**: aggregator/auditor registration → Local Model Submission (LMS) by clients → auditor evaluation/scoring → two-tier aggregation (T1 sub-batches, T2 combines T1 into the new global model) → slashing of misbehaving validators → GI end. Each phase is opened/closed explicitly by the model owner via `dincli model-owner ...` subcommands, and other roles act only within an open phase.
 
@@ -64,7 +66,7 @@ Differential privacy is opt-in per model via a nested `dp` block in the manifest
 
 ### IPFS abstraction
 
-`dincli/services/ipfs.py` supports three interchangeable upload/retrieve backends (env-var-configured IPFS node, Filebase, or a fully custom Python provider) selected via `resolve_ipfs_config()`/`ipfs_provider` config — see `Documentation/guides/ipfs.md`. All CID-bearing artifacts (services, manifests, model weights, ABIs) flow through this layer rather than direct HTTP calls scattered through the CLI.
+`dincli/services/ipfs.py` supports three interchangeable upload/retrieve backends (env-var-configured IPFS node, Filebase, or a fully custom Python provider) selected via `resolve_ipfs_config()`/`ipfs_provider` config — see `Documentation/public/guides/ipfs.md`. All CID-bearing artifacts (services, manifests, model weights, ABIs) flow through this layer rather than direct HTTP calls scattered through the CLI.
 
 ### Networks
 

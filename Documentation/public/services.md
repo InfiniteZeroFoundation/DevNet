@@ -124,7 +124,7 @@ Creates audit test data CIDs for auditor batches. The `testData_percentage_per_a
 
 This service defines the functions used by the clients to train and submit local models.
 
-For the current DevNet reference implementation and the manifest-driven DP flow, see [technical/services/clients.md](technical/services/clients.md).
+For the current DevNet reference implementation and the manifest-driven DP flow, see [technical/services/clients.md](../technical/services/clients.md).
 
 ### 3.1. `train_client_model_and_upload_to_ipfs(...)`
 

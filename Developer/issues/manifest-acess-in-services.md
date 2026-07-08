@@ -31,7 +31,7 @@ There is already a helper in `dincli.cli.utils`:
 
 - `get_manifest_key(network, key, model_id=None, task_coordinator_address=None)`
 
-And the documentation in `Documentation/manifest.md` says custom manifest fields can be accessed in services through `get_manifest_key`.
+And the documentation in `Documentation/public/manifest.md` says custom manifest fields can be accessed in services through `get_manifest_key`.
 
 But there is a practical issue:
 
@@ -56,7 +56,7 @@ Relevant code paths today:
   - `load_custom_fn()` dynamically imports a function from a service file
 - `dincli/cli/utils.py`
   - `get_manifest_key()` reads manifest data from cache or task directories
-- `Documentation/manifest.md`
+- `Documentation/public/manifest.md`
   - states that custom manifest fields can be accessed in services
 
 The current loading mechanism returns a callable, but does not inject:
