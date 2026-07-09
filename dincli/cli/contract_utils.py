@@ -131,7 +131,7 @@ def get_contract_instance(
     try:
         with open(artifact_path) as f:
             data = json.load(f)
-    except JSONDecodeError as e:
+    except json.JSONDecodeError as e:
         raise ValueError(
             f"Failed to parse JSON in artifact: {artifact_path}\n"
             f"Reason: {str(e)}\n"

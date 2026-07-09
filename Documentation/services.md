@@ -124,6 +124,8 @@ Creates audit test data CIDs for auditor batches. The `testData_percentage_per_a
 
 This service defines the functions used by the clients to train and submit local models.
 
+For the current DevNet reference implementation and the manifest-driven DP flow, see [technical/services/clients.md](technical/services/clients.md).
+
 ### 3.1. `train_client_model_and_upload_to_ipfs(...)`
 
 Trains the client model on local data and uploads it to IPFS.
@@ -134,12 +136,12 @@ Trains the client model on local data and uploads it to IPFS.
 | `account_address` | Client's wallet address |
 | `effective_network` | Network identifier (default: `"local"`) |
 | `initial_model_ipfs_hash` | IPFS CID of the initial model (optional) |
-| `dp_mode` | Differential Privacy mode: `"disabled"` or `"enabled"` (default: `"disabled"`) |
 | `model_base_dir` | Base directory for model files |
 | `gi` | Global iteration index |
+| `runtime` | Injected manifest-aware service runtime context |
 | **Returns** | IPFS CID of the trained client model |
 
-Model Owner may define Differential Privacy (DP) logic for the model. If `dp_mode` is set to `"enabled"` in the manifest file, then client models will be trained with DP using the logic defined in `client.py`.
+Model Owner may define Differential Privacy (DP) logic for the model through the nested `dp` manifest block. If `dp.enabled` is `true`, the client service applies the configured mechanism from `client.py`.
 
 **Manifest entry:**
 

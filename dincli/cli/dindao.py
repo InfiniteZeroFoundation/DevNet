@@ -4,7 +4,8 @@ import time
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import get_env_key, load_din_info, save_din_info
+from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
+                               resolve_task_coordinator_address, save_din_info)
 
 app = typer.Typer(help="Commands for DIN DAO")
 
@@ -13,6 +14,42 @@ deploy_app = typer.Typer(help="Deploy DIN smart contracts")
 
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(registry_app, name="registry")
+
+
+def _request_status(processed: bool, approved: bool) -> str:
+    if not processed:
+        return "pending"
+    return "approved" if approved else "rejected"
+
+
+def _format_cid(value):
+    from dincli.services.cid_utils import get_cid_from_bytes32
+
+    try:
+        return get_cid_from_bytes32(value.hex())
+    except Exception:
+        return value.hex()
+
+
+def _print_model_request(console, w3, request_id: int, req):
+    console.print(f"[bold cyan]Model Registration Request {request_id}:[/bold cyan]")
+    console.print(f"  Requester: {req[0]}")
+    console.print(f"  Is Open Source: {req[1]}")
+    console.print(f"  Manifest CID: {_format_cid(req[2])}")
+    console.print(f"  Task Coordinator: {req[3]}")
+    console.print(f"  Task Auditor: {req[4]}")
+    console.print(f"  Fee Paid: {w3.from_wei(req[5], 'ether')} ETH")
+    console.print(f"  Status: {_request_status(req[6], req[7])}")
+    console.print(f"  Created At: {req[8]}")
+
+
+def _print_manifest_request(console, w3, request_id: int, req):
+    console.print(f"[bold cyan]Manifest Update Request {request_id}:[/bold cyan]")
+    console.print(f"  Model ID: {req[0]}")
+    console.print(f"  New Manifest CID: {_format_cid(req[1])}")
+    console.print(f"  Requester: {req[2]}")
+    console.print(f"  Fee Paid: {w3.from_wei(req[3], 'ether')} ETH")
+    console.print(f"  Status: {_request_status(req[4], req[5])}")
 
 @deploy_app.command()
 def din_coordinator(
@@ -27,19 +64,13 @@ def din_coordinator(
     
     DINCoordinator_contract = get_contract_instance(artifact_path, effective_network)
     
-    tx_params = ctx.obj.get_tx_params()
-
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINCoordinator_contract.constructor().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-    tx = DINCoordinator_contract.constructor().build_transaction(tx_params) 
-    
-    # Sign transaction
-    signed_tx = account.sign_transaction(tx)  
-    console.print(f"[bold green]Deploying DIN Coordinator Contract ...[/bold green]")
-   
-    # Send raw transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    tx_receipt = build_and_send_tx(
+        ctx,
+        DINCoordinator_contract.constructor(),
+        "Deploying DIN Coordinator Contract",
+        "DINCoordinator contract deployed successfully",
+        "Failed to deploy DIN Coordinator Contract"
+    )
     
     dincoordinator_contract_address = tx_receipt.contractAddress
         
@@ -50,7 +81,7 @@ def din_coordinator(
     din_addresses[effective_network]["representative"] = account.address 
     save_din_info(din_addresses)
 
-    taskCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
+    taskCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract(verbose=False)
     
     dintoken_address = taskCoordinator_contract.functions.dinToken().call()
     console.print("DINtoken contract deployed at:", dintoken_address)
@@ -88,22 +119,13 @@ def din_validator_stake(
     else:
         dinToken_address = din_addresses[effective_network]["token"]
     
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINValidatorStake_contract.constructor(dinToken_address, dinCoordinator_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-  
-    tx = DINValidatorStake_contract.constructor(
-        dinToken_address, 
-        dinCoordinator_address
-    ).build_transaction(tx_params) 
-    
-    # Sign transaction
-    signed_tx = account.sign_transaction(tx)  
-    
-
-    console.print(f"[bold green]Deploying DIN Validator Stake Contract ...[/bold green]")
-    # Send raw transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    tx_receipt = build_and_send_tx(
+        ctx,
+        DINValidatorStake_contract.constructor(dinToken_address, dinCoordinator_address),
+        "Deploying DIN Validator Stake Contract",
+        "DINValidatorStake contract deployed successfully",
+        "Failed to deploy DIN Validator Stake Contract"
+    )
     
     DINValidatorStake_contract_address = tx_receipt.contractAddress
         
@@ -122,22 +144,13 @@ def din_validator_stake(
     time.sleep(10)
 
 
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINCoordinator_Contract.functions.updateValidatorStakeContract(deployed_DINValidatorStake_Contract.address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-    tx = DINCoordinator_Contract.functions.updateValidatorStakeContract(deployed_DINValidatorStake_Contract.address).build_transaction(tx_params) 
-        
-    # Sign transaction
-    signed_tx = account.sign_transaction(tx) 
-    
-    # Send raw transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-    if tx_receipt.status == 1:
-        console.print("[bold green] ✅ DinValidatorStake contract added to DINCoordinator contract successfully[/bold green]")
-    else:
-        console.print("[bold red] ❌ Failed to add DinValidatorStake contract to DINCoordinator contract[/bold red]")
+    build_and_send_tx(
+        ctx,
+        DINCoordinator_Contract.functions.updateValidatorStakeContract(deployed_DINValidatorStake_Contract.address),
+        "Adding DinValidatorStake contract to DINCoordinator contract",
+        "DinValidatorStake contract added to DINCoordinator contract successfully",
+        "Failed to add DinValidatorStake contract to DINCoordinator contract"
+    )
 
 
 @deploy_app.command("din-model-registry")
@@ -158,32 +171,22 @@ def deploy_din_model_registry(
     else:
         dinValidatorStake_address = din_addresses[effective_network]["stake"]
     
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINModelRegistry_contract.constructor(dinValidatorStake_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-    tx = DINModelRegistry_contract.constructor(dinValidatorStake_address).build_transaction(tx_params) 
+    tx_receipt = build_and_send_tx(
+        ctx,
+        DINModelRegistry_contract.constructor(dinValidatorStake_address),
+        "Deploying DIN Model Registry",
+        "DINModelRegistry contract deployed successfully",
+        "Failed to deploy DINModelRegistry contract"
+    )
     
-    # Sign transaction
-    signed_tx = account.sign_transaction(tx)
-
-    console.print(f"[bold green]Deploying DIN Model Registry...[/bold green]")  
-    
-    # Send raw transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-    if tx_receipt.status == 1:
-        DINModelRegistry_contract_address = tx_receipt.contractAddress
-        console.print("[bold green] ✅ DINModelRegistry contract deployed at:[/bold green]", DINModelRegistry_contract_address)
-    else:
-        console.print("[bold red] ❌ Failed to deploy DINModelRegistry contract[/bold red]")
-        raise typer.Exit(code=1)
+    DINModelRegistry_contract_address = tx_receipt.contractAddress
+    console.print("[bold green] ✅ DINModelRegistry contract deployed at:[/bold green]", DINModelRegistry_contract_address)
     
     din_addresses[effective_network]["registry"] = DINModelRegistry_contract_address
     
     save_din_info(din_addresses)
     
-@app.command(
+@app.command("add-slasher",
     help="Add a slasher to the DIN SlasherRegistry contract."
     "You must specify either the task coordinator or the task auditor (from config) to be registered as the slasher."
     "The contract address can be provided explicitly or loaded from config."
@@ -210,39 +213,35 @@ def add_slasher(
 
     if contract:
         contract_address = contract
-    elif  task_coordinator_flag:
-        contract_address = get_env_key(effective_network.upper()+"_DINTaskCoordinator_Contract_Address")
-        if not contract_address:
-            typer.Exit(1)
-        console.print(f"Using DINTaskCoordinator address: {contract_address} from env variable {effective_network.upper()}_DINTaskCoordinator_Contract_Address in {os.getcwd()}/.env")
+    elif task_coordinator_flag:
+        contract_address = resolve_task_coordinator_address(
+            effective_network, None, console
+        )
     elif task_auditor_flag:
-        task_coordinator_key = f"{effective_network.upper()}_DINTaskCoordinator_Contract_Address"
-        task_coordinator_address = get_env_key(task_coordinator_key)
-
-        if not task_coordinator_address:
-            typer.Exit(1)
-
-        contract_address = get_env_key(effective_network.upper()+"_"+task_coordinator_address+"_DINTaskAuditor_Contract_Address")
+        task_coordinator_address = resolve_task_coordinator_address(
+            effective_network, None, console
+        )
+        contract_address = get_env_key(
+            effective_network.upper() + "_" + task_coordinator_address + "_DINTaskAuditor_Contract_Address"
+        )
         if not contract_address:
-            typer.Exit(1)
-        console.print(f"Using DINTaskAuditor address: {contract_address} from env variable {effective_network.upper()}_{task_coordinator_address}_DINTaskAuditor_Contract_Address in {os.getcwd()}/.env")
+            console.print(
+                f"[bold red]✗ DINTaskAuditor address not found.[/bold red]\n"
+                f"  Set [cyan]{effective_network.upper()}_{task_coordinator_address}_DINTaskAuditor_Contract_Address[/cyan] in [cyan]{os.getcwd()}/.env[/cyan]."
+            )
+            raise typer.Exit(1)
+        console.print(
+            f"[bold green] ✓ Using DINTaskAuditor Address: {contract_address} "
+            f"(from {os.getcwd()}/.env)[/bold green]"
+        )
 
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINCoordinator_Contract.functions.addSlasherContract(contract_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-    tx = DINCoordinator_Contract.functions.addSlasherContract(contract_address).build_transaction(tx_params)
-
-    # Sign transaction
-    signed_tx = account.sign_transaction(tx)  
-    
-    # Send raw transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-    if tx_receipt.status == 1:
-        console.print("[bold green] ✓ Slasher contract added to DINCoordinator contract successfully[/bold green]")
-    else:
-        console.print("[bold red] X Failed to add Slasher contract to DINCoordinator contract[/bold red]")
+    build_and_send_tx(
+        ctx,
+        DINCoordinator_Contract.functions.addSlasherContract(contract_address),
+        "Adding Slasher contract to DINCoordinator contract",
+        "Slasher contract added to DINCoordinator contract successfully",
+        "Failed to add Slasher contract to DINCoordinator contract"
+    )
         
     
     
@@ -258,28 +257,8 @@ def total_models(ctx: typer.Context,
     console.print(f"[bold green]Total models: {models_length}[/bold green]")
 
 
-def build_and_send_tx(ctx, contract_function, action_msg, success_msg, error_msg):
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    tx_params = ctx.obj.get_tx_params()
-    try:
-        tx_params["gas"] = int(w3.eth.estimate_gas(contract_function.build_transaction(tx_params)) * 1.1)
-    except Exception as e:
-        console.print(f"[bold red] X Transaction estimation failed: {e}[/bold red]")
-        raise typer.Exit(1)
-        
-    tx = contract_function.build_transaction(tx_params)
-    signed_tx = account.sign_transaction(tx)
-    console.print(f"[bold green]{action_msg}...[/bold green]")
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    if tx_receipt.status == 1:
-        console.print(f"[bold green] ✓ {success_msg}[/bold green]")
-    else:
-        console.print(f"[bold red] X {error_msg}[/bold red]")
-        raise typer.Exit(1)
-
-@registry_app.command("approve-model")
-def approve_model(ctx: typer.Context, request_id: int = typer.Argument(..., help="Model request ID to approve")):
+@registry_app.command("approve-registration-request")
+def approve_registration_request(ctx: typer.Context, request_id: int = typer.Argument(..., help="Model request ID to approve")):
     DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
     build_and_send_tx(
         ctx, 
@@ -289,8 +268,8 @@ def approve_model(ctx: typer.Context, request_id: int = typer.Argument(..., help
         f"Failed to approve model request {request_id}"
     )
 
-@registry_app.command("reject-model")
-def reject_model(ctx: typer.Context, request_id: int = typer.Argument(..., help="Model request ID to reject")):
+@registry_app.command("reject-registration-request")
+def reject_registration_request(ctx: typer.Context, request_id: int = typer.Argument(..., help="Model request ID to reject")):
     DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
     build_and_send_tx(
         ctx, 
@@ -445,42 +424,48 @@ def set_dao_admin(ctx: typer.Context, new_admin: str = typer.Argument(..., help=
         "Failed to set DAO admin"
     )
 
-@registry_app.command("unprocessed-requests")
-def unprocessed_requests(ctx: typer.Context, req_type: str = typer.Option(None, "--type", "-t", help="Type of request: 'model' or 'manifest'")):
-    """Get all unprocessed Model and ManifestUpdate requests"""
+
+@registry_app.command("list-pending-requests")
+def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None, "--type", "-t", help="Type of request: 'model' or 'manifest'")):
+    """Get all unprocessed Model and ManifestUpdate requests."""
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
+    normalized_type = req_type.lower() if req_type else None
 
-    if req_type == "model" or req_type is None:
-        console.print("[bold cyan]Unprocessed Model Requests:[/bold cyan]")
+    if normalized_type not in (None, "model", "manifest"):
+        console.print("[bold red]Invalid request type. Must be 'model' or 'manifest'.[/bold red]")
+        raise typer.Exit(1)
 
+    if normalized_type in (None, "model"):
+        console.print("[bold cyan]Pending Model Registration Requests:[/bold cyan]")
         totalModelRequests = DINModelRegistry_Contract.functions.totalModelRequests().call()
         found_model = False
         for idx in range(totalModelRequests):
             req = DINModelRegistry_Contract.functions.modelRequests(idx).call()
-            # req[6] is 'processed'
             if not req[6]:
-                console.print(f"  [green]Request ID {idx}[/green] - Requester: {req[0]}")
+                console.print(
+                    f"  [green]Request ID {idx}[/green] - Requester: {req[0]}, "
+                    f"Open Source: {req[1]}, Fee: {w3.from_wei(req[5], 'ether')} ETH"
+                )
                 found_model = True
         if not found_model:
-            console.print("  [gray]No unprocessed model requests[/gray]")
+            console.print("  [gray]No pending model registration requests[/gray]")
 
-    elif req_type == "manifest" or req_type is None:
-        console.print("\n[bold cyan]Unprocessed Manifest Update Requests:[/bold cyan]")
+    if normalized_type in (None, "manifest"):
+        console.print("[bold cyan]Pending Manifest Update Requests:[/bold cyan]")
         totalManifestRequests = DINModelRegistry_Contract.functions.totalManifestRequests().call()
         found_manifest = False
         for idx in range(totalManifestRequests):
             req = DINModelRegistry_Contract.functions.manifestRequests(idx).call()
-            # req[4] is 'processed'
             if not req[4]:
-                console.print(f"  [green]Request ID {idx}[/green] - Model ID: {req[0]}, Requester: {req[2]}")
+                console.print(
+                    f"  [green]Request ID {idx}[/green] - Model ID: {req[0]}, "
+                    f"Requester: {req[2]}, Fee: {w3.from_wei(req[3], 'ether')} ETH"
+                )
                 found_manifest = True
         if not found_manifest:
-            console.print("  [gray]No unprocessed manifest update requests[/gray]")
+            console.print("  [gray]No pending manifest update requests[/gray]")
 
-    else:
-        console.print("[bold red]Invalid request type. Must be 'model' or 'manifest'.[/bold red]")
-        raise typer.Exit(1)
 
 @registry_app.command("explore-request")
 def explore_request(
@@ -488,53 +473,29 @@ def explore_request(
     req_type: str = typer.Option(..., "--type", "-t", help="Type of request: 'model' or 'manifest'"),
     request_id: int = typer.Argument(..., help="Request ID to explore")
 ):
-    """Explore a specific ModelRequest or ManifestUpdateRequest"""
+    """Explore a specific ModelRequest or ManifestUpdateRequest."""
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
-    
-    from dincli.services.cid_utils import get_cid_from_bytes32
+    normalized_type = req_type.lower()
 
-    if req_type.lower() == 'model':
+    if normalized_type == "model":
         try:
             req = DINModelRegistry_Contract.functions.modelRequests(request_id).call()
-            console.print(f"[bold cyan]Model Request {request_id}:[/bold cyan]")
-            console.print(f"  Requester: {req[0]}")
-            console.print(f"  Is Open Source: {req[1]}")
-            
-            try:
-                manifest_cid = get_cid_from_bytes32(req[2].hex())
-            except Exception:
-                manifest_cid = req[2].hex()
-                
-            console.print(f"  Manifest CID: {manifest_cid}")
-            console.print(f"  Task Coordinator: {req[3]}")
-            console.print(f"  Task Auditor: {req[4]}")
-            console.print(f"  Fee Paid: {w3.from_wei(req[5], 'ether')} ETH")
-            console.print(f"  Processed: {req[6]}")
-            console.print(f"  Approved: {req[7]}")
-            import datetime
-            console.print(f"  Created At: {datetime.datetime.fromtimestamp(req[8])}")
-        except Exception as e:
+            _print_model_request(console, w3, request_id, req)
+            if req[6] and req[7]:
+                exists, model_id = DINModelRegistry_Contract.functions.getModelIdByTaskCoordinator(req[3]).call()
+                if exists:
+                    console.print(f"  Approved Model ID: {model_id}")
+        except Exception:
             console.print(f"[bold red]Failed to retrieve Model Request {request_id}. It may not exist.[/bold red]")
-            
-    elif req_type.lower() == 'manifest':
+            raise typer.Exit(1)
+    elif normalized_type == "manifest":
         try:
             req = DINModelRegistry_Contract.functions.manifestRequests(request_id).call()
-            console.print(f"[bold cyan]Manifest Update Request {request_id}:[/bold cyan]")
-            console.print(f"  Model ID: {req[0]}")
-            
-            try:
-                new_manifest_cid = get_cid_from_bytes32(req[1].hex())
-            except Exception:
-                new_manifest_cid = req[1].hex()
-                
-            console.print(f"  New Manifest CID: {new_manifest_cid}")
-            console.print(f"  Requester: {req[2]}")
-            console.print(f"  Fee Paid: {w3.from_wei(req[3], 'ether')} ETH")
-            console.print(f"  Processed: {req[4]}")
-            console.print(f"  Approved: {req[5]}")
-        except Exception as e:
+            _print_manifest_request(console, w3, request_id, req)
+        except Exception:
             console.print(f"[bold red]Failed to retrieve Manifest Update Request {request_id}. It may not exist.[/bold red]")
+            raise typer.Exit(1)
     else:
         console.print("[bold red]Invalid request type. Must be 'model' or 'manifest'.[/bold red]")
         raise typer.Exit(1)

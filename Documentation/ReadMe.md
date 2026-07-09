@@ -6,6 +6,10 @@ Welcome to the DIN Protocol documentation. This README serves as an index and gu
 
 This guide walks you through setting up the `dincli` environment. It includes instructions for setting up a virtual environment, installing and initializing `dincli`, connecting a wallet, configuring the network, managing logging, using demo-mode, and configuring IPFS.
 
+## [IPFS Configuration Guide](./guides/ipfs.md)
+
+This guide explains the three supported IPFS modes in `dincli`: `.env`-backed, Filebase, and fully custom Python services.
+
 ## [Common Commands](./common.md)
 
 This document outlines the common `dincli` commands shared across all stakeholders, including Model Owners, Clients, Aggregators, and Auditors.

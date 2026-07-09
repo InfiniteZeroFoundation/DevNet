@@ -1,5 +1,8 @@
 # Manifest
 
+For a lower-level explanation of runtime resolution, service loading, and the
+new nested `dp` configuration block, see [technical/manifest.md](technical/manifest.md).
+
 The manifest is a JSON file containing the metadata for your model and task. It serves as the central configuration that ties together the model, its services, and contract addresses.
 
 ## Location
@@ -39,7 +42,7 @@ For example:
 | `Genesis_Model_CID` | Yes | IPFS CID of the genesis model. Set after running `dincli model-owner model create-genesis` |
 | `DINTaskCoordinator_Contract` | Yes | Address of the deployed TaskCoordinator contract |
 | `DINTaskAuditor_Contract` | Yes | Address of the deployed TaskAuditor contract |
-| `dp_mode` | No | Differential Privacy mode: `"disabled"` or `"enabled"` (default: `"disabled"`) |
+| `dp` | No | Nested Differential Privacy configuration block used by services at runtime |
 
 ### Service Entries
 

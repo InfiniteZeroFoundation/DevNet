@@ -7,7 +7,7 @@ name = "dincli"
 version = "0.1.0"
 description = "Command-line interface for Decentralized Intelligence Network"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
   { name = "Umer Majeed", email = "umermjd11@gmail.com"},
   { name = "Abraham Nash", email = "abrahamnash@protonmail.com"}
@@ -17,14 +17,9 @@ keywords = ["blockchain", "federated-learning", "privacy", "cli", "fastapi", "DI
 
 dependencies = [
   "typer>=0.9.0",
-  "rich>=13.0.0,<15.0.0",
   "python-dotenv>=1.0.0",
   "web3>=6.0.0",
-  "requests>=2.31.0",
-  "torch==2.6.0",
-  "torchvision==0.21.0",
   "platformdirs>=4.3.0",
-  "numpy>=2.2.0",
   "py-cid>=0.5.0"
 
 ]
@@ -36,3 +31,11 @@ dincli = "dincli.main:app"
 [tool.setuptools.packages.find]
 where = ["."]  # look in project root
 include = ["dincli*"]  # only include dincli and subpackages
+
+[tool.setuptools.package-data]
+dincli = ["config/*.json", "abis/*", "docker/worker/*", "services/*.py"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests that require a live Hardhat node, IPFS daemon, and Docker",
+]

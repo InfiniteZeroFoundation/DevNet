@@ -3,6 +3,7 @@ import typer
 from rich.table import Table
 
 from dincli.services.cid_utils import get_cid_from_bytes32
+from dincli.cli.utils import build_and_send_tx
 
 lms_evaluation_app = typer.Typer(help="Local Model Submission Evaluation commands")
 
@@ -25,19 +26,14 @@ def start(
     console.print(f"[bold green]Starting LMS evaluation[/bold green]")
 
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.startLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-        tx = task_coordinator_Contract.functions.startLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)
-
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-        if receipt.status == 1:
-            console.print("[green]✓ LMS evaluation started[/green]")
-        else:
-            console.print("[red]Error:[/red] Failed to start LMS evaluation")
-            raise typer.Exit(1)
+        build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.startLMsubmissionsEvaluation(ref_gi),
+            "Starting LMS evaluation",
+            "LMS evaluation started",
+            "Failed to start LMS evaluation",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -61,19 +57,14 @@ def close(
     console.print(f"[bold green]Closing LMS evaluation![/bold green]")
 
     try:        
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator_Contract.functions.closeLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-        tx = task_coordinator_Contract.functions.closeLMsubmissionsEvaluation(ref_gi).build_transaction(tx_params)
-
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-        if receipt.status == 1:
-            console.print("[green]✓ LMS evaluation closed![/green]")
-        else:
-            console.print("[red]Error:[/red] Failed to close LMS evaluation")
-            raise typer.Exit(1)
+        build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.closeLMsubmissionsEvaluation(ref_gi),
+            "Closing LMS evaluation!",
+            "LMS evaluation closed!",
+            "Failed to close LMS evaluation",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {str(e)}")
         raise typer.Exit(1)

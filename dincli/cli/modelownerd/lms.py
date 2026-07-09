@@ -2,6 +2,7 @@
 import typer
 
 from dincli.services.cid_utils import get_cid_from_bytes32
+from dincli.cli.utils import build_and_send_tx
 
 lms_app = typer.Typer(help="Local Model Submission commands")
 
@@ -21,19 +22,14 @@ def open(
     console.print(f"[bold green]Opening local model submissions[/bold green]")
 
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startLMsubmissions(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-        tx = task_coordinator.functions.startLMsubmissions(curr_GI).build_transaction(tx_params)
-
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status == 1:
-            console.print("[green]✓ Local model submissions opened![/green]")
-        else:
-            console.print("[red]Error:[/red] Local model submissions opening failed")
-            raise typer.Exit(1)
+        build_and_send_tx(
+            ctx,
+            task_coordinator.functions.startLMsubmissions(curr_GI),
+            "Opening local model submissions",
+            "Local model submissions opened!",
+            "Local model submissions opening failed",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -92,20 +88,15 @@ def close(
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSstarted", "Local model submissions not yet started")
 
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.closeLMsubmissions(ref_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-        tx = taskCoordinator_contract.functions.closeLMsubmissions(ref_gi).build_transaction(tx_params)
-
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status == 1:
-            console.print(f"[dim]Local model submissions closed tx:[/dim] {tx_hash.hex()}")
-            console.print("[green]✓ Local model submissions closed![/green]")
-        else:
-            console.print("[red]Error:[/red] Local model submissions closing failed")
-            raise typer.Exit(1)
+        tx_receipt = build_and_send_tx(
+            ctx,
+            taskCoordinator_contract.functions.closeLMsubmissions(ref_gi),
+            "Closing local model submissions",
+            "Local model submissions closed!",
+            "Local model submissions closing failed",
+            exit_on_failure=False
+        )
+        console.print(f"[dim]Local model submissions closed tx:[/dim] {tx_receipt.transactionHash.hex()}")
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)

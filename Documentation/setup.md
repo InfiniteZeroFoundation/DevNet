@@ -109,6 +109,11 @@ SEPOLIA_OP_DEVNET_RPC_URL=https://optimism-sepolia.infura.io/v3/<auth_token>
 
 ### Private Key
 
+> **⚠️ Local development only.** The `ETH_PRIVATE_KEY_<n>` pattern stores raw
+> private keys in plaintext. If you are running a **production validator node**,
+> use the encrypted keystore instead — see
+> [wallet-setup.md](./guides/wallet-setup.md).
+
 Store private keys using the pattern `ETH_PRIVATE_KEY_<account_index>` in `.env` file at root of your project. You can define as many accounts as needed by incrementing the index.
 
 ```bash
@@ -136,10 +141,12 @@ dincli system configure-demo --mode no
 
 ## 6. IPFS Setup
 
-`dincli` requires an IPFS provider to store and retrieve model data. Choose one of the options below.
+`dincli` requires an IPFS provider to store and retrieve model data.
+
+Detailed reference: [IPFS Configuration Guide](./guides/ipfs.md)
 
 
-### Option A — Filebase (Managed IPFS)
+### Option A — Filebase (Managed IPFS) - RECOMMENDED OPTION
 
 Obtain an API key from [Filebase](https://filebase.com/) and configure it:
 
@@ -151,18 +158,31 @@ dincli system configure-ipfs --provider filebase --api-key <your_api_key>
 > Please create a bucket on Filebase and get bucket's IPFS RPC API token from [Filebase Console](https://console.filebase.com/keys). Use that as `your_api_key` in the command above.
 > IPFS RPC API token dashboard is located at bottom of the page.
 
-### Option B — Custom IPFS Provider
+### Option B — `.env` provider (default)
 
-You may use `ipfs daemon` or any other provider. Just  add the following in `.env` file at root of your project folder.
+If you do not configure a provider, `dincli` uses the `env` provider automatically.
 
-```bash
-IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0/add
-IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0/cat/
-```
-> Ensure your IPFS provider is configured to pin uploaded artifacts. If using a local node, garbage collection must be managed to prevent the loss of registered artifacts. 
-
-also configure IPFS provider in dincli using `dincli system configure-ipfs` command.
+Add the following to the project `.env`:
 
 ```bash
-dincli system configure-ipfs --provider custom
+IPFS_API_URL_ADD=http://127.0.0.1:5001/api/v0
+IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0
 ```
+
+You can set it explicitly if you want:
+
+```bash
+dincli system configure-ipfs --provider env
+```
+
+> Ensure your IPFS backend retains uploaded artifacts. If using a local node, manage pinning and garbage collection carefully.
+
+### Option C — Custom IPFS service
+
+When the built-in `env` and `filebase` providers are not enough, point `dincli` at your own Python module:
+
+```bash
+dincli system configure-ipfs --provider custom --service-path /abs/path/to/custom_ipfs.py
+```
+
+The module must implement `upload_to_ipfs(...)` and `retrieve_from_ipfs(...)`. See the [IPFS Configuration Guide](./guides/ipfs.md) for the full contract.

@@ -1,11 +1,21 @@
 from pathlib import Path
 import time
+from typing import Optional
 
 import typer
 from rich.table import Table
-from web3 import Web3
-from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key
-from dincli.services.auditor import Score_model_by_auditor
+from dincli.cli.dintoken import buy_dintokens, read_dintoken_stake, stake_dintokens
+from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
+                               get_manifest_key, require_custom_manifest_service)
+from dincli.cli.worker import (
+    ensure_worker_image,
+    ensure_worker_packages_installed,
+    get_worker_packages_dir,
+    get_worker_requirements_path,
+    read_worker_result,
+    run_worker_container,
+    write_worker_job,
+)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 app = typer.Typer(help="Commands for Auditors in DIN.")
@@ -16,99 +26,26 @@ lms_evaluation_app = typer.Typer(help="Commands for LMS Evaluation in DIN.")
 app.add_typer(dintoken_app, name="dintoken")
 app.add_typer(lms_evaluation_app, name="lms-evaluation")
 
-@dintoken_app.command(help="Buy DINTokens where amouunt is ETh to exchange for DINTokens")
-def buy(ctx: typer.Context, 
-        amount: float = typer.Argument(..., help="Amount of ETH to exchange for DINTokens")
-    ):
 
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console() 
-    
-    DinToken_contract = ctx.obj.get_deployed_din_token_contract()
-    DinCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
-        
-    console.print("Auditor ETH balance: ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
-    console.print("Auditor DINToken balance: ", DinToken_contract.functions.balanceOf(account.address).call()/(10**18))
-
-    console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
-
-    try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["value"] = w3.to_wei(amount, "ether")
-        tx_params["gas"] = int(w3.eth.estimate_gas(DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-        
-        tx = DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)
-    
-        # Sign transaction
-        signed_tx = account.sign_transaction(tx)
-    
-        # Send raw transaction
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-        if tx_receipt.status == 1:
-            console.print(f"[bold green]✓ DINTokens bought at:[/bold green] {tx_receipt.transactionHash.hex()}")
-            console.print("Auditor DINToken balance: ", Web3.from_wei(DinToken_contract.functions.balanceOf(account.address).call(), "ether"))
-        else:
-            console.print(f"[bold red]✗ Transaction failed! Could not buy DINTokens {tx_receipt.transactionHash.hex()}[/bold red]")
-    except Exception as e:
-        console.print(f"[bold red]✗ Error buying DINTokens: {e}[/bold red]")
+@dintoken_app.command(help="Buy DINTokens where amount is ETH to exchange for DINTokens")
+def buy(
+    ctx: typer.Context,
+    amount: float = typer.Argument(..., help="Amount of ETH to exchange for DINTokens"),
+):
+    buy_dintokens(ctx, amount, name= "Auditor")
 
 
 @dintoken_app.command(help="Stake DINTokens")
-def stake(ctx: typer.Context, amount: int):     
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+def stake(
+    ctx: typer.Context,
+    amount: int = typer.Argument(..., help="Amount of DINTokens to stake"),
+):
+    stake_dintokens(ctx, amount, name= "Auditor")
 
-    DinToken_contract, DinStake_contract = ctx.obj.get_deployed_din_token_contract(), ctx.obj.get_deployed_din_stake_contract()
-    
-    validator_Din_token_balance = DinToken_contract.functions.balanceOf(account.address).call()
-    
-    console.print("[bold green]Auditor ETH balance:[/bold green] ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
-    console.print("[bold green]Auditor DINToken balance:[/bold green] ", Web3.from_wei(validator_Din_token_balance, "ether"))
-    
-    if validator_Din_token_balance < MIN_STAKE:
-        console.print(f"[bold red]✗ Could not stake DINTokens. Not enough DINTokens.[/bold red]")
-        raise typer.Exit()
-    else:
-        console.print(f"[bold green]✓ Enough DINTokens to stake. [bold green]\n [bold green]Staking...[/bold green]")
 
-        try:
-            tx_params = ctx.obj.get_tx_params()
-            tx_params["gas"] = int(w3.eth.estimate_gas(DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)
-
-            signed_tx_approve = account.sign_transaction(tx_approve)
-            tx_hash_approve = w3.eth.send_raw_transaction(signed_tx_approve.raw_transaction)
-            tx_receipt_approve = w3.eth.wait_for_transaction_receipt(tx_hash_approve)
-                
-            if tx_receipt_approve.status == 1:
-                console.print(f"[bold green]✓ DINTokens approved for staking.[/bold green]")
-            else:
-                console.print(f"[bold red]✗ Could not approve DINTokens for staking.[/bold red]")
-                raise typer.Exit()
-
-            time.sleep(5)
-
-            tx_params = ctx.obj.get_tx_params()
-            tx_params["gas"] = int(w3.eth.estimate_gas(DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)
-
-            signed_tx_stake = account.sign_transaction(tx_stake)
-            tx_hash_stake = w3.eth.send_raw_transaction(signed_tx_stake.raw_transaction)
-            tx_receipt_stake = w3.eth.wait_for_transaction_receipt(tx_hash_stake)
-        
-            if tx_receipt_stake.status == 1:
-                console.print(f"[bold green]✓ DINTokens staked.[/bold green]")
-            else:
-                console.print(f"[bold red]✗ Could not stake DINTokens.[/bold red]")
-        except Exception as e:
-            console.print(f"[bold red]✗ Error staking DINTokens: {e}[/bold red]")
-
-@dintoken_app.command(help="Check stake")
+@dintoken_app.command("read-stake", help="Check stake")
 def read_stake(ctx: typer.Context):
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
-
-    console.print("Auditor DIN token stake: ", Web3.from_wei(DinStake_contract.functions.getStake(account.address).call(), "ether"))
+    read_dintoken_stake(ctx, name= "Auditor")
 
 
 @app.command(help="Register as Auditor")
@@ -146,16 +83,14 @@ def register(
             console.print(f"[bold green]✓ Auditor has enough stake.[/bold green]")
 
             try:
-                tx_params = ctx.obj.get_tx_params()
-                tx_params["gas"] = int(w3.eth.estimate_gas(taskAuditor_contract.functions.registerDINAuditor(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-                tx_register = taskAuditor_contract.functions.registerDINAuditor(curr_GI).build_transaction(tx_params)
-
-                signed_tx_register = account.sign_transaction(tx_register)
-                tx_hash_register = w3.eth.send_raw_transaction(signed_tx_register.raw_transaction)
-                tx_receipt_register = w3.eth.wait_for_transaction_receipt(tx_hash_register)
-            
-                if tx_receipt_register.status == 1:
-                    console.print(f"[bold green]✓ Auditor registered.[/bold green]")
+                build_and_send_tx(
+                    ctx,
+                    taskAuditor_contract.functions.registerDINAuditor(curr_GI),
+                    "Registering auditor",
+                    "Auditor registered.",
+                    "Could not register auditor.",
+                    exit_on_failure=False
+                )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
                 raise typer.Exit()
@@ -334,6 +269,8 @@ def evaluate_lms(
     batch: int = typer.Option(None, "--batch", help="Batch index"),
     submit: bool = typer.Option(False, "--submit", help="Submit evaluation"),
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    packages_dir: Optional[str] = typer.Option(None, "--packages-dir", help="Packages directory"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Do not use cached packages"),
 ):
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
@@ -347,10 +284,35 @@ def evaluate_lms(
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationStarted", "Can not evaluate auditor batches at this time")
     
     audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(curr_GI).call()
-    
+
     genesis_model_cid_raw = task_coordinator_contract.functions.genesisModelIpfsHash().call()
     genesis_model_cid = get_cid_from_bytes32(genesis_model_cid_raw.hex())
-    
+
+    model_base_dir = ctx.obj.get_model_base_dir(model_id)
+
+    auditor_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("auditors")
+    requirements_path = get_worker_requirements_path(model_base_dir, "auditors")
+    packages_dir = Path(packages_dir) if packages_dir else None
+    if auditor_requirements_cid:
+        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements")
+        try:
+            ensure_worker_image(console)
+            if not no_cache and packages_dir is None:
+                packages_dir = ensure_worker_packages_installed(
+                    requirements_path,
+                    get_worker_packages_dir(effective_network, model_id),
+                    console,
+                )
+        except RuntimeError as e:
+            console.print(f"[bold red]{e}[/bold red]")
+            raise typer.Exit(1)
+
+    ctx.obj.ensure_file_exists(
+        model_base_dir / "models" / "genesis_model.pth",
+        genesis_model_cid,
+        "genesis model",
+    )
+
     found_any = False
 
     for batch_id in range(audtor_batch_count):
@@ -385,24 +347,77 @@ def evaluate_lms(
             lms = task_auditor_contract.functions.lmSubmissions(curr_GI, model_index).call()
             lm_cid = get_cid_from_bytes32(lms[1].hex())
 
-            model_base_dir = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
             manifest = get_manifest_key(effective_network, "Score_model_by_auditor", model_id)
             auditor_service_path = model_base_dir / Path(manifest["path"])
             model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+            scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
+            scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
 
-            if manifest["type"] == "custom":
+            require_custom_manifest_service(manifest, "Score_model_by_auditor")
+            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service")
+            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service")
+            # auditor.py imports `scoring` as a sibling module via sys.path
+            # rather than a package import, so it must be materialized at the
+            # same local services/ path dincli derives from the manifest
+            # before the worker container can import it.
+            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
 
-                ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"],"auditor service")
-                ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"],"model service")
-           
-                fn = ctx.obj.load_custom_fn(
-                auditor_service_path,
-                "Score_model_by_auditor")
-                
-                score, eligible = fn(curr_GI, genesis_model_cid, batch_id, model_index, account.address, testDataCID, lm_cid, model_base_dir)
-            
-            else:
-                score, eligible = Score_model_by_auditor(curr_GI, genesis_model_cid, batch_id, model_index, account.address, testDataCID, lm_cid, model_base_dir)
+            # dincli fetches every IPFS-addressed input on the host; the
+            # container only ever sees already-materialized local files at the
+            # exact paths Score_model_by_auditor derives internally.
+            ctx.obj.ensure_file_exists(
+                model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt",
+                testDataCID,
+                "auditor test data",
+            )
+            ctx.obj.ensure_file_exists(
+                model_base_dir / "models" / "auditor" / f"lm_{curr_GI}_{model_index}.pth",
+                lm_cid,
+                "local model submission",
+            )
+
+            metric_bundle_dir = model_base_dir / "audits" / "metric_bundles" / account.address
+            jobs_dir = model_base_dir / "jobs" / "auditors" / account.address
+            job_path, output_dir = write_worker_job(
+                jobs_dir,
+                f"auditor_score_gi_{curr_GI}_batch_{batch_id}_lm_{model_index}",
+                {
+                    "network": effective_network,
+                    "model_base_dir": "/din/model",
+                    "manifest_path": "/din/model/manifest.json",
+                    "role": "auditor",
+                    "service_path": manifest["path"],
+                    "function_name": "Score_model_by_auditor",
+                    "args": [curr_GI, genesis_model_cid, batch_id, model_index, account.address, testDataCID, lm_cid, "/din/model"],
+                },
+            )
+
+            docker_result = run_worker_container(
+                container_name=f"din-worker-auditor-model-{model_id}-gi-{curr_GI}-batch-{batch_id}-lm-{model_index}",
+                model_base_dir=model_base_dir,
+                job_path=job_path,
+                output_dir=output_dir,
+                writable_subdirs=[metric_bundle_dir],
+                packages_dir=packages_dir,
+            )
+
+            if docker_result.stdout:
+                console.print(docker_result.stdout)
+            if docker_result.returncode != 0:
+                if docker_result.stderr:
+                    console.print(docker_result.stderr)
+                console.print(f"[bold red]Auditor worker container failed for LM {model_index} from batch {batch_id}.[/bold red]")
+                continue
+
+            worker_result = read_worker_result(output_dir)
+            if worker_result.get("status") != "ok":
+                console.print(f"[bold red]Auditor worker failed:[/bold red] {worker_result.get('error')}")
+                traceback = worker_result.get("traceback")
+                if traceback:
+                    console.print(traceback)
+                continue
+
+            score, eligible = worker_result["result"]
 
             console.print(f"Score: {score}")
             console.print(f"Eligible: {eligible}")
@@ -410,19 +425,14 @@ def evaluate_lms(
             if submit:
                 try:
                     time.sleep(0.5)
-                    tx_params = ctx.obj.get_tx_params()
-                    tx_params["gas"] = int(w3.eth.estimate_gas(task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-                    tx = task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)).build_transaction(tx_params)
-                    signed_tx = account.sign_transaction(tx)
-                    
-                    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-                    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-                    if receipt.status == 1:
-                        console.print(f"[bold green]✓ Audit score and eligibility submitted successfully for LM {model_index} from batch {batch_id}![/bold green]")
-                    else:
-                        console.print(f"[bold red]✗ Audit score and eligibility submission failed for LM {model_index} from batch {batch_id}![/bold red]")
+                    build_and_send_tx(
+                        ctx,
+                        task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)),
+                        f"Submitting audit score and eligibility for LM {model_index} from batch {batch_id}",
+                        f"Audit score and eligibility submitted successfully for LM {model_index} from batch {batch_id}!",
+                        f"Audit score and eligibility submission failed for LM {model_index} from batch {batch_id}!",
+                        exit_on_failure=False
+                    )
                 except Exception as e:
                     console.print(f"[bold red]✗ Error submitting  Audit score and eligibility for LM {model_index} from batch {batch_id}: {e}[/bold red]")
 

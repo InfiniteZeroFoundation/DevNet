@@ -2,7 +2,7 @@
 import typer
 
 from dincli.cli.contract_utils import erc20_abi
-from dincli.cli.utils import get_env_key
+from dincli.cli.utils import build_and_send_tx, get_env_key, resolve_task_coordinator_address
 
 setup_app = typer.Typer(help="Setup commands")
 
@@ -27,11 +27,9 @@ def add_slasher(
 
 
     if not contract_address:
-        
-        contract_address = get_env_key(effective_network.upper() + "_DINTaskCoordinator_Contract_Address")
-
-        if not contract_address:
-            raise typer.Exit(1)
+        contract_address = resolve_task_coordinator_address(
+            effective_network, None, console
+        )
 
 
     # --- Print summary ---
@@ -39,27 +37,21 @@ def add_slasher(
     deployed_DINTaskCoordinatorContract = ctx.obj.get_deployed_din_task_coordinator_contract(True, None, contract_address)
 
     if task_coordinator_flag:
-        console.print("[cyan]Confirming DIN Task Coordinator as slasher...[/cyan]")
-
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(deployed_DINTaskCoordinatorContract.functions.setDINTaskCoordinatorAsSlasher().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-        add_slasher_tx = deployed_DINTaskCoordinatorContract.functions.setDINTaskCoordinatorAsSlasher().build_transaction(tx_params)
-        signed = account.sign_transaction(add_slasher_tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        console.print(f"[dim]Confirming DIN Task Coordinator as slasher tx:[/dim] {tx_hash.hex()}")
-        w3.eth.wait_for_transaction_receipt(tx_hash)
-        console.print("[green]✓ DIN Task Coordinator confirmed as slasher![/green]")
+        build_and_send_tx(
+            ctx,
+            deployed_DINTaskCoordinatorContract.functions.setDINTaskCoordinatorAsSlasher(),
+            "Confirming DIN Task Coordinator as slasher",
+            "DIN Task Coordinator confirmed as slasher!",
+            "Failed to confirm DIN Task Coordinator as slasher"
+        )
 
     if task_auditor_flag:
-        console.print("[cyan]Confirming DIN Task Auditor as slasher...[/cyan]")
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(deployed_DINTaskCoordinatorContract.functions.setDINTaskAuditorAsSlasher().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-        add_slasher_tx = deployed_DINTaskCoordinatorContract.functions.setDINTaskAuditorAsSlasher().build_transaction(tx_params)
-        signed = account.sign_transaction(add_slasher_tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        console.print(f"[dim]Confirming DIN Task Auditor as slasher tx:[/dim] {tx_hash.hex()}")
-        w3.eth.wait_for_transaction_receipt(tx_hash)
-        console.print("[green]✓ DIN Task Auditor confirmed as slasher![/green]")
+        build_and_send_tx(
+            ctx,
+            deployed_DINTaskCoordinatorContract.functions.setDINTaskAuditorAsSlasher(),
+            "Confirming DIN Task Auditor as slasher",
+            "DIN Task Auditor confirmed as slasher!",
+            "Failed to confirm DIN Task Auditor as slasher"
+        )
 
     return

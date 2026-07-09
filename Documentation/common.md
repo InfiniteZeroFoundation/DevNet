@@ -69,6 +69,10 @@ dincli system configure-demo --mode <yes|no>
 
 ### Wallet Management
 
+> **⚠️ Local development only.** The `ETH_PRIVATE_KEY_<n>` pattern stores raw
+> private keys in plaintext. For **production validator nodes**, use the
+> encrypted keystore — see [wallet-setup.md](./guides/wallet-setup.md).
+
 **Connect a wallet:**
 
 ```bash
@@ -76,8 +80,10 @@ dincli system connect-wallet
 ```
 
 Options:
-- `--key-file <path>` — Import a private key from a file.
-- `--account <index>` — Connect an account by index. Reads `ETH_PRIVATE_KEY_<index>` from your `.env` file.
+- `--key-file <path>` — Import a private key from a file (dev/testing only).
+- `--account <index>` — Connect an account by index (dev/testing only). Reads `ETH_PRIVATE_KEY_<index>` from your `.env` file.
+- `--keystore <path>` — Import a standard Ethereum JSON keystore with passphrase (production).
+- `--name <name>` — Label for the saved keystore (default `default`).
 
 > [!IMPORTANT]
 > To use your own wallet (non-demo mode), ensure demo mode is disabled first:
@@ -90,8 +96,14 @@ Options:
 ```bash
 dincli system read-wallet
 ```
-
 > In demo mode, the private key is also displayed.
+
+
+**List all named accounts:**
+
+```bash
+dincli system list-accounts
+```
 
 ---
 

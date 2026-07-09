@@ -1,0 +1,9 @@
+{
+    "services": {
+        "distribute_mnist": {
+            "ipfs": "bafybeic7linkjl4orsd4bkkg3gwv2eoxzvkj77gzcoy2od6wr7hmey4kw4",
+            "requirements": "bafybeie2cpcr2uy37bxghlzllkcuornyk3hbka2dy5dtjdvpoza4oqaktu",
+            "path": "/services/distribute_mnist.py"
+        }
+    }
+}

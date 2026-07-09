@@ -6,6 +6,7 @@ from dincli.cli.auditor import app as auditor_app
 from dincli.cli.client import app as client_app
 from dincli.cli.context import DinContext
 from dincli.cli.core import GlobalOptionsGroup
+from dincli.cli.dintoken import app as dintoken_app
 from dincli.cli.dindao import app as dindao_app
 from dincli.cli.ipfs import app as ipfs_app
 from dincli.cli.modelowner import app as model_owner_app
@@ -26,6 +27,7 @@ app.add_typer(model_owner_app, name="model-owner")
 app.add_typer(aggregators_app, name="aggregator")
 app.add_typer(auditor_app, name="auditor")
 app.add_typer(client_app, name="client")
+app.add_typer(dintoken_app, name="dintoken")
 app.add_typer(task_app, name="task")
 app.add_typer(ipfs_app, name="ipfs")
 
@@ -47,10 +49,18 @@ def main(
         callback=None,
         is_eager=True,
     ),
+    wallet: str = typer.Option(
+        None,
+        "--wallet",
+        help="Select a named keystore (default: 'default')",
+        callback=None,
+        is_eager=True,
+    ),
     
 ):
     ctx.obj = DinContext()
     console = ctx.obj.console
+    ctx.obj.select_wallet(wallet)
 
     configured_network  = ctx.obj.select_network(network).network
     if configured_network:

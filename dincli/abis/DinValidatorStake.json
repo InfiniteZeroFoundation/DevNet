@@ -23,12 +23,22 @@
     },
     {
       "inputs": [],
-      "name": "InsufficientStake",
+      "name": "InvalidAddress",
       "type": "error"
     },
     {
       "inputs": [],
-      "name": "InvalidAddress",
+      "name": "InvalidSlashAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidUnstakeAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NoPendingWithdrawal",
       "type": "error"
     },
     {
@@ -44,11 +54,6 @@
     {
       "inputs": [],
       "name": "NotSlasherContract",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NotValidator",
       "type": "error"
     },
     {
@@ -71,6 +76,11 @@
         }
       ],
       "name": "OwnableUnauthorizedAccount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "PendingWithdrawalExists",
       "type": "error"
     },
     {
@@ -101,12 +111,17 @@
     },
     {
       "inputs": [],
-      "name": "TransferFailed",
+      "name": "ValidatorIsBlacklisted",
       "type": "error"
     },
     {
       "inputs": [],
-      "name": "ValidatorIsBlacklisted",
+      "name": "ValidatorNotBlacklisted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "WithdrawalNotReady",
       "type": "error"
     },
     {
@@ -184,6 +199,12 @@
         },
         {
           "indexed": true,
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
           "internalType": "address",
           "name": "slasher",
           "type": "address"
@@ -219,6 +240,44 @@
           "internalType": "address",
           "name": "validator",
           "type": "address"
+        }
+      ],
+      "name": "ValidatorUnblacklisted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "withdrawAvailableAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "ValidatorUnstakeRequested",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
         },
         {
           "indexed": false,
@@ -227,7 +286,7 @@
           "type": "uint256"
         }
       ],
-      "name": "ValidatorUnstaked",
+      "name": "ValidatorWithdrawalClaimed",
       "type": "event"
     },
     {
@@ -270,6 +329,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "UNBONDING_PERIOD",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -291,6 +363,13 @@
         }
       ],
       "name": "blacklistValidator",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "claimUnstaked",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -341,7 +420,7 @@
           "type": "address"
         }
       ],
-      "name": "isValidatorStaked",
+      "name": "isValidatorActive",
       "outputs": [
         {
           "internalType": "bool",
@@ -350,6 +429,19 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "minStake",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
       "type": "function"
     },
     {
@@ -396,11 +488,41 @@
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
         }
       ],
       "name": "slash",
-      "outputs": [],
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
+        }
+      ],
+      "name": "slashableStakeOf",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -451,6 +573,19 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
+        }
+      ],
+      "name": "unblacklistValidator",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
@@ -473,18 +608,28 @@
       "outputs": [
         {
           "internalType": "uint256",
-          "name": "stake",
+          "name": "activeStake",
           "type": "uint256"
         },
         {
-          "internalType": "bool",
-          "name": "registered",
-          "type": "bool"
+          "internalType": "uint256",
+          "name": "pendingWithdrawals",
+          "type": "uint256"
         },
         {
-          "internalType": "bool",
-          "name": "blacklisted",
-          "type": "bool"
+          "internalType": "uint64",
+          "name": "withdrawAvailableAt",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "jailedUntil",
+          "type": "uint64"
+        },
+        {
+          "internalType": "enum DinValidatorStake.ValidatorStatus",
+          "name": "status",
+          "type": "uint8"
         }
       ],
       "stateMutability": "view",

@@ -23,6 +23,10 @@ Also each actor/stakeholder needs to have a wallet address to interact with the 
 ```bash
 dincli system connect-wallet --account <account_id>
 ```
+> [!WARNING]
+> `--account <index>` (using `ETH_PRIVATE_KEY_<n>` from `.env`) is
+> **local development only**. Production validators should use the encrypted
+> keystore — see [wallet-setup.md](guides/wallet-setup.md).
 
 > [!NOTE]
 > More on wallet configuration can be found in the [DIN CLI Documentation](common.md).

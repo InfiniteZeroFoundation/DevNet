@@ -4,14 +4,35 @@
     "token": "0xa16E02E87b7454126E5E10d957A927A7F5B5d2be",
     "stake": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
     "representative": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    "registry": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+    "registry": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+    "explorer": "https://sepolia-optimism.etherscan.io",
+    "default_manifest": "bafybeiacrjxubt2aj2dhegbb6yzsbjm4jrnt2bsd2hbep3vy4uri2xtvg4",
+    "default_services": {
+      "model.py": "bafybeieoovd7dofejqvc6i5nxcpz5r4ux7o7oakpo2h3gxv4657otpxfpi",
+      "modelowner.py": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
+      "client.py": "bafybeidhtmexaoauz6lqijjao3trc3vetfscnigyh2esev4n2esysf4tj4",
+      "auditor.py": "bafybeidv7xkfpzuakf3if6gyfrlx7jvqxyile5kkxjtzukhdlbhmbzvb5m",
+      "aggregator.py": "bafybeiflktdfbjbegsy3gqrskzxlx4czbwfxo44m2co4eln3a72iie2tnq",
+      "scoring.py": "bafybeienjixlnr3pmsiwuuffrvnqbrucfwvn2awrkx77zdlieacldgzmvq"
+    },
+    "default_abis": {
+      "DINTaskCoordinator.json": "bafybeiafytuzbxidxo7nrc6axzb2braxsbd57i6ckvp37npb6yntvpaqxe",
+      "DINTaskAuditor.json": "bafybeifysyayopr2yng7qttryhzgo5obz7xdpapaeumszqtqtdqn6mzxla"
+    },
+    "default_requirements": {
+      "clients": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
+      "auditors": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
+      "aggregators": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
+      "modelowner": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm"
+    }
   },
   "sepolia_op_devnet": {
     "coordinator": "0xC5B5B125dcF5d51190f78e2685F7Bc97923Ad46a",
     "token": "0x22d38a1965d35478941060dbf39847f36AD443d6",
     "stake": "0x5088D7a568E79c6bec0795258591f2435649139a",
     "representative": "0xc4508FC34298075Ef0c67C49a791844406a3a5d6",
-    "registry": "0xFd2A91E787b4bAa35F83aB63748d01eaa5214Ec6"
+    "registry": "0xFd2A91E787b4bAa35F83aB63748d01eaa5214Ec6",
+    "explorer": "https://sepolia-optimism.etherscan.io"
   },
   "mainnet": {
     "coordinator": "0x...",

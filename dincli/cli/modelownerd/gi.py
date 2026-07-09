@@ -3,14 +3,73 @@ from typing import Optional
 
 import typer
 
-from dincli.cli.utils import CACHE_DIR, GIstateToStr, get_manifest_key
-from dincli.services.modelowner import getscoreforGM
+from dincli.cli.utils import (CACHE_DIR, GIstateToStr, build_and_send_tx,
+                               get_manifest, get_manifest_key,
+                               require_custom_manifest_service, _confirm_or_exit)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 gi_app = typer.Typer(help="Global iteration commands")
 reg_app = typer.Typer(help="Registration commands for a Global Iteration")
 
 gi_app.add_typer(reg_app, name="reg")
+
+DEFAULT_PASS_SCORE_THRESHOLD = 5
+
+
+def _to_bool(value, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "y", "enabled"):
+            return True
+        if normalized in ("false", "0", "no", "n", "disabled"):
+            return False
+    return default if value is None else bool(value)
+
+
+def _get_pass_scoring_config(manifest_data: dict) -> dict:
+    audit_scoring_policy = manifest_data.get("audit_scoring_policy")
+    if not isinstance(audit_scoring_policy, dict):
+        return {"enabled": True}
+
+    pass_scoring = audit_scoring_policy.get("pass_scoring", True)
+    if isinstance(pass_scoring, dict):
+        enabled = pass_scoring.get("enabled", pass_scoring.get("required", True))
+        return {
+            "enabled": _to_bool(enabled),
+            "threshold": pass_scoring.get(
+                "threshold",
+                pass_scoring.get("threshold_deduction"),
+            ),
+        }
+
+    config = {"enabled": _to_bool(pass_scoring)}
+    for key in ("threshold", "pass_score_threshold", "threshold_deduction"):
+        if key in audit_scoring_policy:
+            config["threshold"] = audit_scoring_policy[key]
+            break
+
+    return config
+
+
+def _resolve_pass_score_threshold(
+    cli_threshold: Optional[int],
+    pass_scoring_config: dict,
+) -> int:
+    if cli_threshold is not None:
+        return cli_threshold
+
+    manifest_threshold = pass_scoring_config.get("threshold")
+    if manifest_threshold is None:
+        return DEFAULT_PASS_SCORE_THRESHOLD
+
+    try:
+        return int(manifest_threshold)
+    except (TypeError, ValueError):
+        raise typer.BadParameter(
+            "audit_scoring_policy pass scoring threshold must be an integer"
+        )
 
 @gi_app.command(help="Start a global iteration")
 def start(
@@ -35,77 +94,84 @@ def start(
 
     console.print(f"[bold green]🚀 Starting global iteration {target_gi}[/bold green]")
 
-    # === 2. Latest GM CID Resolution ===
-    if curr_gi == 0:
-        gmcid_raw = task_coordinator.functions.genesisModelIpfsHash().call()
-        gmcid = get_cid_from_bytes32(gmcid_raw.hex())
-        console.print(f"[dim]Using genesis model CID:[/dim] {gmcid}")
-    else:
-        _, _, _, gmcid_raw = task_coordinator.functions.getTier2Batch(curr_gi, 0).call()
-        gmcid = get_cid_from_bytes32(gmcid_raw.hex())
-        console.print(f"[dim]Using T2-aggregated model CID for GI {curr_gi}:[/dim] {gmcid}")
+    # === 2. Manifest Policy Resolution ===
+    manifest_data = get_manifest(effective_network, model_id)
+    pass_scoring_config = _get_pass_scoring_config(manifest_data)
+    pass_scoring_enabled = pass_scoring_config["enabled"]
 
     # === 3. Path Setup (Consistent Path Handling) ===
-    model_base_path = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
-    models_dir = model_base_path / "models"
-    test_data_path = model_base_path / "dataset" / "test" / "test_dataset.pt"
-    genesis_model_path = models_dir / "genesis_model.pth"
+    model_base_path = ctx.obj.get_model_base_dir(model_id)
 
-     # === 4. Accuracy Calculation ===
-    manifest = get_manifest_key(effective_network, "getscoreforGM", model_id)
+    pass_score = None
+    if pass_scoring_enabled:
+        # === 4. Latest GM CID Resolution ===
+        if curr_gi == 0:
+            gmcid_raw = task_coordinator.functions.genesisModelIpfsHash().call()
+            gmcid = get_cid_from_bytes32(gmcid_raw.hex())
+            console.print(f"[dim]Using genesis model CID:[/dim] {gmcid}")
+        else:
+            _, _, _, gmcid_raw = task_coordinator.functions.getTier2Batch(curr_gi, 0).call()
+            gmcid = get_cid_from_bytes32(gmcid_raw.hex())
+            console.print(f"[dim]Using T2-aggregated model CID for GI {curr_gi}:[/dim] {gmcid}")
 
-    if manifest["type"] == "custom":
+        # === 5. Accuracy Calculation ===
+        models_dir = model_base_path / "models"
+        test_data_path = model_base_path / "dataset" / "test" / "test_dataset.pt"
+        genesis_model_path = models_dir / "genesis_model.pth"
+        manifest = manifest_data["getscoreforGM"]
+
+        require_custom_manifest_service(manifest, "getscoreforGM")
 
         # Retrieve required service files
         service_path = model_base_path / manifest["path"]
-        model_arch_path = model_base_path / get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"]
-
+        model_arch_manifest = manifest_data["ModelArchitecture"]
+        model_arch_path = model_base_path / model_arch_manifest["path"]
 
         ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-        ctx.obj.ensure_file_exists(model_arch_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service")
-        ctx.obj.ensure_file_exists(genesis_model_path, get_manifest_key(effective_network, "Genesis_Model_CID", model_id), "genesis model")
+        ctx.obj.ensure_file_exists(model_arch_path, model_arch_manifest["ipfs"], "model architecture service")
+        ctx.obj.ensure_file_exists(genesis_model_path, manifest_data["Genesis_Model_CID"], "genesis model")
 
+        _confirm_or_exit(f"Pass Scoring is enabled. Have you placed the test dataset for GM evaluation at {test_data_path}?", "Pass Scoring is enabled. Test dataset not placed. ", console)
+            
         # Validate test dataset
         if not test_data_path.exists():
-            console.print(f"[red]❌ Test dataset missing:[/red] {test_data_path}")
+            console.print(f"[red]X Test dataset missing:[/red] {test_data_path}")
             raise typer.Exit(1)
-
 
         fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM")
 
         accuracy = fn(curr_gi, gmcid, model_base_path)
+
+        console.print(f"[bold]GM Accuracy (GI {curr_gi}):[/bold] {accuracy:.2f}%")
+
+        # === 6. Threshold Application ===
+        threshold = _resolve_pass_score_threshold(threshold, pass_scoring_config)
+        pass_score = min(100, max(0, int(accuracy - threshold)))
+        console.print(f"[bold]Pass Score (threshold -{threshold}%):[/bold] {pass_score}")
     else:
-         # Built-in scoring fallback
-        accuracy = getscoreforGM(curr_gi, gmcid, base_path=model_base_path)
+        console.print("[yellow]Pass scoring disabled by audit_scoring_policy.pass_scoring. Starting GI without updating auditor pass score.[/yellow]")
 
-    console.print(f"[bold]GM Accuracy (GI {curr_gi}):[/bold] {accuracy:.2f}%")
-
-
-    # === 5. Threshold Application ===
-    threshold = threshold if threshold is not None else 5
-    pass_score = int(accuracy - threshold)
-    console.print(f"[bold]Pass Score (threshold -{threshold}%):[/bold] {pass_score}")
-
-     # === 6. Transaction Execution ===
+     # === 7. Transaction Execution ===
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startGI(target_gi, pass_score).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-        tx = task_coordinator.functions.startGI(target_gi, pass_score).build_transaction(tx_params)
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
-        if receipt.status != 1:
-            console.print(f"[red]❌ Transaction reverted:[/red] {tx_hash.hex()}")
-            raise typer.Exit(1)
-        
-        console.print(f"[dim]Transaction hash:[/dim] {tx_hash.hex()}")
-        console.print(f"[bold green]✓ Global iteration {target_gi} started successfully![/bold green]")
-        console.print(f"[bold]Pass Score set to:[/bold] {pass_score}")
-
+        start_gi_function = (
+            task_coordinator.functions.startGI(target_gi, pass_score)
+            if pass_scoring_enabled
+            else task_coordinator.functions.startGI(target_gi)
+        )
+        tx_receipt = build_and_send_tx(
+            ctx,
+            start_gi_function,
+            f"Starting global iteration {target_gi}",
+            f"Global iteration {target_gi} started successfully!",
+            f"Transaction failed or reverted starting global iteration {target_gi}",
+            exit_on_failure=False
+        )
+        if tx_receipt is None:
+            raise RuntimeError(f"Transaction failed or reverted starting global iteration {target_gi}")
+        if pass_scoring_enabled:
+            console.print(f"[bold]Pass Score set to:[/bold] {pass_score}")
     except Exception as e:
-        console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
+        console.print(f"[red]X Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
     
     
@@ -126,21 +192,15 @@ def aggregators_open(
     console.print(f"[bold green]Opening aggregators registration [/bold green]")
     
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startDINaggregatorsRegistration(curr_gi).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-        tx = task_coordinator.functions.startDINaggregatorsRegistration(curr_gi).build_transaction(tx_params)
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
-        if receipt.status != 1:
-            console.print(f"[red]❌ Transaction reverted:[/red] {tx_hash.hex()}")
-            raise typer.Exit(1)
-        
-        console.print(f"[dim]Transaction hash:[/dim] {tx_hash.hex()}")
-        console.print("[green]✓ Aggregators registration opened![/green]")
-
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator.functions.startDINaggregatorsRegistration(curr_gi),
+            "Opening aggregators registration",
+            "Aggregators registration opened!",
+            "Transaction failed or reverted opening aggregators registration",
+            exit_on_failure=False
+        )
+        console.print(f"[dim]Transaction hash:[/dim] {tx_receipt.transactionHash.hex()}")
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -161,22 +221,14 @@ def aggregators_close(
     console.print(f"[bold green]Closing aggregators registration[/bold green]")
 
     try:
-
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-        tx = task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI).build_transaction(tx_params)
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status == 1:
-            console.print(f"[dim]Aggregators registration closed tx:[/dim] {tx_hash.hex()}")
-            console.print("[green]✓ Aggregators registration closed![/green]")
-        else:
-            console.print("[red]Error:[/red] Aggregators registration closing failed")
-            raise typer.Exit(1)
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI),
+            "Closing aggregators registration",
+            "Aggregators registration closed!",
+            "Aggregators registration closing failed",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -197,21 +249,14 @@ def auditors_open(
     console.print(f"[bold green]Opening auditors registration[/bold green]")
 
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.startDINauditorsRegistration(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-        tx = task_coordinator.functions.startDINauditorsRegistration(curr_GI).build_transaction(tx_params)
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-        if receipt.status == 1:
-            console.print(f"[dim]Auditors registration opened tx:[/dim] {tx_hash.hex()}")
-            console.print("[green]✓ Auditors registration opened![/green]")
-        else:
-            console.print("[red]Error:[/red] Auditors registration opening failed")
-            raise typer.Exit(1)
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator.functions.startDINauditorsRegistration(curr_GI),
+            "Opening auditors registration",
+            "Auditors registration opened!",
+            "Auditors registration opening failed",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -281,20 +326,14 @@ def auditors_close(
     console.print(f"[bold green]Closing auditors registration[/bold green]")
 
     try:    
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.closeDINauditorsRegistration(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-        tx = task_coordinator.functions.closeDINauditorsRegistration(curr_GI).build_transaction(tx_params)
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status == 1:
-            console.print("[green]✓ Auditors registration closed![/green]")
-        else:
-            console.print("[red]Error:[/red] Auditors registration closing failed")
-            raise typer.Exit(1)
+        build_and_send_tx(
+            ctx,
+            task_coordinator.functions.closeDINauditorsRegistration(curr_GI),
+            "Closing auditors registration",
+            "Auditors registration closed!",
+            "Auditors registration closing failed",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
@@ -317,20 +356,14 @@ def end(
     
     console.print(f"[bold green]Ending GI {curr_GI}...[/bold green]")   
     try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(task_coordinator.functions.endGI(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-        tx = task_coordinator.functions.endGI(curr_GI).build_transaction(tx_params)
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status == 1:
-            console.print("[green]✓ GI ended![/green]")
-        else:
-            console.print("[red]Error:[/red] GI ending failed")
-            raise typer.Exit(1)
+        build_and_send_tx(
+            ctx,
+            task_coordinator.functions.endGI(curr_GI),
+            f"Ending GI {curr_GI}",
+            "GI ended!",
+            "GI ending failed",
+            exit_on_failure=False
+        )
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)

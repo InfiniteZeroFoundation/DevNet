@@ -1,0 +1,78 @@
+# din-node — containerized trusted DIN host process.
+#
+# One-command lifecycle (run from this directory, dincli/docker/node/):
+#   Setup : cp .env.example .env   # then edit DIN_STATE_DIR / DOCKER_GID / DIN_UID / DIN_GID
+#   Start : docker compose up -d --build
+#   Stop  : docker compose down
+#   Logs  : docker compose logs -f din-node
+#   Use   : docker compose exec din-node dincli <command>
+#   Upgrade: git pull && docker compose up -d --build
+#
+# See README.md (operator runbook) in this directory for the full story,
+# including the /var/run/docker.sock trust tradeoff.
+
+services:
+  din-node:
+    build:
+      # Build context is the repo root (three levels up) so the Dockerfile can
+      # COPY pyproject.toml + the dincli/ source tree.
+      context: ../../..
+      dockerfile: dincli/docker/node/Dockerfile
+      args:
+        DIN_UID: ${DIN_UID:-1000}
+        DIN_GID: ${DIN_GID:-1000}
+    image: din-node:dev
+    container_name: din-node
+
+    # Share the host's network namespace so dincli can reach host-side devnet
+    # services (anvil/hardhat at 127.0.0.1:8545, an IPFS daemon at
+    # 127.0.0.1:5001) with no port mapping or rpc_url changes. Consistent with
+    # the existing trust model: the mounted Docker socket already grants
+    # root-equivalent host access, and state is bind-mounted at identical host
+    # paths for the same "looks like the host" reason.
+    network_mode: host
+
+    # Run as the host operator's uid/gid so files written into the bind-mounted
+    # state dir (and into worker output dirs, which workers create as this uid)
+    # stay owned by the host user instead of root.
+    user: "${DIN_UID:-1000}:${DIN_GID:-1000}"
+
+    # dinuser is non-root, but the host Docker socket is owned root:<docker-gid>
+    # mode 660. Adding the host's docker group GID is the ONE privilege we grant
+    # so dincli can talk to the host daemon. This is host-specific:
+    #   DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID in .env to the host docker socket group id}"
+
+    # Point dincli's three platformdirs locations into one host directory that
+    # is bind-mounted at the IDENTICAL path below. This is what makes sibling
+    # worker containers work: when dincli runs `docker run -v <cache>:/din/...`,
+    # the path it passes is valid on the host daemon because it's the same path.
+    #   CONFIG_DIR       = $XDG_CONFIG_HOME/dincli         (wallet/config)
+    #   CACHE_DIR        = $XDG_CACHE_HOME/dincli          (manifests/models/jobs)
+    #   WORKER_CACHE_DIR = $XDG_CACHE_HOME/dincli-worker   (worker pip packages)
+    # NOTE: DIN_STATE_DIR uses required (`:?`) interpolation everywhere. If it is
+    # unset, `docker compose` aborts instead of silently rendering /config,
+    # /cache and a broken ':' volume — which would defeat the identical-path
+    # guarantee below without any visible error.
+    environment:
+      XDG_CONFIG_HOME: ${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}/config
+      XDG_CACHE_HOME: ${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}/cache
+
+    volumes:
+      # The Docker socket: lets din-node spawn worker containers as siblings on
+      # the host daemon. SECURITY: this grants root-equivalent host access. Only
+      # run din-node on a host whose operator you trust. See README.md.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Identical-path bind mount for all persistent dincli state (see above).
+      - ${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}:${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}
+
+    working_dir: ${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}
+
+    # Survive host reboots / daemon restarts; `docker compose down` still stops it.
+    restart: unless-stopped
+
+    # Inherited from the image (CMD ["sleep", "infinity"]): dincli is a CLI, not
+    # yet a daemon, so the container idles and operators `exec` in. Stated here
+    # for clarity; remove when the `dind` daemon becomes the entrypoint.
+    command: ["sleep", "infinity"]

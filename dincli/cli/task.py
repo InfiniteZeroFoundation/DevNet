@@ -4,7 +4,9 @@ import json
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import cache_manifest, get_env_key, GIstateToStr
+from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, cache_manifest, _confirm_or_exit,
+                               get_env_key, GIstateToStr,
+                               resolve_task_coordinator_address)
 from dincli.services.ipfs import upload_to_ipfs
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
@@ -16,6 +18,33 @@ gi_app = typer.Typer(help="Global iteration commands")
 
 app.add_typer(model_owner_app, name="model-owner")
 app.add_typer(gi_app, name="gi")
+
+
+def _request_status(processed: bool, approved: bool) -> str:
+    if not processed:
+        return "pending"
+    return "approved" if approved else "rejected"
+
+
+def _print_model_request(console, w3, request_id: int, req):
+    console.print(f"[bold cyan]Model Registration Request {request_id}[/bold cyan]")
+    console.print(f"  Requester: {req[0]}")
+    console.print(f"  Is Open Source: {req[1]}")
+    console.print(f"  Manifest CID: {get_cid_from_bytes32(req[2].hex())}")
+    console.print(f"  Task Coordinator: {req[3]}")
+    console.print(f"  Task Auditor: {req[4]}")
+    console.print(f"  Fee Paid: {w3.from_wei(req[5], 'ether')} ETH")
+    console.print(f"  Status: {_request_status(req[6], req[7])}")
+    console.print(f"  Created At: {req[8]}")
+
+
+def _print_manifest_request(console, w3, request_id: int, req):
+    console.print(f"[bold cyan]Manifest Update Request {request_id}[/bold cyan]")
+    console.print(f"  Model ID: {req[0]}")
+    console.print(f"  New Manifest CID: {get_cid_from_bytes32(req[1].hex())}")
+    console.print(f"  Requester: {req[2]}")
+    console.print(f"  Fee Paid: {w3.from_wei(req[3], 'ether')} ETH")
+    console.print(f"  Status: {_request_status(req[4], req[5])}")
 
 
 # @app.command()
@@ -153,9 +182,8 @@ def show_state(
     console.print("[green]✓ Global iteration state shown![/green]")
 
 
-
-@model_owner_app.command("register") 
-def register(
+@model_owner_app.command("register-request")
+def register_request(
     ctx: typer.Context,
     taskCoordinator: str = typer.Option(None, "--taskCoordinator"),
     taskAuditor: str = typer.Option(None, "--taskAuditor"),
@@ -163,145 +191,131 @@ def register(
     manifestCID: str = typer.Option(None, "--manifestCID"),
     isOpenSource: bool = typer.Option(False, "--isOpenSource"),
 ):
-    """ 
-    Register a model in DINRegistry
-    """ 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-
+    console.print(f"[bold green]Submitting model registration request to DINRegistry ...[/bold green]")
 
     if not taskCoordinator:
-        key = effective_network.upper() + "_DINTaskCoordinator_Contract_Address"
-        taskCoordinator = get_env_key(key)
-        console.print(f"[gray]Task Coordinator not provided, using {key} : {taskCoordinator} from {os.getcwd()}/.env[/gray]")
-
+        taskCoordinator = resolve_task_coordinator_address(
+            effective_network, None, console, verbose=True
+        )
+    
     if not taskAuditor:
         key = effective_network.upper() + "_" + taskCoordinator + "_DINTaskAuditor_Contract_Address"
         taskAuditor = get_env_key(key)
         console.print(f"[gray]Task Auditor not provided, using {key} : {taskAuditor} from {os.getcwd()}/.env[/gray]")
 
-    genesis_model_ipfs_hash = get_env_key(effective_network.upper() + "_" + taskCoordinator + "_GENESIS_MODEL_IPFS_HASH")
-    if not genesis_model_ipfs_hash:
-        console.print(f"[red]Error:[/red] Could not find {effective_network.upper()}_{taskCoordinator}_GENESIS_MODEL_IPFS_HASH in .env")
-        raise typer.Exit(1)
-
+    
     if not manifestCID:
         console.print("[gray]Manifest CID not provided, uploading manifest to IPFS...[/gray]")
         if not manifestpath:
-            manifestpath = Path(os.getcwd()) / "tasks" /effective_network.lower() / taskCoordinator / "manifest.json"
-            console.print(f"[gray]Custom manifest path not provided, using default manifest path: {manifestpath}[/gray]")
+            manifestpath = Path(os.getcwd()) / "tasks" / effective_network.lower() / taskCoordinator / "manifest.json"
+            console.print(f"[gray]Custom manifest path not provided, using default manifest path[/gray]")
+
         if not os.path.exists(manifestpath):
-            console.print("[red]Error:[/red] Manifest not found at path: {manifestpath}")
+            console.print(f"[red]Error:[/red] Manifest not found at path: {manifestpath}")
             raise typer.Exit(1)
+        console.print(f" [blue]Manifest path:[/blue] [magenta] {manifestpath}[/magenta]")
 
-        with open(manifestpath, "r", encoding="utf-8") as f:
-            manifest_data = json.load(f)
-
-        if manifest_data["DINTaskCoordinator_Contract"] != taskCoordinator:
-            manifest_data["DINTaskCoordinator_Contract"] = taskCoordinator
+    
+        _confirm_or_exit(
+                f"Have you run dincli m dincli.main model-owner model validate-update-manifest to update the manifest from the {os.getcwd()}/.env?",
+                "Please run dincli m dincli.main model-owner model validate-update-manifest to update the manifest from the .env file.",
+                console,
+            )
         
-        if manifest_data["DINTaskAuditor_Contract"] != taskAuditor:
-            manifest_data["DINTaskAuditor_Contract"] = taskAuditor
-
-        if manifest_data["Genesis_Model_CID"] != genesis_model_ipfs_hash:
-            manifest_data["Genesis_Model_CID"] = genesis_model_ipfs_hash
-
-        with open(manifestpath, "w", encoding="utf-8") as f:
-            json.dump(manifest_data, f, indent=4)
+        _confirm_or_exit(
+                "Have you throughly read/modify all the parameters/CID values in the manifest file above as needed?",
+                "Please edit/modify all the parameters/CID values in the manifest file.",
+                console,
+            )
 
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
-       
-    dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
 
-    console.print(f"[green]Registering model in DINRegistry[/green]")
+        dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
+
+    console.print(f"[green]Requesting model registration in DINRegistry[/green]")
     console.print(f"[gray]Manifest CID: {manifestCID}[/gray]")
     console.print(f"[gray]Task Coordinator: {taskCoordinator}[/gray]")
     console.print(f"[gray]Task Auditor: {taskAuditor}[/gray]")
     console.print(f"[gray]Is Open Source: {isOpenSource}[/gray]")
 
+    balance_wei = w3.eth.get_balance(account.address)
+    balance_eth = w3.from_wei(balance_wei, "ether")
+    console.print(f"[green]ETH Balance:[/green] {balance_eth} ETH")
+
+    manifestCID_bytes32 = get_bytes32_from_cid(manifestCID)
+    bytes32_value = Web3.to_bytes(hexstr=manifestCID_bytes32)
+    required_fee = (
+        dinregistry_contract.functions.openSourceFee().call()
+        if isOpenSource
+        else dinregistry_contract.functions.proprietaryFee().call()
+    )
+    console.print(f"[gray]Required fee: {w3.from_wei(required_fee, 'ether')} ETH[/gray]")
+
+    _confirm_or_exit(
+        "Proceed with submitting the model registration request on-chain?",
+        "Model registration request aborted by user.",
+        console,
+    )
+
+    tx_receipt = build_and_send_tx(
+        ctx,
+        dinregistry_contract.functions.requestModelRegistration(
+            bytes32_value,
+            taskCoordinator,
+            taskAuditor,
+            isOpenSource,
+        ),
+        "Submitting model registration request in DINRegistry",
+        "Model registration request submitted successfully in DINRegistry",
+        "Model registration request failed in DINRegistry",
+        tx_params={"value": required_fee},
+    )
 
     balance_wei = w3.eth.get_balance(account.address)
     balance_eth = w3.from_wei(balance_wei, "ether")
-        
-    console.print(f"[green]ETH Balance:[/green] {balance_eth} ETH")    
+    console.print(f"[green]ETH Balance after request:[/green] {balance_eth} ETH")
 
-    manifestCID_bytes32 = get_bytes32_from_cid(manifestCID)
+    events = dinregistry_contract.events.ModelRegistrationRequested().process_receipt(tx_receipt)
 
-    bytes32_value = Web3.to_bytes(hexstr=manifestCID_bytes32)
-
-    proprieteryFee = 0
-    if not isOpenSource:
-        proprieteryFee = dinregistry_contract.functions.proprietaryFeeL2().call()
-
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["value"] = proprieteryFee
-    tx_params["gas"] = int(w3.eth.estimate_gas(dinregistry_contract.functions.registerModel(bytes32_value, taskCoordinator, taskAuditor, isOpenSource).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-    tx = dinregistry_contract.functions.registerModel(
-        bytes32_value,
-        taskCoordinator, 
-        taskAuditor, 
-        isOpenSource
-    ).build_transaction(tx_params)
-
-    signed_tx = account.sign_transaction(tx)
-
-
-    # Send raw transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-    if tx_receipt.status == 1:
-        console.print(f"[green]Model registered successfully in DINRegistry[/green]")
-
-        balance_wei = w3.eth.get_balance(account.address)
-        balance_eth = w3.from_wei(balance_wei, "ether")
-        
-        console.print(f"[green]ETH Balance after registration:[/green] {balance_eth} ETH") 
-
-        events = dinregistry_contract.events.ModelRegistered().process_receipt(tx_receipt)
-
-        if events:
-            event = events[0]  # Usually one, but could be more in complex cases
-            args = event['args']
-            console.print("[bold cyan]ModelRegistered Event Emitted:[/bold cyan]")
-            console.print(f"  Model ID: {args['modelId']}")
-            console.print(f"  Owner: {args['owner']}")
-            console.print(f"  Is Open Source: {args['isOpenSource']}")
-            console.print(f"  Manifest CID: {get_cid_from_bytes32(args['manifestCID'].hex())}")
-            console.print(f"  Transaction Hash: {tx_hash.hex()}")
+    if events:
+        event = events[0]
+        args = event['args']
+        console.print("[bold cyan]ModelRegistrationRequested Event Emitted:[/bold cyan]")
+        console.print(f"  Request ID: {args['requestId']}")
+        console.print(f"  Requester: {args['requester']}")
+        console.print("  Status: pending")
+        console.print("[yellow]The model is not registered until DIN DAO approves this request.[/yellow]")
     else:
-        console.print("[yellow]Warning: ModelRegistered event not found in receipt.[/yellow]")
+        console.print("[yellow]Warning: ModelRegistrationRequested event not found in receipt.[/yellow]")
 
-    
-@model_owner_app.command("update-manifest")
-def update_manifest(
+
+@model_owner_app.command("update-manifest-request")
+def update_manifest_request(
     ctx: typer.Context,
     model_id: int = typer.Argument(..., help="Model index"),
     manifestpath: str = typer.Option(None, "--manifestpath"),
     manifestCID: str = typer.Option(None, "--manifestCID"),
 ):
-
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
-
     dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
-
     model_data = dinregistry_contract.functions.getModel(model_id).call()
 
     taskCoordinator = model_data[4]
     owner = model_data[0]
+    is_open_source = model_data[1]
 
-    if owner != account.address:
+    if owner.lower() != account.address.lower():
         console.print("[red]Error:[/red] You are not the owner of this model")
         raise typer.Exit(1)
-    
-    if not manifestCID:
 
+    if not manifestCID:
         console.print("[gray]Manifest CID not provided, uploading manifest to IPFS...[/gray]")
         if not manifestpath:
-            manifestpath = Path(os.getcwd()) / "tasks" /effective_network.lower() / taskCoordinator / "manifest.json"
+            manifestpath = ctx.obj.get_model_base_dir(model_id) / "manifest.json"
             console.print(f"[gray]Custom manifest path not provided, using default manifest path: {manifestpath}[/gray]")
         if not os.path.exists(manifestpath):
-            console.print("[red]Error:[/red] Manifest not found at path: {manifestpath}")
+            console.print(f"[red]Error:[/red] Manifest not found at path: {manifestpath}")
             raise typer.Exit(1)
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
 
@@ -309,51 +323,124 @@ def update_manifest(
 
     if curr_manifestCID == manifestCID:
         console.print("[yellow]Manifest CID is the same as the current manifest CID. No update needed.[/yellow]")
-        typer.Exit(1)
+        raise typer.Exit(1)
 
+    console.print(f"[green]Submitting manifest update request for model ID {model_id}...[/green]")
+    console.print(f"[gray]Current manifest CID: {curr_manifestCID}[/gray]")
+    console.print(f"[gray]New manifest CID: {manifestCID}[/gray]")
+
+    manifestCID_bytes32 = get_bytes32_from_cid(manifestCID)
+    bytes32_value = Web3.to_bytes(hexstr=manifestCID_bytes32)
+    required_fee = (
+        dinregistry_contract.functions.openSourceUpdateFee().call()
+        if is_open_source
+        else dinregistry_contract.functions.proprietaryUpdateFee().call()
+    )
+    console.print(f"[gray]Required fee: {w3.from_wei(required_fee, 'ether')} ETH[/gray]")
+
+    _confirm_or_exit(
+        "Proceed with submitting the manifest update request on-chain?",
+        "Manifest update request aborted by user.",
+        console,
+    )
+
+    tx_receipt = build_and_send_tx(
+        ctx,
+        dinregistry_contract.functions.requestManifestUpdate(model_id, bytes32_value),
+        f"Submitting manifest update request for model ID {model_id}",
+        f"Manifest update request submitted successfully for model ID {model_id}",
+        f"Manifest update request failed for model ID {model_id}",
+        tx_params={"value": required_fee},
+    )
+
+    events = dinregistry_contract.events.ManifestUpdateRequested().process_receipt(tx_receipt)
+
+    if events:
+        event = events[0]
+        args = event['args']
+        console.print("[bold cyan]ManifestUpdateRequested Event Emitted:[/bold cyan]")
+        console.print(f"  Request ID: {args['requestId']}")
+        console.print(f"  Model ID: {args['modelId']}")
+        console.print("  Status: pending")
+        console.print("[yellow]The manifest is not updated until DIN DAO approves this request.[/yellow]")
+        console.print(f"  Transaction Hash: {tx_receipt.transactionHash.hex()}")
     else:
-        console.print("[green]Updating manifest CID for model ID {}...[/green]".format(model_id))
-        console.print(f"[gray]Current manifest CID: {curr_manifestCID}[/gray]")
-        console.print(f"[gray]New manifest CID: {manifestCID}[/gray]")
+        console.print("[yellow]Warning: ManifestUpdateRequested event not found in receipt.[/yellow]")
 
-        manifestCID_bytes32 = get_bytes32_from_cid(manifestCID)
-        bytes32_value = Web3.to_bytes(hexstr=manifestCID_bytes32)
 
-        tx_params = ctx.obj.get_tx_params()
-        tx_params["gas"] = int(w3.eth.estimate_gas(dinregistry_contract.functions.updateManifest(model_id, bytes32_value).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-        
+@model_owner_app.command("show-registration-request")
+def show_registration_request(
+    ctx: typer.Context,
+    request_id: int = typer.Argument(..., help="Registration request ID"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
+    req = dinregistry_contract.functions.modelRequests(request_id).call()
+    if req[0].lower() != account.address.lower():
+        console.print("[red]Error:[/red] This registration request was not submitted by the active account")
+        raise typer.Exit(1)
+    _print_model_request(console, w3, request_id, req)
+    if req[6] and req[7]:
+        exists, approved_model_id = dinregistry_contract.functions.getModelIdByTaskCoordinator(req[3]).call()
+        if exists:
+            console.print(f"[green]Approved model ID: {approved_model_id}[/green]")
 
-        tx = dinregistry_contract.functions.updateManifest(
-            model_id, 
-            bytes32_value
-        ).build_transaction(tx_params)
 
-        signed_tx = account.sign_transaction(tx)
+@model_owner_app.command("show-manifest-update-request")
+def show_manifest_update_request(
+    ctx: typer.Context,
+    request_id: int = typer.Argument(..., help="Manifest update request ID"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
+    req = dinregistry_contract.functions.manifestRequests(request_id).call()
+    if req[2].lower() != account.address.lower():
+        console.print("[red]Error:[/red] This manifest update request was not submitted by the active account")
+        raise typer.Exit(1)
+    _print_manifest_request(console, w3, request_id, req)
 
-        # Send raw transaction
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
-        if tx_receipt.status == 1:
-            console.print("[green]Manifest CID updated successfully for model ID {}[/green]".format(model_id))
-        else:
-            console.print("[red]Error: Manifest CID update failed for model ID {}[/red]".format(model_id))
-            raise typer.Exit(1)
+@model_owner_app.command("my-requests")
+def my_requests(
+    ctx: typer.Context,
+    request_type: str = typer.Option(None, "--type", "-t", help="Type of request: [model, manifest]"),
+    include_processed: bool = typer.Option(False, "--include-processed", "--ip", help="Include approved and rejected requests"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
+    normalized_type = request_type.lower() if request_type else None
 
-        events = dinregistry_contract.events.ManifestUpdated().process_receipt(tx_receipt)
+    if normalized_type not in (None, "model", "manifest"):
+        console.print("[red]Error:[/red] --type must be 'model' or 'manifest'")
+        raise typer.Exit(1)
 
-        if events:
-            event = events[0]  # Usually one, but could be more in complex cases
-            args = event['args']
-            console.print("[bold cyan]ManifestUpdated Event Emitted:[/bold cyan]")
-            console.print(f"  Model ID: {args['modelId']}")
-            console.print(f"  New Manifest CID: {get_cid_from_bytes32(args['newManifestCID'].hex())}")
-            console.print(f"  Transaction Hash: {tx_hash.hex()}")
-        else:
-            console.print("[yellow]Warning: ManifestUpdated event not found in receipt.[/yellow]")
-            
-@app.command("total-models")
-def total_models(ctx: typer.Context,
+    if normalized_type in (None, "model"):
+        total = dinregistry_contract.functions.totalModelRequests().call()
+        console.print("[bold cyan]Your Model Registration Requests[/bold cyan]")
+        found = False
+        for request_id in range(total):
+            req = dinregistry_contract.functions.modelRequests(request_id).call()
+            if req[0].lower() == account.address.lower() and (include_processed or not req[6]):
+                console.print(f"  Request ID {request_id}: {_request_status(req[6], req[7])}, manifest {get_cid_from_bytes32(req[2].hex())}")
+                found = True
+        if not found:
+            console.print("  [gray]No matching model registration requests[/gray]")
+
+    if normalized_type in (None, "manifest"):
+        total = dinregistry_contract.functions.totalManifestRequests().call()
+        console.print("[bold cyan]Your Manifest Update Requests[/bold cyan]")
+        found = False
+        for request_id in range(total):
+            req = dinregistry_contract.functions.manifestRequests(request_id).call()
+            if req[2].lower() == account.address.lower() and (include_processed or not req[4]):
+                console.print(f"  Request ID {request_id}: {_request_status(req[4], req[5])}, model {req[0]}, new manifest {get_cid_from_bytes32(req[1].hex())}")
+                found = True
+        if not found:
+            console.print("  [gray]No matching manifest update requests[/gray]")
+
+
+@app.command("sum-registered-models")
+def sum_registered_models(ctx: typer.Context,
     ):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
 
@@ -361,8 +448,30 @@ def total_models(ctx: typer.Context,
 
     models_length = DINModelRegistry_Contract.functions.totalModels().call()
 
-    console.print(f"[bold green]Total models: {models_length}[/bold green]")
-        
+    console.print(f"[bold green]Total registered models: {models_length}[/bold green]")
+
+
+@app.command("sum-model-registration-requests")
+def sum_model_registration_requests(ctx: typer.Context,
+    ):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
+
+    models_length = DINModelRegistry_Contract.functions.totalModelRequests().call()
+
+    console.print(f"[bold green]Total model registration requests: {models_length}[/bold green]")  
+
+@app.command("sum-manifest-update-requests")
+def sum_manifest_update_requests(ctx: typer.Context,
+    ):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
+
+    models_length = DINModelRegistry_Contract.functions.totalManifestRequests().call()
+
+    console.print(f"[bold green]Total manifest update requests: {models_length}[/bold green]")  
         
 
 

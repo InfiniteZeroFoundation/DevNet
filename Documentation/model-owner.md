@@ -43,17 +43,21 @@ dincli model-owner add-slasher --taskAuditor [--contract <task_coordinator_addre
 
 ---
 
-### Protocol Fee for Proprietary Models
+### Protocol Fees
 
-The DIN protocol trains two types of models - open source and proprietary. 
+The DIN protocol charges fees to submit model registration and manifest update requests. Fees are held by the registry contract and can only be withdrawn by the DAO admin.
 
-For proprietary models, there is a fee for using the protocol. This fee is paid by the model owner at the registration of the model  in DIN Registry contract. This fee is used to fund the development of the protocol. 
-The fee is paid by the model owner in ETH (at the time of registration) to the DIN Registry contract. The current fee is 0.000001 ETH.
+Fees apply regardless of whether the request is approved or rejected (spam protection).
 
-The fee can be displayed using the dincli command
+| Action | Open-Source | Proprietary |
+|--------|------------|-------------|
+| Register a new model | 0.000001 ETH | 0.00001 ETH |
+| Request a manifest update | 0.0000001 ETH | 0.000001 ETH |
+
+View current fees:
 
 ```bash
-dincli system get-proprietary-fee
+dincli system get-fees
 ```
 
 ---
@@ -67,6 +71,52 @@ The manifest is a JSON file containing the metadata for your model and task. For
 **Service files**
 
 The Model Owner must provide a set of service files tailored to the task. For detailed documentation on each service file and the required function signatures, see [services.md](services.md).
+
+---
+
+## 1b. Model Registration (Request → Approval)
+
+Model registration is a **two-step process**. The Model Owner submits a request; the DIN DAO reviews and approves (or rejects) it.
+
+### Step 1 — Submit Registration Request
+
+Submit your model to the registry. Requires the registration fee (see [Protocol Fees](#protocol-fees) above).
+
+```bash
+# TODO
+dincli model-owner registry request-registration \
+  --manifest <path_to_manifest_cid_bytes32> \
+  --task-coordinator <coordinator_address> \
+  --task-auditor <auditor_address> \
+  [--open-source]
+```
+
+On success you receive a **`requestId`**. Track it to monitor approval status.
+
+### Step 2 — Wait for DAO Approval
+
+The DIN DAO reviews your request and calls `approveModel(requestId)`. You will receive a **`modelId`** once approved.
+
+Check the status of your request:
+
+```bash
+# TODO
+dincli model-owner registry show-request <requestId>
+```
+
+> [!IMPORTANT]
+> The coordinator and auditor contracts must remain registered slashers and still be owned by your address at the time the DAO approves. If either condition changes, the approval will revert and you must submit a new request.
+
+### Updating a Manifest
+
+Manifest updates also follow a request/approval flow. The model must not be disabled.
+
+```bash
+# TODO
+dincli model-owner registry request-manifest-update <model_id> --manifest <new_manifest_cid_bytes32>
+```
+
+The DAO reviews the request and calls `approveManifestUpdate(requestId)` to apply it.
 
 ---
 

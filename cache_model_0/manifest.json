@@ -1,68 +1,264 @@
 {
    "name": "mnist-digits",
    "version": "1.0.0",
-   "description":"MNIST model to detect digits",
-   "author":"Umer Majeed (infinite Zero)",
-   "technical details":"",
-   "Genesis_Model_CID":"bafybeiabvfkm46yerhp6ramctwdiqixzs472hekj2tj34x2q4hrhu777va",
-   "DINTaskCoordinator_Contract":"0xB52A53a86Aec43Efc597EBdf338502ab8635c769",
-   "DINTaskAuditor_Contract":"0xdB6259DD05A52D7b254763225Fc13cE852EFE3FA",
-   "dp_mode":"disabled",
-   "getGenesisModelIpfs":{
+   "description": "MNIST model to detect digits 0-9",
+   "author": "Umer Majeed (infinite Zero)",
+   "technical details": "",
+   "Genesis_Model_CID": "bafybeia6hlf3dpptyomuufvswsqjawfr6dizqsuo7tj65wia27crwdgc2a",
+   "DINTaskCoordinator_Contract": "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+   "DINTaskAuditor_Contract": "0x71C95911E9a5D330f4D621842EC243EE1343292e",
+   "audit_scoring_policy": {
+      "spec_version": 1,
+      "pass_scoring": {
+         "enabled": true,
+         "threshold": 5
+      },
+      "scenario": "labeled_holdout_classification",
+      "admission_mode": "holdout_delta",
+      "contribution_mode": "none",
+      "fallback_mode": "screening_only",
+      "algorithms": {
+         "eligibility": "eligibility_anomaly_gate",
+         "utility": "holdout_delta_score",
+         "validator_aggregation": "legacy_mean_until_contract_v2"
+      },
+      "normalization": {
+         "contract_score_scale": "percent_0_100",
+         "utility_scale": "basis_points",
+         "max_utility": 10000
+      },
+      "eligibility_checks": {
+         "require_loadable_model": true,
+         "require_architecture_match": true,
+         "reject_nan_tensors": true,
+         "max_update_norm": 100.0,
+         "max_abs_weight": 100.0,
+         "min_eval_examples": 1
+      },
+      "evaluation": {
+         "batch_size": 32,
+         "dataset_mode": "legacy_testDataCID",
+         "metric_bundle_upload": "best_effort"
+      },
+      "metrics": {
+         "primary": [
+            "accuracy",
+            "loss",
+            "macro_f1",
+            "baseline_delta"
+         ],
+         "thresholds": {
+            "min_accuracy": 50.0,
+            "min_baseline_delta_bps": 0,
+            "max_anomaly_score_bps": 5000
+         }
+      },
+      "validator_consensus": {
+         "acceptance_rule": "legacy_contract_quorum",
+         "target_acceptance_rule_v2": "majority_vote",
+         "target_score_rule_v2": "median",
+         "max_disagreement_bps": 800
+      }
+   },
+   "gm_scoring_policy": {
+      "evaluation": {
+         "requires_test_dataset": true,
+         "dataset_mode": "path"
+      }
+   },
+   "dp": {
+      "enabled": false,
+      "mode": "afterTraining",
+      "mechanism": "post_training_gaussian",
+      "parameters": {
+         "clipping_norm": 1.0,
+         "noise_multiplier": 0.5,
+         "laplace_scale": 0.35,
+         "clip_scope": "per_layer"
+      }
+   },
+   "getGenesisModelIpfs": {
       "type": "custom",
       "path": "services/modelowner.py",
       "ipfs": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
-      "stakeholders": ["modelowner"]
+      "stakeholders": [
+         "modelowner"
+      ]
    },
-   "getscoreforGM":{
+   "getscoreforGM": {
       "type": "custom",
       "path": "services/modelowner.py",
       "ipfs": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
-      "stakeholders": ["modelowner"]
+      "stakeholders": [
+         "modelowner"
+      ]
    },
-   "ModelArchitecture":{
+   "ModelArchitecture": {
       "type": "custom",
       "path": "services/model.py",
       "ipfs": "bafybeieoovd7dofejqvc6i5nxcpz5r4ux7o7oakpo2h3gxv4657otpxfpi",
-      "stakeholders": ["modelowner", "auditors", "aggregators","clients"]
+      "stakeholders": [
+         "modelowner",
+         "auditors",
+         "aggregators",
+         "clients"
+      ]
    },
-   "train_client_model_and_upload_to_ipfs":{
+   "train_client_model": {
       "type": "custom",
       "path": "services/client.py",
-      "ipfs": "bafybeic5jekza5sxec2voknontekxfmz6snlhew3eb2nsyb6sb6qx6mhfe",
-      "stakeholders": ["clients"]
+      "ipfs": "bafybeidhtmexaoauz6lqijjao3trc3vetfscnigyh2esev4n2esysf4tj4",
+      "stakeholders": [
+         "clients"
+      ]
    },
-   "create_audit_testDataCIDs":{
+   "create_audit_testDataCIDs": {
       "type": "custom",
       "path": "services/modelowner.py",
       "ipfs": "bafybeid7uipkcagk453qwogpnlasp3posijcztz26m77ki6comylibr6ym",
-      "stakeholders": ["modelowner"]
+      "stakeholders": [
+         "modelowner"
+      ]
    },
-   "Score_model_by_auditor":{
+   "Score_model_by_auditor": {
       "type": "custom",
       "path": "services/auditor.py",
-      "ipfs": "bafybeif4q2tfaexdflj3bd746ylrkwpprhsw4ozqayowrqtako72ij3zqa",
-      "stakeholders": ["auditors"]
+      "ipfs": "bafybeidv7xkfpzuakf3if6gyfrlx7jvqxyile5kkxjtzukhdlbhmbzvb5m",
+      "stakeholders": [
+         "auditors"
+      ]
    },
-   "get_aggregated_cid_t1":{
+   "ScoringUtils": {
+      "type": "custom",
+      "path": "services/scoring.py",
+      "ipfs": "bafybeienjixlnr3pmsiwuuffrvnqbrucfwvn2awrkx77zdlieacldgzmvq",
+      "stakeholders": [
+         "auditors"
+      ]
+   },
+   "get_aggregated_cid_t1": {
       "type": "custom",
       "path": "services/aggregator.py",
-      "ipfs": "bafybeialydfrws6jozf64maz65h772ms6ukc364gjjwslr2jfhvk7r7j2a",
-      "stakeholders": ["aggregators"]
+      "ipfs": "bafybeiflktdfbjbegsy3gqrskzxlx4czbwfxo44m2co4eln3a72iie2tnq",
+      "stakeholders": [
+         "aggregators"
+      ]
    },
-   "get_aggregated_cid_t2":{
+   "get_aggregated_cid_t2": {
       "type": "custom",
       "path": "services/aggregator.py",
-      "ipfs": "bafybeialydfrws6jozf64maz65h772ms6ukc364gjjwslr2jfhvk7r7j2a",
-      "stakeholders": ["aggregators"]
+      "ipfs": "bafybeiflktdfbjbegsy3gqrskzxlx4czbwfxo44m2co4eln3a72iie2tnq",
+      "stakeholders": [
+         "aggregators"
+      ]
    },
    "guides": {
       "clients": "bafybeifk2hasvhwgjydfunvjzgxpoqhwadswet4xer54hv5ro5gvfqxna4"
    },
    "requirements.txt": {
-      "clients": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
-      "auditors": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
-      "aggregators": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm",
-      "modelowner": "bafybeifolbr4ti734zwbgtu6alimwfl22y4sxsopprd2727rukvac6halm"
+      "clients": "bafybeifnikybtb2dsxc3b2ehocjrji27ypj2uwc6363nc7hci4rmoqbbn4",
+      "auditors": "bafybeifnikybtb2dsxc3b2ehocjrji27ypj2uwc6363nc7hci4rmoqbbn4",
+      "aggregators": "bafybeifnikybtb2dsxc3b2ehocjrji27ypj2uwc6363nc7hci4rmoqbbn4",
+      "modelowner": "bafybeifnikybtb2dsxc3b2ehocjrji27ypj2uwc6363nc7hci4rmoqbbn4"
+   },
+   "task_contracts": {
+      "DINTaskCoordinator_Contract": {
+         "name": "DINTaskCoordinator",
+         "address": "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+         "artifact": {
+            "type": "hardhat-artifact",
+            "path": "contracts/abis/DINTaskCoordinator.json",
+            "ipfs": "bafybeickgth755xv6gxx2jlbtrk4bdc7jjqhoqbvpy56k7v4sups6w6cre",
+            "stakeholders": [
+               "modelowner",
+               "auditors",
+               "aggregators",
+               "clients"
+            ]
+         },
+         "source": {
+            "path": "contracts/sources/DINTaskCoordinator.sol",
+            "ipfs": null
+         },
+         "compilation": {
+            "toolchain": "hardhat",
+            "solidity": "0.8.28",
+            "evm_version": "cancun",
+            "optimizer": {
+               "enabled": false,
+               "runs": 200
+            },
+            "config": {
+               "path": "contracts/compilation/hardhat.config.ts",
+               "ipfs": null
+            },
+            "sources": [
+               {
+                  "path": "contracts/sources/DINTaskCoordinator.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINTaskAuditor.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINShared.sol",
+                  "ipfs": null
+               }
+            ],
+            "dependencies": [
+               "@openzeppelin/contracts"
+            ]
+         }
+      },
+      "DINTaskAuditor_Contract": {
+         "name": "DINTaskAuditor",
+         "address": "0x71C95911E9a5D330f4D621842EC243EE1343292e",
+         "artifact": {
+            "type": "hardhat-artifact",
+            "path": "contracts/abis/DINTaskAuditor.json",
+            "ipfs": "bafybeifysyayopr2yng7qttryhzgo5obz7xdpapaeumszqtqtdqn6mzxla",
+            "stakeholders": [
+               "modelowner",
+               "auditors",
+               "aggregators",
+               "clients"
+            ]
+         },
+         "source": {
+            "path": "contracts/sources/DINTaskAuditor.sol",
+            "ipfs": null
+         },
+         "compilation": {
+            "toolchain": "hardhat",
+            "solidity": "0.8.28",
+            "evm_version": "cancun",
+            "optimizer": {
+               "enabled": false,
+               "runs": 200
+            },
+            "config": {
+               "path": "contracts/compilation/hardhat.config.ts",
+               "ipfs": null
+            },
+            "sources": [
+               {
+                  "path": "contracts/sources/DINTaskCoordinator.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINTaskAuditor.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINShared.sol",
+                  "ipfs": null
+               }
+            ],
+            "dependencies": [
+               "@openzeppelin/contracts"
+            ]
+         }
+      }
    }
 }

@@ -47,9 +47,15 @@ New here? Start with the validator setup guide:
 
 ---
 
-## Setup
+## Install dincli
 
-Full installation and IPFS configuration guide: [dincli Documentation](Documentation/setup.md)
+Full installation guide: [dincli Documentation](Documentation/setup.md)
+
+---
+
+## Configure IPFS
+
+Full configuration guide: [dincli Documentation](Documentation/setup.md)
 
 ---
 
@@ -59,7 +65,7 @@ The network is open and experimental. We use the `develop` branch for contributi
 
 [Contribution Guide →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/CONTRIBUTING.md)
 
-Not sure where to start? We've got you.
+Not sure where to start?
 
 [Good first issues →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/GOOD_FIRST_ISSUES.md)
 

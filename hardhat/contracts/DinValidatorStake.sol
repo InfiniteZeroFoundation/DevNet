@@ -4,44 +4,64 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol"; // ✅ L2-optimized guard
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
     error NotDINCoordinator();
     error ValidatorIsBlacklisted();
+    error ValidatorNotBlacklisted();
     error InvalidAddress();
     error NotSlasherContract();
     error AmountLessThanMinStake();
-    error NotValidator();
-    error InsufficientStake();
     error NotEnoughStake();
     error SlasherContractAlreadyAdded();
     error SlasherContractNotAdded();
-    error TransferFailed();
+    error InvalidSlashAmount();
+    error InvalidUnstakeAmount();
+    error PendingWithdrawalExists();
+    error NoPendingWithdrawal();
+    error WithdrawalNotReady();
 
     IERC20 public immutable DIN_TOKEN;
     address public immutable DIN_COORDINATOR;
 
     using SafeERC20 for IERC20;
 
-    // ✅ Proper decimal scaling: 1M DIN tokens with 18 decimals
     uint256 public constant MIN_STAKE = 10 * 1e18;
+    uint64 public constant UNBONDING_PERIOD = 7 days;
     mapping(address => bool) public slasherContracts;
 
+    enum ValidatorStatus {
+        None,
+        Active,
+        Exiting,
+        Jailed,
+        Blacklisted
+    }
+
     struct ValidatorInfo {
-        uint256 stake;
-        bool registered;
-        bool blacklisted;
+        uint256 activeStake;
+        uint256 pendingWithdrawals;
+        uint64 withdrawAvailableAt;
+        uint64 jailedUntil;
+        ValidatorStatus status;
     }
 
     event ValidatorStaked(address indexed validator, uint256 amount);
     event ValidatorSlashed(
         address indexed validator,
         uint256 amount,
+        bytes32 indexed reason,
         address indexed slasher
     );
-    event ValidatorUnstaked(address indexed validator, uint256 amount);
+    event ValidatorUnstakeRequested(
+        address indexed validator,
+        uint256 amount,
+        uint64 withdrawAvailableAt
+    );
+    event ValidatorWithdrawalClaimed(address indexed validator, uint256 amount);
     event ValidatorBlacklisted(address indexed validator);
+    event ValidatorUnblacklisted(address indexed validator);
     event SlasherContractAdded(address indexed slasher);
     event SlasherContractRemoved(address indexed slasher);
 
@@ -55,129 +75,201 @@ contract DinValidatorStake is Ownable, ReentrancyGuardTransient {
         DIN_COORDINATOR = dinCoordinator;
     }
 
-    /// @notice Modifier: restricts to DinCoordinator only
     modifier onlyDinCoordinator() {
         if (msg.sender != DIN_COORDINATOR) revert NotDINCoordinator();
         _;
     }
 
-    /// @notice Modifier: restricts to Slasher Contracts only
     modifier onlySlasherContract() {
         if (!slasherContracts[msg.sender]) revert NotSlasherContract();
         _;
     }
 
-    /// @notice Stake DIN tokens to become a validator
-    /// @param amount The amount of DIN tokens to stake
     function stake(uint256 amount) external nonReentrant {
         if (amount < MIN_STAKE) revert AmountLessThanMinStake();
 
         ValidatorInfo storage validator = validators[msg.sender];
-        if (validator.blacklisted) revert ValidatorIsBlacklisted();
+        if (validator.status == ValidatorStatus.Blacklisted) {
+            revert ValidatorIsBlacklisted();
+        }
 
-        // ✅ SafeERC20: handles non-standard ERC20 return values + revert on failure
         DIN_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
-        validator.stake += amount;
-        validator.registered = true;
+        validator.activeStake += amount;
+        _syncValidatorStatus(validator);
 
         emit ValidatorStaked(msg.sender, amount);
     }
 
-    /// @notice Add a new slasher contract
-    /// @param slasherContract The address of the slasher contract
     function addSlasherContract(
         address slasherContract
     ) external onlyDinCoordinator {
         if (slasherContract == address(0)) revert InvalidAddress();
-        if (slasherContracts[slasherContract])
+        if (slasherContracts[slasherContract]) {
             revert SlasherContractAlreadyAdded();
+        }
         slasherContracts[slasherContract] = true;
 
         emit SlasherContractAdded(slasherContract);
     }
 
-    /// @notice Remove a slasher contract
-    /// @param slasherContract The address of the slasher contract to remove
     function removeSlasherContract(
         address slasherContract
     ) external onlyDinCoordinator {
         if (slasherContract == address(0)) revert InvalidAddress();
-        if (!slasherContracts[slasherContract])
+        if (!slasherContracts[slasherContract]) {
             revert SlasherContractNotAdded();
+        }
         slasherContracts[slasherContract] = false;
 
         emit SlasherContractRemoved(slasherContract);
     }
 
-    /// @notice Slash a validator
-    /// @param validator The address of the validator to slash
-    /// @param amount The amount of DIN tokens to slash
     function slash(
         address validator,
-        uint256 amount
-    ) external onlySlasherContract nonReentrant {
-        if (amount < MIN_STAKE) revert InsufficientStake();
+        uint256 amount,
+        bytes32 reason
+    ) external onlySlasherContract nonReentrant returns (uint256) {
+        if (validator == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidSlashAmount();
 
         ValidatorInfo storage v = validators[validator];
-
-        if (!v.registered) revert NotValidator();
-        if (v.stake < amount) revert NotEnoughStake();
-
-        v.stake -= amount;
-        // v.blacklisted = true;
-        // ✅ Auto-unregister if stake falls below minimum
-        if (v.stake < MIN_STAKE) {
-            v.registered = false;
+        uint256 actualAmount = amount;
+        uint256 slashableStake = v.activeStake + v.pendingWithdrawals;
+        if (slashableStake < actualAmount) {
+            actualAmount = slashableStake;
         }
 
-        // 🔥 TODO: Implement economic slashing logic
-        // Option A: Burn tokens (requires ERC20Burnable)
-        // DIN_TOKEN.safeTransferFrom(address(this), address(0), amount);
-        // Option B: Transfer to reward pool
-        // DIN_TOKEN.safeTransfer(rewardAddress, amount);
-        // Option C: Keep as logical slash (tokens stay locked)
+        if (actualAmount == 0) {
+            return 0;
+        }
 
-        emit ValidatorSlashed(validator, amount, msg.sender);
+        uint256 activeStake = v.activeStake;
+        if (activeStake >= actualAmount) {
+            v.activeStake = activeStake - actualAmount;
+        } else {
+            v.activeStake = 0;
+            v.pendingWithdrawals -= (actualAmount - activeStake);
+            if (v.pendingWithdrawals == 0) {
+                v.withdrawAvailableAt = 0;
+            }
+        }
+        _syncValidatorStatus(v);
+
+        emit ValidatorSlashed(validator, actualAmount, reason, msg.sender);
+        return actualAmount;
     }
 
-    /// @notice Unstake DIN tokens (validator only)
     function unstake(uint256 amount) external nonReentrant {
         ValidatorInfo storage validator = validators[msg.sender];
-
-        if (validator.stake < amount) revert NotEnoughStake();
-
-        validator.stake -= amount;
-
-        // ✅ Auto-unregister if stake falls below minimum
-        if (validator.stake < MIN_STAKE) {
-            validator.registered = false;
+        if (validator.status == ValidatorStatus.Blacklisted) {
+            revert ValidatorIsBlacklisted();
         }
+        if (amount == 0) revert InvalidUnstakeAmount();
+        if (validator.pendingWithdrawals > 0) revert PendingWithdrawalExists();
+        if (validator.activeStake < amount) revert NotEnoughStake();
 
-        // ✅ SafeERC20 transfer back to validator
-        DIN_TOKEN.safeTransfer(msg.sender, amount);
-        emit ValidatorUnstaked(msg.sender, amount);
+        validator.activeStake -= amount;
+        validator.pendingWithdrawals = amount;
+        validator.withdrawAvailableAt = uint64(
+            block.timestamp + UNBONDING_PERIOD
+        );
+        _syncValidatorStatus(validator);
+
+        emit ValidatorUnstakeRequested(
+            msg.sender,
+            amount,
+            validator.withdrawAvailableAt
+        );
     }
 
-    /// @notice Blacklist a validator (DinCoordinator only) - prevents staking/unstaking
-    function blacklistValidator(address validator) external onlyDinCoordinator {
+    function claimUnstaked() external nonReentrant {
+        ValidatorInfo storage validator = validators[msg.sender];
+        if (validator.status == ValidatorStatus.Blacklisted) {
+            revert ValidatorIsBlacklisted();
+        }
+
+        uint256 pendingAmount = validator.pendingWithdrawals;
+        if (pendingAmount == 0) revert NoPendingWithdrawal();
+        if (block.timestamp < validator.withdrawAvailableAt) {
+            revert WithdrawalNotReady();
+        }
+
+        validator.pendingWithdrawals = 0;
+        validator.withdrawAvailableAt = 0;
+        _syncValidatorStatus(validator);
+
+        DIN_TOKEN.safeTransfer(msg.sender, pendingAmount);
+        emit ValidatorWithdrawalClaimed(msg.sender, pendingAmount);
+    }
+
+    function blacklistValidator(address validator) external onlyOwner {
         if (validator == address(0)) revert InvalidAddress();
-        validators[validator].blacklisted = true;
+        validators[validator].status = ValidatorStatus.Blacklisted;
         emit ValidatorBlacklisted(validator);
     }
 
-    function isValidatorStaked(address validator) public view returns (bool) {
-        return
-            validators[validator].stake >= MIN_STAKE &&
-            !validators[validator].blacklisted;
+    function unblacklistValidator(address validator) external onlyOwner {
+        if (validator == address(0)) revert InvalidAddress();
+
+        ValidatorInfo storage info = validators[validator];
+        if (info.status != ValidatorStatus.Blacklisted) {
+            revert ValidatorNotBlacklisted();
+        }
+
+        if (info.jailedUntil > block.timestamp) {
+            info.status = ValidatorStatus.Jailed;
+        } else {
+            info.status = ValidatorStatus.None;
+        }
+        _syncValidatorStatus(info);
+
+        emit ValidatorUnblacklisted(validator);
+    }
+
+    function minStake() external pure returns (uint256) {
+        return MIN_STAKE;
+    }
+
+    function isValidatorActive(address validator) public view returns (bool) {
+        ValidatorInfo storage info = validators[validator];
+        return info.status == ValidatorStatus.Active;
     }
 
     function getStake(address validator) public view returns (uint256) {
-        return validators[validator].stake;
+        return validators[validator].activeStake;
+    }
+
+    function slashableStakeOf(address validator) public view returns (uint256) {
+        ValidatorInfo storage info = validators[validator];
+        return info.activeStake + info.pendingWithdrawals;
     }
 
     function isSlasherContract(
         address slasherContract
     ) public view returns (bool) {
         return slasherContracts[slasherContract];
+    }
+
+    function _syncValidatorStatus(ValidatorInfo storage validator) internal {
+        if (validator.status == ValidatorStatus.Blacklisted) {
+            return;
+        }
+
+        if (
+            validator.status == ValidatorStatus.Jailed &&
+            validator.jailedUntil > block.timestamp
+        ) {
+            return;
+        }
+
+        if (validator.pendingWithdrawals > 0) {
+            validator.status = ValidatorStatus.Exiting;
+        } else if (validator.activeStake >= MIN_STAKE) {
+            validator.status = ValidatorStatus.Active;
+        } else if (validator.activeStake > 0) {
+            validator.status = ValidatorStatus.Exiting;
+        } else {
+            validator.status = ValidatorStatus.None;
+        }
     }
 }

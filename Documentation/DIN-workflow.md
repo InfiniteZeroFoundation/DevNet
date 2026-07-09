@@ -41,7 +41,7 @@ DinValidatorStake is a contract that allows validators to stake DIN tokens as co
 2. The minimum stake amount `MIN_STAKE` is 10 DIN tokens as of now.
 3. It allows validators to unstake (withdraw their staked) DIN tokens.
 4. If the validator's stake falls below the minimum stake amount, the validator will be automatically unregistered.
-5. It can blacklist certain addresses (validators)
+5. It allows the stake contract owner to blacklist and unblacklist certain validator addresses directly on `DinValidatorStake`.
 6. It allows DIN-Representative to add/remove slasher contracts (Model / Task level Contracts) via dinCoordinator contract.
 7. It allows the authorized slasher contracts to slash the staked DIN tokens if the validator violates the terms of the DIN Protocol.
 8. It allows to query the stake amount of a validator.

@@ -1,0 +1,18 @@
+# Keep the Docker build context small and free of host-only state.
+.git
+.venv*
+**/__pycache__
+**/*.pyc
+*.egg-info
+dincli/*.egg-info
+dincli.egg-info
+# .env at any depth (e.g. dincli/docker/node/.env) — never bake host config or
+# secrets into the image. Keep .env.example out too; it isn't needed at build.
+.env
+.env.*
+**/.env
+**/.env.*
+tasks/
+scripts/
+bashscripts/
+changes/

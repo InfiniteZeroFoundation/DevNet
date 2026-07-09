@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from getpass import getpass
 from importlib.resources import files
@@ -14,6 +15,10 @@ from platformdirs import user_cache_dir, user_config_dir
 from rich.console import Console
 from web3 import Web3
 
+_ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_PASSWORD_TTL_DEFAULT = 900
+_PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
+
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger
 from dincli.services.cid_utils import get_cid_from_bytes32
@@ -23,12 +28,105 @@ console = Console()
 CONFIG_DIR = Path(user_config_dir("dincli"))
 CACHE_DIR = Path(user_cache_dir("dincli"))
 
+# Sibling cache used for docker-only artifacts (e.g. pip-installed client
+# packages). Kept separate from CACHE_DIR so containers never need read/write
+# access to the manifest/service/wallet cache that dincli itself manages.
+WORKER_CACHE_DIR = Path(user_cache_dir("dincli-worker"))
+
 CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
+WALLETS_DIR = CONFIG_DIR / "wallets"
 
-MIN_STAKE = 10*10**18 
+LEGACY_WALLET_FILE = WALLET_FILE
+
+MIN_STAKE = 10*10**18
+
+def validate_account_name(name: str) -> str:
+    name = name.strip()
+    if not _ACCOUNT_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid account name '{name}'. Must be 1-64 chars of A-Z, a-z, 0-9, '-', '_'."
+        )
+    return name
+
+
+def wallet_path_for_name(name: str) -> Path:
+    resolved = validate_account_name(name)
+    return WALLETS_DIR / f"wallet_{resolved}.json"
+
+
+def resolve_wallet_path(name: str) -> tuple[Path, bool]:
+    named_path = wallet_path_for_name(name)
+    if named_path.exists():
+        return named_path, True
+    if name == "default" and LEGACY_WALLET_FILE.exists():
+        return LEGACY_WALLET_FILE, True
+    return named_path, False
+
+
+def ensure_wallets_dir() -> None:
+    WALLETS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(WALLETS_DIR, 0o700)
+    except OSError:
+        pass
+
+
+def atomic_write_wallet(path: Path, data: dict) -> None:
+    ensure_wallets_dir()
+    tmp_path = path.with_suffix(".json.tmp")
+    try:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _extract_keystore(data: dict) -> dict:
+    if isinstance(data, dict) and "keystore" in data:
+        inner = data["keystore"]
+        if isinstance(inner, dict) and "crypto" in inner:
+            return inner
+    if isinstance(data, dict) and "crypto" in data:
+        return data
+    raise ValueError("Data is not a recognised keystore (wrapper, bare, or demo).")
+
+
+def _cleanup_stale_session() -> None:
+    session_file = CONFIG_DIR / ".session"
+    if session_file.exists():
+        try:
+            session_file.unlink()
+            console.print("[dim]Removed stale .session cache from previous dincli version.[/dim]")
+        except OSError:
+            pass
+
 
 ALLOWED_NETWORKS = ["local", "sepolia_devnet", "sepolia_op_devnet", "mainnet"] # "sepolia_testnet"
+SUPPORTED_IPFS_PROVIDERS = ("env", "filebase", "custom")
+
+LEGACY_IPFS_PROVIDER_ALIASES = {
+    "": "env",
+    "default": "env",
+    "env": "env",
+    "ipfs node": "env",
+    "ipfs-node": "env",
+    "node": "env",
+}
+
+FILEBASE_IPFS_ADD_URL = "https://rpc.filebase.io/api/v0/add"
+FILEBASE_IPFS_CAT_URL = "https://rpc.filebase.io/api/v0/cat"
+FILEBASE_IPFS_PIN_URL = "https://rpc.filebase.io/api/v0/pin/add"
 
 
 # Optional: only import dotenv if needed
@@ -37,6 +135,16 @@ try:
     HAS_DOTENV = True
 except ImportError:
     HAS_DOTENV = False
+
+
+@dataclass(frozen=True)
+class IPFSConfig:
+    provider: str = "env"
+    api_url_add: Optional[str] = None
+    api_url_retrieve: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    service_path: Optional[Path] = None
 
 
 def save_config(data):
@@ -63,6 +171,22 @@ def load_config():
 def get_config(key, default=None):
     config = load_config()
     return config.get(key, default)
+
+
+def _clean_optional_string(value: Optional[str]) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+
+    stripped = value.strip()
+    return stripped or None
+
+
+def normalize_ipfs_provider(provider: Optional[str]) -> str:
+    if provider is None:
+        return "env"
+
+    normalized = provider.strip().lower()
+    return LEGACY_IPFS_PROVIDER_ALIASES.get(normalized, normalized)
     
 def resolve_network(cli_network: str | None = None, default: str = "local") -> str:
     """
@@ -84,23 +208,25 @@ def resolve_network(cli_network: str | None = None, default: str = "local") -> s
 
 def resolve_ipfs_config():
     """
-    Resolve ipfs config
+    Resolve the effective IPFS runtime configuration.
     """
-    default = "local"
+    config = load_config()
+    configured_provider = config.get("ipfs_provider")
+    provider = normalize_ipfs_provider(configured_provider) if configured_provider else normalize_ipfs_provider(get_env_key("IPFS_PROVIDER", verbose=False))
+    raw_service_path = _clean_optional_string(config.get("ipfs_service_path"))
 
-    ipfs_api_url_add = "None"
-    ipfs_api_url_retrieve = "None"
+    api_key = _clean_optional_string(config.get(f"ipfs_api_key_{provider}"))
+    if not api_key and provider == "filebase":
+        api_key = _clean_optional_string(config.get("ipfs_api_key"))
 
-    # 2. Check .env (ignore empty strings)
-    from_env = get_env_key("ipfs_api_url_add".upper())
-    if from_env and isinstance(from_env, str) and from_env.strip():
-        ipfs_api_url_add = from_env.strip()
-
-    from_env = get_env_key("ipfs_api_url_retrieve".upper())
-    if from_env and isinstance(from_env, str) and from_env.strip():
-        ipfs_api_url_retrieve = from_env.strip()
-
-    return ipfs_api_url_add, ipfs_api_url_retrieve
+    return IPFSConfig(
+        provider=provider,
+        api_url_add=_clean_optional_string(get_env_key("IPFS_API_URL_ADD", verbose=False)),
+        api_url_retrieve=_clean_optional_string(get_env_key("IPFS_API_URL_RETRIEVE", verbose=False)),
+        api_key=api_key,
+        api_secret=_clean_optional_string(config.get("ipfs_api_secret")),
+        service_path=Path(raw_service_path).expanduser().resolve() if raw_service_path else None,
+    )
 
 
 def get_env_key(key: str, default: Optional[str] = None, verbose: bool = True) -> Optional[str]:
@@ -123,6 +249,9 @@ def get_env_key(key: str, default: Optional[str] = None, verbose: bool = True) -
             if verbose:
                 console.print(f"[bold red] ❌ {key} not found in {os.getcwd()}/.env file[/bold red]")
         return values.get(key, default)
+
+    if not HAS_DOTENV and verbose:  
+        console.print("[yellow]Warning: python-dotenv not installed. Cannot save to .env[/yellow]")
 
     return default
 
@@ -195,9 +324,10 @@ def resolve_network_value(
     )
     
         
-def get_w3(effective_network):  
+def get_w3(effective_network): 
+    rpc_url = resolve_network_value(effective_network,"rpc_url") 
     try:  
-        rpc_url = resolve_network_value(effective_network,"rpc_url")
+        
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
             raise ConnectionError(f"Could not connect to Ethereum node at {rpc_url}")
@@ -256,14 +386,17 @@ def get_demo_account_index(address: str) -> int:
     raise ValueError(f"Address {address} not found in demo accounts.")
 
 
-def load_account() -> Account:
-    """Load wallet from ~/.din/wallet.json (handles demo + encrypted modes)."""
+def load_account(name: str = "default") -> Account:
+    """Load a named wallet, falling back to legacy wallet.json for 'default'."""
 
+    wallet_path, exists = resolve_wallet_path(name)
+    if not exists:
+        raise FileNotFoundError(
+            f"No wallet found for name '{name}' at {wallet_path}. "
+            f"Run `dincli system connect-wallet --name {name}` first."
+        )
 
-    if not WALLET_FILE.exists():
-        raise FileNotFoundError(f"No wallet found at {WALLET_FILE}. Run `dincli system connect-wallet` first.")
-
-    with open(WALLET_FILE) as f:
+    with open(wallet_path) as f:
         data = json.load(f)
 
     # Demo mode: plaintext private key
@@ -271,93 +404,139 @@ def load_account() -> Account:
         private_key = data["private_key"]
         return Account.from_key(private_key)
 
-    # Encrypted mode: check for cached password or env var
-    password = _get_password()
+    keystore_data = _extract_keystore(data)
+
+    password = _get_password(name)
     try:
-        private_key = Account.decrypt(data, password)
-        # Verify strict permissions and save to cache if successful and not from env
-        _cache_password_if_needed(password)
+        private_key = Account.decrypt(keystore_data, password)
+
+        _cache_password_in_memory(name, password)
+        _cleanup_stale_session()
         return Account.from_key(private_key)
     except ValueError:
-        # If decryption fails, clear cache and retry once if it was a cached/env password
-        if _clear_session_cache():
-             print("[yellow]Cached password failed, prompting...[/yellow]")
-             password = getpass("Enter wallet password: ")
-             try:
-                private_key = Account.decrypt(data, password)
-                _cache_password_if_needed(password)
+
+        if _clear_memory_cache(name):
+            console.print("[yellow]Cached password failed, prompting...[/yellow]")
+            password = getpass("Enter wallet password: ")
+            try:
+                private_key = Account.decrypt(keystore_data, password)
+                _cache_password_in_memory(name, password)
+                _cleanup_stale_session()
                 return Account.from_key(private_key)
-             except ValueError:
-                 pass
+            
+            except ValueError:
+                pass
         raise ValueError("Invalid password or corrupted keystore.")
 
-def _get_password(prompt: bool = True) -> str:
+
+def _get_password(name: str = "default", prompt: bool = True) -> str:
     """
     Get password from:
     1. DIN_WALLET_PASSWORD env var
-    2. Session cache file (~/.dincli/.session)
+    2. In-memory cache (keyed by name)
     3. Interactive prompt
     """
-
+    _cleanup_stale_session()
 
     # 1. Environment variable
     env_pass = get_env_key("DIN_WALLET_PASSWORD")
     if env_pass:
-        console.print(f"[green]Got Wallet Password DIN_WALLET_PASSWORD from {os.getcwd()}/.env[/green]")
         return env_pass
 
     # 2. Session cache
-    session_file = CONFIG_DIR / ".session"
-    if session_file.exists():
-        try:
-            # Check file permissions (must be 600)
-            st = session_file.stat()
-            if st.st_mode & 0o777 != 0o600:
-                print("[yellow]Session file permissions unsafe (should be 600). Ignoring.[/yellow]")
-            # Check timeout (default 15 mins)
-            elif (time.time() - st.st_mtime) < (15 * 60):
-                with open(session_file, "r") as f:
-                    console.print(f"[green]Got Wallet Password from session cache {session_file}[/green]")
-                    return f.read().strip()
-        except Exception:
-            pass # ignore errors, fall back to prompt
+    now = time.time()
+    entry = _PASSWORD_CACHE.get(name)
+    if entry is not None:
+        cached_pw, expiry = entry
+        if now < expiry:
+            return cached_pw
+        del _PASSWORD_CACHE[name]
 
     # 3. Prompt
     if prompt:
         return getpass("Enter wallet password: ")
-    else:
-        return ""
+    
+    return ""
 
-def _cache_password_if_needed(password: str):
-    """Save password to session cache if not from env var."""
+def _cache_password_in_memory(name: str, password: str) -> None:
     if get_env_key("DIN_WALLET_PASSWORD"):
         return
+    ttl = int(os.environ.get("DIN_PASSWORD_TTL", _PASSWORD_TTL_DEFAULT))
+    _PASSWORD_CACHE[name] = (password, time.time() + ttl)
 
-    session_file = CONFIG_DIR / ".session"
-    try:
-        # Create with strict permissions
-        # Remove if exists to ensure permissions are reset
-        if session_file.exists():
-            session_file.unlink()
-        
-        fd = os.open(session_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(password)
-            console.print("[green]Password cached successfully.[/green]")
-    except Exception as e:
-        console.print(f"[yellow]Failed to cache password: {e}[/yellow]")
 
-def _clear_session_cache() -> bool:
-    """Remove session cache file. Returns True if a file was removed."""
-    session_file = CONFIG_DIR / ".session"
-    if session_file.exists():
-        session_file.unlink()
-        return True
-    return False 
-    
+def _clear_memory_cache(name: str | None = None) -> bool:
+    if name is not None:
+        return _PASSWORD_CACHE.pop(name, None) is not None
+    _PASSWORD_CACHE.clear()
+    return True
+
+
+def list_accounts(active_name: str = "default") -> list[dict]:
+    entries: list[dict] = []
+    seen_names: set[str] = set()
+    has_named_default = False
+
+    if WALLETS_DIR.exists():
+        for f in sorted(WALLETS_DIR.iterdir()):
+            if not f.suffix == ".json":
+                continue
+            stem = f.stem
+            if stem.startswith("wallet_"):
+                name = stem[len("wallet_"):]
+                if not name:
+                    continue
+                try:
+                    with open(f) as fh:
+                        data = json.load(fh)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if name == "default":
+                    has_named_default = True
+                entries.append({
+                    "name": name,
+                    "address": data.get("address", "unknown"),
+                    "source": data.get("source", "unknown"),
+                    "active": name == active_name,
+                })
+                seen_names.add(name)
+
+    if not has_named_default and "default" not in seen_names and LEGACY_WALLET_FILE.exists():
+        try:
+            with open(LEGACY_WALLET_FILE) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        label = "default (legacy)"
+        entries.append({
+            "name": label,
+            "address": data.get("address", "unknown"),
+            "source": data.get("demo_mode") and "demo" or "legacy",
+            "active": active_name == "default",
+        })
+
+    return entries
+
+
+def get_active_account_name(ctx_obj=None) -> str:
+    if ctx_obj is not None and hasattr(ctx_obj, "wallet_name") and ctx_obj.wallet_name:
+        return validate_account_name(ctx_obj.wallet_name)
+    env_name = os.environ.get("DIN_WALLET_NAME", "").strip()
+    if env_name:
+        return validate_account_name(env_name)
+    config_name = get_config("wallet_name", "")
+    if config_name:
+        return validate_account_name(config_name.strip())
+    return "default"
+
     
 def load_din_info() -> dict:
     path = files("dincli").joinpath("config", "din_info.json")
+    with open(path) as f:
+        return json.load(f)
+
+def load_cid_services() -> dict:
+    path = files("dincli").joinpath("config", "cid_services.json")
     with open(path) as f:
         return json.load(f)
 
@@ -513,9 +692,9 @@ def cache_manifest(model_id: int, network: str, info: bool = False, update: bool
             # Save CID sidecar
             with open(cid_path, "w") as f:
                 f.write(get_cid_from_bytes32(model_info[2].hex()))
-        
 
-def get_manifest_key( network: str, key: str, model_id: int = None, task_coordinator_address: str = None):
+
+def get_manifest_path(network: str, model_id: int = None, task_coordinator_address: str = None) -> Path:
     # Ensure exactly one identifier is provided
     has_model_id = model_id is not None
     has_coordinator_address = task_coordinator_address is not None
@@ -527,14 +706,24 @@ def get_manifest_key( network: str, key: str, model_id: int = None, task_coordin
         raise ValueError("Only one of model_id or task_coordinator_address can be provided")
 
     if has_model_id:
-        manifest_dir = CACHE_DIR / network / f"model_{model_id}"
-        manifest_path = manifest_dir / "manifest.json"
-        cid_path = manifest_dir / "manifest.json.cid"
-        
-        # Check freshness
+        return CACHE_DIR / network / f"model_{model_id}" / "manifest.json"
+
+    return Path(os.getcwd()) / "tasks" / network.lower() / task_coordinator_address / "manifest.json"
+
+
+def get_manifest(network: str, model_id: int = None, task_coordinator_address: str = None) -> dict:
+    manifest_path = get_manifest_path(
+        network,
+        model_id=model_id,
+        task_coordinator_address=task_coordinator_address,
+    )
+
+    if model_id is not None:
+        cid_path = manifest_path.with_suffix(".json.cid")
+
+        # Check freshness against the on-chain manifest CID.
         needs_update = True
-        
-        # 1. Fetch on-chain CID
+
         try:
             din_info = load_din_info()
             din_registry_address = din_info[network]["registry"]
@@ -542,45 +731,186 @@ def get_manifest_key( network: str, key: str, model_id: int = None, task_coordin
             din_registry_contract = get_contract_instance(din_registry_abi, network, din_registry_address)
             model_info = din_registry_contract.functions.getModel(int(model_id)).call()
             on_chain_cid = get_cid_from_bytes32(model_info[2].hex())
-            
+
             if manifest_path.exists() and cid_path.exists():
                 with open(cid_path, "r") as f:
                     local_cid = f.read().strip()
                 if local_cid == on_chain_cid:
                     needs_update = False
         except Exception as e:
-           
             console.print(f"[yellow]Warning: Could not verify manifest freshness: {e}[/yellow]")
-            needs_update = True  
-            pass
+            needs_update = True
 
         if needs_update:
             cache_manifest(int(model_id), network, update=True)
-    
-        with open(manifest_path, "r") as f:
-            manifest = json.load(f)
-        
-        return manifest[key]
-    
-    if has_coordinator_address:
+    elif not manifest_path.exists():
+        raise FileNotFoundError(
+            f"Manifest not found for task coordinator {task_coordinator_address} at {manifest_path}"
+        )
 
-        manifest_path = Path(os.getcwd()) / "tasks" / network.lower() / task_coordinator_address / "manifest.json"
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"Manifest not found for task coordinator {task_coordinator_address} at {manifest_path}")
-        
-        with open(manifest_path, "r") as f:
-            manifest = json.load(f)
-        return manifest[key]
-    
+    with open(manifest_path, "r") as f:
+        return json.load(f)
+
+
+def get_manifest_key(network: str, key: str, model_id: int = None, task_coordinator_address: str = None):
+    manifest = get_manifest(
+        network,
+        model_id=model_id,
+        task_coordinator_address=task_coordinator_address,
+    )
+    return manifest[key]
+
+
+def require_custom_manifest_service(manifest: dict, key: str) -> None:
+    if manifest.get("type") == "custom":
+        return
+
+    manifest_type = manifest.get("type", "<missing>")
+    console.print(
+        f"[bold red]Type of service function '{key}' in manifest must be custom; got '{manifest_type}'.[/bold red]"
+    )
+    console.print(
+        "[yellow]Built-in dincli service fallbacks are obsolete. "
+        "Add a custom service function with type custom and its ipfs entry to the model manifest.[/yellow]"
+    )   
+    raise typer.Exit(1)
+
 
 def is_ethereum_address(s: str) -> bool:
     """Check if string looks like a valid Ethereum address (case-insensitive, 42 chars, starts with 0x)."""
     return bool(re.fullmatch(r'0x[a-fA-F0-9]{40}', s))
 
 
+def resolve_task_coordinator_address(
+    effective_network: str,
+    address: Optional[str],
+    console,
+    verbose: bool = True,
+    exit_on_failure: bool = True,
+) -> Optional[str]:
+    """Resolve a DINTaskCoordinator contract address.
+
+    Resolution order:
+    1. ``address`` argument (e.g. from ``--taskCoordinator`` CLI option).
+    2. Environment variable ``{NETWORK_UPPER}_DINTaskCoordinator_Contract_Address``
+       (read from the current directory's ``.env`` or the process environment).
+
+    Args:
+        effective_network: The active network name (e.g. ``"local"``).
+        address: Explicitly provided address, or ``None`` to trigger env-var lookup.
+        console: Rich ``Console`` instance used for status messages.
+        verbose: When *True* (default), print where the address came from.
+        exit_on_failure: When *True* (default), call ``raise typer.Exit(1)`` if
+            the address cannot be resolved instead of returning ``None``.
+
+    Returns:
+        The resolved checksum-able address string, or ``None`` when
+        ``exit_on_failure=False`` and the address could not be found.
+    """
+    env_key = effective_network.upper() + "_DINTaskCoordinator_Contract_Address"
+
+    if address:
+        if verbose:
+            console.print(
+                f"[bold green] ✓ Using DIN Task Coordinator Address: {address} "
+                f"(from argument)[/bold green]"
+            )
+        return address
+
+    # Try env / .env file
+    address = get_env_key(env_key, verbose=False)
+    if address:
+        if verbose:
+            console.print(
+                f"[bold green] ✓ Using DIN Task Coordinator Address: {address} "
+                f"(from {os.getcwd()}/.env → {env_key})[/bold green]"
+            )
+        return address
+
+    # Not found
+    console.print(
+        f"[bold red]✗ Task Coordinator Address not found.[/bold red]\n"
+        f"  Provide it via [cyan]--taskCoordinator <address>[/cyan], or set "
+        f"[cyan]{env_key}[/cyan] in [cyan]{os.getcwd()}/.env[/cyan]."
+    )
+    if exit_on_failure:
+        raise typer.Exit(1)
+    return None
 
 
+def build_and_send_tx(
+    ctx,
+    contract_function,
+    action_msg: str,
+    success_msg: str,
+    error_msg: str,
+    tx_params: Optional[dict] = None,
+    exit_on_failure: bool = True,
+    show_tx_hash: bool = True,
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    base_tx_params = ctx.obj.get_tx_params()
+    if tx_params:
+        base_tx_params.update(tx_params)
 
+    try:
+        base_tx_params["gas"] = int(w3.eth.estimate_gas(contract_function.build_transaction(base_tx_params)) * 1.1)
+    except Exception as e:
+        console.print(f"[bold red] X Transaction estimation failed: {e}[/bold red]")
+        if exit_on_failure:
+            raise typer.Exit(1)
+        return None
 
+    try:
+        tx = contract_function.build_transaction(base_tx_params)
+        signed_tx = account.sign_transaction(tx)
+        console.print(f"[bold green]{action_msg}...[/bold green]")
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        if show_tx_hash:
+            print_tx_info(tx_hash, effective_network)
+        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        if tx_receipt.status == 1:
+            console.print(f"[bold green] ✓ {success_msg}[/bold green]")
+            return tx_receipt
+        console.print(f"[bold red] X {error_msg}[/bold red]")
+        if exit_on_failure:
+            raise typer.Exit(1)
+        return None
+    except Exception as e:
+        console.print(
+            f"[bold red]✗ {error_msg}[/bold red]"
+        )
+        console.print(
+            f"[bold red]Exception: {e}[/bold red]"
+        )
+
+        if exit_on_failure:
+            raise typer.Exit(1)
+
+        return None
     
+def print_tx_info(tx_hash, network=None, print_url = True):
+    #ensure tx_hash is hex string
+    if isinstance(tx_hash, bytes):
+        tx_hash_hex = tx_hash.hex()
+    else:
+        tx_hash_hex = tx_hash
+
+    #print tx url
+    console.print(f"[bold green]Transaction hash:[/bold green] {tx_hash_hex}")
+    if print_url:
+        din_info = load_din_info()
+        console.print(f"[bold green]Transaction url:[/bold green] [cyan]{din_info[network]['explorer']}/tx/{tx_hash_hex}[/cyan]")
     
+def _confirm_or_exit(question: str, instruction: str, console):
+    answer = console.input(f"[bold yellow]{question} (y/n):[/bold yellow] ").strip().lower()
+
+    if answer in ("y", "yes"):
+        return
+
+    if answer in ("n", "no"):
+        console.print(f"[bold red]Error: {instruction}[/bold red]")
+        raise typer.Exit(1)
+
+    console.print("[bold red]Error: Please answer yes/y or no/n.[/bold red]")
+    raise typer.Exit(1)

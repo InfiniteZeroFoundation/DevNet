@@ -1,7 +1,4 @@
 include dincli/config/accounts.json
 include dincli/config/din_info.json
 include dincli/abis/*
-
-
-
-
+recursive-include dincli/docker/worker *

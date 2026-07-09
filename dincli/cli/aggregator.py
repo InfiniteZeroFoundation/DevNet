@@ -1,12 +1,23 @@
 from pathlib import Path
 import time
+from typing import Optional
 import typer
 from rich.table import Table
 from web3 import Web3
-
-from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key
-from dincli.services.aggregator import get_aggregated_cid
+from dincli.cli.dintoken import buy_dintokens, read_dintoken_stake, stake_dintokens
+from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
+                               get_manifest_key, require_custom_manifest_service)
+from dincli.cli.worker import (
+    ensure_worker_image,
+    ensure_worker_packages_installed,
+    get_worker_packages_dir,
+    get_worker_requirements_path,
+    read_worker_result,
+    run_worker_container,
+    write_worker_job,
+)
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
+from dincli.services.ipfs import upload_to_ipfs
 
 app = typer.Typer(help="Commands for Aggregators in DIN.")
 
@@ -14,105 +25,26 @@ dintoken_app = typer.Typer(help="Commands for DIN Token in DIN.")
 app.add_typer(dintoken_app, name="dintoken")
 
 
-@dintoken_app.command(help="Buy DINTokens where amount is ETh to exchange for DINTokens")
-def buy(ctx: typer.Context, 
-        amount: float = typer.Argument(..., help="Amount of ETH to exchange for DINTokens")
-    ):
-    
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+@dintoken_app.command(help="Buy DINTokens where amount is ETH to exchange for DINTokens")
+def buy(
+    ctx: typer.Context,
+    amount: float = typer.Argument(..., help="Amount of ETH to exchange for DINTokens"),
+):
+    buy_dintokens(ctx, amount, name= "Aggregator")
 
-    DINToken_contract = ctx.obj.get_deployed_din_token_contract()
-    DinCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
-    
-    console.print("[bold green]Aggregator ETH balance:[/bold green] ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
-    console.print("[bold green]Aggregator DINToken balance:[/bold green] ", DINToken_contract.functions.balanceOf(account.address).call()/(10**18))
 
-    console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
-
-    try:
-        tx_params = ctx.obj.get_tx_params()
-        tx_params['value'] = w3.to_wei(amount, "ether")
-        tx_params["gas"] = int(w3.eth.estimate_gas(DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-        tx = DinCoordinator_contract.functions.depositAndMint().build_transaction(tx_params)
-    
-        # Sign transaction
-        signed_tx = account.sign_transaction(tx)
-    
-        # Send raw transaction
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-        if tx_receipt.status == 1:
-            console.print(f"[bold green]✓ DINTokens bought at:[/bold green] {tx_receipt.transactionHash.hex()}")
-            console.print("Aggregator DINToken balance: ", Web3.from_wei(DINToken_contract.functions.balanceOf(account.address).call(), "ether"))
-        else:
-            console.print(f"[bold red]✗ Transaction failed! Could not buy DINTokens {tx_receipt.transactionHash.hex()}[/bold red]")
-    except Exception as e:
-        console.print(f"[bold red]✗ Error buying DINTokens: {e}[/bold red]")
-    
 @dintoken_app.command(help="Stake DINTokens")
-def stake(ctx: typer.Context, amount: int):
+def stake(
+    ctx: typer.Context,
+    amount: int = typer.Argument(..., help="Amount of DINTokens to stake"),
+):
+    stake_dintokens(ctx, amount, name= "Aggregator")
 
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-
-    DinToken_contract, DinStake_contract = ctx.obj.get_deployed_din_token_contract(), ctx.obj.get_deployed_din_stake_contract()
-
-    aggregator_Din_token_balance = DinToken_contract.functions.balanceOf(account.address).call()
-
-    console.print(f"[bold green]Aggregator ETH balance:[/bold green] {Web3.from_wei(w3.eth.get_balance(account.address), "ether")}")
-    console.print(f"[bold green]Aggregator DINToken balance:[/bold green] {Web3.from_wei(aggregator_Din_token_balance, "ether")}")
-    
-    if aggregator_Din_token_balance < MIN_STAKE:
-        console.print(f"[bold red]✗ Could not stake DINTokens. Not enough DINTokens.[/bold red]")
-        raise typer.Exit()
-    else:
-        console.print(f"[bold green]✓ Enough DINTokens to stake. [bold green]\n [bold green]Staking...[/bold green]")
-
-        try:
-            tx_params = ctx.obj.get_tx_params()
-            tx_params["gas"] = int(w3.eth.estimate_gas(DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)
-
-            signed_tx_approve = account.sign_transaction(tx_approve)
-            tx_hash_approve = w3.eth.send_raw_transaction(signed_tx_approve.raw_transaction)
-            tx_receipt_approve = w3.eth.wait_for_transaction_receipt(tx_hash_approve)
-                
-            if tx_receipt_approve.status == 1:
-                console.print(f"[bold green]✓ DINTokens approved for staking.[/bold green]")
-            else:
-                console.print(f"[bold red]✗ Could not approve DINTokens for staking.[/bold red]")
-                raise typer.Exit()
-
-            time.sleep(5)
-
-            tx_params = ctx.obj.get_tx_params()
-            tx_params["gas"] = int(w3.eth.estimate_gas(DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)
-
-            signed_tx_stake = account.sign_transaction(tx_stake)
-        
-            tx_hash_stake = w3.eth.send_raw_transaction(signed_tx_stake.raw_transaction)
-                
-            tx_stake_receipt = w3.eth.wait_for_transaction_receipt(tx_hash_stake) 
-
-            if tx_stake_receipt.status == 1:
-                console.print(f"[bold green]✓ DINTokens staked.[/bold green]")
-            else:
-                console.print(f"[bold red]✗ Could not stake DINTokens.[/bold red]")
-        except Exception as e:
-            console.print(f"[bold red]✗ Could not stake DINTokens. {e}[/bold red]")
 
 @dintoken_app.command("read-stake", help="Check stake")
 def read_stake(ctx: typer.Context):
+    read_dintoken_stake(ctx, name= "Aggregator")
 
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-
-    DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
-
-    console.print("Aggregator staked DIN tokens : ", Web3.from_wei(DinStake_contract.functions.getStake(account.address).call(), "ether"))
 
 @app.command(help="Register as aggregator")
 def register(
@@ -149,18 +81,14 @@ def register(
             console.print(f"[bold green]✓ Aggregator has enough stake.[/bold green]")
 
             try:
-                tx_params = ctx.obj.get_tx_params()
-                tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.registerDINaggregator(curr_GI).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-                tx = taskCoordinator_contract.functions.registerDINaggregator(curr_GI).build_transaction(tx_params)
-                
-                # Sign transaction
-                signed_tx = account.sign_transaction(tx)
-                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-                tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-                if tx_receipt.status == 1:
-                    console.print(f"[bold green]✓ Aggregator registered.[/bold green]")
+                build_and_send_tx(
+                    ctx,
+                    taskCoordinator_contract.functions.registerDINaggregator(curr_GI),
+                    "Registering aggregator",
+                    "Aggregator registered.",
+                    "Could not register aggregator.",
+                    exit_on_failure=False
+                )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register aggregator. {e}[/bold red]")
     
@@ -274,6 +202,8 @@ def aggregate_t1(
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
     submit: bool = typer.Option(False, "--submit", help="Submit aggregation to task coordinator"),
     batch_id: int = typer.Option(None, "--batch", help="Batch ID"),
+    packages_dir: Optional[str] = typer.Option(None, "--packages-dir", help="Packages directory"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Do not use cached packages"),
 ):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
@@ -317,42 +247,98 @@ def aggregate_t1(
 
         console.print(f"Aggregating Assigned T1 batch {bid} for aggregator {account.address} with model cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 
-        model_base_dir = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
+        model_base_dir = ctx.obj.get_model_base_dir(model_id)
         manifest = get_manifest_key(effective_network, "get_aggregated_cid_t1", model_id)
         aggregator_service_path = model_base_dir / Path(manifest["path"])
         model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
 
-        if manifest["type"] == "custom":
-            ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
+        require_custom_manifest_service(manifest, "get_aggregated_cid_t1")
+        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
 
-            fn = ctx.obj.load_custom_fn(aggregator_service_path, "get_aggregated_cid_t1")
-            
-            aggregated_cid = fn(curr_GI, account.address, model_cids, genesis_model_ipfs_hash, bid, model_base_dir)
-        else:
-            aggregated_cid = get_aggregated_cid(curr_GI, account.address, model_cids, genesis_model_ipfs_hash)
+        aggregator_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("aggregators")
+        requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
+        packages_dir = Path(packages_dir) if packages_dir else None
+        if aggregator_requirements_cid:
+            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements")
+            try:
+                ensure_worker_image(console)
+                if not no_cache and packages_dir is None:
+                    packages_dir = ensure_worker_packages_installed(
+                        requirements_path,
+                        get_worker_packages_dir(effective_network, model_id),
+                        console,
+                    )
+            except RuntimeError as e:
+                console.print(f"[bold red]{e}[/bold red]")
+                raise typer.Exit(1)
+
+        # dincli fetches every IPFS-addressed input on the host into the same
+        # local paths get_aggregated_cid_t1 derives internally, so no network
+        # access happens inside the container.
+        aggregator_models_path = model_base_dir / "aggregator" / account.address / str(curr_GI) / "T1" / str(bid) / "models"
+        for model_cid in model_cids:
+            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 local model submission")
+        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model")
+
+        jobs_dir = model_base_dir / "jobs" / "aggregators" / account.address
+        job_path, output_dir = write_worker_job(
+            jobs_dir,
+            f"aggregator_t1_gi_{curr_GI}_batch_{bid}",
+            {
+                "network": effective_network,
+                "model_base_dir": "/din/model",
+                "manifest_path": "/din/model/manifest.json",
+                "role": "aggregator",
+                "service_path": manifest["path"],
+                "function_name": "get_aggregated_cid_t1",
+                "args": [curr_GI, account.address, model_cids, genesis_model_ipfs_hash, bid, "/din/model"],
+            },
+        )
+
+        docker_result = run_worker_container(
+            container_name=f"din-worker-aggregator-t1-model-{model_id}-gi-{curr_GI}-batch-{bid}",
+            model_base_dir=model_base_dir,
+            job_path=job_path,
+            output_dir=output_dir,
+            writable_subdirs=[aggregator_models_path],
+            packages_dir=packages_dir,
+        )
+
+        if docker_result.stdout:
+            console.print(docker_result.stdout)
+        if docker_result.returncode != 0:
+            if docker_result.stderr:
+                console.print(docker_result.stderr)
+            console.print(f"[bold red]Aggregator worker container failed for T1 batch {bid}.[/bold red]")
+            continue
+
+        worker_result = read_worker_result(output_dir)
+        if worker_result.get("status") != "ok":
+            console.print(f"[bold red]Aggregator worker failed:[/bold red] {worker_result.get('error')}")
+            traceback = worker_result.get("traceback")
+            if traceback:
+                console.print(traceback)
+            continue
+
+        averaged_model_path = model_base_dir / Path(worker_result["result"]).relative_to("/din/model")
+        aggregated_cid = upload_to_ipfs(averaged_model_path, f"Averaged T1 model for batch {bid}")
 
         console.print(f"Aggregated CID for T1 batch {bid} is {aggregated_cid}")
 
         if submit:
-
-            console.print(f"Submitting T1 aggregation CID for T1 batch {bid} with aggregated CID {aggregated_cid}")
             try:
                 aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
-
-                tx_params = ctx.obj.get_tx_params()
-                tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
                 time.sleep(2)
 
-                tx = taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32).build_transaction(tx_params)
-                signed_tx = account.sign_transaction(tx)
-                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-                receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-                if receipt.status == 1:
-                    console.print(f"[bold green]✓ Aggregation CID submitted.[/bold green]")
-                else:
-                    console.print(f"[bold red]✗ Could not submit aggregation CID.[/bold red]")
+                build_and_send_tx(
+                    ctx,
+                    taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32),
+                    f"Submitting T1 aggregation CID for T1 batch {bid} with aggregated CID {aggregated_cid}",
+                    "Aggregation CID submitted.",
+                    "Could not submit aggregation CID.",
+                    exit_on_failure=False
+                )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not submit aggregation CID. Error: {e}[/bold red]")
                 raise typer.Exit(1)
@@ -368,10 +354,12 @@ def aggregate_t2(
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
     submit: bool = typer.Option(False, "--submit", help="Submit aggregation to task coordinator"),
     batch_id: int = typer.Option(None, "--batch", help="Batch ID"),
+    packages_dir: Optional[str] = typer.Option(None, "--packages-dir", help="Packages directory"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Do not use cached packages"),
 ):
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
-    
+
     taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
     
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
@@ -415,41 +403,94 @@ def aggregate_t2(
 
         console.print(f"Aggregating T2 batch {bid} for aggregator {account.address} with T1 final cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 
-        model_base_dir = Path(CACHE_DIR) / effective_network / f"model_{model_id}"
+        model_base_dir = ctx.obj.get_model_base_dir(model_id)
         manifest = get_manifest_key(effective_network, "get_aggregated_cid_t2", model_id)
         aggregator_service_path = model_base_dir / Path(manifest["path"])
         model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
   
-        if manifest["type"] == "custom":
+        require_custom_manifest_service(manifest, "get_aggregated_cid_t2")
+        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
 
-            ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
-            
-            fn = ctx.obj.load_custom_fn(aggregator_service_path, "get_aggregated_cid_t2")
-            
-            aggregated_cid = fn(curr_GI, account.address, model_cids, genesis_model_ipfs_hash, bid, model_base_dir)
-        else:
-            aggregated_cid = get_aggregated_cid(curr_GI, account.address, model_cids, genesis_model_ipfs_hash)
+        aggregator_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("aggregators")
+        requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
+        packages_dir = Path(packages_dir) if packages_dir else None
+        if aggregator_requirements_cid:
+            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements")
+            try:
+                ensure_worker_image(console)
+                if not no_cache and packages_dir is None:
+                    packages_dir = ensure_worker_packages_installed(
+                        requirements_path,
+                        get_worker_packages_dir(effective_network, model_id),
+                        console,
+                    )
+            except RuntimeError as e:
+                console.print(f"[bold red]{e}[/bold red]")
+                raise typer.Exit(1)
+
+        aggregator_models_path = model_base_dir / "aggregator" / account.address / str(curr_GI) / "T2" / str(bid) / "models"
+        for model_cid in model_cids:
+            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 final model")
+        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model")
+
+        jobs_dir = model_base_dir / "jobs" / "aggregators" / account.address
+        job_path, output_dir = write_worker_job(
+            jobs_dir,
+            f"aggregator_t2_gi_{curr_GI}_batch_{bid}",
+            {
+                "network": effective_network,
+                "model_base_dir": "/din/model",
+                "manifest_path": "/din/model/manifest.json",
+                "role": "aggregator",
+                "service_path": manifest["path"],
+                "function_name": "get_aggregated_cid_t2",
+                "args": [curr_GI, account.address, model_cids, genesis_model_ipfs_hash, bid, "/din/model"],
+            },
+        )
+
+        docker_result = run_worker_container(
+            container_name=f"din-worker-aggregator-t2-model-{model_id}-gi-{curr_GI}-batch-{bid}",
+            model_base_dir=model_base_dir,
+            job_path=job_path,
+            output_dir=output_dir,
+            writable_subdirs=[aggregator_models_path],
+            packages_dir=packages_dir,
+        )
+
+        if docker_result.stdout:
+            console.print(docker_result.stdout)
+        if docker_result.returncode != 0:
+            if docker_result.stderr:
+                console.print(docker_result.stderr)
+            console.print(f"[bold red]Aggregator worker container failed for T2 batch {bid}.[/bold red]")
+            continue
+
+        worker_result = read_worker_result(output_dir)
+        if worker_result.get("status") != "ok":
+            console.print(f"[bold red]Aggregator worker failed:[/bold red] {worker_result.get('error')}")
+            traceback = worker_result.get("traceback")
+            if traceback:
+                console.print(traceback)
+            continue
+
+        averaged_model_path = model_base_dir / Path(worker_result["result"]).relative_to("/din/model")
+        aggregated_cid = upload_to_ipfs(averaged_model_path, f"Averaged T2 model for batch {bid}")
+
+        console.print(f"Aggregated CID for T2 batch {bid} is {aggregated_cid}")
 
         if submit:
-            console.print(f"Submitting T2 aggregation CID for T2 batch {bid}  with aggregated CID {aggregated_cid}")
             try:
                 aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
 
-                tx_params = ctx.obj.get_tx_params()
-                tx_params["gas"] = int(w3.eth.estimate_gas(taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-                tx = taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32).build_transaction(tx_params)
-
-                signed_tx = account.sign_transaction(tx)
-                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-                receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-                if receipt.status == 1:
-                    console.print(f"[bold green]✓ Aggregation CID submitted.[/bold green]")
-                else:
-                    console.print(f"[bold red]✗ Could not submit aggregation CID.[/bold red]")
+                build_and_send_tx(
+                    ctx,
+                    taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32),
+                    f"Submitting T2 aggregation CID for T2 batch {bid} with aggregated CID {aggregated_cid}",
+                    "Aggregation CID submitted.",
+                    "Could not submit aggregation CID.",
+                    exit_on_failure=False
+                )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not submit aggregation CID. Error: {e}[/bold red]")
                 raise typer.Exit(1)

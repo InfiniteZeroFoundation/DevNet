@@ -3,8 +3,8 @@ import time
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (get_env_key, load_din_info,
-                              set_env_key)
+from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
+                              resolve_task_coordinator_address, set_env_key)
 
 # Deploy sub-app (for 'dincli modelowner deploy ...')
 deploy_app = typer.Typer(help="Deploy task-level smart contracts")
@@ -30,13 +30,13 @@ def task_coordinator(
     console.print(f"[bold green]Deploying DINTaskCoordinator on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake:[/cyan] {din_validator_stake_address}")
     
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINTaskCoordinator_contract.constructor(din_validator_stake_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-
-    tx = DINTaskCoordinator_contract.constructor(din_validator_stake_address).build_transaction(tx_params)
-    signed_tx = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    tx_receipt = build_and_send_tx(
+        ctx,
+        DINTaskCoordinator_contract.constructor(din_validator_stake_address),
+        "Deploying DINTaskCoordinator",
+        "DINTaskCoordinator contract deployed successfully",
+        "Failed to deploy DINTaskCoordinator"
+    )
     
     dintaskcoordinator_contract_address = tx_receipt.contractAddress
     
@@ -64,26 +64,21 @@ def task_auditor(
         din_validator_stake_address = din_info[effective_network]["stake"]
 
     # Resolve DINTaskCoordinator address
-    if task_coordinator:
-        task_coordinator_address = task_coordinator
-    else:
-        task_coordinator_address = get_env_key(effective_network.upper()+"_DINTaskCoordinator_Contract_Address")
-        
-        if not task_coordinator_address:
-            console.print(f"[yellow]Please provide --task-coordinator in the command[/yellow]")
-            raise typer.Exit(1)
+    task_coordinator_address = resolve_task_coordinator_address(
+        effective_network, task_coordinator, console
+    )
     
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
     console.print(f"[cyan]Using DINTaskCoordinator address:[/cyan] {task_coordinator_address}")
     
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-    tx = DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address).build_transaction(tx_params)
-    signed_tx = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    tx_receipt = build_and_send_tx(
+        ctx,
+        DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address),
+        "Deploying DINTaskAuditor",
+        "DINTaskAuditor contract deployed successfully",
+        "Failed to deploy DINTaskAuditor"
+    )
     
     dintaskauditor_contract_address = tx_receipt.contractAddress
     
@@ -99,16 +94,11 @@ def task_auditor(
 
     time.sleep(10)
 
-    tx_params = ctx.obj.get_tx_params()
-    tx_params["gas"] = int(w3.eth.estimate_gas(DINTaskCoordinator_contract.functions.setDINTaskAuditorContract(dintaskauditor_contract_address).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-    
-    tx = DINTaskCoordinator_contract.functions.setDINTaskAuditorContract(dintaskauditor_contract_address).build_transaction(tx_params)
+    tx_receipt = build_and_send_tx(
+        ctx,
+        DINTaskCoordinator_contract.functions.setDINTaskAuditorContract(dintaskauditor_contract_address),
+        "Setting DINTaskAuditor in DINTaskCoordinator",
+        "DINTaskAuditor contract set in DINTaskCoordinator",
+        "Failed to set DINTaskAuditor in DINTaskCoordinator"
+    )
 
-    signed_tx = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-    if tx_receipt.status == 1:
-        console.print(f"[bold green]✓ DINTaskAuditor contract set in DINTaskCoordinator[/bold green]")
-    else:
-        console.print(f"[red]Error:[/red] Failed to set DINTaskAuditor in DINTaskCoordinator")

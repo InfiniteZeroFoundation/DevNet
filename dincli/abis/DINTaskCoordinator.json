@@ -35,6 +35,16 @@
     },
     {
       "inputs": [],
+      "name": "TC_AggregatorAlreadyRegistered",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TC_AggregatorNotActive",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "TC_AggregatorsRegistrationCannotBeFinished",
       "type": "error"
     },
@@ -110,17 +120,17 @@
     },
     {
       "inputs": [],
+      "name": "TC_FailedToSlashAuditors",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "TC_GICannotBeStarted",
       "type": "error"
     },
     {
       "inputs": [],
       "name": "TC_GenesisModelHashCannotBeSet",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "TC_InsufficientStake",
       "type": "error"
     },
     {
@@ -230,13 +240,51 @@
     },
     {
       "inputs": [],
-      "name": "TC_ValidatorAlreadyRegistered",
+      "name": "TC_WrongGI",
       "type": "error"
     },
     {
-      "inputs": [],
-      "name": "TC_WrongGI",
-      "type": "error"
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "GI",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "batchId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "aggregator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "requested",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "actual",
+          "type": "uint256"
+        }
+      ],
+      "name": "AggregatorSlashed",
+      "type": "event"
     },
     {
       "anonymous": false,
@@ -706,19 +754,6 @@
     },
     {
       "inputs": [],
-      "name": "minStake",
-      "outputs": [
-        {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
       "name": "owner",
       "outputs": [
         {
@@ -874,6 +909,19 @@
         }
       ],
       "name": "startDINauditorsRegistration",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_GI",
+          "type": "uint256"
+        }
+      ],
+      "name": "startGI",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
