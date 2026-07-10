@@ -1,0 +1,380 @@
+# DIN Protocol — The Graph subgraph schema
+#
+# Covers the four platform contracts:
+#   DINModelRegistry, DinValidatorStake, DinCoordinator, DinToken
+#
+# Task-level contracts (DINTaskCoordinator, DINTaskAuditor) are out of scope
+# for this subgraph — deferred to P5+ dynamic data sources.
+#
+# Chain: chainId 1337 (local anvil / hardhat).
+# Event field notes: two event additions are pending a reviewed PR
+# (see subgraph/docs/event-coverage-audit.md §6). Fields marked
+# [PENDING EVENT ADDITION] are populated once those events land; until then
+# the mapping handler will set them from a storage call on approval.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — registration requests
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A request submitted by a model owner for DAO review and approval."""
+type ModelRegistrationRequest @entity {
+  "requestId as decimal string"
+  id: ID!
+
+  requestId: BigInt!
+  requester: Bytes!
+
+  "Populated from event once §6.1 addition lands; derived from storage call until then"
+  isOpenSource: Boolean!
+
+  "Fee paid at submission time in wei; populated once §6.1 addition lands"
+  feePaid: BigInt!
+
+  manifestCID: Bytes!
+  taskCoordinator: Bytes!
+  taskAuditor: Bytes!
+
+  processed: Boolean!
+  approved: Boolean
+
+  "Set when the request is approved"
+  model: Model
+
+  submittedAtBlock: BigInt!
+  submittedAtTimestamp: BigInt!
+  processedAtBlock: BigInt
+  processedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — approved models
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An approved federated-learning model registered on the DIN protocol."""
+type Model @entity {
+  "modelId as decimal string"
+  id: ID!
+
+  modelId: BigInt!
+  owner: Bytes!
+  isOpenSource: Boolean!
+  manifestCID: Bytes!
+  taskCoordinator: Bytes!
+  taskAuditor: Bytes!
+
+  disabled: Boolean!
+
+  "The registration request that created this model"
+  registrationRequest: ModelRegistrationRequest!
+
+  manifestHistory: [ManifestUpdateRequest!]! @derivedFrom(field: "model")
+  disableEvents: [ModelKillSwitchEvent!]! @derivedFrom(field: "model")
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — manifest update requests
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A manifest update request submitted by the model owner for DAO review."""
+type ManifestUpdateRequest @entity {
+  "requestId as decimal string"
+  id: ID!
+
+  requestId: BigInt!
+  model: Model!
+
+  "Populated from event once §6.2 addition lands; derivable from model.owner until then"
+  requester: Bytes!
+
+  feePaid: BigInt!
+  newManifestCID: Bytes!
+
+  processed: Boolean!
+  approved: Boolean
+
+  submittedAtBlock: BigInt!
+  submittedAtTimestamp: BigInt!
+  processedAtBlock: BigInt
+  processedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — kill-switch history
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Records each ModelDisabled / ModelEnabled transition."""
+type ModelKillSwitchEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  model: Model!
+  disabled: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — fee governance
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A snapshot of protocol fees at the time of a fee-change event.
+One snapshot per fee-change transaction; latest snapshot is the current fee schedule.
+"""
+type FeeSnapshot @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  openSourceFee: BigInt!
+  proprietaryFee: BigInt!
+  openSourceUpdateFee: BigInt!
+  proprietaryUpdateFee: BigInt!
+
+  "atomic = fired by setFees(); granular = fired by an individual setter"
+  updateKind: String!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An ETH fee withdrawal from DINModelRegistry."""
+type RegistryFeeWithdrawal @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — governance key rotation
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Records every DAOAdmin ownership transfer."""
+type DAOAdminTransfer @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  oldAdmin: Bytes!
+  newAdmin: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — per-validator aggregate
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+Aggregate state for a single validator address, updated on every relevant event.
+Derived status (Active / Exiting / Jailed / Blacklisted / None) is computed
+from the event stream — no dedicated ValidatorStatusChanged event exists yet.
+"""
+type Validator @entity {
+  "validator address as hex string"
+  id: ID!
+
+  address: Bytes!
+
+  activeStake: BigInt!
+  pendingWithdrawal: BigInt!
+  withdrawAvailableAt: BigInt
+
+  "Active | Exiting | Jailed | Blacklisted | None"
+  status: String!
+
+  totalStaked: BigInt!
+  totalSlashed: BigInt!
+  totalWithdrawn: BigInt!
+
+  blacklisted: Boolean!
+
+  stakeEvents: [StakeEvent!]! @derivedFrom(field: "validator")
+  slashEvents: [SlashEvent!]! @derivedFrom(field: "validator")
+  unstakeRequests: [UnstakeRequest!]! @derivedFrom(field: "validator")
+  withdrawalClaims: [WithdrawalClaim!]! @derivedFrom(field: "validator")
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — individual events
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A DIN stake deposit by a validator."""
+type StakeEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A slash applied to a validator's stake."""
+type SlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+  reason: Bytes!
+
+  "Address of the slasher contract (DINTaskCoordinator or DINTaskAuditor)"
+  slasherContract: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An unstake (unbonding) request submitted by a validator."""
+type UnstakeRequest @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+  withdrawAvailableAt: BigInt!
+
+  claimed: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A completed withdrawal after the unbonding period."""
+type WithdrawalClaim @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — slasher registry
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A slasher contract authorized to call DinValidatorStake.slash().
+sourceContract distinguishes DinCoordinator-originated events from
+DinValidatorStake-originated events — both emit identical SlasherContractAdded/
+Removed signatures (see event-coverage-audit.md §5).
+The canonical active-slasher set is derived from DinValidatorStake events only.
+"""
+type SlasherRegistration @entity {
+  "slasherAddress-sourceContract as hex pair"
+  id: ID!
+
+  slasherAddress: Bytes!
+
+  "DinCoordinator or DinValidatorStake — the contract that emitted the event"
+  sourceContract: Bytes!
+
+  active: Boolean!
+
+  addedAtBlock: BigInt!
+  addedAtTimestamp: BigInt!
+  removedAtBlock: BigInt
+  removedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinCoordinator — ETH deposits and treasury
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An ETH deposit that minted DIN tokens for a user."""
+type DINMintEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  user: Bytes!
+  ethAmount: BigInt!
+  dinAmount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+An ETH treasury withdrawal from DinCoordinator.
+Requires the ETHTreasuryWithdrawn event addition (audit §6.3).
+Until that event lands this entity will not be populated.
+"""
+type TreasuryWithdrawal @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A change to the DIN-per-ETH exchange rate."""
+type ExchangeRateSnapshot @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  newRate: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinToken — mint and transfer history
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A DIN token mint (always from DinCoordinator via depositAndMint)."""
+type TokenMintEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+A DIN ERC20 transfer. Indexed from the standard Transfer event.
+Includes zero-address mint/burn transfers for completeness.
+"""
+type TokenTransferEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  from: Bytes!
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
