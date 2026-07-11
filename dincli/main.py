@@ -60,6 +60,7 @@ def main(
 ):
     ctx.obj = DinContext()
     console = ctx.obj.console
+
     ctx.obj.select_wallet(wallet)
 
     configured_network  = ctx.obj.select_network(network).network

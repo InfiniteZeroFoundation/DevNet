@@ -19,6 +19,10 @@ _ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _PASSWORD_TTL_DEFAULT = 900
 _PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
 
+# Sentinel so callers can inject an already-fetched DIN_WALLET_PASSWORD value
+# (fetched once per unlock) while callers that omit it self-fetch as before.
+_UNSET = object()
+
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger
 from dincli.services.cid_utils import get_cid_from_bytes32
@@ -406,51 +410,61 @@ def load_account(name: str = "default") -> Account:
 
     keystore_data = _extract_keystore(data)
 
-    password = _get_password(name)
+    # Fetch DIN_WALLET_PASSWORD once and thread it through the password helpers so a
+    # single unlock parses .env once rather than twice (get_env_key has no memoization).
+    env_pass = get_env_key("DIN_WALLET_PASSWORD")
+
+    password = _get_password(name, env_pass=env_pass)
     try:
         private_key = Account.decrypt(keystore_data, password)
-
-        _cache_password_in_memory(name, password)
+        _cache_password_in_memory(name, password, env_pass=env_pass)
         _cleanup_stale_session()
         return Account.from_key(private_key)
     except ValueError:
-
         if _clear_memory_cache(name):
             console.print("[yellow]Cached password failed, prompting...[/yellow]")
             password = getpass("Enter wallet password: ")
             try:
                 private_key = Account.decrypt(keystore_data, password)
-                _cache_password_in_memory(name, password)
+                _cache_password_in_memory(name, password, env_pass=env_pass)
                 _cleanup_stale_session()
                 return Account.from_key(private_key)
-            
             except ValueError:
                 pass
         raise ValueError("Invalid password or corrupted keystore.")
 
 
-def _get_password(name: str = "default", prompt: bool = True) -> str:
+def _get_password(name: str = "default", prompt: bool = True,
+                  is_new_wallet: bool = False, env_pass=_UNSET) -> str:
     """
     Get password from:
     1. DIN_WALLET_PASSWORD env var
     2. In-memory cache (keyed by name)
     3. Interactive prompt
+    is_new_wallet: when True, the in-memory cache is skipped entirely so a freshly
+        created/overwritten wallet is never silently encrypted with a stale cached
+        password. The DIN_WALLET_PASSWORD env var is still honored (deliberate
+        automation path).
+    env_pass: an already-fetched DIN_WALLET_PASSWORD value, to avoid re-parsing .env
+        (see load_account). Omit (_UNSET) to self-fetch.
     """
     _cleanup_stale_session()
 
     # 1. Environment variable
-    env_pass = get_env_key("DIN_WALLET_PASSWORD")
+    if env_pass is _UNSET:
+        env_pass = get_env_key("DIN_WALLET_PASSWORD")
     if env_pass:
         return env_pass
 
     # 2. Session cache
-    now = time.time()
-    entry = _PASSWORD_CACHE.get(name)
-    if entry is not None:
-        cached_pw, expiry = entry
-        if now < expiry:
-            return cached_pw
-        del _PASSWORD_CACHE[name]
+    if not is_new_wallet:
+        now = time.time()
+        entry = _PASSWORD_CACHE.get(name)
+        if entry is not None:
+            cached_pw, expiry = entry
+            if now < expiry:
+                return cached_pw
+            del _PASSWORD_CACHE[name]
 
     # 3. Prompt
     if prompt:
@@ -458,8 +472,11 @@ def _get_password(name: str = "default", prompt: bool = True) -> str:
     
     return ""
 
-def _cache_password_in_memory(name: str, password: str) -> None:
-    if get_env_key("DIN_WALLET_PASSWORD"):
+
+def _cache_password_in_memory(name: str, password: str, env_pass=_UNSET) -> None:
+    if env_pass is _UNSET:
+        env_pass = get_env_key("DIN_WALLET_PASSWORD")
+    if env_pass:
         return
     ttl = int(os.environ.get("DIN_PASSWORD_TTL", _PASSWORD_TTL_DEFAULT))
     _PASSWORD_CACHE[name] = (password, time.time() + ttl)
