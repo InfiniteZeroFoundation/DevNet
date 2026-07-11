@@ -1,0 +1,213 @@
+specVersion: 0.0.5
+description: >
+  DIN Protocol platform-contract subgraph. Indexes DINModelRegistry,
+  DinValidatorStake, DinCoordinator, and DinToken on the local development
+  chain (chainId 1337). Task-level contracts are out of scope — deferred to
+  P5+ dynamic data sources.
+repository: https://github.com/InfiniteZeroFoundation/DevNet
+schema:
+  file: ./schema.graphql
+
+# ─── Network note ────────────────────────────────────────────────────────────
+# The network name "din-local" must match the network configured in the
+# Graph node's config.toml or networks.toml (see docker-compose.yml). The
+# Graph node maps this name to the local anvil/hardhat RPC at
+# http://localhost:8545 (chainId 1337).
+#
+# ─── Address note ────────────────────────────────────────────────────────────
+# Placeholder addresses below must be replaced with the actual addresses
+# after deploying the platform contracts to the local chain. The canonical
+# deploy command is:
+#   cd hardhat && npx hardhat run scripts/deploy.ts --network localhost
+# Deployed addresses are written to hardhat/deployments/local.json.
+# A helper script (scripts/update-subgraph-addresses.sh) will patch this file
+# automatically once P4-IDX2 setup tooling is in place.
+# ─────────────────────────────────────────────────────────────────────────────
+
+dataSources:
+
+  # ── DINModelRegistry ────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DINModelRegistry
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000001"  # replace after deploy
+      abi: DINModelRegistry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - ModelRegistrationRequest
+        - Model
+        - ManifestUpdateRequest
+        - ModelKillSwitchEvent
+        - FeeSnapshot
+        - RegistryFeeWithdrawal
+        - DAOAdminTransfer
+      abis:
+        - name: DINModelRegistry
+          file: ./abis/DINModelRegistry.json
+      eventHandlers:
+        # Registration request lifecycle
+        - event: ModelRegistrationRequested(indexed uint256,indexed address)
+          handler: handleModelRegistrationRequested
+          # NOTE: missing isOpenSource and fee fields until audit §6.1 addition
+          # lands. Handler will call modelRequests(requestId) as a temporary
+          # bridge to populate those fields.
+        - event: ModelApproved(indexed uint256,indexed uint256)
+          handler: handleModelApproved
+        - event: ModelRejected(indexed uint256)
+          handler: handleModelRejected
+
+        # Manifest update lifecycle
+        - event: ManifestUpdateRequested(indexed uint256,indexed uint256)
+          handler: handleManifestUpdateRequested
+          # NOTE: missing requester field until audit §6.2 addition lands.
+          # Handler will derive requester from Model.owner as a bridge.
+        - event: ManifestUpdated(indexed uint256,indexed uint256,bytes32)
+          handler: handleManifestUpdated
+        - event: ManifestUpdateRejected(indexed uint256)
+          handler: handleManifestUpdateRejected
+
+        # Kill switch
+        - event: ModelDisabled(indexed uint256)
+          handler: handleModelDisabled
+        - event: ModelEnabled(indexed uint256)
+          handler: handleModelEnabled
+
+        # Fee governance — granular setters
+        - event: OpenSourceFeeUpdated(uint256)
+          handler: handleOpenSourceFeeUpdated
+        - event: ProprietaryFeeUpdated(uint256)
+          handler: handleProprietaryFeeUpdated
+        - event: OpenSourceUpdateFeeUpdated(uint256)
+          handler: handleOpenSourceUpdateFeeUpdated
+        - event: ProprietaryUpdateFeeUpdated(uint256)
+          handler: handleProprietaryUpdateFeeUpdated
+
+        # Fee governance — atomic setter (governance proposals)
+        - event: FeesUpdated(uint256,uint256,uint256,uint256)
+          handler: handleFeesUpdated
+
+        # Fee withdrawal and admin rotation
+        - event: FeesWithdrawn(indexed address,uint256)
+          handler: handleFeesWithdrawn
+        - event: DAOAdminUpdated(indexed address,indexed address)
+          handler: handleDAOAdminUpdated
+      file: ./src/registry.ts
+
+  # ── DinValidatorStake ────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinValidatorStake
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000002"  # replace after deploy
+      abi: DinValidatorStake
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Validator
+        - StakeEvent
+        - SlashEvent
+        - UnstakeRequest
+        - WithdrawalClaim
+        - SlasherRegistration
+      abis:
+        - name: DinValidatorStake
+          file: ./abis/DinValidatorStake.json
+      eventHandlers:
+        - event: ValidatorStaked(indexed address,uint256)
+          handler: handleValidatorStaked
+        - event: ValidatorSlashed(indexed address,uint256,indexed bytes32,indexed address)
+          handler: handleValidatorSlashed
+        - event: ValidatorUnstakeRequested(indexed address,uint256,uint64)
+          handler: handleValidatorUnstakeRequested
+        - event: ValidatorWithdrawalClaimed(indexed address,uint256)
+          handler: handleValidatorWithdrawalClaimed
+        - event: ValidatorBlacklisted(indexed address)
+          handler: handleValidatorBlacklisted
+        - event: ValidatorUnblacklisted(indexed address)
+          handler: handleValidatorUnblacklisted
+
+        # SlasherContractAdded/Removed are emitted by both DinCoordinator and
+        # DinValidatorStake with identical signatures (see event-coverage-audit.md §5).
+        # This data source produces the canonical slasher-set records
+        # (sourceContract = DinValidatorStake address).
+        - event: SlasherContractAdded(indexed address)
+          handler: handleSlasherContractAdded
+        - event: SlasherContractRemoved(indexed address)
+          handler: handleSlasherContractRemoved
+      file: ./src/staking.ts
+
+  # ── DinCoordinator ───────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinCoordinator
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000003"  # replace after deploy
+      abi: DinCoordinator
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - DINMintEvent
+        - TreasuryWithdrawal
+        - ExchangeRateSnapshot
+        - SlasherRegistration
+      abis:
+        - name: DinCoordinator
+          file: ./abis/DinCoordinator.json
+      eventHandlers:
+        - event: EthDepositAndDINminted(indexed address,uint256,uint256)
+          handler: handleEthDepositAndDINminted
+        - event: DinPerEthUpdated(uint256)
+          handler: handleDinPerEthUpdated
+        - event: ValidatorStakeContractUpdated(indexed address)
+          handler: handleValidatorStakeContractUpdated
+
+        # Audit-trail records only — canonical slasher set is owned by
+        # DinValidatorStake. sourceContract set to DinCoordinator address.
+        - event: SlasherContractAdded(indexed address)
+          handler: handleCoordinatorSlasherAdded
+        - event: SlasherContractRemoved(indexed address)
+          handler: handleCoordinatorSlasherRemoved
+
+        # ETHTreasuryWithdrawn not yet in ABI — handler registered here for
+        # when the audit §6.3 addition lands and the ABI is updated.
+        # Uncomment once the event exists:
+        # - event: ETHTreasuryWithdrawn(indexed address,uint256)
+        #   handler: handleETHTreasuryWithdrawn
+      file: ./src/coordinator.ts
+
+  # ── DinToken ─────────────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinToken
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000004"  # replace after deploy
+      abi: DinToken
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - TokenMintEvent
+        - TokenTransferEvent
+      abis:
+        - name: DinToken
+          file: ./abis/DinToken.json
+      eventHandlers:
+        - event: TokensMinted(indexed address,uint256)
+          handler: handleTokensMinted
+        # Standard ERC20 Transfer — includes mint (from=0x0) and burn (to=0x0)
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+      file: ./src/token.ts
