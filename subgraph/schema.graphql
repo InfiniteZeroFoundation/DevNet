@@ -465,3 +465,80 @@ type AuditorRegistration @entity {
   blockTimestamp: BigInt!
   transactionHash: Bytes!
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aggregation batches (T1 and T2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A Tier-1 aggregation batch. Created by autoCreateTier1AndTier2().
+Multiple T1 batches exist per GI; each covers a sub-set of approved models.
+"""
+type Tier1Batch @entity {
+  "taskCoordinatorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  batchId: BigInt!
+
+  t1Submissions: [T1AggregationSubmission!]! @derivedFrom(field: "tier1Batch")
+
+  "True once finalizeT1Aggregation() selects the majority CID."
+  finalized: Boolean!
+
+  "Majority-agreed aggregation CID. Set once T1BatchFinalized event lands [PENDING — audit §4.4]."
+  winningCID: Bytes
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+  finalizedAtBlock: BigInt
+  finalizedAtTimestamp: BigInt
+}
+
+"""
+The single Tier-2 aggregation batch per GI. Created alongside T1 batches.
+Its winningCID is the new global model for the iteration.
+"""
+type Tier2Batch @entity {
+  "taskCoordinatorAddress-gi (batchId is always 0)"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+
+  t2Submissions: [T2AggregationSubmission!]! @derivedFrom(field: "tier2Batch")
+
+  "True once finalizeT2Aggregation() selects the majority CID."
+  finalized: Boolean!
+
+  "Majority-agreed CID — the new global model for this GI. Set once T2Finalized event lands [PENDING — audit §4.4]."
+  globalModelCID: Bytes
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+  finalizedAtBlock: BigInt
+  finalizedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit batches
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+An audit batch created by DINTaskAuditor.createAuditorsBatches().
+Groups a subset of auditors with a subset of local model submissions.
+"""
+type AuditBatch @entity {
+  "taskAuditorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  batchId: BigInt!
+
+  scoreSubmissions: [AuditScoreSubmission!]! @derivedFrom(field: "auditBatch")
+  eligibilityVotes: [EligibilityVote!]!      @derivedFrom(field: "auditBatch")
+  eligibilityResults: [EligibilityResult!]!  @derivedFrom(field: "auditBatch")
+  auditorSlashEvents: [AuditorSlashEvent!]!  @derivedFrom(field: "auditBatch")
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+}
