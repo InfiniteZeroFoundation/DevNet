@@ -666,3 +666,85 @@ type EligibilityResult @entity {
   blockTimestamp: BigInt!
   transactionHash: Bytes!
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slash events (task-level)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A slash applied to an aggregator by DINTaskCoordinator.slashAggregators()."""
+type AggregatorSlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  batchId: BigInt!
+  aggregator: Bytes!
+  reason: Bytes!
+  requestedAmount: BigInt!
+  actualAmount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A slash applied to an auditor by DINTaskAuditor.slashAuditors()."""
+type AuditorSlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  auditor: Bytes!
+  reason: Bytes!
+  requestedAmount: BigInt!
+  actualAmount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pass score governance
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A change to the auditor pass score on DINTaskAuditor."""
+type PassScoreUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  "The task auditor contract that emitted the event"
+  taskAuditor: Bytes!
+  oldScore: BigInt!
+  newScore: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GI state transition history
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A single GI state machine transition recorded from GIStateChanged.
+Requires the GIStateChanged event addition [PENDING — audit §4.1].
+One record per state write — the full lifecycle of a GI is reconstructable
+from the ordered sequence of GIStateTransition records for a GlobalIteration.
+newState is the uint8 value of the GIstates enum in DINShared.sol.
+"""
+type GIStateTransition @entity {
+  "taskCoordinatorAddress-gi-newState"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+
+  "uint8 value of the GIstates enum (0 = AwaitingDINTaskAuditorToBeSet … 22 = GIended)"
+  newState: Int!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
