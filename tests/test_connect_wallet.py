@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 from dincli.cli import system as system_mod
 from dincli.cli import utils as utils_mod
+from dincli.sdk import config as sdk_config
 from dincli.main import app as main_app
 
 
@@ -609,18 +610,18 @@ class TestFixERegression:
     def test_set_wallet_persists_config(self, monkeypatch, temp_config):
         config_file = temp_config["config_dir"] / "config.json"
         config_file.write_text("{}")
-        orig_config_file = utils_mod.CONFIG_FILE
-        utils_mod.CONFIG_FILE = config_file
+        orig_config_file = sdk_config.CONFIG_FILE
+        sdk_config.CONFIG_FILE = config_file
         monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
         try:
             (temp_config["wallets_dir"] / "wallet_validator.json").write_text('{"version": 1, "address": "0xTest"}')
             result = CliRunner().invoke(main_app, ["system", "set-wallet", "validator"])
             assert result.exit_code == 0
             assert "Default wallet set to 'validator'" in result.output
-            config = utils_mod.load_config()
+            config = sdk_config.load_config()
             assert config.get("wallet_name") == "validator"
         finally:
-            utils_mod.CONFIG_FILE = orig_config_file
+            sdk_config.CONFIG_FILE = orig_config_file
 
 
 class TestSkipListRouting:
