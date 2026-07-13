@@ -1,4 +1,4 @@
-import { BigInt } from "@graphprotocol/graph-ts"
+import { BigInt, DataSourceContext, Address } from "@graphprotocol/graph-ts"
 import {
   ModelRegistrationRequested,
   ModelApproved,
@@ -27,6 +27,10 @@ import {
   DAOAdminTransfer,
 } from "../generated/schema"
 import { eventId } from "./utils"
+import {
+  DINTaskCoordinator as DINTaskCoordinatorTemplate,
+  DINTaskAuditor as DINTaskAuditorTemplate,
+} from "../generated/templates"
 
 // ─── Registration request lifecycle ──────────────────────────────────────────
 
@@ -92,6 +96,23 @@ export function handleModelApproved(event: ModelApproved): void {
   model.createdAtBlock      = event.block.number
   model.createdAtTimestamp  = event.block.timestamp
   model.save()
+
+  // Spin up dynamic data source instances for this model's task contracts.
+  // Both templates receive the same context so handlers on either side can
+  // resolve the modelId and the paired contract address.
+  let ctx = new DataSourceContext()
+  ctx.setBigInt("modelId", event.params.modelId)
+  ctx.setBytes("taskCoordinatorAddress", model.taskCoordinator)
+  ctx.setBytes("taskAuditorAddress", model.taskAuditor)
+
+  DINTaskCoordinatorTemplate.createWithContext(
+    Address.fromBytes(model.taskCoordinator),
+    ctx,
+  )
+  DINTaskAuditorTemplate.createWithContext(
+    Address.fromBytes(model.taskAuditor),
+    ctx,
+  )
 }
 
 export function handleModelRejected(event: ModelRejected): void {
