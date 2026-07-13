@@ -542,3 +542,127 @@ type AuditBatch @entity {
   createdAtBlock: BigInt!
   createdAtTimestamp: BigInt!
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local model submissions
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A local model submitted by a client during the LMS phase.
+Requires the LocalModelSubmitted event addition [PENDING — audit §4.2].
+Until that event lands this entity will not be populated.
+"""
+type LocalModelSubmission @entity {
+  "taskAuditorAddress-gi-modelIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  modelIndex: BigInt!
+  client: Bytes!
+  modelCID: Bytes!
+
+  "Set once EligibilityFinalized fires for this modelIndex."
+  eligible: Boolean
+  "Set once finalizeEvaluation() is called (derived from EligibilityFinalized + AuditScoreSubmitted)."
+  finalAvgScore: BigInt
+  "True if eligible and finalAvgScore >= passScore."
+  approved: Boolean
+
+  scoreSubmissions: [AuditScoreSubmission!]! @derivedFrom(field: "localModelSubmission")
+  eligibilityVotes: [EligibilityVote!]!      @derivedFrom(field: "localModelSubmission")
+  eligibilityResult: EligibilityResult       @derivedFrom(field: "localModelSubmission")
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aggregation submissions (T1 and T2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A T1 aggregation CID submitted by an aggregator for a specific batch.
+Requires the T1AggregationSubmitted event addition [PENDING — audit §4.3].
+"""
+type T1AggregationSubmission @entity {
+  "taskCoordinatorAddress-gi-batchId-aggregatorAddress"
+  id: ID!
+
+  tier1Batch: Tier1Batch!
+  aggregator: Bytes!
+  cid: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+A T2 aggregation CID submitted by an aggregator.
+batchId is always 0. Requires the T2AggregationSubmitted event addition [PENDING — audit §4.3].
+"""
+type T2AggregationSubmission @entity {
+  "taskCoordinatorAddress-gi-aggregatorAddress"
+  id: ID!
+
+  tier2Batch: Tier2Batch!
+  aggregator: Bytes!
+  cid: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit scoring and eligibility
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An audit score submitted by a single auditor for one local model."""
+type AuditScoreSubmission @entity {
+  "taskAuditorAddress-gi-batchId-auditorAddress-modelIndex"
+  id: ID!
+
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  auditor: Bytes!
+  score: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An eligibility vote cast by a single auditor for one local model."""
+type EligibilityVote @entity {
+  "taskAuditorAddress-gi-batchId-modelIndex-auditorAddress"
+  id: ID!
+
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  auditor: Bytes!
+  vote: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+The finalized eligibility result for a local model once quorum is reached.
+One record per modelIndex per GI.
+"""
+type EligibilityResult @entity {
+  "taskAuditorAddress-gi-batchId-modelIndex"
+  id: ID!
+
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  eligible: Boolean!
+  totalVotes: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
