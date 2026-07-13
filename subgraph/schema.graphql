@@ -69,6 +69,7 @@ type Model @entity {
 
   manifestHistory: [ManifestUpdateRequest!]! @derivedFrom(field: "model")
   disableEvents: [ModelKillSwitchEvent!]! @derivedFrom(field: "model")
+  globalIterations: [GlobalIteration!]! @derivedFrom(field: "model")
 
   createdAtBlock: BigInt!
   createdAtTimestamp: BigInt!
@@ -373,6 +374,92 @@ type TokenTransferEvent @entity {
   from: Bytes!
   to: Bytes!
   amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# =============================================================================
+# Task-level contracts — dynamic data sources
+#
+# DINTaskCoordinator and DINTaskAuditor are deployed once per model (not once
+# globally). The subgraph tracks them via data source templates instantiated
+# when DINModelRegistry emits ModelApproved.
+#
+# Event additions required before several entities below are fully populated
+# are marked [PENDING — see task-contract-event-audit.md §4].
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global Iteration lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A single Global Iteration (GI) for one federated-learning model.
+Central entity linking registrations, batches, submissions, and scoring.
+"""
+type GlobalIteration @entity {
+  "taskCoordinatorAddress-gi (hex-decimal)"
+  id: ID!
+
+  gi: BigInt!
+  taskCoordinator: Bytes!
+
+  "Back-reference to the platform-level Model entity"
+  model: Model!
+
+  "Current GIstates enum value as uint8.
+  Populated once GIStateChanged event lands [PENDING — audit §4.1].
+  Starts at 5 (GIstarted) — the first state reachable after model registration."
+  currentState: Int!
+
+  aggregatorRegistrations: [AggregatorRegistration!]! @derivedFrom(field: "globalIteration")
+  auditorRegistrations: [AuditorRegistration!]!      @derivedFrom(field: "globalIteration")
+  tier1Batches: [Tier1Batch!]!                       @derivedFrom(field: "globalIteration")
+  tier2Batches: [Tier2Batch!]!                       @derivedFrom(field: "globalIteration")
+  auditBatches: [AuditBatch!]!                       @derivedFrom(field: "globalIteration")
+  localModelSubmissions: [LocalModelSubmission!]!    @derivedFrom(field: "globalIteration")
+  aggregatorSlashEvents: [AggregatorSlashEvent!]!    @derivedFrom(field: "globalIteration")
+  auditorSlashEvents: [AuditorSlashEvent!]!          @derivedFrom(field: "globalIteration")
+  stateTransitions: [GIStateTransition!]!            @derivedFrom(field: "globalIteration")
+
+  "T2 winning CID — the new global model. Set once T2Finalized event lands [PENDING — audit §4.4]."
+  globalModelCID: Bytes
+
+  "True once endGI() has been called and GIStateChanged(GIended) fires."
+  ended: Boolean!
+
+  startedAtBlock: BigInt!
+  startedAtTimestamp: BigInt!
+  endedAtBlock: BigInt
+  endedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator registrations per GI
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An aggregator that registered for a specific Global Iteration."""
+type AggregatorRegistration @entity {
+  "taskCoordinatorAddress-gi-validatorAddress"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  validator: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An auditor that registered for a specific Global Iteration."""
+type AuditorRegistration @entity {
+  "taskAuditorAddress-gi-auditorAddress"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditor: Bytes!
 
   blockNumber: BigInt!
   blockTimestamp: BigInt!
