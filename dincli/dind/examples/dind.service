@@ -1,0 +1,22 @@
+[Unit]
+Description=DIN Daemon (dind) — Decentralized Intelligence Network
+Documentation=https://github.com/InfiniteZeroFoundation/DevNet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=-%E/dind/%i.env
+ExecStart=dind start
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dind
+
+[Install]
+WantedBy=multi-user.target

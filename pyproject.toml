@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 dincli = "dincli.main:app"
+dind = "dincli.dind.main:app"
 
 # ✅ Let setuptools auto-find packages (including 'dincli')
 [tool.setuptools.packages.find]
@@ -33,7 +34,8 @@ where = ["."]  # look in project root
 include = ["dincli*"]  # only include dincli and subpackages
 
 [tool.setuptools.package-data]
-dincli = ["config/*.json", "abis/*", "docker/worker/*", "services/*.py"]
+"dincli" = ["config/*.json", "abis/*", "docker/worker/*", "services/*.py"]
+"dincli.dind" = ["examples/*"]
 
 [tool.pytest.ini_options]
 markers = [
