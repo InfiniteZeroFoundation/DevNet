@@ -268,8 +268,8 @@ dincli task gi show-state 0
 ### Step 3: Register (if state = `DINaggregatorsRegistrationStarted`)
 
 ```bash
-# Connect wallet (example: account index 0)
-dincli system connect-wallet --account 0
+# Register wallet (example: account index 0; saved as 'default', the active fallback)
+dincli system register-wallet --account 0
 
 # Check ETH balance
 dincli system --eth-balance
@@ -354,8 +354,8 @@ dincli task gi show-state 0
 ### Step 3: Register (if state = `DINauditorsRegistrationStarted`)
 
 ```bash
-# Connect wallet
-dincli system connect-wallet --account 0
+# Register wallet (saved as 'default', the active fallback)
+dincli system register-wallet --account 0
 
 # Check ETH balance
 dincli system --eth-balance
@@ -515,8 +515,8 @@ dincli task gi show-state 0
 ### Step 3: Submit Local Model (if state = `LMSstarted`)
 
 ```bash
-# Connect wallet
-dincli system connect-wallet --account 0
+# Register wallet (saved as 'default', the active fallback)
+dincli system register-wallet --account 0
 
 # Check ETH balance
 dincli system --eth-balance

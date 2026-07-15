@@ -88,23 +88,23 @@ Import the wallet once, then set it active so later commands use it.
 **If you used Option A (`eth-account` keystore):**
 
 ```bash
-dincli system connect-wallet --keystore ./keystore.json --name validator
+dincli system register-wallet --keystore ./keystore.json --name validator
 rm ./keystore.json      # remove the temporary keystore file once imported
 ```
 
 **If you used Option B path 1 (OWS raw-key export):** paste the exported private key when prompted:
 
 ```bash
-dincli system connect-wallet --name validator
+dincli system register-wallet --name validator
 ```
 
 Then make `validator` the active wallet:
 
 ```bash
-dincli system set-wallet validator
+dincli system connect-wallet validator
 ```
 
-`connect-wallet` prompts for a keystore passphrase (Option A) and persists the encrypted
+`register-wallet` prompts for a keystore passphrase (Option A) and persists the encrypted
 keystore at `~/.config/dincli/wallets/wallet_validator.json` — your raw private key is
 **never written to disk in plaintext**.
 

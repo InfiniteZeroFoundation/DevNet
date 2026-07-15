@@ -200,6 +200,8 @@ def managed_services(din_tmp):
     started are terminated.
     """
     results_dir = din_tmp / "results"
+    hardhat_proc = None
+    ipfs_proc = None
 
     # 1. Compile contracts — ensures ABIs are fresh before any deploy
     _compile_contracts(results_dir)
@@ -226,6 +228,7 @@ def managed_services(din_tmp):
             ipfs_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             ipfs_proc.kill()
+    shutil.rmtree("/home/azureuser/tempdir/dincli", ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +266,9 @@ def workdir():
     dincli resolves task dirs and .env relative to os.getcwd(), and the local
     dincli/ package is found via PYTHONPATH from here.
     """
-    return DEVNET_ROOT
+
+    shutil.copy("/home/azureuser/projects/devnet/.env", str(DIN_TEMP / ".env"))
+    return DIN_TEMP
 
 
 @pytest.fixture(scope="session")
@@ -318,6 +323,11 @@ def run_cmd(
         input=input_text,
         timeout=timeout,
     )
+    print(f"\n$ dincli {' '.join(args)}  (exit {result.returncode})")
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
     if check and result.returncode != 0:
         pytest.fail(
             f"\nCommand failed: {' '.join(args)}\n"
@@ -369,11 +379,19 @@ def run(din_env, workdir):
 @pytest.fixture(scope="session", autouse=True)
 def bootstrap(managed_services, din_info_backup, run):
     """
-    Configure demo mode and local network.  Depends on managed_services so
-    the Hardhat node is guaranteed to be running before the first command.
+    Configure demo mode and local network, and register the named role
+    wallets (account 0 = dindao / DIN-Representative, account 1 = modelowner).
+    Tests switch between them with `system connect-wallet <name>`; dynamic
+    per-account roles in test_04 self-register via
+    `register-wallet --account N --name acctN --yes --connect`.
+    Depends on managed_services so the Hardhat node is guaranteed to be
+    running before the first command.
     """
+    run(["system", "init"])
     run(["system", "configure-demo"])
     run(["system", "configure-network", "--network", "local"])
+    run(["system", "register-wallet", "--account", "0", "--name", "dindao", "--yes"])
+    run(["system", "register-wallet", "--account", "1", "--name", "modelowner", "--yes"])
 
 
 # ---------------------------------------------------------------------------

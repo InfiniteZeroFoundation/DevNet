@@ -21,7 +21,7 @@ dincli system configure-network --network "sepolia_op_devnet"
 Also each actor/stakeholder needs to have a wallet address to interact with the DIN Protocol. Before executing any command, the actor/stakeholder needs to connect their wallet to the DIN CLI.
 
 ```bash
-dincli system connect-wallet --account <account_id>
+dincli system register-wallet --account <account_id>
 ```
 > [!WARNING]
 > `--account <index>` (using `ETH_PRIVATE_KEY_<n>` from `.env`) is

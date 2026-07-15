@@ -6,6 +6,8 @@ Technical documentation for [`hardhat/contracts/DinValidatorStake.sol`](../../..
 
 `DinValidatorStake` is the staking ledger for DIN validators. It holds DIN tokens inside the contract, tracks each validator's staking lifecycle, exposes whether a validator is currently active, and lets authorized slasher contracts reduce stake.
 
+It is deployed once per network behind an OpenZeppelin **Transparent Proxy** and configured via `initialize(dinToken, dinCoordinator)` rather than a constructor (see [Initialization](#initialization) and [Ownership and upgradeability](#ownership-and-upgradeability)).
+
 It is responsible for:
 
 - accepting validator stake in DIN tokens;
@@ -29,8 +31,11 @@ Pending withdrawals remain slashable until they are claimed.
 
 | Component | Source | Purpose |
 |-----------|--------|---------|
-| `Ownable` | OpenZeppelin | DAO admin ownership |
+| `Initializable` | OpenZeppelin (upgradeable) | Initializer guard for the proxy pattern |
+| `OwnableUpgradeable` | OpenZeppelin (upgradeable) | DAO admin ownership; owner set in `initialize` |
 | `ReentrancyGuardTransient` | OpenZeppelin (L2-optimised) | Re-entrancy protection on ERC-20 flows |
+
+`ReentrancyGuardTransient` is the plain (non-upgradeable) OpenZeppelin contract, which is safe behind a proxy because it is stateless: the lock lives in EIP-1153 transient storage and occupies no storage slots.
 
 ### Dependencies
 
@@ -52,18 +57,27 @@ Pending withdrawals remain slashable until they are claimed.
 
 
 
-### Constructor
+### Initialization
 
 ```solidity
-constructor(address dinToken, address dinCoordinator)
+constructor()
 ```
 
-Constructor rules:
+The constructor only calls `_disableInitializers()`. It runs on the raw implementation contract (never through the proxy) and permanently locks it: calling `initialize` directly on the implementation reverts with `InvalidInitialization`. All real state lives in the proxy.
 
+```solidity
+function initialize(address dinToken, address dinCoordinator) external initializer
+```
+
+Initialization rules:
+
+- Runs exactly once per proxy, atomically with proxy deployment (the deploy script encodes the call into the proxy's constructor data).
 - `dinToken` must not be `address(0)`.
 - `dinCoordinator` must not be `address(0)`.
-- `DIN_TOKEN` is stored as an immutable ERC-20 reference.
-- `DIN_COORDINATOR` is stored as an immutable access-control address.
+- `__Ownable_init(msg.sender)` — the deployer becomes `owner()` (blacklist administration).
+- `DIN_TOKEN` is stored as an ERC-20 reference and `DIN_COORDINATOR` as the access-control address. Both are regular storage variables set once here (`immutable` is not usable behind a proxy); the SCREAMING_CASE names are retained from the pre-proxy version.
+
+Unlike `DinToken` and `DinCoordinator`, this contract receives **both** of its dependencies at initialization and needs no further wiring of its own. The one remaining step is on the coordinator's side: `DinCoordinator.updateValidatorStakeContract(thisProxy)` must be called so slasher management can reach this contract.
 
 ### Constants and storage
 
@@ -76,12 +90,22 @@ Constructor rules:
 
 `MIN_STAKE` is enforced per `stake(amount)` call, not on the validator's total post-stake balance.
 
-#### Immutable addresses
+#### Platform addresses
 
 | Name | Meaning |
 |---|---|
-| `DIN_TOKEN` | ERC-20 token accepted as stake |
-| `DIN_COORDINATOR` | Only address allowed to manage slasher contracts |
+| `DIN_TOKEN` | ERC-20 token accepted as stake (the `DinToken` proxy) |
+| `DIN_COORDINATOR` | Only address allowed to manage slasher contracts (the `DinCoordinator` proxy) |
+
+Both are set once in `initialize` and have no setter — they are fixed for the life of the proxy short of an implementation upgrade.
+
+#### Storage reserve
+
+```solidity
+uint256[50] private __gap;
+```
+
+Fifty storage slots reserved after the declared state so future implementation versions can append variables without corrupting the proxy storage layout.
 
 ### Slasher registry
 
@@ -152,6 +176,40 @@ The contract uses two modifiers:
 
 - `onlyDinCoordinator`: reverts with `NotDINCoordinator()` unless `msg.sender == DIN_COORDINATOR`.
 - `onlySlasherContract`: reverts with `NotSlasherContract()` unless `slasherContracts[msg.sender]` is `true`.
+
+`owner()` comes from `OwnableUpgradeable` and is set to the account that ran `initialize` (the deployer / DAO representative); it is transferable via `transferOwnership`.
+
+## Ownership and upgradeability
+
+Three privilege planes coexist:
+
+| Plane | Who | Controls |
+|---|---|---|
+| Contract owner (`owner()`) | `initialize` caller (deployer / DAO representative) | `blacklistValidator`, `unblacklistValidator` |
+| `DIN_COORDINATOR` | `DinCoordinator` proxy | Slasher registry (`addSlasherContract` / `removeSlasherContract`) |
+| Proxy admin (`ProxyAdmin` contract) | Deployed by the OZ upgrades plugin, owned by the deployer | Swapping the implementation behind the proxy |
+
+Upgrade mechanics:
+
+- **Proxy kind:** OpenZeppelin Transparent Proxy. The proxy address — where all staked DIN and validator records live — is permanent; upgrades replace only the code.
+- **Upgrade path:** `CONTRACT=DinValidatorStake npx hardhat run scripts/upgrade-platform.ts --network <network>`, which loads the proxy address from `hardhat/deployments/<network>.json` and records the new implementation address there.
+- **Storage-layout safety:** state may only be appended; the `__gap` array reserves headroom. `hardhat/test/DinValidatorStake.upgrade.test.ts` runs `upgrades.validateUpgrade` against a V2 fixture (`hardhat/contracts/upgrade/DinValidatorStakeV2.sol`) and asserts that stakes, pending withdrawals, statuses, the slasher registry, and access control all survive an upgrade.
+- **Trust implication:** every invariant in this document (unbonding delay, slashing caps, blacklist behavior) holds only as long as the ProxyAdmin owner is honest — an upgrade can rewrite any of it while keeping custody of all staked funds.
+
+### Deployment position and wiring
+
+From `hardhat/scripts/deploy-platform.ts`, this contract is deployed **third**, because `initialize` needs both earlier proxies:
+
+```
+1. DinToken proxy            initialize()
+2. DinCoordinator proxy      initialize(dinToken)
+3. dinToken.setCoordinator(dinCoordinator)
+4. DinValidatorStake proxy   initialize(dinToken, dinCoordinator)     ← this contract
+5. dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
+6. DINModelRegistry proxy    initialize(dinValidatorStake)
+```
+
+Until step 5, `DinCoordinator.addSlasherContract` / `removeSlasherContract` revert with `ValidatorStakeContractNotSet()`, so no slasher can be registered here. Staking itself (`stake`) works as soon as step 4 completes, provided validators hold DIN (which requires step 3).
 
 ## Events
 
@@ -534,3 +592,24 @@ DinValidatorStake owner
 `DinValidatorStake` is not just a token vault. It is a validator lifecycle contract.
 
 Its main production-grade property is that exits are delayed and still slashable. That design closes the most dangerous staking failure mode: a validator doing work, misbehaving, and withdrawing before penalties can be enforced.
+
+---
+
+## Change Log
+
+### 2026-07 — Upgradeable conversion (PR 13)
+
+- Converted to a Transparent Proxy: `Ownable` → `Initializable` + `OwnableUpgradeable`; pragma bumped `^0.8.20` → `^0.8.28`.
+- `constructor(dinToken, dinCoordinator)` replaced by a `_disableInitializers()` constructor plus `initialize(dinToken, dinCoordinator)` with the identical zero-address checks; `owner()` is set to the `initialize` caller.
+- `DIN_TOKEN` and `DIN_COORDINATOR` lost `immutable` — now regular storage variables set once in `initialize` (names kept in SCREAMING_CASE).
+- Added `uint256[50] __gap` storage reserve.
+- **Zero logic changes:** all errors, events, constants, the `ValidatorStatus`/`ValidatorInfo` types, both modifiers, and every function body (`stake`, `unstake`, `claimUnstaked`, `slash`, slasher registry, blacklisting, views, `_syncValidatorStatus`) are unchanged.
+
+---
+
+## Review Notes & Open Caveats
+
+- **No. 1 — Custody meets upgradeability:** this contract holds all staked DIN, and the ProxyAdmin owner can replace its logic (unbonding delay, slash caps, withdrawal rules) without touching the balance. The staking guarantees are only as strong as the upgrade keys — see [Ownership and upgradeability](#ownership-and-upgradeability).
+- **No. 2 — SCREAMING_CASE without `immutable`:** `DIN_TOKEN` / `DIN_COORDINATOR` read as constants but are now plain storage; a future refactor touching them should not assume compile-time immutability.
+- **No. 3 — Stateless re-entrancy guard is intentional:** the non-upgradeable `ReentrancyGuardTransient` is kept deliberately — it stores its lock in EIP-1153 transient storage and does not affect the proxy storage layout.
+- **No. 4 — Pre-existing gaps unchanged by the conversion:** no public jail entrypoint, slashed tokens accumulate in the contract with no burn/redistribution, and blacklisted validators' funds remain trapped pending a governance recovery path.

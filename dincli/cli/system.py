@@ -22,13 +22,14 @@ from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
                               SUPPORTED_IPFS_PROVIDERS, _get_password,
                               _confirm_or_exit, _clean_optional_string,
                               get_config, get_demo_private_key,
-                              get_env_key, load_cid_services, load_config,
+                              get_env_key, is_ethereum_address,
+                              load_cid_services, load_config,
                               load_din_info, normalize_ipfs_provider,
                               resolve_ipfs_config, resolve_task_coordinator_address,
-                              save_config,
+                              save_config, save_din_info,
                               validate_account_name, wallet_path_for_name,
                               atomic_write_wallet, resolve_wallet_path,
-                              list_accounts, get_active_account_name,
+                              list_accounts, get_active_account_name, load_account,
                               _extract_keystore, ensure_wallets_dir)
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
@@ -37,8 +38,6 @@ app = typer.Typer(help="System utilities for DIN CLI.")
 
 # Register the dataset group under system_app
 app.add_typer(dataset_app, name="dataset")
-
-WALLET_FILE = CONFIG_DIR / "wallet.json"
 
 
 def _is_inside_container() -> bool:
@@ -71,7 +70,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read-wallet", "show-index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet"]:
+    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -222,23 +221,131 @@ def configure_network(ctx: typer.Context):
 
     console.print(f"[green]Network configured successfully: {effective_network}[/green]")
 
-@app.command("set-wallet")
-def set_wallet(ctx: typer.Context, name: str = typer.Argument(..., help="Wallet name to set as the persistent default")):
-    """Persist a default named wallet for this machine (config wallet_name)."""
-    console = ctx.obj.console
+# ---------------------------------------------------------------------------
+# Wallet model — registration vs. connection
+# ---------------------------------------------------------------------------
+# Wallets are *registered* once (key material stored under a name) and then
+# *connected* (made the active wallet) as often as needed:
+#
+#   dincli system register-wallet ...    write key material to
+#                                        <CONFIG_DIR>/wallets/wallet_<name>.json
+#   dincli system connect-wallet NAME    flip the persistent active-wallet
+#                                        pointer (config "wallet_name");
+#                                        never touches key material, never
+#                                        prompts for a secret
+#
+# Every command resolves the active wallet via utils.get_active_account_name()
+# with this precedence (first hit wins):
+#
+#   1. dincli --wallet <name>    global flag — this invocation only
+#   2. DIN_WALLET_NAME           environment variable
+#   3. config "wallet_name"      persisted by connect-wallet (or set-wallet)
+#   4. "default"                 wallets/wallet_default.json, falling back to
+#                                the legacy single-wallet <CONFIG_DIR>/wallet.json
+#
+# The private key is only decrypted (DIN_WALLET_PASSWORD or password prompt)
+# when a command actually needs to sign — see utils.load_account().
+
+
+def _connect_registered_wallet(console, name: str) -> str:
+    """Persist `name` as the active wallet (config "wallet_name").
+
+    Pure pointer flip: requires the wallet file to already exist, never writes
+    key material, never prompts for a secret. Returns the validated name.
+    """
     try:
         resolved = validate_account_name(name)
-        wallet_path, exists = resolve_wallet_path(resolved)
-        if not exists:
-            console.print(f"[red]❌ Wallet '{resolved}' not found. Run `dincli system connect-wallet` first.[/red]")
-            raise typer.Exit(1)
     except ValueError as e:
         console.print(f"[red]❌ {e}[/red]")
         raise typer.Exit(1)
+
+    wallet_path, exists = resolve_wallet_path(resolved)
+    if not exists:
+        console.print(
+            f"[red]❌ Wallet '{resolved}' not found. "
+            f"Run `dincli system register-wallet --name {resolved}` first.[/red]"
+        )
+        registered = [e["name"] for e in list_accounts(resolved)]
+        if registered:
+            console.print(f"[yellow]Registered wallets:[/yellow] {', '.join(registered)}")
+        raise typer.Exit(1)
+
     config = load_config()
     config["wallet_name"] = resolved
     save_config(config)
-    console.print(f"[green]Default wallet set to '{resolved}'.[/green]")
+
+    # Show the address without decrypting (present in demo, wrapper, and
+    # legacy-keystore formats; fall back gracefully if unreadable).
+    try:
+        with open(wallet_path) as f:
+            address = json.load(f).get("address", "unknown")
+    except (json.JSONDecodeError, OSError):
+        address = "unknown"
+
+    console.print(f"[green]✅ Active wallet set to '{resolved}'[/green] ({address})")
+    console.print("[dim]`dincli --wallet <name>` or DIN_WALLET_NAME still override this per invocation.[/dim]")
+    return resolved
+
+
+@app.command("connect-wallet")
+def connect_wallet(ctx: typer.Context,
+    name: str = typer.Argument("default", help="Registered wallet name to make active (default: 'default')"),
+):
+    """
+    Connect (activate) a registered named wallet.
+
+    Persists the choice in config ("wallet_name") so every subsequent dincli
+    invocation on this machine uses that wallet. This is purely a pointer
+    flip: no key material is read, written, or decrypted, and nothing is
+    prompted — so switching between named wallets is always safe and silent.
+
+    Active-wallet resolution priority (first hit wins):
+
+    
+      1. dincli --wallet <name>   global flag, this invocation only
+      2. DIN_WALLET_NAME          environment variable
+      3. config "wallet_name"     <- what this command sets
+      4. 'default'
+
+    The wallet must already be registered:
+
+    
+      dincli system register-wallet --name validator --keystore ks.json
+      dincli system connect-wallet validator     # switch to it
+      dincli system connect-wallet               # switch back to 'default'
+    """
+    # Direct callers (e.g. tests) may omit the argument; Typer then passes an
+    # ArgumentInfo object — normalize to the CLI default.
+    if not isinstance(name, str):
+        name = "default"
+
+    # Guard against a common trap: `--wallet X` is the global per-invocation
+    # override (GlobalOptionsGroup hoists it to the root callback), so it never
+    # reaches this command — `connect-wallet --wallet X` just falls back to the
+    # positional default. If the override names a different wallet than the
+    # argument, the user almost certainly meant the positional form.
+    override = ctx.obj.wallet_name
+    if override and override != name:
+        ctx.obj.console.print(
+            f"[red]❌ `--wallet {override}` overrides the active wallet for this "
+            f"invocation only — it does not choose the wallet to connect.[/red]"
+        )
+        ctx.obj.console.print(
+            f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {override}"
+        )
+        raise typer.Exit(1)
+
+    resolved = _connect_registered_wallet(ctx.obj.console, name)
+    # Keep the in-process context consistent for the rest of this invocation.
+    ctx.obj.select_wallet(resolved)
+
+
+@app.command("set-wallet", deprecated=True)
+def set_wallet(ctx: typer.Context, name: str = typer.Argument(..., help="Wallet name to set as the persistent default")):
+    """(Deprecated) Alias of `connect-wallet`."""
+    console = ctx.obj.console
+    console.print("[yellow]`set-wallet` is deprecated — use `dincli system connect-wallet <name>`.[/yellow]")
+    _connect_registered_wallet(console, name)
 
 @app.command("configure-demo")
 def configure_demo(ctx: typer.Context,
@@ -280,43 +387,62 @@ def configure_logging(ctx: typer.Context,
     console.print(f"[green]Log level set to {level}.[/green]")
     
     
-@app.command()
-def connect_wallet(ctx: typer.Context,
+@app.command("register-wallet")
+def register_wallet(ctx: typer.Context,
     privatekey: Optional[str] = typer.Argument(None, help="Your Ethereum private key (0x...)"),
     key_file: Optional[Path] = typer.Option(None, "--key-file", "-f", help="Path to file containing private key"),
     account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),
     keystore: Optional[Path] = typer.Option(None, "--keystore", help="Import a standard Ethereum JSON keystore file"),
     name: Optional[str] = typer.Option("default", "--name", "-n", help="Label for the saved keystore (default 'default')"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt when overwriting an existing named wallet"),
+    connect: bool = typer.Option(False, "--connect", "-c", help="Also make this wallet the active one (same as running `connect-wallet <name>` afterwards)"),
 ):
     """
-    Connect a wallet to DIN CLI.
-    
-    Usage:
-      # Interactive prompt (Recommended)
-      dincli system connect-wallet
+    Register a wallet: store key material under a name (create or import).
 
-      # Import a standard keystore file (Production)
-      dincli system connect-wallet --keystore ./keystore.json --name validator
+    The key comes from exactly ONE of the following sources — passing more
+    than one is an error, passing none falls through to the hidden prompt:
 
-      # Connect using a key file (Secure)
-      dincli system connect-wallet --key-file ~/.dincli/wallet.key
-      
-      # Connect with explicit private key (Not recommended due to logs/history)
-      dincli system connect-wallet 0x123...
-      
-      # Connect Hardhat dev account by index (auto demo mode)
-      dincli system connect-wallet --account 3
-    
-    Encrypt and store the user's wallet for DIN CLI.
-    In configured demo mode, stores plaintext key for Hardhat testing.
+    
+      --keystore FILE   import a standard Ethereum JSON keystore
+      --account N       dev-account index: in demo mode reads the bundled
+                        Hardhat dev keys, otherwise reads ETH_PRIVATE_KEY_<N>
+                        from the environment/.env
+      --key-file FILE   read the raw private key (0x...) from a file
+      PRIVATEKEY        positional argument (insecure: shell history/logs)
+      (none)            interactive hidden prompt  <- recommended
+
+    
+    Storage (at <CONFIG_DIR>/wallets/wallet_<name>.json):
+      demo mode ON   -> plaintext JSON — local Hardhat testing ONLY
+      demo mode OFF  -> encrypted keystore; the encryption password comes
+                        from DIN_WALLET_PASSWORD if set, else a create/confirm
+                        prompt
+
+    Registering does NOT switch the active wallet — pass --connect, or run
+    `dincli system connect-wallet <name>` afterwards. (--name defaults to
+    'default', which is also the final fallback of the active-wallet
+    resolution, so a plain `register-wallet` sets up the wallet used when
+    nothing else is selected.)
+
+    An existing wallet with the same name is only overwritten after
+    confirmation (skip with --yes).
+
+    
+    Examples:
+      dincli system register-wallet                          # prompt, save as 'default'
+      dincli system register-wallet --keystore ks.json --name validator
+      dincli system register-wallet --key-file ~/.dincli/wallet.key
+      dincli system register-wallet --account 3 --name acct3 --connect
     """
 
     console = ctx.obj.console
-    # Direct callers (e.g. tests) may omit --yes; Typer then passes an OptionInfo
-    # object (truthy), which would silently bypass the overwrite guard below.
-    # Normalize to a real bool so the guard behaves the same on direct calls.
+    # Direct callers (e.g. tests) may omit --yes/--connect; Typer then passes an
+    # OptionInfo object (truthy), which would silently bypass the overwrite guard
+    # below (or trigger an unwanted connect). Normalize to real bools so the
+    # behavior is the same on direct calls.
     yes = yes if isinstance(yes, bool) else False
+    connect = connect if isinstance(connect, bool) else False
 
     # Validate account name
     try:
@@ -375,7 +501,7 @@ def connect_wallet(ctx: typer.Context,
             console.print("[yellow]Aborted. Existing wallet left unchanged.[/yellow]")
             raise typer.Exit(0)
 
-    console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
+    console.print(f"[green] ⚙️  Registering wallet...[/green]")
     console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
 
     # --- resolve secret material ---
@@ -489,10 +615,20 @@ def connect_wallet(ctx: typer.Context,
         wallet_path = wallet_path_for_name(resolved_name)
         atomic_write_wallet(wallet_path, wrapper)
 
-        console.print(f"[green]Wallet connected successfully![/green]")
-        console.print(f"[green] Active Account Address:[/green] {address}")
+        console.print(f"[green]Wallet {resolved_name} registered successfully![/green]")
+        console.print(f"[green]Wallet Account Address:[/green] {address}")
         console.print(f"[green]Encrypted keystore saved at:[/green] {wallet_path}")
-    
+
+    # Registration never switches the active wallet implicitly — only via
+    # --connect (see the wallet-model comment above for the resolution order).
+    if connect:
+        _connect_registered_wallet(console, resolved_name)
+    elif resolved_name != "default":
+        console.print(
+            f"[dim]Run `dincli system connect-wallet {resolved_name}` to make it the active wallet.[/dim]"
+        )
+
+
 @app.command("read-wallet")
 def read_wallet(ctx: typer.Context, 
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Wallet name")
@@ -514,7 +650,7 @@ def read_wallet(ctx: typer.Context,
     wallet_path, exists = resolve_wallet_path(wallet_to_read_name)
 
     if not exists:
-        console.print(f"[red]No wallet found for '{wallet_to_read_name}'. Run `dincli system connect-wallet` first.[/red]")
+        console.print(f"[red]No wallet found for '{wallet_to_read_name}'. Run `dincli system register-wallet` first.[/red]")
         raise typer.Exit(1)
 
     with open(wallet_path) as f:
@@ -529,8 +665,11 @@ def read_wallet(ctx: typer.Context,
         console.print("[cyan]⚠️  This key is stored in plaintext — for local testing only![/cyan]")
         return
     try:
-        # to fix to read other wallets
-        console.print(f"[green]Address:[/green] {ctx.obj.account.address}")
+        # Decrypt the *requested* wallet, not the active one — ctx.obj.account
+        # always resolves the active wallet and would ignore --name.
+        acct = load_account(wallet_to_read_name)
+        console.print(f"[green]Wallet Name:[/green] {wallet_to_read_name} {'[bold green](active)[/bold green]' if active else ''}")
+        console.print(f"[green]Address:[/green] {acct.address}")
         console.print("[green]✅ Wallet decrypted successfully.[/green]")
     except Exception as e:
         console.print(f"[red]❌ {e}[/red]")
@@ -548,7 +687,7 @@ def list_managed_accounts(ctx: typer.Context):
     accounts = list_accounts(active_name)
 
     if not accounts:
-        console.print("[yellow]No wallets found. Run `dincli system connect-wallet` to create one.[/yellow]")
+        console.print("[yellow]No wallets found. Run `dincli system register-wallet` to create one.[/yellow]")
         return
 
     console.print("[bold cyan]Named wallets:[/bold cyan]")
@@ -680,6 +819,122 @@ def din_info(ctx: typer.Context,
         console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
         console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
         console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
+
+
+# ---------------------------------------------------------------------------
+# Platform deployments import
+# ---------------------------------------------------------------------------
+# The platform contracts (DinToken, DinCoordinator, DinValidatorStake,
+# DINModelRegistry) are transparent proxies (PR 13). INTERIM bootstrap flow:
+# proxy deployment + initialize + wiring is done by the toolchain script,
+# which runs through the OpenZeppelin upgrades plugin:
+#
+#     cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>
+#
+# That script records the proxy addresses in hardhat/deployments/<net>.json;
+# `dincli system import-deployments` maps that file into din_info.json so all
+# dincli commands resolve the deployed platform.
+#
+# NOTE — this is not the target architecture. The decision record
+# Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md
+# chose native web3.py proxy deployment inside `dindao deploy` (its Option C;
+# backlog: Developer/issues/dincli-native-proxy-deployment.md). Once that
+# lands, this command demotes to a secondary sync utility for script-driven
+# deployments/upgrades and for adopting already-deployed networks.
+#
+# Foundry migration note: foundry/ carries the same contracts but has no
+# deploy scripts yet. Whatever produces the addresses next (forge script for
+# upgrades, native dincli deploys for bootstrap), keep this command as the
+# single import interface — either have the forge script write the same
+# deployments/<network>.json shape (preferred, trivial with vm.writeJson), or
+# extend _DEPLOYMENTS_TO_DIN_INFO parsing with a reader for foundry's
+# broadcast/<Script>.s.sol/<chainid>/run-latest.json. Only the producer of the
+# addresses changes; din_info.json stays the contract with the rest of dincli.
+
+# dincli network name → hardhat network name (standalone `npx hardhat node`
+# is hardhat's "localhost"); networks not listed map to themselves.
+_HARDHAT_NETWORK_FOR = {"local": "localhost"}
+
+# deployments/<network>.json keys (savePlatformAddresses in deploy/helpers.ts)
+# → din_info.json keys. proxy_admin is informational; the four contract keys
+# are required.
+_DEPLOYMENTS_TO_DIN_INFO = {
+    "dinCoordinator": "coordinator",
+    "dinToken": "token",
+    "dinValidatorStake": "stake",
+    "dinModelRegistry": "registry",
+    "proxyAdmin": "proxy_admin",
+}
+_REQUIRED_DEPLOYMENT_KEYS = ("dinToken", "dinCoordinator", "dinValidatorStake", "dinModelRegistry")
+
+
+@app.command("import-deployments")
+def import_deployments(ctx: typer.Context,
+    file: Optional[Path] = typer.Option(
+        None, "--file", "-f",
+        help="Deployments JSON written by deploy-platform.ts (default: hardhat/deployments/<network>.json under the current directory, with dincli network 'local' mapped to hardhat's 'localhost')",
+    ),
+):
+    """
+    Import platform proxy addresses from a hardhat deployments file into din_info.json.
+
+    Deploy the platform first with the canonical proxy-aware script:
+
+      cd hardhat && npx hardhat run scripts/deploy-platform.ts --network localhost
+
+    then run this command to point dincli at the deployed proxies:
+
+      dincli system import-deployments                     # default file location
+      dincli system import-deployments --file hardhat/deployments/localhost.json
+
+    Only the platform address keys of the active network's din_info entry are
+    updated (coordinator, token, stake, registry, proxy_admin); everything
+    else (representative, explorer, default CIDs, ...) is preserved.
+    """
+    console = ctx.obj.console
+    effective_network = ctx.obj.network
+
+    if file is None:
+        hardhat_network = _HARDHAT_NETWORK_FOR.get(effective_network, effective_network)
+        file = Path("hardhat") / "deployments" / f"{hardhat_network}.json"
+
+    file = file.expanduser()
+    if not file.exists():
+        console.print(f"[red]❌ Deployments file not found: {file}[/red]")
+        console.print("[yellow]Run the platform deploy script first:[/yellow] cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>")
+        raise typer.Exit(1)
+
+    try:
+        with open(file) as f:
+            deployments = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        console.print(f"[red]❌ Failed to read deployments file: {e}[/red]")
+        raise typer.Exit(1)
+
+    missing = [k for k in _REQUIRED_DEPLOYMENT_KEYS if k not in deployments]
+    if missing:
+        console.print(f"[red]❌ Deployments file is missing keys: {', '.join(missing)}[/red]")
+        raise typer.Exit(1)
+    bad = [k for k in _DEPLOYMENTS_TO_DIN_INFO if k in deployments and not is_ethereum_address(deployments[k])]
+    if bad:
+        console.print(f"[red]❌ Not a valid Ethereum address for: {', '.join(bad)}[/red]")
+        raise typer.Exit(1)
+
+    din_info = load_din_info()
+    entry = din_info.setdefault(effective_network, {})
+    for src_key, dst_key in _DEPLOYMENTS_TO_DIN_INFO.items():
+        if src_key in deployments:
+            entry[dst_key] = deployments[src_key]
+    save_din_info(din_info)
+
+    console.print(f"[green]✅ Imported platform deployments into din_info.json[/green] (network: {effective_network})")
+    console.print(f"[cyan]Source:[/cyan] {file}")
+    console.print(f"[cyan]Coordinator:[/cyan] {entry.get('coordinator')}")
+    console.print(f"[green]DIN Token:[/green] {entry.get('token')}")
+    console.print(f"[yellow]Staking Contract:[/yellow] {entry.get('stake')}")
+    console.print(f"[magenta]Registry:[/magenta] {entry.get('registry')}")
+    if entry.get("proxy_admin"):
+        console.print(f"[magenta]Proxy Admin:[/magenta] {entry.get('proxy_admin')}")
 
 
 @app.command("reset-all")

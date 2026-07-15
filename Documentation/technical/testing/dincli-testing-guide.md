@@ -20,6 +20,10 @@ sudo systemctl start docker   # or Docker Desktop
 cd /home/azureuser/projects/devnet
 source /home/azureuser/my_venvs/pyDIN/bin/activate
 pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee /home/azureuser/tempdir/dincli/results/last_run.txt
+
+# one test 
+python -m pytest tests/dincli/test_01_platform.py \
+  -v -x -m integration --tb=short -k test_dump_abi_token
 ```
 
 That's it. The conftest will:
@@ -49,6 +53,42 @@ Before any test runs, the fixture does the following:
 4. **Docker daemon** *(pre-requisite, not managed)* — must already be running
    on the host to execute containerized client training, evaluation, and
    aggregation in Phase 4.
+
+### Fixture ordering and `autouse`
+
+Only two fixtures in the conftest are `autouse=True`: `managed_services` and
+`bootstrap`. `autouse` means pytest applies the fixture to every test
+automatically, without any test naming it in its signature; combined with
+`scope="session"` it runs exactly once before the first test, and its teardown
+(the code after `yield`) runs once after the last test. Everything else
+(`din_tmp`, `din_env`, `workdir`, `din_info_backup`, `state`, `run`) is a plain
+session fixture that only runs because something requests it.
+
+`din_tmp` runs first, but not on its own — it is *not* autouse. It executes
+first because `managed_services` declares it as a parameter: when pytest sets
+up `managed_services`, it resolves the dependency and instantiates `din_tmp`
+before running the fixture body. Declaring `din_tmp` as an argument serves two
+purposes:
+
+1. **The value is needed** — `managed_services` writes its compile/node/IPFS
+   logs to `din_tmp / "results"`.
+2. **Ordering is guaranteed** — the temp dir is created and `config/`/`cache/`
+   are wiped *before* any service writes logs into `results/`.
+
+The full session setup chain, in execution order:
+
+```
+din_tmp                    (create/wipe temp dirs)
+  └─ managed_services      (autouse: compile, fresh Hardhat node, IPFS)
+bootstrap                  (autouse) depends on:
+  ├─ managed_services      (already up)
+  ├─ din_info_backup       (snapshot din_info.json for restore at teardown)
+  └─ run ─ din_env, workdir
+     then: configure-demo + configure-network --network local
+```
+
+By the time the first test executes, services are running and the CLI is
+configured for the local network.
 
 ### Config and state isolation
 

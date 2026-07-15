@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import stat
 import tempfile
 from getpass import getpass
@@ -21,6 +22,13 @@ from dincli.main import app as main_app
 DUMMY_KEY_0 = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 DUMMY_KEY_1 = "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 DUMMY_PW = "test-password"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI color codes so assertions match rich-rendered CLI output."""
+    return _ANSI_RE.sub("", text)
 
 @pytest.fixture
 def temp_config(tmp_path):
@@ -293,7 +301,7 @@ class TestAtomicWrite:
         assert st.st_mode & 0o777 == 0o700
 
 
-class TestConnectWalletKeystore:
+class TestRegisterWalletKeystore:
     def test_keystore_import_valid(self, temp_config, monkeypatch):
         acct = Account.create()
         ks = Account.encrypt(acct.key.hex(), "import-pw")
@@ -309,7 +317,7 @@ class TestConnectWalletKeystore:
             "ctx": ctx, "privatekey": None, "key_file": None,
             "account": None, "keystore": ks_path, "name": "validator",
         }
-        system_mod.connect_wallet(**connect_kwargs)
+        system_mod.register_wallet(**connect_kwargs)
 
         saved = temp_config["wallets_dir"] / "wallet_validator.json"
         assert saved.exists()
@@ -336,7 +344,7 @@ class TestConnectWalletKeystore:
             "account": None, "keystore": ks_path, "name": "bad",
         }
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(**connect_kwargs)
+            system_mod.register_wallet(**connect_kwargs)
 
         saved = temp_config["wallets_dir"] / "wallet_bad.json"
         assert not saved.exists()
@@ -348,7 +356,7 @@ class TestConnectWalletKeystore:
             "account": None, "keystore": Path("/nonexistent/ks.json"), "name": "nope",
         }
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(**connect_kwargs)
+            system_mod.register_wallet(**connect_kwargs)
 
     def test_keystore_import_malformed_json(self, temp_config, monkeypatch):
         ks_path = temp_config["config_dir"] / "bad.json"
@@ -363,21 +371,21 @@ class TestConnectWalletKeystore:
             "account": None, "keystore": ks_path, "name": "bad",
         }
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(**connect_kwargs)
+            system_mod.register_wallet(**connect_kwargs)
 
 
-class TestConnectWalletMutualExclusivity:
+class TestRegisterWalletMutualExclusivity:
     def test_two_methods_exits(self, monkeypatch):
         monkeypatch.setattr(system_mod, "get_config", lambda key, default=None: False)
         ctx = make_ctx()
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(
+            system_mod.register_wallet(
                 ctx=ctx, privatekey=DUMMY_KEY_0, key_file=None,
                 account=None, keystore=Path("test.json"), name="default",
             )
 
 
-class TestConnectWalletNamedAccounts:
+class TestRegisterWalletNamedAccounts:
     def test_save_named_wrapper_schema(self, temp_config, monkeypatch):
         monkeypatch.setattr(system_mod, "get_config", lambda key, default=None: False)
         monkeypatch.setattr(system_mod, "load_config", lambda: {})
@@ -385,7 +393,7 @@ class TestConnectWalletNamedAccounts:
         monkeypatch.setattr(system_mod, "getpass", lambda prompt: DUMMY_PW)
 
         ctx = SimpleNamespace(obj=DummyCtxObj())
-        system_mod.connect_wallet(
+        system_mod.register_wallet(
             ctx=ctx, privatekey=DUMMY_KEY_0, key_file=None,
             account=None, keystore=None, name="prod",
         )
@@ -403,7 +411,7 @@ class TestConnectWalletNamedAccounts:
         ctx = make_ctx()
         for bad_name in ["../escape", "a/b", "wallet name", "a" * 100]:
             with pytest.raises((typer.Exit, ValueError)):
-                system_mod.connect_wallet(
+                system_mod.register_wallet(
                     ctx=ctx, privatekey=DUMMY_KEY_0, key_file=None,
                     account=None, keystore=None, name=bad_name,
                 )
@@ -487,9 +495,16 @@ class TestCLICommands:
         assert "No wallets found" in result.output or result.exit_code == 0
 
     def test_help_exposes_new_commands(self):
+        result = CliRunner().invoke(main_app, ["system", "register-wallet", "--help"])
+        plain = _plain(result.output)
+        assert "--keystore" in plain
+        assert "--name" in plain
+        assert "--connect" in plain
+
+    def test_connect_wallet_help_documents_priority(self):
         result = CliRunner().invoke(main_app, ["system", "connect-wallet", "--help"])
-        assert "--keystore" in result.output
-        assert "--name" in result.output
+        assert result.exit_code == 0
+        assert "DIN_WALLET_NAME" in _plain(result.output)
 
 
 class TestFixARegression:
@@ -513,7 +528,7 @@ class TestFixARegression:
                 monkeypatch.setattr(system_mod, "load_config", lambda: {"demo_mode": True})
                 monkeypatch.setattr(system_mod, "get_demo_private_key", lambda idx: DUMMY_KEY_0)
                 ctx = make_ctx()
-                system_mod.connect_wallet(
+                system_mod.register_wallet(
                     ctx=ctx, privatekey=None, key_file=None,
                     account=0, keystore=None, name="default",
                 )
@@ -565,7 +580,7 @@ class TestFixCRegression:
             "ctx": ctx, "privatekey": None, "key_file": None,
             "account": None, "keystore": ks_path, "name": "single",
         }
-        system_mod.connect_wallet(**connect_kwargs)
+        system_mod.register_wallet(**connect_kwargs)
 
         saved = temp_config["wallets_dir"] / "wallet_single.json"
         data = json.loads(saved.read_text())
@@ -594,7 +609,7 @@ class TestFixCRegression:
             "ctx": ctx, "privatekey": None, "key_file": None,
             "account": None, "keystore": wrapped_path, "name": "reimport",
         }
-        system_mod.connect_wallet(**connect_kwargs)
+        system_mod.register_wallet(**connect_kwargs)
 
         saved = temp_config["wallets_dir"] / "wallet_reimport.json"
         data = json.loads(saved.read_text())
@@ -616,11 +631,46 @@ class TestFixERegression:
             (temp_config["wallets_dir"] / "wallet_validator.json").write_text('{"version": 1, "address": "0xTest"}')
             result = CliRunner().invoke(main_app, ["system", "set-wallet", "validator"])
             assert result.exit_code == 0
-            assert "Default wallet set to 'validator'" in result.output
+            plain = _plain(result.output)
+            assert "deprecated" in plain
+            assert "Active wallet set to 'validator'" in plain
             config = utils_mod.load_config()
             assert config.get("wallet_name") == "validator"
         finally:
             utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_connect_wallet_persists_config(self, monkeypatch, temp_config):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text("{}")
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
+        try:
+            (temp_config["wallets_dir"] / "wallet_validator.json").write_text('{"version": 1, "address": "0xTest"}')
+            result = CliRunner().invoke(main_app, ["system", "connect-wallet", "validator"])
+            assert result.exit_code == 0
+            plain = _plain(result.output)
+            assert "Active wallet set to 'validator'" in plain
+            assert "0xTest" in plain
+            config = utils_mod.load_config()
+            assert config.get("wallet_name") == "validator"
+        finally:
+            utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_connect_wallet_unregistered_name_exits(self, monkeypatch, temp_config):
+        monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
+        result = CliRunner().invoke(main_app, ["system", "connect-wallet", "ghost"])
+        assert result.exit_code == 1
+        assert "register-wallet" in _plain(result.output)
+
+    def test_connect_wallet_rejects_wallet_flag_trap(self, monkeypatch, temp_config):
+        # `--wallet X` is the per-invocation override (hoisted by GlobalOptionsGroup),
+        # not the wallet to connect — the guard must point at the positional form.
+        monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
+        (temp_config["wallets_dir"] / "wallet_validator.json").write_text('{"version": 1, "address": "0xTest"}')
+        result = CliRunner().invoke(main_app, ["system", "connect-wallet", "--wallet", "validator"])
+        assert result.exit_code == 1
+        assert "Did you mean" in _plain(result.output)
 
 
 class TestSkipListRouting:
@@ -657,7 +707,7 @@ def _write_encrypted_wallet(wallets_dir, name, key, pw):
     return acct.address
 
 
-class TestConnectWalletOverwriteGuard:
+class TestRegisterWalletOverwriteGuard:
     """Review fix #2: confirm before overwriting an existing named keystore."""
 
     def _base_monkeypatch(self, monkeypatch):
@@ -677,7 +727,7 @@ class TestConnectWalletOverwriteGuard:
 
         ctx = make_ctx()
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(
+            system_mod.register_wallet(
                 ctx=ctx, privatekey=DUMMY_KEY_1, key_file=None,
                 account=None, keystore=None, name="prod",  # `yes` intentionally omitted
             )
@@ -693,7 +743,7 @@ class TestConnectWalletOverwriteGuard:
 
         ctx = make_ctx()
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(
+            system_mod.register_wallet(
                 ctx=ctx, privatekey=DUMMY_KEY_1, key_file=None,
                 account=None, keystore=None, name="prod", yes=False,
             )
@@ -706,7 +756,7 @@ class TestConnectWalletOverwriteGuard:
         monkeypatch.setattr(typer, "confirm", lambda *a, **k: True)
 
         ctx = make_ctx()
-        system_mod.connect_wallet(
+        system_mod.register_wallet(
             ctx=ctx, privatekey=DUMMY_KEY_1, key_file=None,
             account=None, keystore=None, name="prod", yes=False,
         )
@@ -721,7 +771,7 @@ class TestConnectWalletOverwriteGuard:
         monkeypatch.setattr(typer, "confirm", lambda *a, **k: called.append(True) or True)
 
         ctx = make_ctx()
-        system_mod.connect_wallet(
+        system_mod.register_wallet(
             ctx=ctx, privatekey=DUMMY_KEY_1, key_file=None,
             account=None, keystore=None, name="prod", yes=True,
         )
@@ -739,7 +789,7 @@ class TestConnectWalletOverwriteGuard:
 
         ctx = make_ctx()
         with pytest.raises(typer.Exit):
-            system_mod.connect_wallet(
+            system_mod.register_wallet(
                 ctx=ctx, privatekey=None, key_file=None, account=None,
                 keystore=Path("/nonexistent/ks.json"), name="prod", yes=False,
             )
@@ -760,7 +810,7 @@ class TestNewWalletPasswordNotCached:
         monkeypatch.setattr(system_mod, "getpass", lambda prompt: "fresh-pw")
 
         ctx = make_ctx()
-        system_mod.connect_wallet(
+        system_mod.register_wallet(
             ctx=ctx, privatekey=DUMMY_KEY_0, key_file=None,
             account=None, keystore=None, name="prod", yes=True,
         )

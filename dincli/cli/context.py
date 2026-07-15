@@ -19,7 +19,7 @@ from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
                               get_config, get_manifest, get_manifest_key, get_w3,
                               load_account, load_config, load_din_info,
                               resolve_network, get_active_account_name,
-                              validate_account_name)
+                              validate_account_name, resolve_wallet_path)
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
 
@@ -133,9 +133,47 @@ class DinContext:
             except ValueError as e:
                 self.console.print(f"[red]{e}[/red]")
                 raise typer.Exit(1)
+            wallet_path, exists = resolve_wallet_path(name)
+            if not exists:
+                self.console.print(
+                    f"[red]No wallet found for name '{name}' at {wallet_path}. "
+                    f"Run `dincli system register-wallet --name {name}` first.[/red]"
+                )
+                raise typer.Exit(1)
             self.wallet_name = name
             self._resolved_wallet_name = None
             self._account = None
+        return self
+
+    def select_demo_account(self, index: Optional[int]):
+        """DEMO MODE ONLY: sign this invocation with Hardhat dev account `index`.
+
+        Loads the private key straight from the bundled demo accounts file and
+        caches the Account on the context — the named-wallet machinery
+        (wallet files, keystore encryption/decryption, password prompts) is
+        bypassed entirely. Takes precedence over every wallet-name source
+        (--wallet / DIN_WALLET_NAME / config wallet_name) because it fills the
+        account cache directly. Refuses to run outside demo mode so raw-key
+        loading can never be reached with production configuration.
+        """
+        if index is None:
+            return self
+        if not get_config("demo_mode"):
+            self.console.print(
+                "[red]--demokey works only in demo mode. "
+                "Enable it with `dincli system configure-demo` (local testing only).[/red]"
+            )
+            raise typer.Exit(1)
+        from dincli.cli.utils import get_demo_private_key
+        try:
+            private_key = get_demo_private_key(index)
+        except (FileNotFoundError, IndexError) as e:
+            self.console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        from eth_account import Account
+        self._account = Account.from_key(private_key)
+        # Display-only label; never resolved against wallet files.
+        self._resolved_wallet_name = f"demo-{index}"
         return self
     
     def get_deployed_din_coordinator_contract(self, verbose: bool = True):

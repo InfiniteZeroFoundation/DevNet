@@ -77,7 +77,7 @@ Here is how to build your images, run the `din-node` container, and monitor Dock
    # Set the network
    docker compose exec din-node dincli system configure-network --network sepolia_devnet 
 
-   # Configure demo wallet (or use connect-wallet for your own keys)
+   # Configure demo wallet (or use register-wallet for your own keys)
    docker compose exec din-node dincli system configure-demo --mode yes
    ```
    > **Production validators:** Import an encrypted keystore instead of demo mode.

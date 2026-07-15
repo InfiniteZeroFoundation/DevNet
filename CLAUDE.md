@@ -39,7 +39,7 @@ Foundry config: `solc 0.8.28`, `via_ir = true`. Hardhat config: `solc 0.8.28`, `
 ```bash
 ./foundry/anvil.sh                                   # local anvil chain
 dincli system configure-network --network local      # or sepolia_op_devnet / mainnet
-dincli system connect-wallet --account <account_id>
+dincli system register-wallet --account <account_id>
 ```
 
 ## Architecture

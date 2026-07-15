@@ -10,11 +10,26 @@ logic callable by `dind` without going through the CLI layer.
 
 ## Platform contracts (Phase 1 → `sdk/platform.py`)
 
+PR 13 made the platform contracts transparent proxies. INTERIM: the hardhat
+script (OZ upgrades plugin) deploys + wires token → coordinator →
+`setCoordinator` → stake → `updateValidatorStakeContract` → registry, and
+dincli imports the resulting `deployments/<network>.json` via
+`system import-deployments`. This is scaffolding only — the committed decision
+record (`Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md`)
+chose native web3.py proxy deploys in `dindao deploy` (backlog:
+`Developer/issues/dincli-native-proxy-deployment.md`); once implemented,
+Phase 1 returns to per-contract dincli deploy tests.
+
+Foundry migration: foundry/ has the same contracts but no deploy script yet.
+When a forge deploy script lands, `deploy_platform` wraps `forge script
+--broadcast` instead of `npx hardhat run`; `import_deployments` stays the
+handoff (forge script should write the same deployments JSON shape, or the
+importer grows a broadcast/run-latest.json parser).
+
 | Test | SDK function |
 |------|-------------|
-| `test_deploy_din_coordinator` | `deploy_din_coordinator(network, account, artifact_path) → address` |
-| `test_deploy_din_validator_stake` | `deploy_din_validator_stake(network, account, artifact_path) → address` |
-| `test_deploy_din_model_registry` | `deploy_din_model_registry(network, account, artifact_path) → address` |
+| `test_deploy_platform_via_script` | `deploy_platform(network) → addresses dict` (wraps the deploy script) |
+| `test_import_deployments_into_din_info` | `import_deployments(network, file) → dict` (body of `system import-deployments`) |
 | `test_dump_abi_*` | `dump_abi(artifact_path, official=True)` |
 
 ---

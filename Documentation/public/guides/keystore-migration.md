@@ -62,7 +62,7 @@ print('Keystore exported to ./keystore.json')
 ### Step 2: Import into dincli
 
 ```bash
-dincli system connect-wallet --keystore ./keystore.json --name validator
+dincli system register-wallet --keystore ./keystore.json --name validator
 ```
 
 `dincli` will:
@@ -121,7 +121,7 @@ dincli --wallet validator client train-lms 0 --submit
 | Passphrase | (never stored) | No — entered each command |
 | `DIN_WALLET_PASSWORD` | `.env` file on bind-mounted volume | Yes |
 
-> The passphrase is **never stored on disk**. Each `connect-wallet` or command
+> The passphrase is **never stored on disk**. Each `register-wallet` or command
 > that needs to unlock the wallet will prompt you, unless `DIN_WALLET_PASSWORD`
 > is set.
 
@@ -135,7 +135,7 @@ When resolving the `default` wallet:
 2. `~/.config/dincli/wallet.json` (legacy) — used only as fallback when no named
    default exists
 
-If you run `connect-wallet --name default`, the new `wallets/wallet_default.json`
+If you run `register-wallet --name default`, the new `wallets/wallet_default.json`
 is created and the legacy file is **not** overwritten.
 
 ---
@@ -146,7 +146,7 @@ is created and the legacy file is **not** overwritten.
 |---|---|---|
 | `--wallet <name>` | Per-command override | `dincli --wallet validator dintoken buy 0.001` |
 | `DIN_WALLET_NAME` env var | Process-level default | `export DIN_WALLET_NAME=validator` |
-| Config `wallet_name` | Persistent default | Set via `dincli system set-wallet <name>` |
+| Config `wallet_name` | Persistent default | Set via `dincli system connect-wallet <name>` (`set-wallet` is a deprecated alias) |
 | None of the above | Fallback to `default` | Legacy `wallet.json` or `wallets/wallet_default.json` |
 
 **See also:** [Wallet Setup Guide](./wallet-setup.md) for creating and funding a
