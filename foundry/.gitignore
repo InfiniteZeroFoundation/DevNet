@@ -17,3 +17,4 @@ docs/
 lib/*
 node_modules/*
 script/*
+!script/*.sol
