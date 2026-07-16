@@ -23,9 +23,7 @@ _PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
 # (fetched once per unlock) while callers that omit it self-fetch as before.
 _UNSET = object()
 
-from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger
-from dincli.services.cid_utils import get_cid_from_bytes32
 
 console = Console()
 
@@ -38,6 +36,11 @@ from dincli.sdk.config import (
     get_env_key, set_env_key, resolve_network_value,
 )
 from dincli.sdk.web3 import get_w3
+from dincli.sdk.manifest import (
+    load_din_info, save_din_info, load_cid_services,
+    get_manifest, get_manifest_path, get_manifest_key,
+    is_ethereum_address, download_manifest, get_model_info,
+)
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 WALLETS_DIR = CONFIG_DIR / "wallets"
 
@@ -323,21 +326,6 @@ def get_active_account_name(ctx_obj=None) -> str:
     return "default"
 
     
-def load_din_info() -> dict:
-    path = files("dincli").joinpath("config", "din_info.json")
-    with open(path) as f:
-        return json.load(f)
-
-def load_cid_services() -> dict:
-    path = files("dincli").joinpath("config", "cid_services.json")
-    with open(path) as f:
-        return json.load(f)
-
-def save_din_info(data: dict):
-    path = files("dincli").joinpath("config", "din_info.json")
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
 stateDescription = [
         "Awaiting DINTaskAuditor to be set",
         "Awaiting DINTaskCoordinator to be set as slasher",
@@ -439,119 +427,26 @@ def load_tasks() -> dict:
 
 
 def cache_manifest(model_id: int, network: str, info: bool = False, update: bool = False, genesis_model_info: bool = False):
-    if int(model_id) < 0:
+    from dincli.sdk.errors import ValidationError
+
+    try:
+        download_manifest(network, model_id, force=update)
+    except ValidationError:
         console.print("[red]Error:[/red] Model ID must be non-negative")
         raise typer.Exit(1)
 
-    manifest_dir = CACHE_DIR / network / f"model_{model_id}"
-    os.makedirs(manifest_dir, exist_ok=True)
-    manifest_path = manifest_dir / "manifest.json"
-    cid_path = manifest_dir / "manifest.json.cid"
-    
-    if not manifest_path.exists() or info or update:
-
-        din_info = load_din_info()
-        din_registry_address = din_info[network]["registry"]
-        din_registry_abi = files("dincli").joinpath("abis", "DINModelRegistry.json")
-
-        din_registry_contract = get_contract_instance(din_registry_abi, network, din_registry_address)
-     
-
-        model_info = din_registry_contract.functions.getModel(model_id).call()
-
-        if info:
-            console.print("[bold green]Model Info :[/bold green]")
-            console.print("Model Owner :", model_info[0])
-            console.print("Is Open Source :", model_info[1])
-            # console.print("Manifest CID (Bytes32) :", model_info[2])
-            # console.print("Manifest CID (Bytes32) hex:", model_info[2].hex())
-            console.print("Manifest CID :", get_cid_from_bytes32(model_info[2].hex()))
-            console.print("Created At (Unix Timestamp) :", model_info[3])
-            console.print("Created At :", datetime.fromtimestamp(model_info[3]).strftime("%Y-%m-%d %H:%M:%S %p"))  # am/pm
-            console.print("Task Coordinator Address :", model_info[4])
-            console.print("Task Auditor Address :", model_info[5])
-            if genesis_model_info:
-                din_task_coordinator_abi = files("dincli").joinpath("abis", "DINTaskCoordinator.json")
-                taskCoordinator_contract = get_contract_instance(din_task_coordinator_abi, network, model_info[4])
-                genesis_model_ipfs_hash_raw = taskCoordinator_contract.functions.genesisModelIpfsHash().call()
-                genesis_model_ipfs_hash = get_cid_from_bytes32(genesis_model_ipfs_hash_raw.hex())
-                console.print("Genesis Model IPFS Hash :", genesis_model_ipfs_hash)
-
-        if  update or not manifest_path.exists():
-
-            from dincli.services.ipfs import retrieve_from_ipfs
-            retrieve_from_ipfs(get_cid_from_bytes32(model_info[2].hex()), manifest_path)
-            
-            # Save CID sidecar
-            with open(cid_path, "w") as f:
-                f.write(get_cid_from_bytes32(model_info[2].hex()))
-
-
-def get_manifest_path(network: str, model_id: int = None, task_coordinator_address: str = None) -> Path:
-    # Ensure exactly one identifier is provided
-    has_model_id = model_id is not None
-    has_coordinator_address = task_coordinator_address is not None
-
-    if not has_model_id and not has_coordinator_address:
-        raise ValueError("Either model_id or task_coordinator_address must be provided")
-
-    if has_model_id and has_coordinator_address:
-        raise ValueError("Only one of model_id or task_coordinator_address can be provided")
-
-    if has_model_id:
-        return CACHE_DIR / network / f"model_{model_id}" / "manifest.json"
-
-    return Path(os.getcwd()) / "tasks" / network.lower() / task_coordinator_address / "manifest.json"
-
-
-def get_manifest(network: str, model_id: int = None, task_coordinator_address: str = None) -> dict:
-    manifest_path = get_manifest_path(
-        network,
-        model_id=model_id,
-        task_coordinator_address=task_coordinator_address,
-    )
-
-    if model_id is not None:
-        cid_path = manifest_path.with_suffix(".json.cid")
-
-        # Check freshness against the on-chain manifest CID.
-        needs_update = True
-
-        try:
-            din_info = load_din_info()
-            din_registry_address = din_info[network]["registry"]
-            din_registry_abi = files("dincli").joinpath("abis", "DINModelRegistry.json")
-            din_registry_contract = get_contract_instance(din_registry_abi, network, din_registry_address)
-            model_info = din_registry_contract.functions.getModel(int(model_id)).call()
-            on_chain_cid = get_cid_from_bytes32(model_info[2].hex())
-
-            if manifest_path.exists() and cid_path.exists():
-                with open(cid_path, "r") as f:
-                    local_cid = f.read().strip()
-                if local_cid == on_chain_cid:
-                    needs_update = False
-        except Exception as e:
-            console.print(f"[yellow]Warning: Could not verify manifest freshness: {e}[/yellow]")
-            needs_update = True
-
-        if needs_update:
-            cache_manifest(int(model_id), network, update=True)
-    elif not manifest_path.exists():
-        raise FileNotFoundError(
-            f"Manifest not found for task coordinator {task_coordinator_address} at {manifest_path}"
-        )
-
-    with open(manifest_path, "r") as f:
-        return json.load(f)
-
-
-def get_manifest_key(network: str, key: str, model_id: int = None, task_coordinator_address: str = None):
-    manifest = get_manifest(
-        network,
-        model_id=model_id,
-        task_coordinator_address=task_coordinator_address,
-    )
-    return manifest[key]
+    if info:
+        model_data = get_model_info(network, model_id, include_genesis=genesis_model_info)
+        console.print("[bold green]Model Info :[/bold green]")
+        console.print("Model Owner :", model_data["model_owner"])
+        console.print("Is Open Source :", model_data["is_open_source"])
+        console.print("Manifest CID :", model_data["manifest_cid"])
+        console.print("Created At (Unix Timestamp) :", model_data["created_at"])
+        console.print("Created At :", datetime.fromtimestamp(model_data["created_at"]).strftime("%Y-%m-%d %H:%M:%S %p"))
+        console.print("Task Coordinator Address :", model_data["task_coordinator_address"])
+        console.print("Task Auditor Address :", model_data["task_auditor_address"])
+        if genesis_model_info:
+            console.print("Genesis Model IPFS Hash :", model_data["genesis_model_ipfs_hash"])
 
 
 def require_custom_manifest_service(manifest: dict, key: str) -> None:
@@ -567,11 +462,6 @@ def require_custom_manifest_service(manifest: dict, key: str) -> None:
         "Add a custom service function with type custom and its ipfs entry to the model manifest.[/yellow]"
     )   
     raise typer.Exit(1)
-
-
-def is_ethereum_address(s: str) -> bool:
-    """Check if string looks like a valid Ethereum address (case-insensitive, 42 chars, starts with 0x)."""
-    return bool(re.fullmatch(r'0x[a-fA-F0-9]{40}', s))
 
 
 def resolve_task_coordinator_address(
