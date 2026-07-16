@@ -32,7 +32,7 @@ contract UpgradePlatform is Script {
         string memory implName     = string.concat(contractName, "V2");
 
         string memory deploymentsPath = string.concat(
-            vm.projectRoot(), "/foundry/deployments/localhost.json"
+            vm.projectRoot(), "/deployments/localhost.json"
         );
         string memory raw = vm.readFile(deploymentsPath);
 

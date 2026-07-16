@@ -104,7 +104,7 @@ contract DeployPlatform is Script {
         string memory finalJson = vm.serializeAddress(json, "proxyAdmin", proxyAdmin);
 
         string memory outPath = string.concat(
-            vm.projectRoot(), "/foundry/deployments/localhost.json"
+            vm.projectRoot(), "/deployments/localhost.json"
         );
         vm.writeJson(finalJson, outPath);
         console.log("Deployments written to:", outPath);
