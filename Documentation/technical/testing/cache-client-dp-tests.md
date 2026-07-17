@@ -24,7 +24,7 @@ noise scale and a clipping norm far above the tensor norms — so exact
 ## Running
 
 ```bash
-cd /home/azureuser/projects/devnet
+cd /path/to/devnet
 pytest tests/test_cache_client_dp.py -v
 
 # single test

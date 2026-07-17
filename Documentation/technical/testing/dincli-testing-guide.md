@@ -17,9 +17,9 @@ requirement is Docker — it must be running before Phase 4 client training begi
 sudo systemctl start docker   # or Docker Desktop
 
 # 2. Run the full harness (fail-fast, recommended)
-cd /home/azureuser/projects/devnet
-source /home/azureuser/my_venvs/pyDIN/bin/activate
-pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee /home/azureuser/tempdir/dincli/results/last_run.txt
+cd /path/to/devnet
+source ~/my_venvs/pyDIN/bin/activate
+pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee ~/tempdir/dincli/results/last_run.txt
 
 # one test 
 python -m pytest tests/dincli/test_01_platform.py \
@@ -43,7 +43,7 @@ that isolates dependencies and coordinates services.
 
 Before any test runs, the fixture does the following:
 1. **Solidity compilation** — runs `npx hardhat compile` inside
-   `/home/azureuser/projects/devnet/hardhat` to generate fresh contract ABIs.
+   `/path/to/devnet/hardhat` to generate fresh contract ABIs.
 2. **Fresh Hardhat node** — kills any active node process on port `8545` and
    launches a clean local node (`npx hardhat node`) with the customized
    account count.
@@ -93,7 +93,7 @@ configured for the local network.
 ### Config and state isolation
 
 The conftest redirects `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` to
-`/home/azureuser/tempdir/dincli/`, so it never touches `~/.config/dincli` or
+`~/tempdir/dincli/`, so it never touches `~/.config/dincli` or
 `~/.cache/dincli`. Your real wallet and network config are untouched.
 `config/` and `cache/` are wiped at the start of each session; `results/`
 accumulates across runs.
@@ -112,8 +112,8 @@ between them automatically per command — no manual activation needed:
 
 | Environment | Path | Used for |
 |-------------|------|----------|
-| `pyDIN` | `/home/azureuser/my_venvs/pyDIN/bin/python` | All CLI commands except those requiring torch/numpy |
-| `torchenv` | `/home/azureuser/my_venvs/torchenv/bin/python` | Genesis model creation, client training, auditor evaluation, aggregation, MNIST distribution |
+| `pyDIN` | `~/my_venvs/pyDIN/bin/python` | All CLI commands except those requiring torch/numpy |
+| `torchenv` | `~/my_venvs/torchenv/bin/python` | Genesis model creation, client training, auditor evaluation, aggregation, MNIST distribution |
 
 `TORCHENV_PYTHON` / `PYDIN_PYTHON` are defined in `tests/dincli/constants.py`.
 If you see torch import errors in Phase 4, confirm those paths are correct.
@@ -309,7 +309,7 @@ pytest tests/dincli/test_04_gi.py::test_gi_start -v -m integration
 
 ## Output / logs
 
-All output is written to `/home/azureuser/tempdir/dincli/`:
+All output is written to `~/tempdir/dincli/`:
 
 | Path | Contents |
 |------|----------|
@@ -328,10 +328,10 @@ All output is written to `/home/azureuser/tempdir/dincli/`:
 Start Docker before running the suite.
 
 **Hardhat node failed to start** — check
-`/home/azureuser/tempdir/dincli/results/hardhat_node.log`.
+`~/tempdir/dincli/results/hardhat_node.log`.
 
 **IPFS not responding** — check
-`/home/azureuser/tempdir/dincli/results/ipfs_daemon.log`.
+`~/tempdir/dincli/results/ipfs_daemon.log`.
 If the daemon was already running externally it will not be stopped at teardown.
 
 **`din_info.json` dirty after interrupted run** —

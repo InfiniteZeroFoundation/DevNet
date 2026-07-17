@@ -19,7 +19,7 @@ transaction is ever built or signed.
 ## Running
 
 ```bash
-cd /home/azureuser/projects/devnet
+cd /path/to/devnet
 pytest tests/test_dintoken.py -v
 
 # single test

@@ -8,7 +8,7 @@ Here is how to build your images, run the `din-node` container, and monitor Dock
 
 1. **Navigate to the node docker directory:**
    ```bash
-   cd /home/azureuser/projects/devnet/dincli/docker/node
+   cd /path/to/devnet/dincli/docker/node
    ```
 
 2. **Configure the environment file:**
@@ -18,8 +18,7 @@ Here is how to build your images, run the `din-node` container, and monitor Dock
    ```
 
 3. **Edit `.env` and fill in your host values:**
-    mkdir /home/azureuser/.din-node
-   * **`DIN_STATE_DIR`**: Set this to an **absolute** path on your host (e.g., `/home/azureuser/.din-node`).
+   * **`DIN_STATE_DIR`**: Set this to an **absolute** path on your host (e.g., `/home/<user>/.din-node`).
    * **`DOCKER_GID`**: Retrieve the GID of `/var/run/docker.sock` by running:
      ```bash
      stat -c '%g' /var/run/docker.sock
@@ -42,16 +41,16 @@ Here is how to build your images, run the `din-node` container, and monitor Dock
 ### Step 2: Building the Images
 
 1. **Pre-build the Worker Image (`din-worker:dev`):**
-   Run the build from the repository root `/home/azureuser/projects/devnet`. Doing this on the host is highly recommended to speed up execution:
+   Run the build from the repository root `/path/to/devnet`. Doing this on the host is highly recommended to speed up execution:
    ```bash
-   cd /home/azureuser/projects/devnet
+   cd /path/to/devnet
    docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
    ```
 
 2. **Build the Node Image (`din-node:dev`):**
    Navigate back and build the `din-node` container using Docker Compose:
    ```bash
-   cd /home/azureuser/projects/devnet/dincli/docker/node
+   cd /path/to/devnet/dincli/docker/node
    docker compose build
    ```
 
@@ -134,6 +133,6 @@ mkdir contracts
 ```
 
 ### Summary of Files Read
-* [dincli/docker/node/README.md](file:///home/azureuser/projects/devnet/dincli/docker/node/README.md) — The operator runbook with architecture overview and commands.
-* [dincli/docker/node/Dockerfile](file:///home/azureuser/projects/devnet/dincli/docker/node/Dockerfile) — Standard multi-stage build configuration mapping `dincli` control plane.
-* [dincli/docker/node/docker-compose.yml](file:///home/azureuser/projects/devnet/dincli/docker/node/docker-compose.yml) — Compose specification detailing environment variable interpolation and bind mounts.
+* [dincli/docker/node/README.md](../../../dincli/docker/node/README.md) — The operator runbook with architecture overview and commands.
+* [dincli/docker/node/Dockerfile](../../../dincli/docker/node/Dockerfile) — Standard multi-stage build configuration mapping `dincli` control plane.
+* [dincli/docker/node/docker-compose.yml](../../../dincli/docker/node/docker-compose.yml) — Compose specification detailing environment variable interpolation and bind mounts.

@@ -40,7 +40,7 @@ In current DIN Protocol, the model owner needs to deploy a taskCoordinator contr
 
 Model Owner deploys a taskCoordinator contract specific to each model.
 ```bash
-dincli model-owner deploy task-coordinator --artifact "/home/azureuser/projects/devnet/hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
+dincli model-owner deploy task-coordinator --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
 ```
 
 dincli will store the taskCoordinator contract address in the .env file as `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address` in your local project directory which we call `root_dir`.
@@ -49,7 +49,7 @@ dincli will store the taskCoordinator contract address in the .env file as `SEPO
 
 Model Owner deploys a taskAuditor contract specific to each model.
 ```bash
-dincli model-owner deploy task-auditor --artifact "/home/azureuser/projects/devnet/hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
+dincli model-owner deploy task-auditor --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
 ```
 
 dincli will store the taskAuditor contract address in the .env file as `SEPOLIA_OP_DEVNET_<task_coordinator_contract_address>_DINTaskAuditor_Contract_Address` in your local project directory which we call `root_dir`.

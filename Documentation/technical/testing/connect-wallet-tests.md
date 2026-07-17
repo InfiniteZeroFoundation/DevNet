@@ -24,7 +24,7 @@ is isolated via a temp directory and `monkeypatch`.
 ## Running
 
 ```bash
-cd /home/azureuser/projects/devnet
+cd /path/to/devnet
 pytest tests/test_connect_wallet.py -v
 
 # single test

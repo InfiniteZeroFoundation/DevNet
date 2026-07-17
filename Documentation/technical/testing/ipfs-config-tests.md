@@ -16,7 +16,7 @@ replaced via `monkeypatch` and `tmp_path`.
 ## Running
 
 ```bash
-cd /home/azureuser/projects/devnet
+cd /path/to/devnet
 pytest tests/test_ipfs_config.py -v
 
 # single test
