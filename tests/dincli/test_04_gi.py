@@ -40,7 +40,7 @@ SDK candidates:
 """
 
 import pytest
-from tests.dincli.constants import TORCHENV_PYTHON
+from tests.dincli.constants import TORCHENV_PYTHON, TORCHENV_SITE_PACKAGES
 
 pytestmark = pytest.mark.integration
 
@@ -214,7 +214,7 @@ def test_client_train_and_submit(run, acc):
     """
     run(["--demokey", str(acc), "client", "create-client-dataset-dir", MODEL_ID])
     run(
-        ["--demokey", str(acc), "client", "train-lms", MODEL_ID, "--packages-dir", "/home/azureuser/my_venvs/torchenv/lib/python3.12/site-packages", "--no-cache"],
+        ["--demokey", str(acc), "client", "train-lms", MODEL_ID, "--packages-dir", TORCHENV_SITE_PACKAGES, "--no-cache"],
         python=TORCHENV_PYTHON,
         input_text="y\ny\ny\n",
         timeout=300,
@@ -293,7 +293,7 @@ def test_auditor_evaluate(run, acc):
     result = run(
         [
             "--demokey", str(acc), "auditor", "lms-evaluation", "evaluate", MODEL_ID, "--submit",
-            "--packages-dir", "/home/azureuser/my_venvs/torchenv/lib/python3.12/site-packages", "--no-cache",
+            "--packages-dir", TORCHENV_SITE_PACKAGES, "--no-cache",
         ],
         python=TORCHENV_PYTHON,
         timeout=300,
@@ -359,7 +359,7 @@ def test_aggregator_aggregate_t1(run, acc):
     result = run(
         [
             "--demokey", str(acc), "aggregator", "aggregate-t1", MODEL_ID, "--submit",
-            "--packages-dir", "/home/azureuser/my_venvs/torchenv/lib/python3.12/site-packages", "--no-cache",
+            "--packages-dir", TORCHENV_SITE_PACKAGES, "--no-cache",
         ],
         python=TORCHENV_PYTHON,
         timeout=300,
@@ -412,7 +412,7 @@ def test_aggregator_aggregate_t2(run, acc):
     result = run(
         [
             "--demokey", str(acc), "aggregator", "aggregate-t2", MODEL_ID, "--submit",
-            "--packages-dir", "/home/azureuser/my_venvs/torchenv/lib/python3.12/site-packages", "--no-cache",
+            "--packages-dir", TORCHENV_SITE_PACKAGES, "--no-cache",
         ],
         python=TORCHENV_PYTHON,
         timeout=300,

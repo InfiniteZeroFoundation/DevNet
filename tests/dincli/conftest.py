@@ -9,9 +9,10 @@ The conftest automatically handles all prerequisites:
      aggregation / auditor evaluate). Docker is not started automatically.
 
 Run (fail-fast — recommended, because every test depends on the previous one):
-  pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee /home/azureuser/tempdir/dincli/results/last_run.txt
+  pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee ~/tempdir/dincli/results/last_run.txt
 
-All test output / logs are written to /home/azureuser/tempdir/dincli/.
+All test output / logs are written to ~/tempdir/dincli/ (override with
+DIN_TEST_TMPDIR; see tests/dincli/constants.py for all env overrides).
 """
 
 import json
@@ -32,17 +33,12 @@ from tests.dincli.constants import (
     DIN_INFO_PATH,
     PYDIN_PYTHON,
     TORCHENV_PYTHON,
+    DEVNET_ROOT,
+    HARDHAT_DIR,
+    DIN_TEMP,
+    NPX_BIN,
+    IPFS_BIN,
 )
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-DEVNET_ROOT  = Path(__file__).parent.parent.parent   # /home/azureuser/projects/devnet
-HARDHAT_DIR  = DEVNET_ROOT / "hardhat"
-DIN_TEMP     = Path("/home/azureuser/tempdir/dincli")
-NPX_BIN      = "/home/azureuser/.nvm/versions/node/v20.18.1/bin/npx"
-IPFS_BIN     = "/usr/local/bin/ipfs"
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +224,7 @@ def managed_services(din_tmp):
             ipfs_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             ipfs_proc.kill()
-    shutil.rmtree("/home/azureuser/tempdir/dincli", ignore_errors=True)
+    shutil.rmtree(str(DIN_TEMP), ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +263,7 @@ def workdir():
     dincli/ package is found via PYTHONPATH from here.
     """
 
-    shutil.copy("/home/azureuser/projects/devnet/.env", str(DIN_TEMP / ".env"))
+    shutil.copy(str(DEVNET_ROOT / ".env"), str(DIN_TEMP / ".env"))
     return DIN_TEMP
 
 
