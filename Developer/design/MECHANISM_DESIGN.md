@@ -236,6 +236,8 @@ Decisions that must be made (with owner + roadmap slot) before DevNet 2.0 contra
 
 ## 10. Cross-references
 
+- [`p3-design-plan.md`](p3-design-plan.md) — coordination page for the P3 design push: mechanism → GitHub issue map, discussion links for the §9 open decisions.
+- [`whitepaper-summary.md`](whitepaper-summary.md) — white paper summary + gap/alignment checklist; §8 items feed the designs above.
 - `Developer/ROADMAP.md` — WP scheduling (P3-4.x, P3-5.x, P3-SCR, P3-6.x, P3-DOC2/3/5).
 - `Documentation/public/workflows/din-workflow.md`, `Documentation/public/workflows/model-workflow.md` — current GI lifecycle these mechanisms attach to.
 - `foundry/src/DinValidatorStake.sol`, `DINTaskCoordinator.sol`, `DINTaskAuditor.sol`, `DINModelRegistry.sol`, `DinCoordinator.sol`, `DinToken.sol` — current implementations referenced in §2.
