@@ -18,6 +18,7 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 ///
 /// Usage (from repo root):
 ///   ./foundry/anvil.sh &
+///   forge clean
 ///   cd foundry && forge script script/DeployPlatform.s.sol \
 ///     --rpc-url http://127.0.0.1:8545 \
 ///     --broadcast \
@@ -56,19 +57,26 @@ contract DeployPlatform is Script {
         address dinValidatorStakeProxy = Upgrades.deployTransparentProxy(
             "DinValidatorStake.sol:DinValidatorStake",
             msg.sender,
-            abi.encodeCall(DinValidatorStake.initialize, (dinTokenProxy, dinCoordinatorProxy))
+            abi.encodeCall(
+                DinValidatorStake.initialize,
+                (dinTokenProxy, dinCoordinatorProxy)
+            )
         );
         console.log("DinValidatorStake proxy:", dinValidatorStakeProxy);
 
         // 5. Wire DinCoordinator → DinValidatorStake
-        DinCoordinator(payable(dinCoordinatorProxy)).updateValidatorStakeContract(dinValidatorStakeProxy);
+        DinCoordinator(payable(dinCoordinatorProxy))
+            .updateValidatorStakeContract(dinValidatorStakeProxy);
         console.log("DinCoordinator stake contract wired");
 
         // 6. DINModelRegistry — receives the stake proxy
         address dinModelRegistryProxy = Upgrades.deployTransparentProxy(
             "DINModelRegistry.sol:DINModelRegistry",
             msg.sender,
-            abi.encodeCall(DINModelRegistry.initialize, (dinValidatorStakeProxy))
+            abi.encodeCall(
+                DINModelRegistry.initialize,
+                (dinValidatorStakeProxy)
+            )
         );
         console.log("DINModelRegistry proxy: ", dinModelRegistryProxy);
 
@@ -97,11 +105,15 @@ contract DeployPlatform is Script {
         address proxyAdmin
     ) internal {
         string memory json = "deployments";
-        vm.serializeAddress(json, "dinToken",           dinToken);
-        vm.serializeAddress(json, "dinCoordinator",     dinCoordinator);
-        vm.serializeAddress(json, "dinValidatorStake",  dinValidatorStake);
-        vm.serializeAddress(json, "dinModelRegistry",   dinModelRegistry);
-        string memory finalJson = vm.serializeAddress(json, "proxyAdmin", proxyAdmin);
+        vm.serializeAddress(json, "dinToken", dinToken);
+        vm.serializeAddress(json, "dinCoordinator", dinCoordinator);
+        vm.serializeAddress(json, "dinValidatorStake", dinValidatorStake);
+        vm.serializeAddress(json, "dinModelRegistry", dinModelRegistry);
+        string memory finalJson = vm.serializeAddress(
+            json,
+            "proxyAdmin",
+            proxyAdmin
+        );
 
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
         vm.createDir(outDir, true);

@@ -11,6 +11,10 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 
 import {DinTokenV2} from "../src/upgrade/DinTokenV2.sol";
 
+import {DinCoordinatorV2} from "../src/upgrade/DinCoordinatorV2.sol";
+import {DinValidatorStakeV2} from "../src/upgrade/DinValidatorStakeV2.sol";
+import {DINModelRegistryV2} from "../src/upgrade/DINModelRegistryV2.sol";
+
 interface IOwnable {
     function owner() external view returns (address);
 }
@@ -20,12 +24,15 @@ interface IOwnable {
 ///      verifies IOwnable(taskCoordinator).owner() == msg.sender.
 contract MockTaskContract {
     address private _owner;
-    constructor(address owner_) { _owner = owner_; }
-    function owner() external view returns (address) { return _owner; }
+
+    constructor(address owner_) {
+        _owner = owner_;
+    }
+
+    function owner() external view returns (address) {
+        return _owner;
+    }
 }
-import {DinCoordinatorV2} from "../src/upgrade/DinCoordinatorV2.sol";
-import {DinValidatorStakeV2} from "../src/upgrade/DinValidatorStakeV2.sol";
-import {DINModelRegistryV2} from "../src/upgrade/DINModelRegistryV2.sol";
 
 // ─── Shared platform fixture ──────────────────────────────────────────────────
 
@@ -42,13 +49,13 @@ struct Platform {
 /// @dev Base contract providing deployPlatform() and mintDin() helpers.
 ///      All test contracts inherit from this so they share the cheatcode VM.
 abstract contract PlatformTest is Test {
-    address internal constant USER  = address(0xBEEF);
+    address internal constant USER = address(0xBEEF);
     address internal constant OTHER = address(0xCAFE);
 
     function _deployPlatform() internal returns (Platform memory p) {
         p.deployer = address(this);
-        p.user     = USER;
-        p.other    = OTHER;
+        p.user = USER;
+        p.other = OTHER;
 
         address tokenProxy = Upgrades.deployTransparentProxy(
             "DinToken.sol:DinToken",
@@ -69,7 +76,10 @@ abstract contract PlatformTest is Test {
         address stakeProxy = Upgrades.deployTransparentProxy(
             "DinValidatorStake.sol:DinValidatorStake",
             address(this),
-            abi.encodeCall(DinValidatorStake.initialize, (tokenProxy, coordinatorProxy))
+            abi.encodeCall(
+                DinValidatorStake.initialize,
+                (tokenProxy, coordinatorProxy)
+            )
         );
         p.dinValidatorStake = DinValidatorStake(stakeProxy);
 
@@ -83,7 +93,11 @@ abstract contract PlatformTest is Test {
         p.dinModelRegistry = DINModelRegistry(registryProxy);
     }
 
-    function _mintDin(DinCoordinator coordinator, address user_, uint256 ethAmount) internal {
+    function _mintDin(
+        DinCoordinator coordinator,
+        address user_,
+        uint256 ethAmount
+    ) internal {
         vm.deal(user_, ethAmount);
         vm.prank(user_);
         coordinator.depositAndMint{value: ethAmount}();
@@ -108,7 +122,10 @@ contract ProxyWiringTest is PlatformTest {
     }
 
     function test_dinCoordinator_stakeContractWired() public view {
-        assertEq(address(p.dinCoordinator.dinValidatorStakeContract()), address(p.dinValidatorStake));
+        assertEq(
+            address(p.dinCoordinator.dinValidatorStakeContract()),
+            address(p.dinValidatorStake)
+        );
     }
 
     function test_dinValidatorStake_tokenWired() public view {
@@ -116,17 +133,35 @@ contract ProxyWiringTest is PlatformTest {
     }
 
     function test_dinValidatorStake_coordinatorWired() public view {
-        assertEq(p.dinValidatorStake.DIN_COORDINATOR(), address(p.dinCoordinator));
+        assertEq(
+            p.dinValidatorStake.DIN_COORDINATOR(),
+            address(p.dinCoordinator)
+        );
     }
 
     function test_allProxyAdminsOwnedByDeployer() public view {
         // OZ v5 TransparentUpgradeableProxy deploys one ProxyAdmin per proxy,
         // so admin addresses differ. The invariant is that each admin's owner
         // is the deployer (address(this) in the test context).
-        assertEq(IOwnable(Upgrades.getAdminAddress(address(p.dinToken))).owner(),          address(this));
-        assertEq(IOwnable(Upgrades.getAdminAddress(address(p.dinCoordinator))).owner(),    address(this));
-        assertEq(IOwnable(Upgrades.getAdminAddress(address(p.dinValidatorStake))).owner(), address(this));
-        assertEq(IOwnable(Upgrades.getAdminAddress(address(p.dinModelRegistry))).owner(),  address(this));
+        assertEq(
+            IOwnable(Upgrades.getAdminAddress(address(p.dinToken))).owner(),
+            address(this)
+        );
+        assertEq(
+            IOwnable(Upgrades.getAdminAddress(address(p.dinCoordinator)))
+                .owner(),
+            address(this)
+        );
+        assertEq(
+            IOwnable(Upgrades.getAdminAddress(address(p.dinValidatorStake)))
+                .owner(),
+            address(this)
+        );
+        assertEq(
+            IOwnable(Upgrades.getAdminAddress(address(p.dinModelRegistry)))
+                .owner(),
+            address(this)
+        );
     }
 
     function test_depositAndMint_mintsDinViaProxy() public {
@@ -158,7 +193,10 @@ contract ReInitializerProtectionTest is PlatformTest {
 
     function test_proxy_rejectsDoubleInitialize_DinValidatorStake() public {
         vm.expectRevert();
-        p.dinValidatorStake.initialize(address(p.dinToken), address(p.dinCoordinator));
+        p.dinValidatorStake.initialize(
+            address(p.dinToken),
+            address(p.dinCoordinator)
+        );
     }
 
     function test_proxy_rejectsDoubleInitialize_DINModelRegistry() public {
@@ -207,7 +245,12 @@ contract DinTokenUpgradeTest is PlatformTest {
 
         Options memory opts;
         opts.referenceContract = "DinToken.sol:DinToken";
-        Upgrades.upgradeProxy(address(p.dinToken), "DinTokenV2.sol:DinTokenV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinToken),
+            "DinTokenV2.sol:DinTokenV2",
+            "",
+            opts
+        );
         DinTokenV2 upgraded = DinTokenV2(address(p.dinToken));
 
         assertEq(upgraded.coordinator(), address(p.dinCoordinator));
@@ -222,7 +265,12 @@ contract DinTokenUpgradeTest is PlatformTest {
     function test_keepsMintRestrictedToCoordinatorAfterUpgrade() public {
         Options memory opts;
         opts.referenceContract = "DinToken.sol:DinToken";
-        Upgrades.upgradeProxy(address(p.dinToken), "DinTokenV2.sol:DinTokenV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinToken),
+            "DinTokenV2.sol:DinTokenV2",
+            "",
+            opts
+        );
 
         vm.expectRevert(DinToken.Unauthorized.selector);
         vm.prank(p.user);
@@ -232,7 +280,12 @@ contract DinTokenUpgradeTest is PlatformTest {
     function test_keepsCoordinatorSetupRestrictedToOwnerAfterUpgrade() public {
         Options memory opts;
         opts.referenceContract = "DinToken.sol:DinToken";
-        Upgrades.upgradeProxy(address(p.dinToken), "DinTokenV2.sol:DinTokenV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinToken),
+            "DinTokenV2.sol:DinTokenV2",
+            "",
+            opts
+        );
 
         vm.expectRevert();
         vm.prank(p.other);
@@ -257,8 +310,15 @@ contract DinCoordinatorUpgradeTest is PlatformTest {
 
         Options memory opts;
         opts.referenceContract = "DinCoordinator.sol:DinCoordinator";
-        Upgrades.upgradeProxy(address(p.dinCoordinator), "DinCoordinatorV2.sol:DinCoordinatorV2", "", opts);
-        DinCoordinatorV2 upgraded = DinCoordinatorV2(payable(address(p.dinCoordinator)));
+        Upgrades.upgradeProxy(
+            address(p.dinCoordinator),
+            "DinCoordinatorV2.sol:DinCoordinatorV2",
+            "",
+            opts
+        );
+        DinCoordinatorV2 upgraded = DinCoordinatorV2(
+            payable(address(p.dinCoordinator))
+        );
 
         assertEq(address(upgraded.dinToken()), address(p.dinToken));
         assertEq(upgraded.dinPerEth(), newRate);
@@ -269,21 +329,33 @@ contract DinCoordinatorUpgradeTest is PlatformTest {
     function test_keepsOwnerOnlyFunctionsRestrictedAfterUpgrade() public {
         Options memory opts;
         opts.referenceContract = "DinCoordinator.sol:DinCoordinator";
-        Upgrades.upgradeProxy(address(p.dinCoordinator), "DinCoordinatorV2.sol:DinCoordinatorV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinCoordinator),
+            "DinCoordinatorV2.sol:DinCoordinatorV2",
+            "",
+            opts
+        );
 
         vm.expectRevert();
         vm.prank(p.other);
         p.dinCoordinator.updateDinPerEth(1);
     }
 
-    function test_keepsSlasherManagementWiredToStakeContractAfterUpgrade() public {
+    function test_keepsSlasherManagementWiredToStakeContractAfterUpgrade()
+        public
+    {
         address slasher = address(0xDEAD);
         p.dinCoordinator.addSlasherContract(slasher);
         assertTrue(p.dinValidatorStake.isSlasherContract(slasher));
 
         Options memory opts;
         opts.referenceContract = "DinCoordinator.sol:DinCoordinator";
-        Upgrades.upgradeProxy(address(p.dinCoordinator), "DinCoordinatorV2.sol:DinCoordinatorV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinCoordinator),
+            "DinCoordinatorV2.sol:DinCoordinatorV2",
+            "",
+            opts
+        );
 
         assertTrue(p.dinValidatorStake.isSlasherContract(slasher));
     }
@@ -292,8 +364,8 @@ contract DinCoordinatorUpgradeTest is PlatformTest {
 // ─── §3.4 DinValidatorStake upgrade ──────────────────────────────────────────
 
 contract DinValidatorStakeUpgradeTest is PlatformTest {
-    uint256 constant MIN_STAKE          = 10 * 1e18;
-    uint256 constant STAKE_DEPOSIT_ETH  = 0.01 ether;
+    uint256 constant MIN_STAKE = 10 * 1e18;
+    uint256 constant STAKE_DEPOSIT_ETH = 0.01 ether;
 
     Platform p;
 
@@ -312,18 +384,32 @@ contract DinValidatorStakeUpgradeTest is PlatformTest {
 
         Options memory opts;
         opts.referenceContract = "DinValidatorStake.sol:DinValidatorStake";
-        Upgrades.upgradeProxy(address(p.dinValidatorStake), "DinValidatorStakeV2.sol:DinValidatorStakeV2", "", opts);
-        DinValidatorStakeV2 upgraded = DinValidatorStakeV2(address(p.dinValidatorStake));
+        Upgrades.upgradeProxy(
+            address(p.dinValidatorStake),
+            "DinValidatorStakeV2.sol:DinValidatorStakeV2",
+            "",
+            opts
+        );
+        DinValidatorStakeV2 upgraded = DinValidatorStakeV2(
+            address(p.dinValidatorStake)
+        );
 
         assertEq(upgraded.getStake(p.user), stakeBefore);
         assertTrue(upgraded.isValidatorActive(p.user));
         assertEq(upgraded.version(), 2);
     }
 
-    function test_keepsSlasherRegistrationRestrictedToCoordinatorAfterUpgrade() public {
+    function test_keepsSlasherRegistrationRestrictedToCoordinatorAfterUpgrade()
+        public
+    {
         Options memory opts;
         opts.referenceContract = "DinValidatorStake.sol:DinValidatorStake";
-        Upgrades.upgradeProxy(address(p.dinValidatorStake), "DinValidatorStakeV2.sol:DinValidatorStakeV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinValidatorStake),
+            "DinValidatorStakeV2.sol:DinValidatorStakeV2",
+            "",
+            opts
+        );
 
         vm.expectRevert(DinValidatorStake.NotDINCoordinator.selector);
         vm.prank(p.other);
@@ -336,7 +422,12 @@ contract DinValidatorStakeUpgradeTest is PlatformTest {
 
         Options memory opts;
         opts.referenceContract = "DinValidatorStake.sol:DinValidatorStake";
-        Upgrades.upgradeProxy(address(p.dinValidatorStake), "DinValidatorStakeV2.sol:DinValidatorStakeV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinValidatorStake),
+            "DinValidatorStakeV2.sol:DinValidatorStakeV2",
+            "",
+            opts
+        );
 
         p.dinValidatorStake.blacklistValidator(p.user);
         assertFalse(p.dinValidatorStake.isValidatorActive(p.user));
@@ -362,7 +453,7 @@ contract DINModelRegistryUpgradeTest is PlatformTest {
         // Deploy mock task contracts owned by p.user — requestModelRegistration
         // calls IOwnable(taskCoordinator).owner() and requires it equals msg.sender.
         taskCoordinator = address(new MockTaskContract(p.user));
-        taskAuditor     = address(new MockTaskContract(p.user));
+        taskAuditor = address(new MockTaskContract(p.user));
         p.dinCoordinator.addSlasherContract(taskCoordinator);
         p.dinCoordinator.addSlasherContract(taskAuditor);
     }
@@ -376,27 +467,42 @@ contract DINModelRegistryUpgradeTest is PlatformTest {
         vm.deal(p.user, fee);
         vm.prank(p.user);
         p.dinModelRegistry.requestModelRegistration{value: fee}(
-            manifestCID, taskCoordinator, taskAuditor, false
+            manifestCID,
+            taskCoordinator,
+            taskAuditor,
+            false
         );
         p.dinModelRegistry.approveModel(0);
 
         Options memory opts;
         opts.referenceContract = "DINModelRegistry.sol:DINModelRegistry";
-        Upgrades.upgradeProxy(address(p.dinModelRegistry), "DINModelRegistryV2.sol:DINModelRegistryV2", "", opts);
-        DINModelRegistryV2 upgraded = DINModelRegistryV2(address(p.dinModelRegistry));
+        Upgrades.upgradeProxy(
+            address(p.dinModelRegistry),
+            "DINModelRegistryV2.sol:DINModelRegistryV2",
+            "",
+            opts
+        );
+        DINModelRegistryV2 upgraded = DINModelRegistryV2(
+            address(p.dinModelRegistry)
+        );
 
         assertEq(upgraded.proprietaryFee(), newFee);
         assertEq(upgraded.totalModels(), 1);
         assertEq(upgraded.version(), 2);
 
-        (address owner,,,,, ) = upgraded.getModel(0);
+        (address owner, , , , , ) = upgraded.getModel(0);
         assertEq(owner, p.user);
     }
 
     function test_keepsOwnerOnlyGovernanceRestrictedAfterUpgrade() public {
         Options memory opts;
         opts.referenceContract = "DINModelRegistry.sol:DINModelRegistry";
-        Upgrades.upgradeProxy(address(p.dinModelRegistry), "DINModelRegistryV2.sol:DINModelRegistryV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinModelRegistry),
+            "DINModelRegistryV2.sol:DINModelRegistryV2",
+            "",
+            opts
+        );
 
         vm.expectRevert();
         vm.prank(p.other);
@@ -408,16 +514,26 @@ contract DINModelRegistryUpgradeTest is PlatformTest {
         vm.deal(p.user, fee);
         vm.prank(p.user);
         p.dinModelRegistry.requestModelRegistration{value: fee}(
-            keccak256("manifest-pending"), taskCoordinator, taskAuditor, true
+            keccak256("manifest-pending"),
+            taskCoordinator,
+            taskAuditor,
+            true
         );
 
         Options memory opts;
         opts.referenceContract = "DINModelRegistry.sol:DINModelRegistry";
-        Upgrades.upgradeProxy(address(p.dinModelRegistry), "DINModelRegistryV2.sol:DINModelRegistryV2", "", opts);
+        Upgrades.upgradeProxy(
+            address(p.dinModelRegistry),
+            "DINModelRegistryV2.sol:DINModelRegistryV2",
+            "",
+            opts
+        );
 
         assertEq(p.dinModelRegistry.totalModelRequests(), 1);
 
-        (address requester,,,,,, bool processed,,) = p.dinModelRegistry.modelRequests(0);
+        (address requester, , , , , , bool processed, , ) = p
+            .dinModelRegistry
+            .modelRequests(0);
         assertEq(requester, p.user);
         assertFalse(processed);
 
