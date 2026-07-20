@@ -851,9 +851,10 @@ def din_info(ctx: typer.Context,
 # broadcast/<Script>.s.sol/<chainid>/run-latest.json. Only the producer of the
 # addresses changes; din_info.json stays the contract with the rest of dincli.
 
-# dincli network name → hardhat network name (standalone `npx hardhat node`
-# is hardhat's "localhost"); networks not listed map to themselves.
-_HARDHAT_NETWORK_FOR = {"local": "localhost"}
+# dincli network name → deploy-toolchain network name (standalone `npx hardhat
+# node` / anvil are both "localhost"); networks not listed map to themselves.
+# Shared by both the hardhat and foundry deployments/<network>.json lookups.
+_DEPLOYMENT_CHAIN_NETWORK_FOR = {"local": "localhost"}
 
 # deployments/<network>.json keys (savePlatformAddresses in deploy/helpers.ts)
 # → din_info.json keys. proxy_admin is informational; the four contract keys
@@ -872,20 +873,33 @@ _REQUIRED_DEPLOYMENT_KEYS = ("dinToken", "dinCoordinator", "dinValidatorStake", 
 def import_deployments(ctx: typer.Context,
     file: Optional[Path] = typer.Option(
         None, "--file", "-f",
-        help="Deployments JSON written by deploy-platform.ts (default: hardhat/deployments/<network>.json under the current directory, with dincli network 'local' mapped to hardhat's 'localhost')",
+        help="Explicit deployments JSON path. Mutually exclusive with --foundry/--hardhat.",
+    ),
+    foundry: bool = typer.Option(
+        False, "--foundry",
+        help="Load from foundry/deployments/<network>.json (dincli 'local' maps to 'localhost'). Mutually exclusive with --hardhat/--file. Default when no flag is given.",
+    ),
+    hardhat: bool = typer.Option(
+        False, "--hardhat",
+        help="Load from hardhat/deployments/<network>.json (dincli 'local' maps to 'localhost'). Mutually exclusive with --foundry/--file.",
     ),
 ):
     """
-    Import platform proxy addresses from a hardhat deployments file into din_info.json.
+    Import platform proxy addresses from a deployments JSON into din_info.json.
 
-    Deploy the platform first with the canonical proxy-aware script:
+    Foundry flow (default, --foundry is optional/implicit):
+
+      forge script foundry/script/DeployPlatform.s.sol --rpc-url http://127.0.0.1:8545 --broadcast ...
+      dincli system import-deployments
+
+    Hardhat flow:
 
       cd hardhat && npx hardhat run scripts/deploy-platform.ts --network localhost
+      dincli system import-deployments --hardhat
 
-    then run this command to point dincli at the deployed proxies:
-
-      dincli system import-deployments                     # default file location
-      dincli system import-deployments --file hardhat/deployments/localhost.json
+    Both flows write the same address schema; this command reads either.
+    Pass --file to supply an explicit path. --foundry, --hardhat, and --file
+    are all mutually exclusive with each other.
 
     Only the platform address keys of the active network's din_info entry are
     updated (coordinator, token, stake, registry, proxy_admin); everything
@@ -894,14 +908,25 @@ def import_deployments(ctx: typer.Context,
     console = ctx.obj.console
     effective_network = ctx.obj.network
 
+    if sum([foundry, hardhat, file is not None]) > 1:
+        console.print("[red]❌ --foundry, --hardhat, and --file are mutually exclusive; pass only one.[/red]")
+        raise typer.Exit(1)
+
     if file is None:
-        hardhat_network = _HARDHAT_NETWORK_FOR.get(effective_network, effective_network)
-        file = Path("hardhat") / "deployments" / f"{hardhat_network}.json"
+        network_key = _DEPLOYMENT_CHAIN_NETWORK_FOR.get(effective_network, effective_network)
+        if hardhat:
+            file = Path("hardhat") / "deployments" / f"{network_key}.json"
+        else:
+            # --foundry explicit, or no flag given (foundry is the default).
+            file = Path("foundry") / "deployments" / f"{network_key}.json"
 
     file = file.expanduser()
     if not file.exists():
         console.print(f"[red]❌ Deployments file not found: {file}[/red]")
-        console.print("[yellow]Run the platform deploy script first:[/yellow] cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>")
+        if hardhat:
+            console.print("[yellow]Run the platform deploy script first:[/yellow] cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>")
+        else:
+            console.print("[yellow]Run the Foundry deploy script first:[/yellow] forge script foundry/script/DeployPlatform.s.sol --rpc-url http://127.0.0.1:8545 --broadcast ...")
         raise typer.Exit(1)
 
     try:
