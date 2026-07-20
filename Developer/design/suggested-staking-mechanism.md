@@ -1,3 +1,5 @@
+> **Reading note (July 19, 2026):** start with [staking-design.md](staking-design.md) — the current entry point for staking design, tracked in [issue #37](https://github.com/InfiniteZeroFoundation/DevNet/issues/37). This document remains the detailed production-hardening spec, but its "Current Implementation Findings" and migration Phases 1–2 have since been implemented on `develop` (active-status eligibility gates, request/claim unbonding, lifecycle statuses, non-blocking capped `slash()`); Phases 3–4 remain open.
+
 Affected contracts: `DinValidatorStake.sol`, `DINTaskCoordinator.sol`, `DINTaskAuditor.sol`, `DINShared.sol`, `DinCoordinator.sol`
 
 # DIN Protocol: Suggested Production Staking and Slashing Mechanism
