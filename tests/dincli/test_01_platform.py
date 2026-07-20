@@ -1,17 +1,21 @@
 """
-Phase 1 — Deploy platform-level contracts (PR 13: transparent proxies).
+Phase 1 — Deploy platform-level contracts (PR 13: transparent proxies;
+PR 35: foundry parity).
 
 The four platform contracts (DinToken, DinCoordinator, DinValidatorStake,
 DINModelRegistry) are upgradeable transparent proxies. They are deployed and
-wired by the canonical hardhat script — token → coordinator →
-dinToken.setCoordinator → stake → dinCoordinator.updateValidatorStakeContract
-→ registry — which runs through the OpenZeppelin upgrades plugin
-(storage-layout validation + .openzeppelin/ manifest used by later upgrades):
+wired — token → coordinator → dinToken.setCoordinator → stake →
+dinCoordinator.updateValidatorStakeContract → registry — through the
+OpenZeppelin upgrades plugin (storage-layout validation + manifest used by
+later upgrades), by either of two equivalent scripts selected via
+PLATFORM_DEPLOY_TOOLCHAIN (see tests/dincli/constants.py):
 
+    cd foundry && forge script script/DeployPlatform.s.sol --rpc-url <rpc> --broadcast ...
     cd hardhat && npx hardhat run scripts/deploy-platform.ts --network localhost
 
-dincli then imports the script's output (hardhat/deployments/localhost.json)
-into din_info.json via `dincli system import-deployments`.
+dincli then imports whichever script's output (<toolchain>/deployments/
+localhost.json — same address schema either way) into din_info.json via
+`dincli system import-deployments`.
 
 INTERIM SCAFFOLDING — this script+import flow is the *rejected* Option A of
 the committed decision record
@@ -21,13 +25,6 @@ native web3.py proxy deployment inside `dindao deploy`
 (backlog: Developer/issues/dincli-native-proxy-deployment.md); when that
 lands, restore per-contract `dindao deploy ...` tests here and demote
 import-deployments to a sync-utility test.
-
-Foundry migration: foundry/ carries the same contracts but has no deploy
-script yet. If the script flow is still in use by then, only
-test_deploy_platform_via_script changes (forge script ... --broadcast); the
-import/verification tests stay as long as the forge script writes the same
-deployments JSON shape (preferred) or `system import-deployments` learns to
-parse foundry's broadcast/<Script>.s.sol/<chainid>/run-latest.json.
 
 SDK candidates:
   deploy_platform(network) → addresses dict   (wraps the deploy script)
@@ -43,8 +40,13 @@ from pathlib import Path
 from tests.dincli.constants import (
     ARTIFACT_BASE,
     DIN_INFO_PATH,
+    FOUNDRY_DIR,
+    FORGE_BIN,
     HARDHAT_DIR,
+    HARDHAT_DEV_ACCOUNT_0,
+    HARDHAT_RPC,
     NPX_BIN,
+    PLATFORM_DEPLOY_TOOLCHAIN,
     DEPLOYMENTS_FILE,
 )
 
@@ -96,12 +98,32 @@ def test_deploy_platform_via_script(state):
     """Deploy the four platform proxies + wiring via the canonical script.
 
     The deployer is hardhat signer 0 — the same key as the dindao wallet.
+    Which script runs is picked up from PLATFORM_DEPLOY_TOOLCHAIN
+    (tests/dincli/constants.py): "foundry" runs `forge script
+    DeployPlatform.s.sol`, "hardhat" runs `hardhat run
+    scripts/deploy-platform.ts`. Both write the same deployments/<network>.json
+    address schema.
     SDK candidate: deploy_platform(network) — a thin wrapper around this
-    subprocess (or, post-foundry-migration, around `forge script`).
+    subprocess.
     """
+    if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
+        cmd = [
+            FORGE_BIN, "script", "script/DeployPlatform.s.sol",
+            "--rpc-url", HARDHAT_RPC,
+            "--broadcast",
+            "--sender", HARDHAT_DEV_ACCOUNT_0,
+            "--unlocked",
+        ]
+        cwd = str(FOUNDRY_DIR)
+        label = "DeployPlatform.s.sol"
+    else:
+        cmd = [NPX_BIN, "hardhat", "run", "scripts/deploy-platform.ts", "--network", "localhost"]
+        cwd = str(HARDHAT_DIR)
+        label = "deploy-platform.ts"
+
     result = subprocess.run(
-        [NPX_BIN, "hardhat", "run", "scripts/deploy-platform.ts", "--network", "localhost"],
-        cwd=str(HARDHAT_DIR),
+        cmd,
+        cwd=cwd,
         capture_output=True,
         text=True,
         timeout=300,
@@ -109,7 +131,7 @@ def test_deploy_platform_via_script(state):
     print(result.stdout)
     if result.stderr:
         print(result.stderr)
-    assert result.returncode == 0, f"deploy-platform.ts failed:\n{result.stderr}"
+    assert result.returncode == 0, f"{label} failed:\n{result.stderr}"
 
     deployments = json.loads(DEPLOYMENTS_FILE.read_text())
     for key in (*DEPLOYMENT_KEYS, "proxyAdmin"):
@@ -120,6 +142,11 @@ def test_deploy_platform_via_script(state):
 def test_import_deployments_into_din_info(run, state):
     """Point dincli at the deployed proxies.
 
+    Passes an explicit --file (DEPLOYMENTS_FILE, already toolchain-aware via
+    PLATFORM_DEPLOY_TOOLCHAIN) rather than relying on --foundry/--hardhat's
+    own default-path resolution: import-deployments resolves that default
+    relative to cwd, but the `run` fixture's cwd is the isolated DIN_TEMP
+    scratch dir, not the repo root, so a relative default would miss.
     SDK candidate: import_deployments(network, file) — body of
     `dincli system import-deployments`.
     """

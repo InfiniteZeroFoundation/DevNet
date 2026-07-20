@@ -1,9 +1,17 @@
 """
-Integration test harness for dincli — runs against a local Hardhat node.
+Integration test harness for dincli — runs against a local Hardhat node or
+local Anvil node (chain backend picked by PLATFORM_DEPLOY_TOOLCHAIN, see
+tests/dincli/constants.py).
 
 The conftest automatically handles all prerequisites:
-  1. Compiles Solidity contracts via  npx hardhat compile
-  2. Kills any running Hardhat node and starts a fresh one (clean EVM state)
+  1. Compiles Solidity contracts via  npx hardhat compile  (task-level
+     contract deploys and dump-abi tests always need hardhat's ABIs/bytecode,
+     regardless of which toolchain deploys the platform contracts); also runs
+     `forge build` when PLATFORM_DEPLOY_TOOLCHAIN is "foundry"
+  2. Kills any running chain node and starts a fresh one (clean EVM state) —
+     Hardhat node for the "hardhat" toolchain, Anvil for "foundry" (both
+     listen on HARDHAT_RPC / chain-id 1337, so the rest of the harness is
+     unaffected by which one is running)
   3. Ensures the IPFS daemon is running (starts it if not already up)
   4. Docker daemon must be running externally (required for client train-lms /
      aggregation / auditor evaluate). Docker is not started automatically.
@@ -35,6 +43,9 @@ from tests.dincli.constants import (
     TORCHENV_PYTHON,
     DEVNET_ROOT,
     HARDHAT_DIR,
+    FOUNDRY_DIR,
+    FORGE_BIN,
+    PLATFORM_DEPLOY_TOOLCHAIN,
     DIN_TEMP,
     NPX_BIN,
     IPFS_BIN,
@@ -53,6 +64,20 @@ def _hardhat_is_running() -> bool:
         # "params": []: An array of arguments passed to the method. Since eth_chainId does not require any parameters, it is sent as an empty list.
         # "id": 1: A request identifier. Since JSON-RPC can be asynchronous or batched, the node will include this same ID in its response so the client knows exactly which request the response belongs to.
 
+        resp = requests.post(
+            HARDHAT_RPC,
+            json={"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1},
+            timeout=3,
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _anvil_is_running() -> bool:
+    """Same liveness probe as _hardhat_is_running — anvil answers the same
+    eth_chainId JSON-RPC call on the same port."""
+    try:
         resp = requests.post(
             HARDHAT_RPC,
             json={"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1},
@@ -90,6 +115,29 @@ def _compile_contracts(results_dir: Path) -> None:
     print("[setup] Contracts compiled successfully.")
 
 
+def _build_foundry_contracts(results_dir: Path) -> None:
+    """Run forge build. Aborts the session on failure.
+
+    Needed only when PLATFORM_DEPLOY_TOOLCHAIN is "foundry" — DeployPlatform.s.sol
+    reads compiled artifacts under foundry/out/, separate from hardhat/artifacts/.
+    """
+    print("\n[setup] Building Foundry contracts...")
+    log_path = results_dir / "forge_build.log"
+    result = subprocess.run(
+        [FORGE_BIN, "build"],
+        cwd=str(FOUNDRY_DIR),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
+    if result.returncode != 0:
+        pytest.exit(
+            f"[setup] Foundry contract build failed (see {log_path}):\n{result.stderr[-2000:]}"
+        )
+    print("[setup] Foundry contracts built successfully.")
+
+
 def _start_fresh_hardhat_node(results_dir: Path) -> subprocess.Popen:
     """
     Kill any running Hardhat node, start a fresh one, and wait until it is ready.
@@ -125,6 +173,50 @@ def _start_fresh_hardhat_node(results_dir: Path) -> subprocess.Popen:
     log_fh.flush()
     pytest.exit(
         f"[setup] Hardhat node did not start after 40 s "
+        f"(see {log_path} for details)"
+    )
+
+
+def _start_fresh_anvil_node(results_dir: Path) -> subprocess.Popen:
+    """
+    Kill any running Anvil node, start a fresh one via foundry/anvil.sh, and
+    wait until it is ready. Returns the Popen handle so it can be killed at
+    session teardown.
+
+    foundry/anvil.sh pins --chain-id 1337, matching hardhat.config.ts's
+    "localhost" network, so deployments/localhost.json naming and dincli's
+    "local" -> "localhost" network mapping stay valid under either toolchain.
+    """
+    # Kill every existing anvil process
+    subprocess.run(["pkill", "-f", "anvil"], capture_output=True)
+    # Also kill any process holding port 8545
+    subprocess.run(["fuser", "-k", "8545/tcp"], capture_output=True)
+    time.sleep(3)  # give port time to release
+
+    log_path = results_dir / "anvil_node.log"
+    log_fh = open(log_path, "w", encoding="utf-8")
+
+    # Inherit PATH so the script can find the anvil binary
+    env = os.environ.copy()
+    proc = subprocess.Popen(
+        ["bash", str(FOUNDRY_DIR / "anvil.sh")],
+        cwd=str(FOUNDRY_DIR),
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+
+    print("[setup] Waiting for Anvil node to start...", end="", flush=True)
+    for _ in range(15):
+        time.sleep(1)
+        print(".", end="", flush=True)
+        if _anvil_is_running():
+            print(" ready.")
+            return proc
+
+    log_fh.flush()
+    pytest.exit(
+        f"[setup] Anvil node did not start after 40 s "
         f"(see {log_path} for details)"
     )
 
@@ -182,28 +274,39 @@ def din_tmp():
 
 
 # ---------------------------------------------------------------------------
-# Managed services — compile, hardhat node, IPFS
+# Managed services — compile, chain node, IPFS
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session", autouse=True)
 def managed_services(din_tmp):
     """
-    Compile contracts, start a fresh Hardhat node, and ensure IPFS is running.
+    Compile contracts, start a fresh chain node, and ensure IPFS is running.
+
+    The chain node is Anvil when PLATFORM_DEPLOY_TOOLCHAIN is "foundry", else
+    the Hardhat node — either way it ends up listening on HARDHAT_RPC / chain-id
+    1337, so nothing downstream (task-contract deploys, dincli itself) needs to
+    know which one is running.
 
     This is the first session fixture that runs (all other autouse fixtures
     depend on it transitively via bootstrap). On teardown, any processes we
     started are terminated.
     """
     results_dir = din_tmp / "results"
-    hardhat_proc = None
+    chain_proc = None
     ipfs_proc = None
 
-    # 1. Compile contracts — ensures ABIs are fresh before any deploy
+    # 1. Compile contracts — task-level contract deploys and dump-abi tests
+    #    always need hardhat's ABIs/bytecode, regardless of deploy toolchain.
     _compile_contracts(results_dir)
+    if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
+        _build_foundry_contracts(results_dir)
 
-    # 2. Fresh Hardhat node (kill and restart for clean EVM state)
-    hardhat_proc = _start_fresh_hardhat_node(results_dir)
+    # 2. Fresh chain node (kill and restart for clean EVM state)
+    if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
+        chain_proc = _start_fresh_anvil_node(results_dir)
+    else:
+        chain_proc = _start_fresh_hardhat_node(results_dir)
 
     # 3. IPFS daemon (start if not already up)
     ipfs_proc = _ensure_ipfs_running(results_dir)
@@ -212,12 +315,12 @@ def managed_services(din_tmp):
 
     # Teardown — stop the processes we started
     print("\n[teardown] Stopping managed services...")
-    if hardhat_proc and hardhat_proc.poll() is None:
-        hardhat_proc.terminate()
+    if chain_proc and chain_proc.poll() is None:
+        chain_proc.terminate()
         try:
-            hardhat_proc.wait(timeout=10)
+            chain_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            hardhat_proc.kill()
+            chain_proc.kill()
     if ipfs_proc and ipfs_proc.poll() is None:
         ipfs_proc.terminate()
         try:

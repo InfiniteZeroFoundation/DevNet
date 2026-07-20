@@ -10,9 +10,15 @@ environment first, then `.env` at the repo root):
                      (default: ~/my_venvs/torchenv/bin/python, else sys.executable)
   NPX_BIN            npx binary used for hardhat compile/node/deploy
                      (default: newest ~/.nvm/versions/node/*/bin/npx, else `npx` on PATH)
+  FORGE_BIN          forge binary used for the foundry deploy/upgrade scripts
+                     (default: `forge` on PATH)
   IPFS_BIN           ipfs binary (default: `ipfs` on PATH, else /usr/local/bin/ipfs)
   DIN_TEST_TMPDIR    scratch dir for config/cache isolation and logs
                      (default: ~/tempdir/dincli)
+  PLATFORM_DEPLOY_TOOLCHAIN   "foundry" or "hardhat" — which platform deploy
+                     script test_deploy_platform_via_script runs (default:
+                     "foundry", matching `dincli system import-deployments`'s
+                     own default)
 """
 
 import os
@@ -85,19 +91,39 @@ TORCHENV_PYTHON = _resolve_python("TORCHENV_PYTHON", "torchenv")
 TORCHENV_SITE_PACKAGES = _env("TORCHENV_SITE_PACKAGES") or _venv_site_packages(TORCHENV_PYTHON)
 
 NPX_BIN = _resolve_npx()
+FORGE_BIN = _env("FORGE_BIN") or shutil.which("forge") or "forge"
 IPFS_BIN = _env("IPFS_BIN") or shutil.which("ipfs") or "/usr/local/bin/ipfs"
 
 DIN_TEMP = Path(_env("DIN_TEST_TMPDIR") or str(Path.home() / "tempdir" / "dincli"))
 
 
-# Platform deployment (PR 13: transparent proxies).
-# The four platform contracts are deployed + wired by the canonical hardhat
-# script (OZ upgrades plugin), NOT by dincli — dincli only imports the
-# resulting addresses via `system import-deployments`.
-# Foundry migration: when foundry/ gains an equivalent forge deploy script,
-# point HARDHAT_DIR/DEPLOY_CMD at it and keep DEPLOYMENTS_FILE as the handoff
-# (the forge script should write the same JSON shape, or import-deployments
-# grows a broadcast/run-latest.json parser).
+# Platform deployment (PR 13: transparent proxies; PR 35: foundry parity).
+# The four platform contracts are deployed + wired by a canonical script, NOT
+# by dincli — dincli only imports the resulting addresses via
+# `system import-deployments`. Both toolchains write the same
+# deployments/<network>.json address schema, so import-deployments accepts
+# either one unmodified.
 HARDHAT_DIR = DEVNET_ROOT / "hardhat"
-# dincli network "local" is hardhat's "localhost" (standalone `npx hardhat node`)
-DEPLOYMENTS_FILE = HARDHAT_DIR / "deployments" / "localhost.json"
+FOUNDRY_DIR = DEVNET_ROOT / "foundry"
+
+_VALID_DEPLOY_TOOLCHAINS = ("foundry", "hardhat")
+PLATFORM_DEPLOY_TOOLCHAIN = (_env("PLATFORM_DEPLOY_TOOLCHAIN") or "foundry").lower()
+if PLATFORM_DEPLOY_TOOLCHAIN not in _VALID_DEPLOY_TOOLCHAINS:
+    raise ValueError(
+        f"PLATFORM_DEPLOY_TOOLCHAIN must be one of {_VALID_DEPLOY_TOOLCHAINS}, "
+        f"got {PLATFORM_DEPLOY_TOOLCHAIN!r}"
+    )
+
+_DEPLOY_TOOLCHAIN_DIR = {"hardhat": HARDHAT_DIR, "foundry": FOUNDRY_DIR}[PLATFORM_DEPLOY_TOOLCHAIN]
+# dincli network "local" maps to "localhost" for both scripts' output filename.
+# conftest.py's managed_services fixture starts the matching chain backend for
+# PLATFORM_DEPLOY_TOOLCHAIN (Anvil for "foundry", Hardhat node for "hardhat"),
+# both on HARDHAT_RPC / chain-id 1337 (hardhat.config.ts's "localhost" network
+# is pinned to 1337 to match foundry/anvil.sh).
+DEPLOYMENTS_FILE = _DEPLOY_TOOLCHAIN_DIR / "deployments" / "localhost.json"
+
+# Standard dev-mnemonic account 0 (hardhat node and anvil both derive the same
+# address from "test test test ... junk"). Registered as the "dindao" wallet
+# by the bootstrap fixture; used as --sender for the foundry script, which
+# broadcasts via --unlocked rather than signing with a local private key.
+HARDHAT_DEV_ACCOUNT_0 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
