@@ -55,7 +55,7 @@ From [issues/staking-mechanism.md](../issues/staking-mechanism.md) (proposals ad
 - **Unified stake pool** for both validator roles (simpler accounting; slashers already wired). Revisit only if role risk profiles diverge.
 - **7-day unbonding, slashable while pending** — already correct. (Unbonding must outlast offence detection for the last GI participated in.)
 - **Random/rotational batch assignment above the stake floor.** Stake-weighted selection is **rejected**: it concentrates work in whales and weakens the cross-validator median. To be recorded in `rejected-ideas/`.
-- **No delegation until P5+** — the white paper specifies DPoS delegation, so this is an explicit scope call pending [discussion #46](https://github.com/InfiniteZeroFoundation/DevNet/discussions/46).
+- **No delegation until P5+** — the white paper specifies DPoS delegation; this scope call is now confirmed by Abraham (via Slack, 2026-07-21) in [discussion #46](https://github.com/InfiniteZeroFoundation/DevNet/discussions/46).
 
 ### 3.5 Quality-of-life
 
@@ -78,9 +78,9 @@ Governance hooks arrive via P3-5.1 (`onlyOwner` setters now, multisig/DAO path l
 | Decision | Recommendation | Where |
 |---|---|---|
 | Per-role min stake (auditor vs aggregator) | **No** — single floor for 2.0 | this doc / issue #37 |
-| Delegation in 2.0 | **No** — P5+; needs explicit white-paper alignment call | [Discussion #46](https://github.com/InfiniteZeroFoundation/DevNet/discussions/46) |
+| Delegation in 2.0 | ✅ **Resolved: No, P5+** — confirmed by Abraham (white-paper author), via Slack, 2026-07-21; not just Umer's recommendation | [Discussion #46](https://github.com/InfiniteZeroFoundation/DevNet/discussions/46) |
 | Stake floor economic grounding (cost-of-corruption model vs nominal constant) | Derive from P3-5.2 simulation + Sybil bound (`minStake × validator-to-participant ratio`) | with [tokenomics-design.md](tokenomics-design.md) simulation |
-| Tombstoning semantics (authority, slash %, accidental recovery) | Decide with S4/S5 slashing tiers | [Issue #38](https://github.com/InfiniteZeroFoundation/DevNet/issues/38) / [discussion #44](https://github.com/InfiniteZeroFoundation/DevNet/discussions/44) |
+| Tombstoning semantics (authority, slash %, accidental recovery) | ✅ **Resolved for 2.0: no permanent tombstoning** — jail/blacklist suffices (Abraham, via Slack, 2026-07-21). Full tombstoning semantics revisited once delegation lands. | [Issue #38](https://github.com/InfiniteZeroFoundation/DevNet/issues/38) / [discussion #44](https://github.com/InfiniteZeroFoundation/DevNet/discussions/44) |
 | Selection: stake as eligibility only vs weight | Eligibility only (weighting rejected) | recorded here; selection engine in [issues/validator_selection.md](../issues/validator_selection.md) |
 
 ## 6. Sequencing

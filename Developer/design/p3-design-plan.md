@@ -34,6 +34,8 @@ The consolidated list is [MECHANISM_DESIGN §9](MECHANISM_DESIGN.md). The protoc
 | [#45 — Tokenomics](https://github.com/InfiniteZeroFoundation/DevNet/discussions/45) | Emission shape & MAX_SUPPLY (5), fee denomination (4), `depositAndMint` retirement (8), burn/public-goods routing |
 | [#46 — White paper ↔ DevNet alignment](https://github.com/InfiniteZeroFoundation/DevNet/discussions/46) | Delegation scope, encrypted test data & key mapping, test-set resampling, commit-then-reveal, non-coin voting (whitepaper-summary §8 gap items 1–2, 5–7, 9, 11, 13) |
 
+**Status update (2026-07-21):** all three discussions are **resolved in substance** — Abraham answered every open item above via Slack rather than in-thread. The GitHub Discussion threads themselves still show zero comments; posting Abraham's answers publicly is a separate decision that hasn't been made yet, so treat the threads as formally open until that happens even though the underlying decisions are settled. Outcomes are recorded back into [MECHANISM_DESIGN §9](MECHANISM_DESIGN.md#9-consolidated-open-decision-list), [staking-design.md §5](staking-design.md), and [tokenomics-design.md §6](tokenomics-design.md).
+
 Decisions that stay internal (simulation-driven, no discussion needed): reward split percentages (3, P3-5.2 simulation) and per-model stake bounds (6, P3-5.1).
 
 ## White paper alignment
@@ -42,7 +44,7 @@ Decisions that stay internal (simulation-driven, no discussion needed): reward s
 
 ## Definition of done
 
-- [ ] Each child issue has an agreed design; decisions recorded back into [MECHANISM_DESIGN.md](MECHANISM_DESIGN.md)
-- [ ] Discussions #44/#45/#46 resolved
+- [ ] Each child issue has an agreed design; decisions recorded back into [MECHANISM_DESIGN.md](MECHANISM_DESIGN.md) — most of §9 is now resolved (see status update above), but reward split %, per-model stake bounds, and dispute bond size/window are still open
+- [ ] Discussions #44/#45/#46 resolved — decided in substance via Slack (2026-07-21), but **not yet checked off**: the GitHub threads themselves have zero comments and posting the answers publicly is a separate pending decision. Don't mark this done until the threads reflect it.
 - [ ] Issues on [project board 6](https://github.com/orgs/InfiniteZeroFoundation/projects/6) with owners
 - [ ] Mechanism spec frozen → contract work starts (P3-4.x, P3-5.x), audit prep per P3-6.3b
