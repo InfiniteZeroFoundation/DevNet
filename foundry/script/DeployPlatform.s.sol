@@ -80,10 +80,15 @@ contract DeployPlatform is Script {
         );
         console.log("DINModelRegistry proxy: ", dinModelRegistryProxy);
 
-        // 7. ProxyAdmin — shared across all four proxies; read from ERC1967 slot
-        //    of any proxy (they all share the same admin per OZ TransparentProxy)
-        address proxyAdmin = Upgrades.getAdminAddress(dinTokenProxy);
-        console.log("ProxyAdmin:             ", proxyAdmin);
+        // 7. ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all four
+        address proxyAdminToken       = Upgrades.getAdminAddress(dinTokenProxy);
+        address proxyAdminCoordinator = Upgrades.getAdminAddress(dinCoordinatorProxy);
+        address proxyAdminStake       = Upgrades.getAdminAddress(dinValidatorStakeProxy);
+        address proxyAdminRegistry    = Upgrades.getAdminAddress(dinModelRegistryProxy);
+        console.log("ProxyAdmin (token):     ", proxyAdminToken);
+        console.log("ProxyAdmin (coord):     ", proxyAdminCoordinator);
+        console.log("ProxyAdmin (stake):     ", proxyAdminStake);
+        console.log("ProxyAdmin (registry):  ", proxyAdminRegistry);
 
         vm.stopBroadcast();
 
@@ -93,7 +98,10 @@ contract DeployPlatform is Script {
             dinCoordinatorProxy,
             dinValidatorStakeProxy,
             dinModelRegistryProxy,
-            proxyAdmin
+            proxyAdminToken,
+            proxyAdminCoordinator,
+            proxyAdminStake,
+            proxyAdminRegistry
         );
     }
 
@@ -102,17 +110,23 @@ contract DeployPlatform is Script {
         address dinCoordinator,
         address dinValidatorStake,
         address dinModelRegistry,
-        address proxyAdmin
+        address proxyAdminToken,
+        address proxyAdminCoordinator,
+        address proxyAdminStake,
+        address proxyAdminRegistry
     ) internal {
         string memory json = "deployments";
         vm.serializeAddress(json, "dinToken", dinToken);
         vm.serializeAddress(json, "dinCoordinator", dinCoordinator);
         vm.serializeAddress(json, "dinValidatorStake", dinValidatorStake);
         vm.serializeAddress(json, "dinModelRegistry", dinModelRegistry);
+        vm.serializeAddress(json, "proxyAdminToken", proxyAdminToken);
+        vm.serializeAddress(json, "proxyAdminCoordinator", proxyAdminCoordinator);
+        vm.serializeAddress(json, "proxyAdminStake", proxyAdminStake);
         string memory finalJson = vm.serializeAddress(
             json,
-            "proxyAdmin",
-            proxyAdmin
+            "proxyAdminRegistry",
+            proxyAdminRegistry
         );
 
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
