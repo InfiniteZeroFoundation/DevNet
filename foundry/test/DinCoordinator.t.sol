@@ -55,6 +55,88 @@ contract DinCoordinatorTest is Test {
         );
     }
 
+    // ── depositAndMint: faucet retirement ─────────────────────────────────────
+
+    function test_depositAndMint_succeedsWhenFaucetActive() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        coordinator.depositAndMint{value: 0.001 ether}();
+        assertGt(token.balanceOf(alice), 0);
+    }
+
+    function test_depositAndMint_revertsWhenFaucetRetired() public {
+        coordinator.retireFaucet();
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(DinCoordinator.FaucetRetired.selector);
+        coordinator.depositAndMint{value: 0.001 ether}();
+    }
+
+    // ── depositAndMint: mint cap ───────────────────────────────────────────────
+
+    function test_depositAndMint_uncappedByDefault() public {
+        assertEq(coordinator.mintCap(), 0);
+
+        vm.deal(alice, 100 ether);
+        vm.prank(alice);
+        coordinator.depositAndMint{value: 100 ether}();
+        assertGt(token.balanceOf(alice), 0);
+    }
+
+    function test_depositAndMint_revertsWhenCapExceeded() public {
+        coordinator.setMintCap(500e18); // 0.001 ETH → 1000 DIN > 500
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(DinCoordinator.MintCapExceeded.selector);
+        coordinator.depositAndMint{value: 0.001 ether}();
+    }
+
+    function test_depositAndMint_succeedsAtExactlyTheCap() public {
+        uint256 capAmount = (0.001 ether * coordinator.dinPerEth()) / 1e18;
+        coordinator.setMintCap(capAmount);
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        coordinator.depositAndMint{value: 0.001 ether}();
+
+        assertEq(token.balanceOf(alice), capAmount);
+        assertEq(coordinator.totalMinted(), capAmount);
+    }
+
+    function test_depositAndMint_tracksTotalMinted() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        coordinator.depositAndMint{value: 0.001 ether}();
+
+        uint256 expected = (0.001 ether * coordinator.dinPerEth()) / 1e18;
+        assertEq(coordinator.totalMinted(), expected);
+    }
+
+    // ── retireFaucet ──────────────────────────────────────────────────────────
+
+    function test_retireFaucet_isOneWay() public {
+        coordinator.retireFaucet();
+        assertTrue(coordinator.faucetRetired());
+
+        vm.expectRevert(DinCoordinator.FaucetRetired.selector);
+        coordinator.retireFaucet();
+    }
+
+    function test_retireFaucet_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        coordinator.retireFaucet();
+    }
+
+    function test_setMintCap_rejectsAfterRetirement() public {
+        coordinator.retireFaucet();
+
+        vm.expectRevert(DinCoordinator.FaucetRetired.selector);
+        coordinator.setMintCap(1e18);
+    }
+
     // ── withdraw: treasury routing ────────────────────────────────────────────
 
     function test_withdraw_revertsWhenTreasuryNotSet() public {

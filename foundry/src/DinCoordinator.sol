@@ -26,10 +26,13 @@ contract DinCoordinator is
     uint256 public dinPerEth;
 
     address public treasury;
+    bool public faucetRetired;    // one-way flag
+    uint256 public mintCap;       // 0 = uncapped (DevNet default)
+    uint256 public totalMinted;
 
     // Reserved for future state variables at this inheritance level.
-    // Reduced from [50] by 1: treasury
-    uint256[49] private __gap;
+    // Reduced from [50] by 4: treasury, faucetRetired (packed), mintCap, totalMinted
+    uint256[46] private __gap;
 
     event EthDepositAndDINminted(
         address indexed user,
@@ -41,12 +44,16 @@ contract DinCoordinator is
     event ValidatorStakeContractUpdated(address indexed validatorStakeContract);
     event DinPerEthUpdated(uint256 newRate);
     event TreasuryUpdated(address indexed treasury);
+    event MintCapUpdated(uint256 newCap);
+    event FaucetRetiredEvent();
 
     error InvalidAddress();
     error ValidatorStakeContractNotSet();
     error ZeroValue();
     error TransferFailed();
     error TreasuryNotSet();
+    error FaucetRetired();
+    error MintCapExceeded();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -65,13 +72,15 @@ contract DinCoordinator is
 
     /// @notice Deposits ETH and mints the equivalent amount of DIN tokens to
     ///         the caller at the current exchange rate.
-    /// @dev Rate is a fixed-point value scaled by 1e18.
+    /// @dev Rate is a fixed-point value scaled by 1e18. Reverts if the faucet
+    ///      has been retired or if minting would exceed the cap (when set).
     function depositAndMint() external payable nonReentrant {
+        if (faucetRetired) revert FaucetRetired();
         if (msg.value == 0) revert ZeroValue();
-
         uint256 mintAmount = (msg.value * dinPerEth) / 1e18;
+        if (mintCap > 0 && totalMinted + mintAmount > mintCap) revert MintCapExceeded();
+        totalMinted += mintAmount;
         dinToken.mint(msg.sender, mintAmount);
-
         emit EthDepositAndDINminted(msg.sender, msg.value, mintAmount);
     }
 
@@ -83,6 +92,21 @@ contract DinCoordinator is
         if (balance == 0) return;
         (bool success, ) = payable(treasury).call{value: balance}("");
         if (!success) revert TransferFailed();
+    }
+
+    /// @notice Sets a cap on the total DIN that can be minted via depositAndMint.
+    ///         0 = uncapped. Cannot be changed after retireFaucet().
+    function setMintCap(uint256 newCap) external onlyOwner {
+        if (faucetRetired) revert FaucetRetired();
+        mintCap = newCap;
+        emit MintCapUpdated(newCap);
+    }
+
+    /// @notice Permanently disables depositAndMint. Cannot be undone.
+    function retireFaucet() external onlyOwner {
+        if (faucetRetired) revert FaucetRetired();
+        faucetRetired = true;
+        emit FaucetRetiredEvent();
     }
 
     /// @notice Sets the treasury address. Required before withdraw() can be called.
