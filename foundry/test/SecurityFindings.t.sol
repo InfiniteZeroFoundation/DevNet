@@ -96,6 +96,7 @@ contract SecurityFindingsTest is Test {
         registry.setFeeRouter(address(feeRouter));
         feeRouter.addFeeSource(address(registry));
         registry.setDinFees(1e18, 10e18, 1e17, 1e18);
+        stake.setSlashTreasury(address(treasury));
     }
 
     // ─────────────────────────────────────────────────────────────────────

@@ -117,6 +117,9 @@ abstract contract PlatformTest is Test {
 
         // Step 13: set DIN-denominated fees (must not be skipped; defaults are 0)
         p.dinModelRegistry.setDinFees(1e18, 10e18, 1e17, 1e18);
+
+        // Step 14: wire DinValidatorStake → DinTreasury for slash distribution
+        p.dinValidatorStake.setSlashTreasury(address(p.dinTreasury));
     }
 
     function _mintDin(
@@ -217,6 +220,10 @@ contract ProxyWiringTest is PlatformTest {
     function test_dinModelRegistry_dinFeesSet() public view {
         assertEq(p.dinModelRegistry.openSourceFeeDIN(), 1e18);
         assertEq(p.dinModelRegistry.proprietaryFeeDIN(), 10e18);
+    }
+
+    function test_dinValidatorStake_slashTreasuryWired() public view {
+        assertEq(p.dinValidatorStake.slashTreasury(), address(p.dinTreasury));
     }
 
     function test_depositAndMint_mintsDinViaProxy() public {

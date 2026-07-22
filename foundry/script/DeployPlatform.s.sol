@@ -119,6 +119,10 @@ contract DeployPlatform is Script {
         DINModelRegistry(dinModelRegistryProxy).setDinFees(1e18, 10e18, 1e17, 1e18);
         console.log("DINModelRegistry DIN fees set");
 
+        // 14. Wire DinValidatorStake → DinTreasury for slash distribution
+        DinValidatorStake(dinValidatorStakeProxy).setSlashTreasury(dinTreasuryProxy);
+        console.log("DinValidatorStake slashTreasury wired");
+
         // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; read from any one
         address proxyAdmin = Upgrades.getAdminAddress(dinTokenProxy);
         console.log("ProxyAdmin (DinToken):  ", proxyAdmin);
