@@ -7,6 +7,10 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
+interface IBurnableToken {
+    function burn(uint256 amount) external;
+}
+
 /// @title DIN Validator Stake
 /// @notice Manages validator staking, unbonding, slashing, and blacklisting for
 ///         the DIN protocol. Deployed once per network behind a Transparent Proxy.
@@ -29,14 +33,21 @@ contract DinValidatorStake is
     error PendingWithdrawalExists();
     error NoPendingWithdrawal();
     error WithdrawalNotReady();
+    error InvalidJailDuration();
+    error NotJailed();
+    error JailPeriodNotExpired();
+    error StakeBelowFloor();
+    error InvalidMinStake();
+    error InvalidUnbondingPeriod();
+    error InvalidStakeBounds();
 
     IERC20 public DIN_TOKEN;
     address public DIN_COORDINATOR;
 
     using SafeERC20 for IERC20;
 
-    uint256 public constant MIN_STAKE = 10 * 1e18;
-    uint64 public constant UNBONDING_PERIOD = 7 days;
+    uint256 public MIN_STAKE;
+    uint64 public UNBONDING_PERIOD;
     mapping(address => bool) public slasherContracts;
 
     enum ValidatorStatus {
@@ -72,11 +83,30 @@ contract DinValidatorStake is
     event ValidatorUnblacklisted(address indexed validator);
     event SlasherContractAdded(address indexed slasher);
     event SlasherContractRemoved(address indexed slasher);
+    event ValidatorJailed(
+        address indexed validator,
+        uint64 jailedUntil,
+        bytes32 indexed reason,
+        address indexed slasher
+    );
+    event ValidatorReactivated(address indexed validator);
+    event MinStakeUpdated(uint256 newMinStake);
+    event UnbondingPeriodUpdated(uint64 newPeriod);
+    event ModelStakeBoundsUpdated(uint256 indexed modelId, uint256 min, uint256 max);
+    event MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256 value);
+    event SlashTreasuryUpdated(address indexed treasury);
 
     mapping(address => ValidatorInfo) public validators;
 
+    struct ModelStakeBounds { uint256 min; uint256 max; }
+    mapping(uint256 => ModelStakeBounds) public modelMinStakeBounds;
+    uint256 public maxConcurrentRegistrationsPerStakeUnit;
+    address public slashTreasury;
+
     // Reserved for future state variables at this inheritance level.
-    uint256[50] private __gap;
+    // Reduced from [50] by 5: MIN_STAKE, UNBONDING_PERIOD, modelMinStakeBounds,
+    // maxConcurrentRegistrationsPerStakeUnit, slashTreasury
+    uint256[45] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -96,6 +126,8 @@ contract DinValidatorStake is
         __Ownable_init(msg.sender);
         DIN_TOKEN = IERC20(dinToken);
         DIN_COORDINATOR = dinCoordinator;
+        MIN_STAKE = 10 * 1e18;
+        UNBONDING_PERIOD = 7 days;
     }
 
     modifier onlyDinCoordinator() {
@@ -154,10 +186,8 @@ contract DinValidatorStake is
         emit SlasherContractRemoved(slasherContract);
     }
 
-    /// @notice Slashes a validator's stake by the requested amount.
-    /// @dev Active stake is consumed first; any remainder is taken from pending
-    ///      withdrawals. If total slashable stake is less than amount, the actual
-    ///      slashed amount is capped and returned rather than reverting.
+    /// @notice Slashes a validator's stake. 50% of the slashed amount is burned;
+    ///         50% is sent to slashTreasury (if set) or also burned as a fallback.
     /// @param validator Address of the validator to slash.
     /// @param amount Maximum token amount to slash.
     /// @param reason Arbitrary identifier for the slash event, emitted on-chain.
@@ -192,6 +222,15 @@ contract DinValidatorStake is
             }
         }
         _syncValidatorStatus(v);
+
+        uint256 burnAmount = actualAmount / 2;
+        uint256 treasuryAmount = actualAmount - burnAmount;
+        IBurnableToken(address(DIN_TOKEN)).burn(burnAmount);
+        if (slashTreasury != address(0)) {
+            DIN_TOKEN.safeTransfer(slashTreasury, treasuryAmount);
+        } else {
+            IBurnableToken(address(DIN_TOKEN)).burn(treasuryAmount);
+        }
 
         emit ValidatorSlashed(validator, actualAmount, reason, msg.sender);
         return actualAmount;
@@ -276,39 +315,90 @@ contract DinValidatorStake is
         emit ValidatorUnblacklisted(validator);
     }
 
-    /// @notice Returns the minimum token amount required to become an active validator.
-    /// @return The MIN_STAKE constant in wei.
-    function minStake() external pure returns (uint256) {
-        return MIN_STAKE;
+    /// @notice Updates the minimum stake required to become an active validator.
+    function setMinStake(uint256 newMinStake) external onlyOwner {
+        if (newMinStake == 0) revert InvalidMinStake();
+        MIN_STAKE = newMinStake;
+        emit MinStakeUpdated(newMinStake);
+    }
+
+    /// @notice Updates the unbonding period applied to new unstake requests.
+    /// @dev Does not retroactively affect in-flight withdrawals whose withdrawAvailableAt
+    ///      was already computed at the time unstake() was called.
+    function setUnbondingPeriod(uint64 newPeriod) external onlyOwner {
+        if (newPeriod == 0) revert InvalidUnbondingPeriod();
+        UNBONDING_PERIOD = newPeriod;
+        emit UnbondingPeriodUpdated(newPeriod);
+    }
+
+    /// @notice Stores per-model stake bounds (not yet enforced — follow-up task).
+    function setModelStakeBounds(uint256 modelId, uint256 min, uint256 max) external onlyOwner {
+        if (min > max) revert InvalidStakeBounds();
+        modelMinStakeBounds[modelId] = ModelStakeBounds(min, max);
+        emit ModelStakeBoundsUpdated(modelId, min, max);
+    }
+
+    /// @notice Stores the concurrent-registration cap per stake unit (not yet enforced).
+    function setMaxConcurrentRegistrationsPerStakeUnit(uint256 value) external onlyOwner {
+        maxConcurrentRegistrationsPerStakeUnit = value;
+        emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
+    }
+
+    /// @notice Sets the treasury address that receives 50% of every slashed amount.
+    function setSlashTreasury(address treasury_) external onlyOwner {
+        if (treasury_ == address(0)) revert InvalidAddress();
+        slashTreasury = treasury_;
+        emit SlashTreasuryUpdated(treasury_);
+    }
+
+    /// @notice Jails a validator for the given duration. Callable only by a registered
+    ///         slasher contract. Extends an existing jail if the new deadline is later.
+    function jailValidator(
+        address validator,
+        uint64 duration,
+        bytes32 reason
+    ) external onlySlasherContract {
+        if (validator == address(0)) revert InvalidAddress();
+        if (duration == 0) revert InvalidJailDuration();
+        ValidatorInfo storage v = validators[validator];
+        if (v.status == ValidatorStatus.Blacklisted) revert ValidatorIsBlacklisted();
+        uint64 newJailedUntil = uint64(block.timestamp) + duration;
+        if (newJailedUntil > v.jailedUntil) v.jailedUntil = newJailedUntil;
+        v.status = ValidatorStatus.Jailed;
+        emit ValidatorJailed(validator, v.jailedUntil, reason, msg.sender);
+    }
+
+    /// @notice Allows a jailed validator to exit jail once the period has expired
+    ///         and their stake is at or above the current MIN_STAKE.
+    function reactivate() external nonReentrant {
+        ValidatorInfo storage v = validators[msg.sender];
+        if (v.status != ValidatorStatus.Jailed) revert NotJailed();
+        if (block.timestamp < v.jailedUntil) revert JailPeriodNotExpired();
+        if (v.activeStake < MIN_STAKE) revert StakeBelowFloor();
+        v.jailedUntil = 0;
+        _syncValidatorStatus(v);
+        emit ValidatorReactivated(msg.sender);
     }
 
     /// @notice Returns true if the validator's status is Active.
-    /// @param validator Address to query.
-    /// @return True if the validator is currently in the Active state.
     function isValidatorActive(address validator) public view returns (bool) {
         ValidatorInfo storage info = validators[validator];
         return info.status == ValidatorStatus.Active;
     }
 
     /// @notice Returns a validator's current active stake.
-    /// @param validator Address to query.
-    /// @return Active stake balance in wei.
     function getStake(address validator) public view returns (uint256) {
         return validators[validator].activeStake;
     }
 
     /// @notice Returns the total amount that can be slashed from a validator,
     ///         including both active stake and any pending withdrawals.
-    /// @param validator Address to query.
-    /// @return Sum of activeStake and pendingWithdrawals in wei.
     function slashableStakeOf(address validator) public view returns (uint256) {
         ValidatorInfo storage info = validators[validator];
         return info.activeStake + info.pendingWithdrawals;
     }
 
     /// @notice Returns true if the given address is a registered slasher contract.
-    /// @param slasherContract Address to query.
-    /// @return True if the address has slasher authorisation.
     function isSlasherContract(
         address slasherContract
     ) public view returns (bool) {
