@@ -3,7 +3,10 @@ export interface PlatformAddresses {
   dinCoordinator: string;
   dinValidatorStake: string;
   dinModelRegistry: string;
-  proxyAdmin?: string;
+  proxyAdminToken?: string;
+  proxyAdminCoordinator?: string;
+  proxyAdminStake?: string;
+  proxyAdminRegistry?: string;
   implementations?: {
     dinToken?: string;
     dinCoordinator?: string;
