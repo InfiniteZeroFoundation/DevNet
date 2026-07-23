@@ -131,6 +131,8 @@ error TA_AlreadyVoted();
 error TA_CannotFinalizeEvaluation();
 /// @dev Auditor's validator status is not Active.
 error TA_AuditorNotActive();
+/// @dev S3 deviation threshold must be in the range [0, 100].
+error TA_InvalidDeviationThreshold();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator
