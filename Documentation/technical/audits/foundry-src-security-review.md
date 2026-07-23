@@ -12,7 +12,9 @@ This is a findings-only report. No contract in `foundry/src/` was modified. PoC 
 cd foundry && forge test --match-contract SecurityFindingsTest -vv
 ```
 
-Baseline confirmed before review: `forge build` and `forge test` both pass clean at the pinned commit (4/4 existing tests in `UpgradeValidation.t.sol`).
+Baseline confirmed before review: `forge build` and `forge test` both pass clean at the pinned commit (4/4 existing tests in `UpgradeValidation.t.sol`). Note for reviewers re-running the baseline: the 4 `UpgradeValidation.t.sol` tests can fail in some environments on an FFI/npx path issue inside the OZ upgrades-core CLI (`readBuildInfo`/`checkOutputSelection`) — reproduced independently in a second environment during the follow-up round below. Not related to any contract or PoC in this report; `SecurityFindingsTest` has no such dependency and is unaffected.
+
+**Update (follow-up round):** the Sybil-DoS and zero-CID findings (originally H-1/H-2) are elevated to Critical (now C-1/C-2), and C-1's gas estimate is replaced with real measured `forge` numbers plus a clearly-labeled extrapolation — see that section for the reasoning and the new PoC test that produced the numbers (`test_gas_finalizeEvaluation_and_slashAuditors_atScale`, `foundry/test/SecurityFindings.t.sol`). The two remaining High findings are renumbered H-1/H-2 accordingly; no finding content changed as part of the renumbering, only the labels.
 
 ---
 
@@ -20,18 +22,20 @@ Baseline confirmed before review: `forge build` and `forge test` both pass clean
 
 | Severity | Count |
 |---|---|
-| Critical | 0 |
-| High | 4 |
+| Critical | 2 |
+| High | 2 |
 | Medium | 4 |
 | Low / Informational | 8 |
 
 The headline risk isn't in the four upgradeable platform contracts — their proxy conversion is careful and the initializer/storage-layout checks in this report all came back clean. It's in the two **non-upgradeable task contracts** (`DINTaskCoordinator`, `DINTaskAuditor`), which run the actual federated-learning round: they have several ways for a single low-stake participant to permanently brick a Global Iteration, and no on-chain recovery once that happens (redeploy is the only path, per the documented "task contracts are disposable" design — but that design assumes *planned* redeployment, not mid-round griefing).
 
+Two of those ways — C-1 and C-2 below — are rated **Critical**, not High: both produce a permanent, unrecoverable brick of an entire Global Iteration on contracts that cannot be upgraded, and both are cheap or free for a single unprivileged participant to trigger, deliberately or (for C-2) even by accident. "Permanent brick + trivial-to-cheap trigger + zero recovery path" is the Critical bar here, not just "High-impact DoS."
+
 ---
 
-## High Severity
+## Critical Severity
 
-### H-1. Sybil-cheap gas-DoS: unbounded auditor/aggregator registration feeds four O(n) or worse loops with no pagination
+### C-1. Sybil-cheap gas-DoS: unbounded auditor/aggregator registration feeds four O(n) or worse loops with no pagination
 
 **Contracts / functions:**
 - `DINTaskAuditor.sol`: `_activeAuditorPool()` (L275-297), `slashAuditors()` (L620-659), `finalizeEvaluation()` (L552-612)
@@ -55,9 +59,24 @@ for (uint b = 0; b < batchCount; b++) {                 // O(batches)
 
 batches scales linearly with registered auditors (`batches ≈ registeredAuditors / auditorsPerBatch`), so total loop body executions are `O(registeredAuditors × modelsPerBatch)`, and every "missed vote" auditor costs one more external `slash()` call (~50k+ gas each with the SSTORE + event in `DinValidatorStake`).
 
-**Concrete cost math, using the contract's own documented parameters** (`Params` struct comments in `DINTaskAuditor.sol` L36-43 literally say "demo: 3… spec: 10" / "demo: 3… spec: 100"):
+**Cost math — real `forge` gas measurements, not just a closed-form estimate** (`Params` struct comments in `DINTaskAuditor.sol` L36-43 literally say "demo: 3… spec: 10" / "demo: 3… spec: 100"):
 
-- At spec scale (`auditorsPerBatch=10`, `modelsPerBatch=100`): **one single batch** already requires 1,000 `hasAuditedLM` reads before any slashing even starts. 50 batches (500 registered auditors — a modest number for a "decentralized" network) is 50,000 loop iterations plus up to 500 external `slash()` calls. That is well past any realistic L2 block gas limit (Optimism's is ~30M as of this review); the transaction reverts with out-of-gas every time it's retried, and there is **no smaller-batch entry point to work around it** — `slashAuditors`/`slashAggregators`/`finalizeT1Aggregation`/`finalizeT2Aggregation`/`finalizeEvaluation` all process the *entire* GI in one call.
+`Params.auditorsPerBatch`/`modelsPerBatch` is hardcoded to the demo defaults (3, 3) in the `DINTaskAuditor` constructor with no setter — there is no way to deploy or configure a batch with literal spec-scale internal dimensions (`auditorsPerBatch=10`, `modelsPerBatch=100`) without modifying the contract, which is out of scope for this findings-only review. What *is* measurable without touching the contract: real gas cost as **batch count** scales at demo internal size, via `test_gas_finalizeEvaluation_and_slashAuditors_atScale` in `foundry/test/SecurityFindings.t.sol`:
+
+| | @ 10 batches (30 registered auditors) | @ 30 batches (90 registered auditors) | measured marginal gas/batch |
+|---|---|---|---|
+| `finalizeEvaluation()` | 447,262 gas | 1,252,062 gas | 40,240 |
+| `slashAuditors()` | 290,310 gas | 900,500 gas | 30,509 |
+
+Batch-count scaling alone (inner size held constant at demo's 3×3) comes out close to linear — 3× the batches costs ~2.8×–3.1× the gas — which is expected for this loop shape and not on its own alarming. The real danger is the *second* dimension: at spec params each batch is also 111× bigger internally, which the batch-count slope above doesn't capture at all. That's the extrapolation below, done as an explicit, separate step rather than folded silently into the batch-count number.
+
+To project to literal spec scale requires one more step **on top of** that real slope, not instead of it: each batch at spec params is also internally 111× bigger (`10 × 100 = 1,000` `(auditor, model)` pair-checks per batch, vs. the demo `3 × 3 = 9` actually measured above). Dividing the measured marginal cost by 9 gives a real, measured **per-pair** cost (**4,471 gas/pair** for `finalizeEvaluation`), which can then be scaled by the spec-scale pair count and batch count — this second step is a structural (Big-O) extrapolation from the loop shape, applied on top of real data, clearly distinct from the first step which is a direct measurement:
+
+- **`finalizeEvaluation()` at full spec scale (50 batches, 500 registered auditors): ≈ 223,550,000 gas** — 4,471 gas/pair × 1,000 pairs/batch × 50 batches.
+- **`slashAuditors()` at full spec scale: ≈ 169,450,000 gas, and that is a *floor*, not a worst case.** `slashAuditors`'s innermost loop `break`s on the first missed vote it finds; the measurement above used the cheapest attack (Sybils that never vote at all, so the break fires immediately), which *undermeasures* the function's true worst case. An attacker who instead votes on every model but the last in their batch forces the full `modelsPerBatch` traversal before the break fires, pushing real worst-case `slashAuditors` gas toward `finalizeEvaluation`'s per-pair cost instead — i.e., toward the ~223M figure, not the ~169M one.
+
+Either number is **5.6×–7.5× over Optimism's ~30M block gas limit** as of this review. `slashAuditors`/`slashAggregators`/`finalizeT1Aggregation`/`finalizeT2Aggregation`/`finalizeEvaluation` all process the *entire* GI in one call with **no smaller-batch entry point to work around it** — the transaction reverts with out-of-gas on every retry, permanently, once registrant counts reach this range.
+
 - **And it's cheap to trigger deliberately.** `MIN_STAKE` is 10 DIN, bought at the default rate of 1,000,000 DIN/ETH (`DinCoordinator.initialize`, L58) — **0.00001 ETH per Sybil identity**. Registering 1,000 Sybil auditor addresses costs ~0.01 ETH plus L2 gas, and since staked DIN isn't consumed by registering (only by being slashed), the attacker can unstake and reuse it after the 7-day unbonding window. This is not a scaling accident that only bites at organic success — it's a cheap, repeatable attack a single actor can execute against any model's GI today.
 
 **Failure scenario:** An attacker registers a few hundred throwaway addresses as auditors for a target model's GI (trivial cost, no collusion needed with anyone else). Once the model owner calls `slashAuditors()` (or `finalizeEvaluation()`, or the coordinator's `slashAggregators()`/`finalizeT1Aggregation()`/`finalizeT2Aggregation()` with a matching flood of aggregator Sybils), the call runs out of gas every time. The GI is now stuck at that phase permanently — `DINTaskCoordinator`/`DINTaskAuditor` are not upgradeable, so there is no way to patch around it; the model owner's only recourse is to abandon the GI and redeploy new task contracts (losing all state and honest participants' in-flight work for that round).
@@ -66,7 +85,7 @@ batches scales linearly with registered auditors (`batches ≈ registeredAuditor
 
 ---
 
-### H-2. Zero-CID sentinel collision permanently bricks `finalizeT1Aggregation` / `finalizeT2Aggregation` for the whole GI
+### C-2. Zero-CID sentinel collision permanently bricks `finalizeT1Aggregation` / `finalizeT2Aggregation` for the whole GI
 
 **Contract / functions:** `DINTaskCoordinator.sol`, `finalizeT1Aggregation()` (L549-582), `finalizeT2Aggregation()` (L627-660), and the corresponding `submitT1Aggregation()` / `submitT2Aggregation()` which accept an unvalidated `_aggregationCID`.
 
@@ -94,7 +113,9 @@ Because `finalizeT1Aggregation`/`finalizeT2Aggregation` loop over **every batch 
 
 ---
 
-### H-3. No quorum enforced before Tier-1/Tier-2 aggregation is accepted as "final" — a single aggregator's output can become the consensus result
+## High Severity
+
+### H-1. No quorum enforced before Tier-1/Tier-2 aggregation is accepted as "final" — a single aggregator's output can become the consensus result
 
 **Contract / functions:** `DINTaskCoordinator.sol`, `finalizeT1Aggregation()` (L549-582), `finalizeT2Aggregation()` (L627-660).
 
@@ -106,7 +127,7 @@ Compare this to `DINTaskAuditor`, which explicitly enforces `minEligibilityQuoru
 
 ---
 
-### H-4. Predictable, grindable pseudo-randomness in auditor/aggregator batch shuffling enables collusion
+### H-2. Predictable, grindable pseudo-randomness in auditor/aggregator batch shuffling enables collusion
 
 **Contracts / functions:**
 - `DINTaskAuditor.sol`: `_shuffleAddressArray()` (L263-273), `_shuffleUintArray()` (L299-308), both used by `createAuditorsBatches()`
@@ -116,7 +137,7 @@ Compare this to `DINTaskAuditor`, which explicitly enforces `minEligibilityQuoru
 
 Both contracts derive their Fisher-Yates shuffle entropy from `blockhash(block.number - 1)` (address shuffle) and `block.timestamp` (model-index shuffle, further combined with `msg.sender`, which is always the same fixed coordinator address per model — contributing no real entropy). Both inputs are public and known *before* the batch-creation transaction is even submitted, since the previous block is already final by the time anyone calls `createAuditorsBatches`/`autoCreateTier1AndTier2`.
 
-The caller of these functions (the model owner, since both are gated `onlyOwner`/routed through the owner-only coordinator call) can therefore **compute the resulting batch assignment offline before submitting**, and can choose *when* to submit (i.e., wait for a block whose hash produces a favorable shuffle) since retrying costs only gas on an L2. Combined with H-1's cheap Sybil registration:
+The caller of these functions (the model owner, since both are gated `onlyOwner`/routed through the owner-only coordinator call) can therefore **compute the resulting batch assignment offline before submitting**, and can choose *when* to submit (i.e., wait for a block whose hash produces a favorable shuffle) since retrying costs only gas on an L2. Combined with C-1's cheap Sybil registration:
 
 **Failure scenario:** A model owner registers a handful of Sybil-controlled auditor addresses alongside honest ones. Before calling `createAuditorsBatches`, they simulate the shuffle for the current `blockhash(block.number - 1)` locally; if the resulting batch doesn't cluster ≥2 of their Sybils into the same batch as their target model (default `auditorsPerBatch=3`, `minEligibilityQuorum=2` — only 2-of-3 needed to control a batch's eligibility outcome), they simply wait for the next block and recompute. Once a favorable block arrives, they submit. Their colluding auditors then rubber-stamp their own (possibly low-quality or malicious) submitted model as eligible, defeating the purpose of independent auditor review. The same grinding applies to `autoCreateTier1AndTier2`'s aggregator/model shuffle.
 
@@ -227,14 +248,14 @@ All four constructors contain exactly one line, `_disableInitializers()`, with `
 
 ## Seeded Leads — Explicitly Confirmed or Refuted
 
-1. **`DINTaskAuditor.slashAuditors()` nested iteration (batches × auditors × models) may not fit in a block at production scale — is this a real DoS?** **Confirmed real.** See H-1. Not hypothetical: cheap to trigger deliberately via Sybil registration (≈0.00001 ETH per identity at the default exchange rate), no collusion needed.
-2. **`DINTaskAuditor._activeAuditorPool()` unbounded iteration over all registered auditors.** **Confirmed real**, same root cause as #1 (no registration cap) — folded into H-1 along with its `DINTaskCoordinator._activeAggregatorPool()` counterpart, which has the identical shape and wasn't in the seed list but is exposed to the same attack.
-3. **blockhash/timestamp shuffling in auditor selection — predictable by block producers; does slashing/selection fairness depend on unpredictability?** **Confirmed real.** See H-4. It matters more than block-producer-level MEV — the *caller* (model owner, who is not disinterested) can grind the timing of their own transaction against public, pre-known entropy, which is a lower bar than needing block-producer collusion.
+1. **`DINTaskAuditor.slashAuditors()` nested iteration (batches × auditors × models) may not fit in a block at production scale — is this a real DoS?** **Confirmed real, Critical.** See C-1. Not hypothetical: cheap to trigger deliberately via Sybil registration (≈0.00001 ETH per identity at the default exchange rate), no collusion needed, and real `forge` gas measurements (see C-1) put spec-scale cost at 5.6×–7.5× the L2 block gas limit.
+2. **`DINTaskAuditor._activeAuditorPool()` unbounded iteration over all registered auditors.** **Confirmed real**, same root cause as #1 (no registration cap) — folded into C-1 along with its `DINTaskCoordinator._activeAggregatorPool()` counterpart, which has the identical shape and wasn't in the seed list but is exposed to the same attack.
+3. **blockhash/timestamp shuffling in auditor selection — predictable by block producers; does slashing/selection fairness depend on unpredictability?** **Confirmed real.** See H-2. It matters more than block-producer-level MEV — the *caller* (model owner, who is not disinterested) can grind the timing of their own transaction against public, pre-known entropy, which is a lower bar than needing block-producer collusion.
 
 ---
 
 ## What I'd do differently with more time
 
-- Extend the PoC suite with a real (not just closed-form) gas measurement at spec-scale parameters (`auditorsPerBatch=10`, `modelsPerBatch=100`, ~500 registered auditors) to get an exact gas number instead of the order-of-magnitude estimate in H-1 — the flow to reach `slashAuditors`/`slashAggregators` requires driving a GI through 8+ phase transitions per participant, which is straightforward but time-consuming to script at that scale.
-- M-1 (copy-the-leader free-riding) and H-3 (missing quorum) interact: a full fix probably wants to land together (commit-reveal naturally gives you a place to also enforce "N-of-M revealed before finalize is callable").
+- ~~Extend the PoC suite with a real gas measurement at spec-scale parameters~~ — done in the follow-up round (`test_gas_finalizeEvaluation_and_slashAuditors_atScale`, see C-1). What's still not directly measurable: `Params.auditorsPerBatch`/`modelsPerBatch` has no setter, so the literal spec-scale *internal batch size* (as opposed to batch *count*, which is measured) can only be reached via a structural extrapolation on top of the real numbers, not a direct measurement — would need a contract change (out of scope) to close that last gap.
+- M-1 (copy-the-leader free-riding) and H-1 (missing quorum) interact: a full fix probably wants to land together (commit-reveal naturally gives you a place to also enforce "N-of-M revealed before finalize is callable").
 - Didn't attempt fuzzing `DinCoordinator`'s exchange-rate math or `DinValidatorStake`'s stake accounting (suggested in the task) — manual review didn't turn up an obvious overflow/precision target beyond L-2, and Solidity 0.8's built-in overflow checks close off the classic wraparound class. Would still run `forge fuzz` against `slash()`'s active/pending-withdrawal split accounting given more time, since that's the one place doing subtraction across two balances in the same function.

@@ -9,7 +9,7 @@ Forward-looking material for people building the DIN Protocol: plans, designs, p
 | Location | Contents |
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | Phase plans (P2–P4) and the full work-package table with owners, dependencies, and status |
-| [`design/`](design/) | Target designs not yet (fully) implemented: [DevNet 2.0 mechanism design](design/MECHANISM_DESIGN.md), [production staking/slashing spec](design/suggested-staking-mechanism.md), [feasibility report](design/feasibility-report.md) |
+| [`design/`](design/) | Target designs not yet (fully) implemented: [system architecture](design/din-architecture.md), [DevNet 2.0 mechanism design](design/MECHANISM_DESIGN.md), [P3 design plan](design/p3-design-plan.md) (coordination page for the P3 mechanism-design push), [tokenomics design](design/tokenomics-design.md), [staking design](design/staking-design.md), [white paper summary](design/whitepaper-summary.md), [production staking/slashing spec](design/suggested-staking-mechanism.md), [feasibility report](design/feasibility-report.md) |
 | [`issues/`](issues/) | Backlog of design/implementation write-ups per mechanism or feature (some with `design.md` / `implementation.md` / `simulation.md` subdocs) |
 | [`proposals/`](proposals/) | Tooling proposals — tools that don't exist yet (client labeling, model-owner contract/service builders) |
 | [`tasks/`](tasks/) | Contributor task specs (`task_DDMMYY_n.md`) |

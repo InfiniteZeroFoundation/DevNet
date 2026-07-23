@@ -20,7 +20,7 @@ In the DevNet flow, the manifest is not just static metadata. It is also runtime
 
 The current reference manifest is:
 
-- [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json)
+- [cache_model_0/manifest.json](../../cache_model_0/manifest.json)
 
 That file is the best concrete example of the fields the current services expect.
 
@@ -28,9 +28,9 @@ That file is the best concrete example of the fields the current services expect
 
 The main manifest-loading path is:
 
-- runtime object: [dincli/services/runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py)
-- manifest path helpers: [dincli/cli/utils.py](/home/azureuser/projects/devnet/dincli/cli/utils.py)
-- client service invocation example: [dincli/cli/client.py](/home/azureuser/projects/devnet/dincli/cli/client.py)
+- runtime object: [dincli/services/runtime.py](../../dincli/services/runtime.py)
+- manifest path helpers: [dincli/cli/utils.py](../../dincli/cli/utils.py)
+- client service invocation example: [dincli/cli/client.py](../../dincli/cli/client.py)
 
 High-level flow:
 
@@ -199,12 +199,12 @@ For current DevNet work:
 
 Primary local sources:
 
-- example manifest: [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json)
-- runtime object: [dincli/services/runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py)
-- service loading path: [dincli/cli/client.py](/home/azureuser/projects/devnet/dincli/cli/client.py)
-- existing higher-level manifest doc: [Documentation/public/manifest.md](/home/azureuser/projects/devnet/Documentation/public/manifest.md)
-- client-service technical doc: [Documentation/technical/services/clients.md](/home/azureuser/projects/devnet/Documentation/technical/services/clients.md)
-- DP design notes: [Developer/issues/DifferentialPrivacy.md](/home/azureuser/projects/devnet/Developer/issues/DifferentialPrivacy.md)
+- example manifest: [cache_model_0/manifest.json](../../cache_model_0/manifest.json)
+- runtime object: [dincli/services/runtime.py](../../dincli/services/runtime.py)
+- service loading path: [dincli/cli/client.py](../../dincli/cli/client.py)
+- existing higher-level manifest doc: [Documentation/public/manifest.md](../../Documentation/public/manifest.md)
+- client-service technical doc: [Documentation/technical/services/clients.md](../../Documentation/technical/services/clients.md)
+- DP design notes: [Developer/issues/DifferentialPrivacy.md](../../Developer/issues/DifferentialPrivacy.md)
 
 Related external references for DP-specific manifest fields:
 

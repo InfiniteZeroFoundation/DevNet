@@ -25,6 +25,8 @@ DIN devnet live on Optimism Sepolia. `dincli v0.1.0` released. Validator onboard
 **Duration:** ~16 weeks  
 **Current week:** Week 8 (June 30, 2026)
 
+> **Status (July 19, 2026):** P3 implementation is delayed pending finalized mechanism designs, while P4 work (din-sdk, din-daemon, din-dao, din-indexer) proceeds in parallel. The design push that unblocks P3 is coordinated in [design/p3-design-plan.md](design/p3-design-plan.md) and tracked in [issue #36](https://github.com/InfiniteZeroFoundation/DevNet/issues/36). Week-by-week dates below predate the team setup and are not binding; use WP IDs for scope and sequencing.
+
 ### Goal
 
 Deliver the economic, governance, and security foundations required to make DIN testnet-ready. This phase introduces staking, slashing, rewards, scoring, tokenomics, fee flows, DAO-governed protocol controls, and stronger network-level security guarantees.

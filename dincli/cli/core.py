@@ -7,9 +7,9 @@ from typer.core import TyperGroup
 
 
 class GlobalOptionsGroup(TyperGroup):
-    """Allows global options (--network, --wallet, --version) to appear anywhere in the CLI."""
+    """Allows global options (--network, --wallet, --demokey, --version) to appear anywhere in the CLI."""
 
-    GLOBAL_OPTIONS = {"--network", "--wallet", "--version", "-v"}
+    GLOBAL_OPTIONS = {"--network", "--wallet", "--demokey", "--version", "-v"}
 
     def parse_args(self, ctx, args: List[str]):
         global_args = []
@@ -19,7 +19,7 @@ class GlobalOptionsGroup(TyperGroup):
             arg = args[i]
             if arg in self.GLOBAL_OPTIONS:
                 global_args.append(arg)
-                if arg in ("--network", "--wallet") and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                if arg in ("--network", "--wallet", "--demokey") and i + 1 < len(args) and not args[i + 1].startswith("-"):
                     global_args.append(args[i + 1])
                     i += 1
                 i += 1
