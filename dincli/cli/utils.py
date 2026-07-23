@@ -325,85 +325,13 @@ def get_active_account_name(ctx_obj=None) -> str:
         return validate_account_name(config_name.strip())
     return "default"
 
-    
-stateDescription = [
-        "Awaiting DINTaskAuditor to be set",
-        "Awaiting DINTaskCoordinator to be set as slasher",
-        "Awaiting DINTaskAuditor to be set as slasher",
-        "Awaiting Genesis Model",
-        "Genesis Model Created",
-        "GI started",
-        "DIN aggregators registration started",
-        "DIN aggregators registration closed",
-        "DIN auditors registration started",
-        "DIN auditors registration closed",
-        "LM submissions started",
-        "LM submissions closed",
-        "Auditors batches created",
-        "LM submissions evaluation started",
-        "LM submissions evaluation closed",
-        "T1nT2B created",
-        "T1B aggregation started",
-        "T1B aggregation done",
-        "T2B aggregation started",
-        "T2B aggregation done",
-        "Auditors slashed",
-        "Validators slashed",
-        "GI ended"
-    ]
-
-states = [
-        "AwaitingDINTaskAuditorToBeSet",
-        "AwaitingDINTaskCoordinatorAsSlasher",
-        "AwaitingDINTaskAuditorAsSlasher",
-        "AwaitingGenesisModel",
-        "GenesisModelCreated",
-        "GIstarted",
-        "DINaggregatorsRegistrationStarted",
-        "DINaggregatorsRegistrationClosed",
-        "DINauditorsRegistrationStarted",
-        "DINauditorsRegistrationClosed",
-        "LMSstarted",
-        "LMSclosed",
-        "AuditorsBatchesCreated",
-        "LMSevaluationStarted",
-        "LMSevaluationClosed",
-        "T1nT2Bcreated",
-        "T1AggregationStarted",
-        "T1AggregationDone",
-        "T2AggregationStarted",
-        "T2AggregationDone",
-        "AuditorsSlashed",
-        "AggregatorsSlashed",
-        "GIended"
-    ]
-    
-
-GIstate_to_index = {state: idx for idx, state in enumerate(states)}  
-
-
-def GIstateToDes(GIstate: int) -> str:
-
-    if 0 <= GIstate < len(stateDescription):
-        return stateDescription[GIstate]
-    else:
-        return f"UnknownState({GIstate})"
-    
-
-def GIstateToStr(GIstate: int) -> str:
-    """
-    Convert GIstate integer (from Solidity enum) to its string representation.
-    Safe against errors by returning 'Unknown' for invalid states.
-    """
-    
-    
-    if 0 <= GIstate < len(states):
-        return states[GIstate]
-    else:
-        return f"UnknownState({GIstate})"
-    
-def GIstatestrToIndex(GIstateStr: str) -> int:    
-    return GIstate_to_index[GIstateStr]
+# GI-state enums/converters moved to dincli.sdk.state (issue #20). Re-exported so
+# existing `from dincli.cli.utils import GIstateToDes, ...` call sites keep
+# working. New code: import from dincli.sdk.state.
+from dincli.sdk.state import (  # noqa: F401,E402
+    GIState, GIstateToDes, GIstateToStr, GIstatestrToIndex,
+    stateDescription, states, GIstate_to_index,
+)
 
 
 def save_tasks(data: dict):

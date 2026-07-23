@@ -561,15 +561,24 @@ class DinContext:
         return gi
 
     def validate_GIstate_ET_given_GIstate(self, curr_GIstate: int, given_GIstate: str, msg: str) -> bool:
-        if GIstateToStr(curr_GIstate) != given_GIstate:
+        from dincli.sdk.state import validate_gi_state_equals
+        from dincli.sdk.errors import ValidationError
+        try:
+            validate_gi_state_equals(curr_GIstate, given_GIstate)
+        except ValidationError:
             self.console.print(f"[bold red]✗ {msg}. Current state: {GIstateToStr(curr_GIstate)} [/bold red]")
             raise typer.Exit(1)
         return True
 
     def validate_GIstate_LTE_given_GIstate(self, target_gi: int, curr_gi: int, curr_GIstate: int, given_GIstate: str, msg: str) -> bool:
-        if target_gi == curr_gi and curr_GIstate < GIstatestrToIndex(given_GIstate):
-            self.console.print(f"[bold red]✗ {msg}. Current state: {GIstateToStr(curr_GIstate)} [/bold red]")
-            raise typer.Exit(1)
+        from dincli.sdk.state import validate_gi_state_at_least
+        from dincli.sdk.errors import ValidationError
+        if target_gi == curr_gi:
+            try:
+                validate_gi_state_at_least(curr_GIstate, given_GIstate)
+            except ValidationError:
+                self.console.print(f"[bold red]✗ {msg}. Current state: {GIstateToStr(curr_GIstate)} [/bold red]")
+                raise typer.Exit(1)
         return True
 
     def get_model_base_dir(self, model_id: int) -> Path:
