@@ -2,22 +2,7 @@
 
 ---
 
-## P2: Devnet Launch and CLI Release *(Completed — April 2026)*
-
-**Timeline:** November 1, 2025 to April 30, 2026  
-**Duration:** ~24 weeks
-
-### Goal
-
-Deploy the DIN devnet on Optimism Sepolia, release `dincli`, and onboard validators and stakeholders to a publicly usable network.
-
-### Phase Outcome
-
-DIN devnet live on Optimism Sepolia. `dincli v0.1.0` released. Validator onboarding flows documented. Public devnet accessible.
-
-> **Still open from P2:** Foundry migration (partially done — Foundry test suite exists at `foundry/`; Hardhat remains active for deployment and verification tooling). Lower priority; not blocking P3.
-
----
+> **P2 (Devnet Launch and CLI Release) is complete.** See [UP_LOG.md](UP_LOG.md) for the phase writeup. This document covers active phases (P3–P4) only.
 
 ## P3: Cryptoeconomic Layer and Network Hardening
 
@@ -217,18 +202,6 @@ DIN currently defends against: crude poisoning (label-flip, sign-flip, scaling, 
 
 ---
 
-## Backlog — Unscheduled / Not Yet Phased
+## Backlog
 
-> Items identified but not yet assigned to a specific phase or formal Work Package.
-> Triage into P3/P4/P5 (promote to a numbered WP row above) as priorities firm up.
-> Goal: keep a visible backlog of independent, scopeable tasks so assignment doesn't
-> become reactive — open a corresponding GitHub issue as each item is triaged.
-
-| ID | Domain | Item | Description | Candidate Phase | Source / Rationale | Status |
-|----|--------|------|--------------|------------------|---------------------|--------|
-| BL-1 | dincli / SDK | Nonce management for concurrent tx submission | `DinContext.get_tx_params()` (`cli/context.py`) fetches the nonce via `get_transaction_count(address)` with no block param — defaults to `"latest"` (confirmed only), so two transactions fired before the first confirms collide on the same nonce today. Needs a nonce manager/lock before `dind` submits jobs concurrently from one account. | P3 (bug fix) or P4-1.2 | Surfaced during SDK interface proposal review, issue #20 (Jul 23, 2026) | 🆕 New |
-| BL-2 | Daemon / SDK | Wallet/session/tx signing keystone (`session.py`, `wallet.py`, `tx.py`) | `DinSession`, `SignerProvider`, and `tx.send()` — the private-key/signing surface of the SDK interface proposal (§2, §5b). Deliberately deferred out of task_220726_7 as its own focused review-and-build task given the security sensitivity. | P4-1.2 | task_220726_7 scope boundaries; SDK interface proposal v0.3 | 🆕 New |
-| BL-3 | Daemon | Validator hardware load-bearing / load-balancing | P4-2.2 covers hardware *detection* and *scoring* for task eligibility, not balancing load across concurrent jobs a validator is running. Distinct, substantial follow-on once multi-task daemon automation exists. | P4/P5 | Staffing discussion, Jul 23, 2026 | 💭 Idea |
-| BL-4 | Tooling | Client tooling layer | Dedicated tooling for clients (dataset configuration, etc.) — distinct from `dind`'s own automation (P4-4.1 covers daemon-driven client automation *once* configured, not the setup/config tooling itself). | P4/P5 | Staffing discussion, Jul 23, 2026 | 💭 Idea |
-| BL-5 | Tooling | Model-owner tooling layer | Dedicated tooling to help model owners author `manifest.json`/service files (`model.py`, `modelowner.py`, `client.py`, `auditor.py`, `aggregator.py`) — explicitly beyond `dind`'s job. P4-5.1 covers IPFS/registration automation, not authoring assistance. | P4/P5 | SDK proposal §6 review (issue #20); staffing discussion, Jul 23, 2026 | 💭 Idea |
-| BL-6 | Daemon | "Agentic dind" extension | Once P4 daemon automation is stable, extend `dind` toward more autonomous/agentic operation beyond scripted automation. Vision-stage, not yet scoped. | P5+ | Staffing discussion, Jul 23, 2026 | 💭 Idea |
+Unscheduled / not-yet-phased items moved to [BACK_LOG.md](BACK_LOG.md) to keep this document focused on active, phased work. Triage entries there into a numbered WP row above as priorities firm up.
