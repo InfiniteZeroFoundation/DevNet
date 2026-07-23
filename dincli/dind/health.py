@@ -7,11 +7,11 @@ find the endpoint even with ephemeral ports.
 import json
 import logging
 import os
-import shutil
 import time
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+from dincli.dind.capabilities import resource_snapshot
 from dincli.dind.state import StateStore
 
 logger = logging.getLogger("dincli")
@@ -64,13 +64,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         queue = self.state.get_job_counts()
 
         state_dir = str(self.state.db_path.parent)
-        try:
-            disk = shutil.disk_usage(state_dir)
-            disk_free = disk.free
-            disk_total = disk.total
-        except OSError:
-            disk_free = None
-            disk_total = None
+        snap = resource_snapshot(state_dir)
 
         return {
             "status": status,
@@ -80,9 +74,12 @@ class HealthHandler(BaseHTTPRequestHandler):
             "last_success": last_success,
             "queue": queue,
             "resources": {
-                "cpu_count": os.cpu_count(),
-                "disk_free_bytes": disk_free,
-                "disk_total_bytes": disk_total,
+                "cpu_count": snap["cpu_count"],
+                "disk_free_bytes": snap["disk_free_bytes"],
+                "disk_total_bytes": snap["disk_total_bytes"],
+                "ram_total_bytes": snap["ram_total_bytes"],
+                "ram_free_bytes": snap["ram_free_bytes"],
+                "cpu_speed_mhz": snap["cpu_speed_mhz"],
             },
         }
 

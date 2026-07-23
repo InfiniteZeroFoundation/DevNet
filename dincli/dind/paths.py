@@ -13,3 +13,7 @@ class StateDirs:
     @property
     def pid_path(self) -> Path:
         return self.state_dir / "dind.pid"
+
+    @property
+    def preferences_path(self) -> Path:
+        return self.state_dir / "preferences.json"

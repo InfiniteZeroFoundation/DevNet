@@ -1,7 +1,6 @@
-"""dind Typer app — start | stop | status (P4-1.1 scaffold).
+"""dind Typer app — start | stop | status | preferences | capabilities.
 
-All three commands accept --state-dir so lifecycle ops can't target the
-wrong daemon.
+All commands accept --state-dir so lifecycle ops can't target the wrong daemon.
 """
 
 import json
@@ -9,6 +8,7 @@ import signal
 import threading
 import time
 import urllib.request
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +22,12 @@ from dincli.dind.config import (
     validate_health_port,
 )
 from dincli.dind.paths import StateDirs
+from dincli.dind.preferences import (
+    Preferences,
+    VALID_RISK_TOLERANCES,
+    load_preferences,
+    save_preferences,
+)
 from dincli.dind.process import (
     is_process_running,
     read_pid,
@@ -207,3 +213,59 @@ def status(
         )
     except Exception:
         typer.echo("  (health endpoint unavailable)")
+
+
+preferences_app = typer.Typer(help="Local daemon preferences.")
+app.add_typer(preferences_app, name="preferences")
+
+
+PREFS_STATE_DIR = typer.Option(
+    None, "--state-dir", help=_STATE_DIR_HELP,
+)
+
+
+@preferences_app.command("show")
+def preferences_show(state_dir: str | None = PREFS_STATE_DIR) -> None:
+    resolved = resolve_state_dir(state_dir)
+    paths = StateDirs(resolved)
+    prefs = load_preferences(paths.preferences_path)
+    typer.echo(json.dumps(asdict(prefs), indent=2))
+
+
+@preferences_app.command("set")
+def preferences_set(
+    state_dir: str | None = PREFS_STATE_DIR,
+    domain: str | None = typer.Option(None, "--domain"),
+    risk_tolerance: str | None = typer.Option(None, "--risk-tolerance"),
+    min_reward: int | None = typer.Option(None, "--min-reward"),
+    privacy: list[str] | None = typer.Option(None, "--privacy"),
+) -> None:
+    resolved = resolve_state_dir(state_dir)
+    paths = StateDirs(resolved)
+    prefs = load_preferences(paths.preferences_path)
+
+    if risk_tolerance is not None and risk_tolerance not in VALID_RISK_TOLERANCES:
+        raise typer.BadParameter(
+            f"Must be one of: {', '.join(sorted(VALID_RISK_TOLERANCES))}"
+        )
+
+    if domain is not None:
+        prefs.domain = domain
+    if risk_tolerance is not None:
+        prefs.risk_tolerance = risk_tolerance
+    if min_reward is not None:
+        prefs.min_expected_reward = min_reward
+    if privacy is not None:
+        prefs.privacy_constraints = privacy
+
+    save_preferences(paths.preferences_path, prefs)
+    typer.echo(json.dumps(asdict(prefs), indent=2))
+
+
+@app.command()
+def capabilities(state_dir: str | None = STATE_DIR) -> None:
+    from dincli.dind.capabilities import detect_capabilities
+
+    resolved = resolve_state_dir(state_dir)
+    summary = detect_capabilities(resolved)
+    typer.echo(json.dumps(asdict(summary), indent=2))
