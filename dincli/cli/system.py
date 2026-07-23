@@ -857,14 +857,17 @@ def din_info(ctx: typer.Context,
 _DEPLOYMENT_CHAIN_NETWORK_FOR = {"local": "localhost"}
 
 # deployments/<network>.json keys (savePlatformAddresses in deploy/helpers.ts)
-# → din_info.json keys. proxy_admin is informational; the four contract keys
-# are required.
+# → din_info.json keys. proxy_admin_* keys are informational; the four contract
+# keys are required.
 _DEPLOYMENTS_TO_DIN_INFO = {
     "dinCoordinator": "coordinator",
     "dinToken": "token",
     "dinValidatorStake": "stake",
     "dinModelRegistry": "registry",
-    "proxyAdmin": "proxy_admin",
+    "proxyAdminToken": "proxy_admin_token",
+    "proxyAdminCoordinator": "proxy_admin_coordinator",
+    "proxyAdminStake": "proxy_admin_stake",
+    "proxyAdminRegistry": "proxy_admin_registry",
 }
 _REQUIRED_DEPLOYMENT_KEYS = ("dinToken", "dinCoordinator", "dinValidatorStake", "dinModelRegistry")
 
@@ -902,7 +905,7 @@ def import_deployments(ctx: typer.Context,
     are all mutually exclusive with each other.
 
     Only the platform address keys of the active network's din_info entry are
-    updated (coordinator, token, stake, registry, proxy_admin); everything
+    updated (coordinator, token, stake, registry, proxy_admin_*); everything
     else (representative, explorer, default CIDs, ...) is preserved.
     """
     console = ctx.obj.console
@@ -958,8 +961,14 @@ def import_deployments(ctx: typer.Context,
     console.print(f"[green]DIN Token:[/green] {entry.get('token')}")
     console.print(f"[yellow]Staking Contract:[/yellow] {entry.get('stake')}")
     console.print(f"[magenta]Registry:[/magenta] {entry.get('registry')}")
-    if entry.get("proxy_admin"):
-        console.print(f"[magenta]Proxy Admin:[/magenta] {entry.get('proxy_admin')}")
+    for _label, _key in [
+        ("Proxy Admin (token)", "proxy_admin_token"),
+        ("Proxy Admin (coordinator)", "proxy_admin_coordinator"),
+        ("Proxy Admin (stake)", "proxy_admin_stake"),
+        ("Proxy Admin (registry)", "proxy_admin_registry"),
+    ]:
+        if entry.get(_key):
+            console.print(f"[magenta]{_label}:[/magenta] {entry[_key]}")
 
 
 @app.command("reset-all")

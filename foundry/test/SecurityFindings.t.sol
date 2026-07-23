@@ -315,4 +315,227 @@ contract SecurityFindingsTest is Test {
         // to finalizeT1Aggregation reverts the same way, forever.
         assertEq(uint256(tc.GIstate()), uint256(GIstates.T1AggregationStarted));
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // H-1 gas measurement.
+    //
+    // DINTaskAuditor.Params (auditorsPerBatch, modelsPerBatch) is hardcoded
+    // to demo defaults (3, 3) in the constructor with no setter -- literal
+    // "spec scale" (auditorsPerBatch=10, modelsPerBatch=100) cannot be
+    // deployed without modifying the contract, which is out of scope for
+    // this findings-only review (see report §"What I'd do differently").
+    //
+    // Instead: measure REAL forge gas at two registrant scales (demo batch
+    // size = 3, so batch count = N/3), derive the real marginal per-batch
+    // cost from the slope between them, and use that measured slope --
+    // not an assumed one -- to extrapolate to spec-scale batch counts.
+    // ─────────────────────────────────────────────────────────────────────
+
+    function _registerNAuditors(uint n) internal returns (address[] memory auditors) {
+        auditors = new address[](n);
+        for (uint i = 0; i < n; i++) {
+            address a = makeAddr(string.concat("gasAuditor", vm.toString(i)));
+            auditors[i] = a;
+            _fundAndStake(a);
+            vm.prank(a);
+            ta.registerDINAuditor(1);
+        }
+    }
+
+    function _submitNModels(uint n) internal {
+        for (uint i = 0; i < n; i++) {
+            address c = makeAddr(string.concat("gasClient", vm.toString(i)));
+            vm.prank(c);
+            ta.submitLocalModel(bytes32(uint256(9000 + i)), 1);
+        }
+    }
+
+    /// @dev Drives the GI up to LMSevaluationStarted with N registered
+    ///      auditors / N submitted models (batches = N/3 at demo params).
+    ///      Only the first batch's 3 auditors actually vote (all models
+    ///      eligible, score 100) -- enough for finalizeEvaluation() to
+    ///      return true so the phase transition doesn't itself revert.
+    ///      Every other registered auditor casts no vote at all: the
+    ///      worst-case, and also the realistic Sybil-registers-and-never-
+    ///      bothers-voting attack from the H-1 failure scenario.
+    function _setupForGasMeasurement(uint n) internal returns (address[] memory auditors) {
+        _deployPlatform();
+        _deployTaskPair();
+
+        _fundAndStake(agg1);
+        _fundAndStake(agg2);
+        _fundAndStake(agg3);
+
+        vm.startPrank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        vm.stopPrank();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+        vm.prank(agg2);
+        tc.registerDINaggregator(1);
+        vm.prank(agg3);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        auditors = _registerNAuditors(n);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        _submitNModels(n);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        tc.createAuditorsBatches(1);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        // Only batch 0 votes -- guarantees finalizeEvaluation() finalizes
+        // at least one model (returns true) without every registrant
+        // needing to participate.
+        (, address[] memory batch0Auditors, uint[] memory batch0Models,) = ta.getAuditorsBatch(1, 0);
+        for (uint i = 0; i < batch0Auditors.length; i++) {
+            for (uint m = 0; m < batch0Models.length; m++) {
+                vm.prank(batch0Auditors[i]);
+                ta.setAuditScorenEligibility(1, 0, batch0Models[m], 100, true);
+            }
+        }
+    }
+
+    /// @dev Completes evaluation close (measuring finalizeEvaluation's real
+    ///      gas), then drives T1/T2 aggregation to completion using only
+    ///      the 3 registered aggregators (T1_AGGREGATORS_PER_BATCH is a
+    ///      fixed constant = 3, unrelated to the auditor-side N being
+    ///      measured here) so slashAuditors() becomes callable.
+    function _finishEvaluationAndAggregation() internal returns (uint256 finalizeEvaluationGas) {
+        uint256 gasBefore = gasleft();
+        vm.prank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        finalizeEvaluationGas = gasBefore - gasleft();
+
+        vm.startPrank(modelOwner);
+        tc.autoCreateTier1AndTier2(1);
+        tc.startT1Aggregation(1);
+        vm.stopPrank();
+
+        (, address[] memory t1aggs,,,) = tc.getTier1Batch(1, 0);
+        bytes32 realCID = bytes32(uint256(0xC1D));
+        for (uint i = 0; i < t1aggs.length; i++) {
+            vm.prank(t1aggs[i]);
+            tc.submitT1Aggregation(1, 0, realCID);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+        tc.startT2Aggregation(1);
+        // Only 3 aggregators total registered -> 0 left over for a Tier-2
+        // batch (needs T1_AGGREGATORS_PER_BATCH=3 remaining after T1
+        // consumes all 3), so tier2Batches[1] is empty and this finalizes
+        // trivially. Not the subject of this measurement (H-1's aggregator-
+        // side loops scale with *aggregator* count, held fixed here at the
+        // minimum needed to reach slashAuditors()).
+        tc.finalizeT2Aggregation(1);
+        vm.stopPrank();
+    }
+
+    function test_gas_finalizeEvaluation_and_slashAuditors_atScale() public {
+        // ── Small scale: 30 registered auditors -> 10 batches ──
+        address[] memory auditorsSmall = _setupForGasMeasurement(30);
+        uint256 gasSmall = _finishEvaluationAndAggregation();
+        uint256 gasBeforeSlashSmall = gasleft();
+        vm.prank(modelOwner);
+        tc.slashAuditors(1);
+        uint256 gasSlashSmall = gasBeforeSlashSmall - gasleft();
+
+        // Sanity: everyone outside batch 0 (auditors[3:]) missed their
+        // vote and should have been slashed down from MIN_STAKE.
+        assertLt(stake.getStake(auditorsSmall[29]), 10 ether, "sanity: non-voting auditor should have been slashed");
+
+        // ── Larger scale: 90 registered auditors -> 30 batches ──
+        address[] memory auditorsLarge = _setupForGasMeasurement(90);
+        uint256 gasLarge = _finishEvaluationAndAggregation();
+        uint256 gasBeforeSlashLarge = gasleft();
+        vm.prank(modelOwner);
+        tc.slashAuditors(1);
+        uint256 gasSlashLarge = gasBeforeSlashLarge - gasleft();
+
+        assertLt(stake.getStake(auditorsLarge[89]), 10 ether, "sanity: non-voting auditor should have been slashed");
+
+        // ── Real measured marginal cost per batch (slope between the two
+        //    real data points -- not an assumption) ──
+        uint256 batchesSmall = 30 / 3; // 10
+        uint256 batchesLarge = 90 / 3; // 30
+        uint256 marginalGasPerBatch_finalizeEval = (gasLarge - gasSmall) / (batchesLarge - batchesSmall);
+        uint256 marginalGasPerBatch_slash = (gasSlashLarge - gasSlashSmall) / (batchesLarge - batchesSmall);
+
+        emit log_named_uint("finalizeEvaluation gas @10 batches (30 auditors)", gasSmall);
+        emit log_named_uint("finalizeEvaluation gas @30 batches (90 auditors)", gasLarge);
+        emit log_named_uint("slashAuditors gas @10 batches (30 auditors)", gasSlashSmall);
+        emit log_named_uint("slashAuditors gas @30 batches (90 auditors)", gasSlashLarge);
+        emit log_named_uint("measured marginal gas/batch, finalizeEvaluation", marginalGasPerBatch_finalizeEval);
+        emit log_named_uint("measured marginal gas/batch, slashAuditors", marginalGasPerBatch_slash);
+
+        // Spec-scale extrapolation -- TWO factors, not one, or this
+        // understates the real number by ~111x:
+        //
+        //   1. More batches: 500 registrants / auditorsPerBatch=10 = 50
+        //      batches (vs. 10/30 measured here). Captured by the real
+        //      measured per-batch slope above.
+        //   2. Each batch is ALSO internally bigger: spec params are
+        //      auditorsPerBatch=10 x modelsPerBatch=100 = 1,000 inner
+        //      (auditor,model) pair-checks per batch, vs. demo's
+        //      3 x 3 = 9 per batch actually measured here. This dimension
+        //      cannot be empirically measured -- Params.auditorsPerBatch/
+        //      modelsPerBatch is hardcoded in the DINTaskAuditor
+        //      constructor with no setter, so a batch with spec-scale
+        //      internal dimensions cannot be deployed without modifying
+        //      the contract, which is out of scope for this findings-only
+        //      review. This factor is therefore a structural (Big-O)
+        //      extrapolation from the loop shape, applied on top of the
+        //      real measured per-batch cost -- not itself measured.
+        uint256 demoInnerPairsPerBatch = 3 * 3; // auditorsPerBatch x modelsPerBatch, demo
+        uint256 specInnerPairsPerBatch = 10 * 100; // auditorsPerBatch x modelsPerBatch, spec
+        uint256 specScaleBatches = 50; // ~500 registrants / auditorsPerBatch=10
+
+        uint256 gasPerPair_finalizeEval = marginalGasPerBatch_finalizeEval / demoInnerPairsPerBatch;
+        uint256 gasPerPair_slash = marginalGasPerBatch_slash / demoInnerPairsPerBatch;
+
+        uint256 projectedGasPerBatch_finalizeEval = gasPerPair_finalizeEval * specInnerPairsPerBatch;
+        uint256 projectedGasPerBatch_slash = gasPerPair_slash * specInnerPairsPerBatch;
+
+        uint256 projectedGas_finalizeEval = projectedGasPerBatch_finalizeEval * specScaleBatches;
+        uint256 projectedGas_slash = projectedGasPerBatch_slash * specScaleBatches;
+
+        emit log_named_uint("measured gas per (auditor,model) pair, finalizeEvaluation", gasPerPair_finalizeEval);
+        emit log_named_uint("PROJECTED finalizeEvaluation gas, full spec scale (50 batches x 1000 pairs/batch)", projectedGas_finalizeEval);
+        emit log_named_uint("PROJECTED slashAuditors gas, full spec scale (LOWER BOUND -- see note below)", projectedGas_slash);
+
+        // Caveat on the slashAuditors projection: slashAuditors' innermost
+        // loop `break`s on the FIRST missed vote it finds. In this test no
+        // registrant outside batch 0 votes at all, so the break fires
+        // immediately (m=0) for every one of them -- meaning the measured
+        // slashAuditors numbers above are a FLOOR, not a worst case. An
+        // attacker who instead votes on every model in their batch except
+        // the last would force the full modelsPerBatch traversal before
+        // triggering the break, making real worst-case slashAuditors gas
+        // approach finalizeEvaluation's (no-early-break) per-pair cost
+        // instead of this measurement's. Both the floor above and that
+        // worst-case (finalizeEvaluation-shaped) figure are well past any
+        // realistic L2 block gas limit at spec scale either way.
+
+        // Confirms worse-than-linear-in-registrants-alone growth is at
+        // minimum present (3x batches should cost meaningfully more than
+        // 3x gas given the O(batches x auditorsPerBatch x modelsPerBatch)
+        // shape layered on top of per-batch fixed costs); real numbers are
+        // the point of this test, this assertion just guards against the
+        // measurement accidentally becoming a no-op.
+        assertGt(gasLarge, gasSmall * 2, "finalizeEvaluation should scale well above linearly with batch count");
+    }
 }

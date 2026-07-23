@@ -47,14 +47,20 @@ async function main() {
   const dinModelRegistryAddress = await dinModelRegistry.getAddress();
   console.log("DINModelRegistry:", dinModelRegistryAddress);
 
-  const proxyAdmin = await getProxyAdminAddress(dinTokenAddress);
+  const proxyAdminToken       = await getProxyAdminAddress(dinTokenAddress);
+  const proxyAdminCoordinator = await getProxyAdminAddress(dinCoordinatorAddress);
+  const proxyAdminStake       = await getProxyAdminAddress(dinValidatorStakeAddress);
+  const proxyAdminRegistry    = await getProxyAdminAddress(dinModelRegistryAddress);
 
   savePlatformAddresses(hre.network.name, {
     dinToken: dinTokenAddress,
     dinCoordinator: dinCoordinatorAddress,
     dinValidatorStake: dinValidatorStakeAddress,
     dinModelRegistry: dinModelRegistryAddress,
-    proxyAdmin,
+    proxyAdminToken,
+    proxyAdminCoordinator,
+    proxyAdminStake,
+    proxyAdminRegistry,
   });
 
   console.log(`Saved deployments/${hre.network.name}.json`);

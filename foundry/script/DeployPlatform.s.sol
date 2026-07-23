@@ -123,9 +123,19 @@ contract DeployPlatform is Script {
         DinValidatorStake(dinValidatorStakeProxy).setSlashTreasury(dinTreasuryProxy);
         console.log("DinValidatorStake slashTreasury wired");
 
-        // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; read from any one
-        address proxyAdmin = Upgrades.getAdminAddress(dinTokenProxy);
-        console.log("ProxyAdmin (DinToken):  ", proxyAdmin);
+        // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all six
+        address proxyAdminTreasury    = Upgrades.getAdminAddress(dinTreasuryProxy);
+        address proxyAdminToken       = Upgrades.getAdminAddress(dinTokenProxy);
+        address proxyAdminCoordinator = Upgrades.getAdminAddress(dinCoordinatorProxy);
+        address proxyAdminFeeRouter   = Upgrades.getAdminAddress(dinFeeRouterProxy);
+        address proxyAdminStake       = Upgrades.getAdminAddress(dinValidatorStakeProxy);
+        address proxyAdminRegistry    = Upgrades.getAdminAddress(dinModelRegistryProxy);
+        console.log("ProxyAdmin (treasury):  ", proxyAdminTreasury);
+        console.log("ProxyAdmin (token):     ", proxyAdminToken);
+        console.log("ProxyAdmin (coord):     ", proxyAdminCoordinator);
+        console.log("ProxyAdmin (feeRouter): ", proxyAdminFeeRouter);
+        console.log("ProxyAdmin (stake):     ", proxyAdminStake);
+        console.log("ProxyAdmin (registry):  ", proxyAdminRegistry);
 
         vm.stopBroadcast();
 
@@ -136,7 +146,12 @@ contract DeployPlatform is Script {
             dinFeeRouterProxy,
             dinValidatorStakeProxy,
             dinModelRegistryProxy,
-            proxyAdmin
+            proxyAdminTreasury,
+            proxyAdminToken,
+            proxyAdminCoordinator,
+            proxyAdminFeeRouter,
+            proxyAdminStake,
+            proxyAdminRegistry
         );
     }
 
@@ -147,7 +162,12 @@ contract DeployPlatform is Script {
         address dinFeeRouter,
         address dinValidatorStake,
         address dinModelRegistry,
-        address proxyAdmin
+        address proxyAdminTreasury,
+        address proxyAdminToken,
+        address proxyAdminCoordinator,
+        address proxyAdminFeeRouter,
+        address proxyAdminStake,
+        address proxyAdminRegistry
     ) internal {
         string memory json = "deployments";
         vm.serializeAddress(json, "dinTreasury", dinTreasury);
@@ -156,10 +176,15 @@ contract DeployPlatform is Script {
         vm.serializeAddress(json, "dinFeeRouter", dinFeeRouter);
         vm.serializeAddress(json, "dinValidatorStake", dinValidatorStake);
         vm.serializeAddress(json, "dinModelRegistry", dinModelRegistry);
+        vm.serializeAddress(json, "proxyAdminTreasury", proxyAdminTreasury);
+        vm.serializeAddress(json, "proxyAdminToken", proxyAdminToken);
+        vm.serializeAddress(json, "proxyAdminCoordinator", proxyAdminCoordinator);
+        vm.serializeAddress(json, "proxyAdminFeeRouter", proxyAdminFeeRouter);
+        vm.serializeAddress(json, "proxyAdminStake", proxyAdminStake);
         string memory finalJson = vm.serializeAddress(
             json,
-            "proxyAdmin",
-            proxyAdmin
+            "proxyAdminRegistry",
+            proxyAdminRegistry
         );
 
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
