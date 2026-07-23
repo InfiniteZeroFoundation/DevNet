@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-torch = pytest.importorskip("torch")
+try:
+    import torch
+except ImportError as exc:
+    raise ImportError(
+        "torch is required for tests/test_cache_client_dp.py but is not installed "
+        "in this environment"
+    ) from exc
 
 
 def load_client_module():

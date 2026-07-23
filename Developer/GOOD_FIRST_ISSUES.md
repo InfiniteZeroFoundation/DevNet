@@ -92,16 +92,15 @@ Important framing:
 
 Code and docs to review first:
 
-- [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py)
-- [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json)
-- [cache_model_0/services/aggregator.py](/home/azureuser/projects/devnet/cache_model_0/services/aggregator.py)
-- [dincli/services/runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py)
-- [dincli/cli/client.py](/home/azureuser/projects/devnet/dincli/cli/client.py)
-- [dincli/services/client.py](/home/azureuser/projects/devnet/dincli/services/client.py)
-- [tests/test_cache_client_dp.py](/home/azureuser/projects/devnet/tests/test_cache_client_dp.py)
-- [Developer/issues/DifferentialPrivacy.md](/home/azureuser/projects/devnet/Developer/issues/DifferentialPrivacy.md)
-- [Documentation/technical/services/clients.md](/home/azureuser/projects/devnet/Documentation/technical/services/clients.md)
-- [Documentation/technical/manifest.md](/home/azureuser/projects/devnet/Documentation/technical/manifest.md)
+- [cache_model_0/services/client.py](../cache_model_0/services/client.py)
+- [cache_model_0/manifest.json](../cache_model_0/manifest.json)
+- [cache_model_0/services/aggregator.py](../cache_model_0/services/aggregator.py)
+- [dincli/services/runtime.py](../dincli/services/runtime.py)
+- [dincli/cli/client.py](../dincli/cli/client.py)
+- [tests/test_cache_client_dp.py](../tests/test_cache_client_dp.py)
+- [Developer/issues/DifferentialPrivacy.md](../Developer/issues/DifferentialPrivacy.md)
+- [Documentation/technical/services/clients.md](../Documentation/technical/services/clients.md)
+- [Documentation/technical/manifest.md](../Documentation/technical/manifest.md)
 
 Related reference material (Note: TKNN-Shapley is rejected for client model scoring due to FL privacy constraints - see [Rejected Ideas: TKNN-Shapley](issues/../rejected-ideas/tknn-shapley.md)):
 
@@ -144,10 +143,9 @@ Current focus areas:
 - building data staging, auto-labeling, and quality analytics into `dincli` and client services.
 
 #### Curated Review Packet
-- [Developer/issues/client-data-labeling.md](/home/azureuser/projects/devnet/Developer/issues/client-data-labeling.md)
-- [Developer/proposals/client-labeling.md](/home/azureuser/projects/devnet/Developer/proposals/client-labeling.md)
-- [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py)
-- [dincli/services/client.py](/home/azureuser/projects/devnet/dincli/services/client.py)
+- [Developer/issues/client-data-labeling.md](../Developer/issues/client-data-labeling.md)
+- [Developer/proposals/client-labeling.md](../Developer/proposals/client-labeling.md)
+- [cache_model_0/services/client.py](../cache_model_0/services/client.py)
 
 ---
 

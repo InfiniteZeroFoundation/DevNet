@@ -34,7 +34,7 @@ Good contributors challenge assumptions, question tradeoffs, and propose alterna
 **Testing**: improve coverage  
 **Research**: DP integration, contribution scoring, validator economics
 
-For issue-specific contributor packets, review questions, and curated reading lists, start with [GOOD_FIRST_ISSUES.md](/home/azureuser/projects/devnet/Developer/GOOD_FIRST_ISSUES.md) and then open the detailed issue linked from there.
+For issue-specific contributor packets, review questions, and curated reading lists, start with [GOOD_FIRST_ISSUES.md](GOOD_FIRST_ISSUES.md) and then open the detailed issue linked from there.
 
 ## Submitting PRs
 

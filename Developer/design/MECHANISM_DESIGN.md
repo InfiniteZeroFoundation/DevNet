@@ -62,7 +62,7 @@ Grounding: everything below references `foundry/src/` as of `develop`.
 ### Open decisions
 
 - Per-role min stake (auditor vs aggregator) — recommend **no** for 2.0, single floor.
-- Delegation — out of scope until P5+.
+- Delegation — out of scope until P5+. ✅ Confirmed (Abraham, via Slack, 2026-07-21), not just Umer's recommendation.
 
 ---
 
@@ -87,10 +87,10 @@ Grounding: everything below references `foundry/src/` as of `develop`.
 - **Full slash:** entire slashable stake (active + unbonding) + blacklist. Reserved for provable malice (S4) and recidivism (S5).
 - **Jailing:** `_syncValidatorStatus` already produces a Jailed state below min stake; keep — jailed validators cannot register until they top up.
 
-### Slashed-stake destination (decision required in P3-4.2)
+### Slashed-stake destination (resolved, P3-4.2)
 
-Options: (a) burn, (b) treasury, (c) redistribute to honest validators of the same GI, (d) split.
-**Recommendation: split — 50% burn / 50% treasury.** Burning creates a deflationary sink and avoids perverse incentives (validators profiting from peers being slashed encourages false disputes); the treasury half funds dispute adjudication costs. Do **not** redistribute to the reporting validator beyond a fixed dispute bounty (see below). Today's behaviour (tokens stranded in the stake contract) is an accidental burn — make it explicit either way.
+Options were: (a) burn, (b) treasury, (c) redistribute to honest validators of the same GI, (d) split.
+✅ **Resolved (Abraham, via Slack, 2026-07-21): split — 50% burn / 50% treasury.** Burning creates a deflationary sink and avoids perverse incentives (validators profiting from peers being slashed encourages false disputes); the treasury half funds dispute adjudication costs. Do **not** redistribute to the reporting validator beyond a fixed dispute bounty (see below). Today's behaviour (tokens stranded in the stake contract) is an accidental burn — make it explicit either way.
 
 ### Dispute resolution (P3-4.3)
 
@@ -171,7 +171,7 @@ T1/T2 outputs are deterministic functions of accepted inputs ⇒ verifiable by r
 ### Utility (demand sinks)
 
 1. **Staking** — validators must hold and lock DIN (the primary sink).
-2. **Fees** — model-owner fees payable in DIN (see migration note in §8; today they're ETH).
+2. **Fees** — on-chain protocol fees (registration, manifest updates) payable in DIN; the per-GI validator network fee stays in ETH (see the resolved denomination decision in §8; today all fees are ETH).
 3. **Reward-pool deposits** — model owners pre-fund GI pools in DIN.
 4. **Governance** — future DAO weight (P5+, design hook only).
 
@@ -179,10 +179,10 @@ T1/T2 outputs are deterministic functions of accepted inputs ⇒ verifiable by r
 
 | Flow | Mechanism | 2.0 design |
 |---|---|---|
-| **Mint — deposit** | `depositAndMint` ETH→DIN at `dinPerEth` (exists) | Keep for devnet as the faucet/on-ramp; the deposited ETH backing should route to treasury, not `owner()` withdrawal. Flag: this is effectively an unlimited mint at a fixed admin-set rate — acceptable for devnet, must be capped or replaced before any real-value network. |
-| **Mint — emission** | None today | New emission contract (P3-5.2): per-GI reward subsidy, **diminishing schedule** (recommend geometric decay per epoch), hard `MAX_SUPPLY` cap, inflation guard (per-GI mint ceiling), mint triggers tied to GI lifecycle events only. |
+| **Mint — deposit** | `depositAndMint` ETH→DIN at `dinPerEth` (exists) | ✅ **Resolved:** keep active (faucet mode) for devnet; the deposited ETH backing should route to treasury, not `owner()` withdrawal. **Cap on testnet. Retire on mainnet**, replaced by either a proper on-ramp/ICO or a validator-airdrop program rewarding testnet participants — both kept open, final model TBD. |
+| **Mint — emission** | None today | New emission contract (P3-5.2): per-GI reward subsidy, ✅ **geometric decay per epoch confirmed**, inflation guard (per-GI mint ceiling) tied to GI lifecycle events only. `MAX_SUPPLY`: ✅ **resolved as deliberately open/dynamic for now** — no hard cap at freeze time, supply governed by issuance vs. burn, hard cap possible later via governance once economics are proven. |
 | **Burn — slashing** | Accidental (stranded in stake contract) | Explicit: slashed-stake burn share (§4). |
-| **Burn — fees** | None | Optional: burn a fraction of protocol fees (decide in P3-5.3; start at 0%, keep the hook). |
+| **Burn — fees** | None | ✅ **Resolved:** burn a fraction of *both* on-chain protocol fees and validator network fees (dual sources, P3-5.3), start at 0%, keep the hook. Reserve a public-goods routing slot alongside `{validatorPool, treasury, burn, storage}` now even though it stays unfunded initially. |
 | **Treasury** | None (owner-withdraw patterns) | Dedicated treasury address/contract receiving: network fee split, slashed-stake share, deposit backing. DAO-controlled spend (multisig path per Roadmap §1). |
 
 ### Modelling requirement (P3-5.2, before contracts)
@@ -197,13 +197,13 @@ Simulate: does the pool + emission produce stable validator income at target / 1
 
 ### Fee lines
 
-| Fee | Payer | When | Exists today? | Routing |
-|---|---|---|---|---|
-| **Model registration fee** (open-source vs proprietary tiers) | Model owner | `requestModelRegistration` | ✅ (ETH, in `DINModelRegistry`, owner-withdrawable) | → treasury (change from `withdrawFees(owner)`) |
-| **Manifest update fee** | Model owner | `requestManifestUpdate` | ✅ (ETH) | → treasury |
-| **Per-GI service fee** | Model owner | Precondition of `startGI` | ❌ — this **is** the reward-pool deposit (§5); fee and pool are one flow | → validator pool (95%) + treasury network fee (5%) |
-| **Storage cost line item** | Model owner | Per-GI, alongside service fee | ❌ | Design the routing slot now, keep at 0 until Filecoin migration (RES-1) |
-| **Dispute bond** | Disputing validator | Dispute open | ❌ | Returned + bounty if upheld; → treasury if frivolous |
+| Fee | Payer | When | Exists today? | Denomination (resolved) | Routing |
+|---|---|---|---|---|---|
+| **Model registration fee** (open-source vs proprietary tiers) | Model owner | `requestModelRegistration` | ✅ (ETH, in `DINModelRegistry`, owner-withdrawable) | On-chain protocol fee → **DIN** | → treasury (change from `withdrawFees(owner)`) |
+| **Manifest update fee** | Model owner | `requestManifestUpdate` | ✅ (ETH) | On-chain protocol fee → **DIN** | → treasury |
+| **Per-GI service fee** | Model owner | Precondition of `startGI` | ❌ — this **is** the reward-pool deposit (§5); fee and pool are one flow | Validator network fee → **ETH** (model owners already pay gas in ETH; a DIN requirement adds friction) | → validator pool (95%) + treasury network fee (5%) |
+| **Storage cost line item** | Model owner | Per-GI, alongside service fee | ❌ | Validator network fee → ETH, same reasoning as service fee | Design the routing slot now, keep at 0 until Filecoin migration (RES-1) |
+| **Dispute bond** | Disputing validator | Dispute open | ❌ | Validator network fee → ETH | Returned + bounty if upheld; → treasury if frivolous |
 
 ### Routing contract (P3-5.3)
 
@@ -211,7 +211,12 @@ Single fee-router with DAO-settable split fractions: `modelOwner → {validatorP
 
 ### Denomination decision
 
-Registration fees are ETH today; staking/rewards are DIN. **Recommend converging on DIN for all protocol fees in 2.0** (single-asset accounting, reinforces token utility; the `depositAndMint` on-ramp makes acquisition trivial on devnet). Migration: add DIN-denominated fee params alongside, deprecate ETH fees after one release. If ETH fees are kept, the router must handle both assets — added complexity for no devnet benefit.
+✅ **Resolved (Abraham, via Slack, 2026-07-21) — a split, not a full DIN migration.** Registration/manifest fees are ETH today; staking/rewards are DIN. The resolved split:
+
+- **On-chain protocol fees** (registration, manifest updates, staking, rewards) → **DIN** — single-asset accounting, reinforces token utility, and `depositAndMint` makes acquisition trivial on devnet.
+- **Validator network fees** (model owner → validator, i.e. the per-GI service fee, storage line item, dispute bond) → **stay in ETH** — model owners already pay gas in ETH; requiring them to also hold DIN just to pay validators adds friction the on-ramp doesn't fully remove. Mirrors how Ethereum uses ETH for gas without forcing a separate token for network usage.
+
+Migration: add DIN-denominated params for the protocol-fee lines only, deprecate their ETH variants after one release. The fee router must still handle both assets (DIN for protocol fees, ETH for network fees) — this is accepted complexity now, not deferred.
 
 ### Dynamic fees
 
@@ -221,21 +226,28 @@ Admin/DAO-settable base rate + per-role multipliers (P3-5.3). No algorithmic (de
 
 ## 9. Consolidated open-decision list
 
-Decisions that must be made (with owner + roadmap slot) before DevNet 2.0 contracts freeze:
+Decisions that must be made (with owner + roadmap slot) before DevNet 2.0 contracts freeze. Items 1, 4, 5, 8–11 are **resolved** (Abraham, CEO/white-paper author, via Slack, 2026-07-21) pending the discussion threads being updated to reflect it — see [`p3-design-plan.md`](p3-design-plan.md).
 
-1. **Slashed-stake destination** — burn/treasury/split (rec: 50/50). Owner: Umer, P3-4.2.
-2. **Partial-slash fraction & S3 deviation threshold** — needs P3-SCR empirical data; shadow-mode first. Owner: Umer, P3-4.1 + P3-SCR.
+1. **Slashed-stake destination** — ✅ **Resolved: 50% burn / 50% treasury.** Burn is a deflationary sink; treasury funds dispute adjudication. Reporters get a fixed bounty only, never a share of the slash. Owner: Umer, P3-4.2.
+2. **Partial-slash fraction & S3 deviation threshold** — still open, needs P3-SCR empirical data; shadow-mode first. Abraham's reply layered an Ethereum-style penalty *framework* on top of this (not yet a fraction/threshold number): a correlation penalty scaling with how many validators are slashed in a short window, ejection to a draining withdrawal queue, and an inactivity leak for persistent offline validators. Owner: Umer, P3-4.1 + P3-SCR.
 3. **Reward split percentages across roles** — simulate in P3-5.2. Owner: Umer.
-4. **Fee denomination** — DIN-only vs dual-asset (rec: DIN-only). Owner: Umer, P3-5.3.
-5. **Emission schedule shape + MAX_SUPPLY** — P3-5.2 simulation. Owner: Umer (design), Robbert (contract).
+4. **Fee denomination** — ✅ **Resolved as a split, not DIN-only as previously recommended here.** On-chain protocol fees (registration, staking, rewards) → DIN. Validator network fees (model owner → validator, i.e. the per-GI service fee) → ETH — model owners already pay gas in ETH, and requiring DIN just to pay validators adds friction the `depositAndMint` on-ramp doesn't fully remove. See the restated denomination decision in §8. Owner: Umer, P3-5.3.
+5. **Emission schedule shape + MAX_SUPPLY** — ✅ **Partially resolved.** Geometric decay per epoch and a GI-lifecycle-tied inflation guard are confirmed. `MAX_SUPPLY` is deliberately left **open/dynamic for now** — no hard cap at freeze time; supply is governed by issuance vs. burn, with a hard cap possible later via governance once the economics are proven. Decay rate/epoch length numbers and the simulation bar (stable validator income at target / 10× / 0.1× participation) are unchanged from §7. Owner: Umer (design), Robbert (contract).
 6. **Per-model stake requirement bounds** — P3-5.1. Owner: Umer.
 7. **Dispute bond size & window length** — P3-4.3. Owner: Umer (design), Robbert (contract).
-8. **`depositAndMint` cap/retirement plan for testnet** — flag before audit. Owner: Umer.
+8. **`depositAndMint` cap/retirement plan for testnet** — ✅ **Resolved.** Keep active (faucet mode) on DevNet; cap on testnet; retire on mainnet, replaced by either a proper on-ramp/ICO or a validator-airdrop program rewarding testnet participants — both kept open, final distribution model still TBD. Owner: Umer.
+9. **Burn policy** — ✅ **Resolved.** Burn from both on-chain protocol fees *and* validator network fees (dual sources), plus the existing slashed-stake burn share (item 1). Reserve the public-goods routing slot in the fee router now (`{validatorPool, treasury, burn, storage, publicGoods}`) even though it stays unfunded initially — see §8. Owner: Umer, P3-5.3.
+10. **White paper §46 scope items** — ✅ **Resolved.** DPoS delegation stays parked to P5+ (confirms existing default, §3). Encrypted test dataset (paper §5.2.3b) — adopt in 2.0. Test-set resampling (paper §5.2) — adopt in 2.0. Commit-then-reveal between auditors (paper §5.2) — in scope for P3 (§6 scoring hardening). Non-coin-based voting credits (DPPs) — note the stance early in din-dao design; P3 still ships `onlyOwner` governance only. Owner: Umer, P3-SCR / P3-DOC7.
+11. **White paper §8.1 delegator/removal semantics** — ✅ **Resolved for 2.0:** jail/blacklist, not permanent removal (§4 jailing). Full §8.1 alignment (delegator penalties, forced re-registration) is deferred until delegation lands (item 10 / §3 open decisions).
+12. **Slashing-framework translation** — flagged, not resolved: Abraham's Ethereum-DPoS framing (double-signing, surrounding votes, 1/32 immediate penalty) is consensus-validator language that doesn't map directly onto DIN's liveness/correctness conditions (S1–S6 above). Needs a translation pass before it's a drop-in spec for item 2, not just a restatement of Ethereum's numbers.
 
 ---
 
 ## 10. Cross-references
 
+- [`p3-design-plan.md`](p3-design-plan.md) — coordination page for the P3 design push: mechanism → GitHub issue map, discussion links for the §9 open decisions.
+- [`tokenomics-design.md`](tokenomics-design.md) and [`staking-design.md`](staking-design.md) — easy-to-follow entry points for §7 (tokenomics) and §3 (staking); current implemented staking state is documented in `Documentation/technical/mechanisms/staking-mechanism.md`.
+- [`whitepaper-summary.md`](whitepaper-summary.md) — white paper summary + gap/alignment checklist; §8 items feed the designs above.
 - `Developer/ROADMAP.md` — WP scheduling (P3-4.x, P3-5.x, P3-SCR, P3-6.x, P3-DOC2/3/5).
 - `Documentation/public/workflows/din-workflow.md`, `Documentation/public/workflows/model-workflow.md` — current GI lifecycle these mechanisms attach to.
 - `foundry/src/DinValidatorStake.sol`, `DINTaskCoordinator.sol`, `DINTaskAuditor.sol`, `DINModelRegistry.sol`, `DinCoordinator.sol`, `DinToken.sol` — current implementations referenced in §2.

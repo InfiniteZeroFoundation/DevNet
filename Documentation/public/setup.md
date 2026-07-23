@@ -127,7 +127,7 @@ ETH_PRIVATE_KEY_1 = 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234
 Connect a stored account with:
 
 ```bash
-dincli system connect-wallet --account 0
+dincli system register-wallet --account 0
 ```
 
 > [!IMPORTANT]

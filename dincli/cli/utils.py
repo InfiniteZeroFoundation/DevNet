@@ -176,7 +176,7 @@ def load_account(name: str = "default") -> Account:
     if not exists:
         raise FileNotFoundError(
             f"No wallet found for name '{name}' at {wallet_path}. "
-            f"Run `dincli system connect-wallet --name {name}` first."
+            f"Run `dincli system register-wallet --name {name}` first."
         )
 
     with open(wallet_path) as f:

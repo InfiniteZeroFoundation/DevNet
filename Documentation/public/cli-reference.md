@@ -73,17 +73,27 @@ dincli system configure-demo --mode <yes|no>
 > private keys in plaintext. For **production validator nodes**, use the
 > encrypted keystore — see [wallet-setup.md](./guides/wallet-setup.md).
 
-**Connect a wallet:**
+**Register a wallet** — store key material under a name (prompts for the private key if no source option is given):
 
 ```bash
-dincli system connect-wallet
+dincli system register-wallet
 ```
 
 Options:
 - `--key-file <path>` — Import a private key from a file (dev/testing only).
-- `--account <index>` — Connect an account by index (dev/testing only). Reads `ETH_PRIVATE_KEY_<index>` from your `.env` file.
+- `--account <index>` — Register an account by index (dev/testing only). Reads `ETH_PRIVATE_KEY_<index>` from your `.env` file (or the bundled Hardhat dev keys in demo mode).
 - `--keystore <path>` — Import a standard Ethereum JSON keystore with passphrase (production).
 - `--name <name>` — Label for the saved keystore (default `default`).
+- `--connect` — Also make the wallet active after registering.
+- `--yes` — Skip the confirmation prompt when overwriting an existing named wallet.
+
+**Connect (switch) the active wallet** — flips the persistent pointer between registered wallets; never touches key material and never prompts:
+
+```bash
+dincli system connect-wallet <name>
+```
+
+The active wallet is resolved per invocation with this priority: global `--wallet <name>` flag → `DIN_WALLET_NAME` env var → the config value set by `connect-wallet` → `default`. (`set-wallet` is a deprecated alias of `connect-wallet`.)
 
 > [!IMPORTANT]
 > To use your own wallet (non-demo mode), ensure demo mode is disabled first:

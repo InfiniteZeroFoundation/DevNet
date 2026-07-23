@@ -18,7 +18,6 @@ That is acceptable for a demo such as MNIST, but it is not a robust general fede
 Current implementation is centered around:
 
 - `cache_model_0/services/client.py`
-- `dincli/services/client.py`
 - model manifests that expose `train_client_model_and_upload_to_ipfs`
 
 The current flow is roughly:
