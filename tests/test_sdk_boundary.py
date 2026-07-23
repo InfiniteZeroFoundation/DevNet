@@ -27,6 +27,8 @@ def test_sdk_imports_no_cli_or_ui():
         bad_cli = sorted(m for m in loaded if m == "dincli.cli" or m.startswith("dincli.cli."))
         assert not bad_ui, f"SDK pulled in UI libs: {sorted(bad_ui)}"
         assert not bad_cli, f"SDK imported dincli.cli modules: {bad_cli}"
+        assert {"dincli.sdk.state", "dincli.sdk.serialize"} <= loaded, \
+            f"Missing SDK modules: {loaded}"
         print("ok")
         """
     )
