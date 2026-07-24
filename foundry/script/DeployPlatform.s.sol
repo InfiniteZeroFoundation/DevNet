@@ -106,13 +106,15 @@ contract DeployPlatform is Script {
         DINModelRegistry(dinModelRegistryProxy).setDinToken(dinTokenProxy);
         console.log("DINModelRegistry dinToken wired");
 
-        // 11. Wire DINModelRegistry → DinFeeRouter
-        DINModelRegistry(dinModelRegistryProxy).setFeeRouter(dinFeeRouterProxy);
-        console.log("DINModelRegistry feeRouter wired");
-
-        // 12. Authorise DINModelRegistry as a fee source on DinFeeRouter
+        // 11. Authorise DINModelRegistry as a fee source on DinFeeRouter
+        //     Must come before setFeeRouter (step 12): once the registry knows about the
+        //     router, any fee-paying DIN registration reverts NotFeeSource until this is set.
         DinFeeRouter(dinFeeRouterProxy).addFeeSource(dinModelRegistryProxy);
         console.log("DINModelRegistry added as fee source");
+
+        // 12. Wire DINModelRegistry → DinFeeRouter
+        DINModelRegistry(dinModelRegistryProxy).setFeeRouter(dinFeeRouterProxy);
+        console.log("DINModelRegistry feeRouter wired");
 
         // 13. Set DIN-denominated fees on DINModelRegistry (do not skip)
         //     Values: openSource=1 DIN, proprietary=10 DIN, osUpdate=0.1 DIN, propUpdate=1 DIN
