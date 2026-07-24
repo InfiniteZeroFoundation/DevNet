@@ -97,21 +97,82 @@ def getscoreforGM(gi: int, gmcid: str, base_path):
         print(e)
         
 
+def _select_reserved_pool(
+    total_test_samples: int,
+    reserved_pool_fraction: float = 0.4,
+    seed: int = 0,
+) -> torch.Tensor:
+    """Deterministically select the task's reserved test-data pool.
+
+    Fixed for the whole task (same `seed` every call, independent of `gi`) so
+    "resampling" in `_resample_round_pool` below means something: rounds draw
+    fresh subsets of a stable underlying reservation, not of the whole test
+    set fresh each time, which is what would let a many-round task leak the
+    entire test set to auditors over time. A dedicated `torch.Generator` is
+    used (not the global `torch.manual_seed`) so this selection can't be
+    perturbed by unrelated torch RNG calls elsewhere in the process.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    pool_size = int(total_test_samples * reserved_pool_fraction)
+    return torch.randperm(total_test_samples, generator=generator)[:pool_size]
+
+
+def _resample_round_pool(
+    reserved_pool_indices: torch.Tensor,
+    gi: int,
+    is_final_round: bool,
+    resample_fraction: float = 0.5,
+) -> torch.Tensor:
+    """Task_210726_6 §2c resampling policy: half the reserved pool per round,
+    full reserved pool on the final round.
+
+    Whitepaper §5.2.3b's mitigation for test-set leakage/overfitting when the
+    same held-out data is reused across many rounds: expose only a resampled
+    half of the ~40% reserved pool (~20% of the full test set) each
+    non-final round, and only reveal the complete reserved pool on the round
+    the model owner has explicitly signaled as final (no further rounds to
+    protect from cumulative exposure). Resampling is seeded by `gi` so each
+    round's half is a genuinely fresh draw, not a repeat.
+    """
+    if is_final_round:
+        return reserved_pool_indices
+    generator = torch.Generator().manual_seed(gi)
+    round_size = int(len(reserved_pool_indices) * resample_fraction)
+    round_local_indices = torch.randperm(len(reserved_pool_indices), generator=generator)[:round_size]
+    return reserved_pool_indices[round_local_indices]
+
+
 def create_audit_testDataCIDs(
-    batch_counts: int, 
-    gi: int, 
-    base_path: Union[str, Path], 
-    test_data_path: Union[str, Path, None] = None
+    batch_counts: int,
+    gi: int,
+    base_path: Union[str, Path],
+    test_data_path: Union[str, Path, None] = None,
+    is_final_round: bool = False,
 ) -> list[str]:
     """
     Create audit datasets by sampling from test data and uploading to IPFS.
-    
+
+    Implements the task_210726_6 §2c resampling policy (`_select_reserved_pool`
+    / `_resample_round_pool` above): batches now sample from a per-round
+    resampled subset of a fixed ~40% reserved pool, not directly from the
+    full test set, bounding cumulative auditor exposure to the held-out data
+    across a many-round task.
+
     Args:
         batch_counts: Number of auditor batches to create
-        gi: Generation index for naming datasets
+        gi: Generation index for naming datasets AND for seeding this round's
+            resample (see `_resample_round_pool`) -- do not pass an arbitrary
+            or repeated value here if round-to-round freshness matters.
         base_path: Root directory path (task/workspace directory)
         test_data_path: Optional custom path to test dataset (defaults to base_path/dataset/test/test_dataset.pt)
-    
+        is_final_round: True to expose the full reserved pool (no resampling)
+            for this round. Defaults to False so the existing dincli call
+            site (which does not yet pass this argument -- see
+            task_210726_6 PR notes) keeps behaving safely without changes:
+            under-exposing the test set is the safe direction to default,
+            or a manifest/CLI enhancement to pass the real value is
+            follow-up work, not a blocker for this policy landing.
+
     Returns:
         List of IPFS CIDs for uploaded auditor datasets
     """
@@ -135,29 +196,38 @@ def create_audit_testDataCIDs(
                 f"Test dataset not found at {test_data_path.resolve()}"
             )
         test_data = torch.load(test_data_path, weights_only=False)
-    
+
     total_test_samples = len(test_data)
-    
+
+    reserved_pool_indices = _select_reserved_pool(total_test_samples)
+    round_pool_indices = _resample_round_pool(reserved_pool_indices, gi, is_final_round)
+
     testData_percentage_per_auditor_batch = 5
-    
-    # Number of samples each batch gets
+
+    # Number of samples each batch gets, sized off the FULL test set (as
+    # before) but never more than the round pool actually has available --
+    # relevant when is_final_round=False and the round pool (~20% of total)
+    # is smaller than a naive percent-of-total calculation might assume for
+    # a very large batch_counts.
     samples_per_batch = int(total_test_samples * (testData_percentage_per_auditor_batch / 100))
-    
+    samples_per_batch = min(samples_per_batch, len(round_pool_indices))
+
     audit_testDataCIDs = []
     audit_dir = base_path / "dataset" / "auditor" / "TestDatasets"
     audit_dir.mkdir(parents=True, exist_ok=True)  # Modern Path-based mkdir
-    
+
     for batch_id in range(batch_counts):
-        
-        torch.manual_seed(batch_id)
-        
-        random_indices = torch.randperm(total_test_samples)[:samples_per_batch]
+
+        generator = torch.Generator().manual_seed(batch_id)
+
+        round_local_indices = torch.randperm(len(round_pool_indices), generator=generator)[:samples_per_batch]
+        random_indices = round_pool_indices[round_local_indices]
         assigned_testData = torch.utils.data.Subset(test_data, random_indices)
-        
+
         # Path-based file handling (no string formatting)
         audit_path = audit_dir / f"auditorDataset_{gi}_{batch_id}.pt"
         torch.save(assigned_testData, audit_path)
-        
+
         ipfs_hash = upload_to_ipfs(
             str(audit_path),  # Convert to str ONLY for external API
             f"Auditor Dataset for gi_{gi} index {batch_id} uploaded"

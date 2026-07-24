@@ -30,7 +30,26 @@ enum GIstates {
     T2AggregationDone, // 19
     AuditorsSlashed, // 20
     AggregatorsSlashed, // 21
-    GIended // 22
+    GIended, // 22
+    // Reveal phase for commit-then-reveal auditor scoring (task_210726_6 §2a).
+    // Chronologically this sits BETWEEN LMSevaluationStarted (13, now the
+    // commit phase) and LMSevaluationClosed (14) -- appended here instead of
+    // inserted in sequence deliberately: dincli/cli/utils.py's `states` list
+    // is a hand-maintained positional mirror of this enum's raw ordinals
+    // (`states[GIstate]`), and dincli/cli/context.py's
+    // `validate_GIstate_LTE_given_GIstate` compares raw ordinals directly.
+    // Inserting a new member between existing ones would silently shift
+    // every subsequent state's integer value and desync every state name
+    // dincli displays from that point on -- exactly the kind of breakage
+    // "no dincli changes required" (task notes) is telling us to avoid.
+    // Appending is not fully ordinal-monotonic with chronological order (an
+    // LTE check against a threshold between 13 and 22, e.g. "T1nT2Bcreated"
+    // (15), would not treat this state as "before" it) -- audited that this
+    // doesn't break anything today: no dincli LTE check uses a threshold in
+    // that range, and the ones that do (T1nT2Bcreated, checked from
+    // aggregator.py) gate purely read-only "show batches" queries whose
+    // underlying on-chain data doesn't exist yet during this window anyway.
+    LMSevaluationRevealStarted // 23
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,6 +95,27 @@ interface IDINTaskAuditor {
 
     function updatePassScore(uint256 newPassScore) external;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — commit-then-reveal auditor scoring (task_210726_6 §2a-2b, DINTaskAuditor)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev GI state does not permit committing an audit score at this time.
+error TA_CommitPhaseNotOpen();
+/// @dev This auditor has already committed a score for this model.
+error TA_AlreadyCommitted();
+/// @dev The commit hash must not be zero.
+error TA_EmptyCommitHash();
+/// @dev GI state does not permit revealing an audit score at this time.
+error TA_RevealPhaseNotOpen();
+/// @dev This auditor has not committed a score for this model.
+error TA_NoCommitFound();
+/// @dev The revealed (score, vote, salt) does not hash to the stored commitment.
+error TA_RevealHashMismatch();
+/// @dev GI state does not permit starting the reveal phase.
+error TC_RevealCannotBeStarted();
+/// @dev The number of encrypted keys supplied does not match the batch's auditor count.
+error TA_EncryptedKeyCountMismatch();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskAuditor

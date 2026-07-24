@@ -36,6 +36,7 @@ contract SecurityFindingsTest is Test {
     DINModelRegistry registry;
 
     address admin = makeAddr("admin");
+    bytes32 constant TEST_SALT = bytes32(uint256(0xC0FFEE));
 
     function _deployPlatform() internal {
         vm.startPrank(admin);
@@ -262,12 +263,25 @@ contract SecurityFindingsTest is Test {
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
-        // Both models pass: all 3 auditors vote eligible + score 100 on both models.
+        // Both models pass: all 3 auditors commit-then-reveal eligible +
+        // score 100 on both models (commit-then-reveal per task_210726_6 §2a
+        // replaced the old single-shot setAuditScorenEligibility).
         (, address[] memory batchAuditors, uint[] memory modelIdxs,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.setAuditScorenEligibility(1, 0, modelIdxs[m], 100, true);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 100, true, TEST_SALT);
             }
         }
 
@@ -388,12 +402,27 @@ contract SecurityFindingsTest is Test {
 
         // Only batch 0 votes -- guarantees finalizeEvaluation() finalizes
         // at least one model (returns true) without every registrant
-        // needing to participate.
+        // needing to participate. Commit-then-reveal (§2a) replaced the old
+        // single-shot setAuditScorenEligibility; leaves GIstate at
+        // LMSevaluationRevealStarted so _finishEvaluationAndAggregation can
+        // measure closeLMsubmissionsEvaluation's gas directly, matching what
+        // this helper returned to callers before commit-reveal existed.
         (, address[] memory batch0Auditors, uint[] memory batch0Models,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batch0Auditors.length; i++) {
             for (uint m = 0; m < batch0Models.length; m++) {
                 vm.prank(batch0Auditors[i]);
-                ta.setAuditScorenEligibility(1, 0, batch0Models[m], 100, true);
+                ta.commitAuditScore(1, 0, batch0Models[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batch0Auditors.length; i++) {
+            for (uint m = 0; m < batch0Models.length; m++) {
+                vm.prank(batch0Auditors[i]);
+                ta.revealAuditScore(1, 0, batch0Models[m], 100, true, TEST_SALT);
             }
         }
     }

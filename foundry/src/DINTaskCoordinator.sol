@@ -281,7 +281,8 @@ contract DINTaskCoordinator is Ownable {
         dinTaskAuditorContract.setTestDataAssignedFlag(_GI, flag);
     }
 
-    /// @notice Opens the LMS evaluation phase so auditors can begin scoring.
+    /// @notice Opens the LMS evaluation COMMIT phase so auditors can begin
+    ///         committing (hidden) scores via DINTaskAuditor.commitAuditScore.
     /// @param _GI Current GI index.
     function startLMsubmissionsEvaluation(
         uint _GI
@@ -291,14 +292,27 @@ contract DINTaskCoordinator is Ownable {
         GIstate = GIstates.LMSevaluationStarted;
     }
 
-    /// @notice Closes the LMS evaluation phase and finalises audit results on
-    ///         the paired DINTaskAuditor.
+    /// @notice Closes the commit phase and opens the REVEAL phase (task_210726_6
+    ///         §2a) so auditors can call DINTaskAuditor.revealAuditScore.
+    /// @dev Must run strictly after commits close and before any reveal is
+    ///      accepted -- see DINTaskAuditor.revealAuditScore's GIstate gate.
+    /// @param _GI Current GI index.
+    function startLMsubmissionsEvaluationReveal(
+        uint _GI
+    ) external onlyOwner onlyCurrentGI(_GI) {
+        if (GIstate != GIstates.LMSevaluationStarted)
+            revert TC_RevealCannotBeStarted();
+        GIstate = GIstates.LMSevaluationRevealStarted;
+    }
+
+    /// @notice Closes the LMS evaluation reveal phase and finalises audit
+    ///         results on the paired DINTaskAuditor.
     /// @dev Calls DINTaskAuditor.finalizeEvaluation; reverts if it returns false.
     /// @param _GI Current GI index.
     function closeLMsubmissionsEvaluation(
         uint _GI
     ) public onlyOwner onlyCurrentGI(_GI) {
-        if (GIstate != GIstates.LMSevaluationStarted)
+        if (GIstate != GIstates.LMSevaluationRevealStarted)
             revert TC_LMEvalCannotBeFinished();
         bool success = dinTaskAuditorContract.finalizeEvaluation(_GI);
         if (!success) revert TC_FailedToFinalizeEvaluation();
