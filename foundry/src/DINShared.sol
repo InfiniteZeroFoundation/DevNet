@@ -75,6 +75,13 @@ interface IDINTaskAuditor {
     ) external view returns (uint[] memory);
 
     function updatePassScore(uint256 newPassScore) external;
+
+    function giRewardPool(uint256 gi) external view returns (uint256);
+
+    function settleRewards(
+        uint256 gi,
+        address[] calldata rewardableAggregators
+    ) external;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,3 +229,16 @@ error TC_FailedToFinalizeEvaluation();
 error TC_AggregatorNotActive();
 /// @dev The call to DINTaskAuditor.slashAuditors() returned false.
 error TC_FailedToSlashAuditors();
+/// @dev The upcoming GI's reward pool has not been funded via depositRewards.
+error TC_GIRewardPoolNotFunded();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — rewards (task_210726_6 §3, DINTaskAuditor)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev A required address argument was the zero address.
+error TA_InvalidAddress();
+/// @dev The four RewardSplit fields must sum to exactly 10000 bps.
+error TA_InvalidRewardSplit();
+/// @dev Caller has no claimable reward balance.
+error TA_NoRewardsToClaim();

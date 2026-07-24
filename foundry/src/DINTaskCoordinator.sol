@@ -162,6 +162,11 @@ contract DINTaskCoordinator is Ownable {
             GIstate != GIstates.GIended
         ) revert TC_GICannotBeStarted();
         if (_GI != GI + 1) revert TC_WrongGI();
+        // task_210726_6 §3: a GI cannot start unless its reward pool has
+        // been funded via DINTaskAuditor.depositRewards(_GI, ...) first.
+        // Prevents a GI running to completion with nothing to settle/claim.
+        if (dinTaskAuditorContract.giRewardPool(_GI) == 0)
+            revert TC_GIRewardPoolNotFunded();
         if (updatePassScore) {
             dinTaskAuditorContract.updatePassScore(score);
         }
@@ -776,12 +781,84 @@ contract DINTaskCoordinator is Ownable {
         return tier2Score[_GI];
     }
 
-    /// @notice Marks the current Global Iteration as complete.
-    /// @dev Must be called after slashAggregators. The next startGI call will
-    ///      increment GI and transition state to GIstarted.
+    /// @notice Marks the current Global Iteration as complete and settles
+    ///         its reward pool.
+    /// @dev Must be called after slashAggregators. Delegates the actual
+    ///      client/auditor/aggregator/treasury split computation to
+    ///      DINTaskAuditor.settleRewards (task_210726_6 §3) -- that contract
+    ///      owns the client/auditor data (lmSubmissions, audit batches) this
+    ///      contract doesn't have, and owns the giRewardPool/claimable
+    ///      accounting so all three roles claim from one place. This
+    ///      contract owns the T1/T2 aggregator batch data settleRewards
+    ///      needs but doesn't have, hence _collectFinalizedBatchAggregators
+    ///      building that list here rather than extending the cross-contract
+    ///      interface to expose T1/T2 batch internals for a read only used
+    ///      once, at end-of-GI.
+    ///      settleRewards only credits a `claimable` mapping -- no transfers
+    ///      happen in this call, so this stays a bounded-cost state
+    ///      transition regardless of pool size (the iteration cost of
+    ///      collecting/crediting scales with participant count, same
+    ///      already-known-and-documented class of cost as
+    ///      slashAggregators/finalizeEvaluation elsewhere in these
+    ///      contracts, not a new unbounded-loop risk this task introduces).
+    ///      The next startGI call will increment GI and transition state to
+    ///      GIstarted.
     /// @param _GI Current GI index.
     function endGI(uint _GI) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.AggregatorsSlashed) revert TC_NotReadyToEndGI();
+
+        address[] memory rewardableAggregators = _collectFinalizedBatchAggregators(_GI);
+        dinTaskAuditorContract.settleRewards(_GI, rewardableAggregators);
+
         GIstate = GIstates.GIended;
+    }
+
+    /// @notice Builds the list of aggregators credited for a finalized T1/T2
+    ///         batch this GI, one entry per (aggregator, finalized batch) pair.
+    /// @dev "Per finalized T1/T2 batch" (task_210726_6 §3): an aggregator who
+    ///      completed both a T1 batch and the T2 batch appears twice, earning
+    ///      proportionally more weight in DINTaskAuditor.settleRewards.
+    ///      Correctness (did they submit the matching CID) is enforced by
+    ///      slashAggregators having already run this GI, not re-checked here
+    ///      -- mirrors the "correctness enforced by slashing, not reward
+    ///      weighting" principle task_210726_6 §3 states explicitly for
+    ///      auditors; an aggregator assigned to a finalized batch is
+    ///      rewardable for it regardless of whether they personally matched
+    ///      consensus, since a mismatch already cost them stake.
+    /// @param _GI GI index to collect for.
+    /// @return Flat address list, ordered T1 batches then the T2 batch.
+    function _collectFinalizedBatchAggregators(
+        uint _GI
+    ) internal view returns (address[] memory) {
+        Tier1Batch[] storage t1batches = tier1Batches[_GI];
+        Tier2Batch[] storage t2batches = tier2Batches[_GI];
+
+        uint256 count;
+        for (uint i = 0; i < t1batches.length; i++) {
+            if (t1batches[i].finalized) count += t1batches[i].aggregators.length;
+        }
+        for (uint i = 0; i < t2batches.length; i++) {
+            if (t2batches[i].finalized) count += t2batches[i].aggregators.length;
+        }
+
+        address[] memory result = new address[](count);
+        uint256 ptr;
+        for (uint i = 0; i < t1batches.length; i++) {
+            if (t1batches[i].finalized) {
+                address[] storage aggs = t1batches[i].aggregators;
+                for (uint j = 0; j < aggs.length; j++) {
+                    result[ptr++] = aggs[j];
+                }
+            }
+        }
+        for (uint i = 0; i < t2batches.length; i++) {
+            if (t2batches[i].finalized) {
+                address[] storage aggs = t2batches[i].aggregators;
+                for (uint j = 0; j < aggs.length; j++) {
+                    result[ptr++] = aggs[j];
+                }
+            }
+        }
+        return result;
     }
 }
