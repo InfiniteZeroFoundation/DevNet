@@ -306,4 +306,53 @@ contract DINModelRegistryTest is Test {
         assertEq(registry.openSourceUpdateFeeDIN(), 3e17);
         assertEq(registry.proprietaryUpdateFeeDIN(), 4e17);
     }
+
+    // ── FeeRouterNotSet guard ─────────────────────────────────────────────────
+
+    function _registryWithoutFeeRouter() internal returns (DINModelRegistry) {
+        DINModelRegistry impl = new DINModelRegistry();
+        DINModelRegistry r = DINModelRegistry(
+            address(
+                new TransparentUpgradeableProxy(
+                    address(impl),
+                    address(this),
+                    abi.encodeCall(DINModelRegistry.initialize, (address(stake)))
+                )
+            )
+        );
+        r.setDinToken(address(token));
+        // feeRouter intentionally not set
+        r.setDinFees(OS_FEE_DIN, PROP_FEE_DIN, OS_UPDATE_FEE_DIN, PROP_UPDATE_FEE_DIN);
+        return r;
+    }
+
+    function test_requestModelRegistrationDIN_revertsWhenFeeRouterNotSet() public {
+        DINModelRegistry r = _registryWithoutFeeRouter();
+        vm.expectRevert(DINModelRegistry.FeeRouterNotSet.selector);
+        vm.prank(alice);
+        r.requestModelRegistrationDIN(
+            keccak256("manifest"),
+            taskCoordinator,
+            taskAuditor,
+            true
+        );
+    }
+
+    function test_requestManifestUpdateDIN_revertsWhenFeeRouterNotSet() public {
+        // Register + approve a model via ETH path in the unwired registry so
+        // onlyModelOwner passes, then confirm FeeRouterNotSet fires.
+        DINModelRegistry r = _registryWithoutFeeRouter();
+        vm.prank(alice);
+        r.requestModelRegistration{value: 0.000001 ether}(
+            keccak256("manifest"),
+            taskCoordinator,
+            taskAuditor,
+            true
+        );
+        r.approveModel(0);
+
+        vm.expectRevert(DINModelRegistry.FeeRouterNotSet.selector);
+        vm.prank(alice);
+        r.requestManifestUpdateDIN(0, keccak256("newManifest"));
+    }
 }
