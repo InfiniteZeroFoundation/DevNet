@@ -222,3 +222,24 @@ error TC_FailedToFinalizeEvaluation();
 error TC_AggregatorNotActive();
 /// @dev The call to DINTaskAuditor.slashAuditors() returned false.
 error TC_FailedToSlashAuditors();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — dispute resolution (task_210726_6 §4c, DINTaskCoordinator)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev A required address argument was the zero address.
+error TC_InvalidAddress();
+/// @dev Dispute bond and window must both be greater than zero.
+error TC_InvalidDisputeParams();
+/// @dev The batch being disputed has not been finalized yet.
+error TC_BatchNotFinalized();
+/// @dev The dispute window for this batch has already elapsed.
+error TC_DisputeWindowClosed();
+/// @dev A dispute has already been opened against this batch.
+error TC_DisputeAlreadyOpen();
+/// @dev No dispute exists for this batch.
+error TC_DisputeNotOpen();
+/// @dev This dispute has already been resolved.
+error TC_DisputeAlreadyResolved();
+/// @dev Caller has no claimable dispute-bond balance.
+error TC_NoBondClaimable();
