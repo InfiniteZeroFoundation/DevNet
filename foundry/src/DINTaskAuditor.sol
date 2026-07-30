@@ -280,10 +280,21 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      nothing stops a third party topping up a pool they care about).
     ///      DINTaskCoordinator._startGI checks giRewardPool(_GI) > 0 as a
     ///      precondition before that GI can start.
-    /// @param gi GI index to fund.
+    ///
+    ///      `gi` must be the current GI or a future one: GI only ever moves
+    ///      forward (DINTaskCoordinator._startGI requires _GI == GI + 1 and
+    ///      never allows re-starting an earlier index), so a deposit tagged
+    ///      with a `gi` that has already passed could never be started,
+    ///      settled, or claimed -- it would just sit in this contract's
+    ///      balance forever with no sweep path. Rejecting that case here is
+    ///      cheap and catches both a mistyped GI number and a genuinely
+    ///      unreachable one.
+    /// @param gi GI index to fund. Must be >= the coordinator's current GI.
     /// @param amount DIN amount to deposit, in wei (18 decimals).
     function depositRewards(uint256 gi, uint256 amount) external {
         if (amount == 0) revert TA_AmountMustBePositive();
+        if (gi == 0 || gi < dintaskcoordinatorContract.GI())
+            revert TA_InvalidRewardGI();
         dinToken.safeTransferFrom(msg.sender, address(this), amount);
         giRewardPool[gi] += amount;
         emit RewardDeposited(gi, msg.sender, amount);

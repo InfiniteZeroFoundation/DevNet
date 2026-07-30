@@ -242,3 +242,7 @@ error TA_InvalidAddress();
 error TA_InvalidRewardSplit();
 /// @dev Caller has no claimable reward balance.
 error TA_NoRewardsToClaim();
+/// @dev depositRewards was called for a GI that has already passed and can
+///      never be started (or re-started) again, so the deposit could never
+///      be settled or claimed.
+error TA_InvalidRewardGI();
