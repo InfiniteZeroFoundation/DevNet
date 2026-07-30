@@ -327,6 +327,53 @@ contract RewardEngineTest is Test {
         assertEq(ta.giRewardPool(1), 500 ether);
     }
 
+    function test_depositRewards_rejectsGiZero() public {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundDinBalance(modelOwner, 1 ether);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(); // TA_InvalidRewardGI
+        ta.depositRewards(0, 1 ether);
+    }
+
+    function test_depositRewards_allowsCurrentAndFutureGi() public {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundDinBalance(modelOwner, 2 ether);
+
+        // GI is 0 before the first startGI call -- both the immediate next
+        // GI (1) and one further out (2) must be fundable in advance.
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
+        ta.depositRewards(2, 1 ether);
+        vm.stopPrank();
+
+        assertEq(ta.giRewardPool(1), 1 ether);
+        assertEq(ta.giRewardPool(2), 1 ether);
+    }
+
+    function test_depositRewards_rejectsAGiThatHasAlreadyPassed() public {
+        // Run GI 1 all the way through and start GI 2, so the coordinator's
+        // GI counter has moved past 1 -- GI 1 can never be started again,
+        // so a deposit tagged with gi=1 at this point could never be spent.
+        _runFullHonestGI(1_000 ether);
+        vm.prank(modelOwner);
+        tc.endGI(1);
+
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.prank(modelOwner);
+        ta.depositRewards(2, 1 ether); // fund GI 2 so it can start
+        vm.prank(modelOwner);
+        tc.startGI(2);
+        assertEq(tc.GI(), 2);
+
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.prank(modelOwner);
+        vm.expectRevert(); // TA_InvalidRewardGI
+        ta.depositRewards(1, 1 ether);
+    }
+
     function test_startGI_revertsWithoutFundedPool() public {
         _deployPlatform();
         _deployTaskPair();
