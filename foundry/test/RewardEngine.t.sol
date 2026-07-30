@@ -432,12 +432,15 @@ contract RewardEngineTest is Test {
         assertEq(ta.treasuryAccrued(), 500 ether);
     }
 
-    function test_endGI_totalClaimablePlusTreasuryNeverExceedsPool() public {
+    function testFuzz_endGI_totalClaimablePlusTreasuryNeverExceedsPool(
+        uint256 pool
+    ) public {
         // Rounding-dust invariant: individually-divided shares can lose a
         // few wei to integer division, but nothing should ever be minted
         // out of thin air -- sum of everything credited must not exceed the
-        // deposited pool.
-        uint256 pool = 9_999 ether; // deliberately not evenly divisible by 3
+        // deposited pool, for any pool size, not just one fixed
+        // not-evenly-divisible-by-3 example.
+        pool = bound(pool, 1 ether, 1_000_000 ether);
         _runFullHonestGI(pool);
 
         vm.prank(modelOwner);
