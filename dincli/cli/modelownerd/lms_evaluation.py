@@ -39,6 +39,39 @@ def start(
         raise typer.Exit(1)
     
 
+@lms_evaluation_app.command("start-reveal")
+def start_reveal(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Close the commit window and open the reveal window (commit-then-reveal auditor scoring)."""
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_Contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationStarted", "Can not start LMS evaluation reveal at this time")
+
+    console.print(f"[bold green]Starting LMS evaluation reveal window[/bold green]")
+
+    try:
+        build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.startLMsubmissionsEvaluationReveal(ref_gi),
+            "Starting LMS evaluation reveal",
+            "LMS evaluation reveal started",
+            "Failed to start LMS evaluation reveal",
+            exit_on_failure=False
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+
 @lms_evaluation_app.command()
 def close(
     ctx: typer.Context,
@@ -46,13 +79,13 @@ def close(
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
 ):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
-    
+
     task_coordinator_Contract, task_auditor_Contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
-    
+
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
-    
+
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationStarted",  "Can not close LMS evaluation at this time")
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationRevealStarted",  "Can not close LMS evaluation at this time")
     
     console.print(f"[bold green]Closing LMS evaluation![/bold green]")
 
