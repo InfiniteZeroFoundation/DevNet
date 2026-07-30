@@ -585,7 +585,8 @@ stateDescription = [
         "T2B aggregation done",
         "Auditors slashed",
         "Validators slashed",
-        "GI ended"
+        "GI ended",
+        "LM submissions evaluation reveal started"
     ]
 
 states = [
@@ -611,7 +612,13 @@ states = [
         "T2AggregationDone",
         "AuditorsSlashed",
         "AggregatorsSlashed",
-        "GIended"
+        "GIended",
+        # Appended, not inserted where it chronologically belongs (between
+        # LMSevaluationStarted and LMSevaluationClosed) -- this list is a
+        # positional mirror of DINShared.sol's GIstates enum, which appends
+        # this member for the same reason (see the enum's own comment).
+        # Inserting here would desync every state index below GIended.
+        "LMSevaluationRevealStarted"
     ]
     
 
