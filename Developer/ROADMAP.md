@@ -2,22 +2,7 @@
 
 ---
 
-## P2: Devnet Launch and CLI Release *(Completed — April 2026)*
-
-**Timeline:** November 1, 2025 to April 30, 2026  
-**Duration:** ~24 weeks
-
-### Goal
-
-Deploy the DIN devnet on Optimism Sepolia, release `dincli`, and onboard validators and stakeholders to a publicly usable network.
-
-### Phase Outcome
-
-DIN devnet live on Optimism Sepolia. `dincli v0.1.0` released. Validator onboarding flows documented. Public devnet accessible.
-
-> **Still open from P2:** Foundry migration (partially done — Foundry test suite exists at `foundry/`; Hardhat remains active for deployment and verification tooling). Lower priority; not blocking P3.
-
----
+> **P2 (Devnet Launch and CLI Release) is complete.** See [UP_LOG.md](UP_LOG.md) for the phase writeup. This document covers active phases (P3–P4) only.
 
 ## P3: Cryptoeconomic Layer and Network Hardening
 
@@ -214,3 +199,9 @@ A prospective validator raised explicit requirements before committing to run a 
 ### §5 — Threat Model Scope
 
 DIN currently defends against: crude poisoning (label-flip, sign-flip, scaling, garbage updates — caught by the marginal-gain gate and cross-validator median) and Sybil attacks (bounded by stake threshold and validator-to-participant ratio). Out of scope: backdoor attacks (backdoored models maintain clean-data accuracy and sail through the gain gate — would require model-inspection defenses not yet in scope) and collusion above ~50% of validators (bounded by cross-validator median, which tolerates up to ~half malicious). Both out-of-scope gaps are documented explicitly in P3-DOC6 (whitepaper threat model section). Backdoor defense is tracked as RES-2 for a future phase.
+
+---
+
+## Backlog
+
+Unscheduled / not-yet-phased items moved to [BACK_LOG.md](BACK_LOG.md) to keep this document focused on active, phased work. Triage entries there into a numbered WP row above as priorities firm up.

@@ -118,6 +118,8 @@ All new contracts follow the PR #13 conventions (Transparent Proxy, `_disableIni
 | §9-1 | Slashed-stake destination split | ✅ Resolved: 50/50 burn/treasury | [Discussion #44](https://github.com/InfiniteZeroFoundation/DevNet/discussions/44) |
 | §9-3 | Reward split percentages | Still open | Internal, P3-5.2 simulation |
 | — | Public-goods funding slot in the fee router (white paper §8 quadratic funding) | ✅ Resolved: reserve the routing slot now, fund later | [Discussion #45](https://github.com/InfiniteZeroFoundation/DevNet/discussions/45), point 4 |
+| §9-13 | `dinPerEth` rate-setting authority | Still open — currently a bare owner-set admin parameter, no formula/peg/DAO gate | [issues/tokenomics.md](../issues/tokenomics.md) Gap 1 |
+| §9-14 | ICO / token-sale mechanics (if chosen over validator-airdrop at mainnet retirement) | Still open — quantity, pricing, operator/legal entity, KYC all undefined | Depends on §9-8 branch chosen |
 
 All resolved rows above: Abraham (CEO, white-paper author), via Slack, 2026-07-21 — pending the GitHub discussion threads themselves being updated (see [`p3-design-plan.md`](p3-design-plan.md)).
 

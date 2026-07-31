@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 InfiniteZero / DIN Protocol DevNet: a federated-learning network coordinated by Solidity contracts on Optimism Sepolia, operated through `dincli`, a Python/Typer CLI. Raw training data never leaves a client's device — only model artifacts (pinned to IPFS) and on-chain coordination state are shared.
 
-The Solidity tree at `hardhat/contracts/` (Hardhat workflow) is used for deployment/verification tooling. 
+The Solidity tree at `foundry/` (Foundry workflow) is the primary toolchain for building, testing, deploying, and verifying contracts, via `foundry/script/`. `hardhat/` remains in the tree as a complementary/secondary toolchain, not the primary path.
 
 Docs convention: `Documentation/` describes what exists in the code on `develop` (not the live Sepolia deployment) — `Documentation/public/` for network participants, `Documentation/technical/` for code readers. `Developer/` holds forward-looking material: `design/` (planned mechanism designs), `issues/` (backlog), `proposals/` (tooling proposals), `tasks/` (contributor task specs), `discussion/`, `rejected-ideas/`, plus ROADMAP.md and process docs. Placement rules: `Developer/README.md`.
 
@@ -28,8 +28,9 @@ Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner` rath
 ### Solidity
 
 ```bash
-cd foundry && forge build && forge test
-cd hardhat && npx hardhat compile && npx hardhat test
+cd foundry && forge build && forge test          # primary: build/test
+forge script script/DeployPlatform.s.sol ...      # primary: deploy (see script/ for deploy/upgrade scripts)
+cd hardhat && npx hardhat compile && npx hardhat test   # secondary/complementary toolchain
 ```
 
 Foundry config: `solc 0.8.28`, `via_ir = true`. Hardhat config: `solc 0.8.28`, `evmVersion: cancun`, local hardhat network forced to `hardfork: cancun` (required for TSTORE/TLOAD support used by the contracts). `hardhat/hardhat.config.ts` loads `../.env` then `../.env.<NETWORK>` (defaults to `local`).
