@@ -545,6 +545,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         address taskAuditor,
         bool isOpenSource
     ) external returns (uint256 requestId) {
+        if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
         if (!dinValidatorStake.isSlasherContract(taskCoordinator))
             revert CoordinatorNoLongerSlasher();
         if (!dinValidatorStake.isSlasherContract(taskAuditor))
@@ -587,6 +588,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         notDisabled(modelId)
         returns (uint256 requestId)
     {
+        if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
         Model storage m = models[modelId];
         uint256 requiredFee = m.isOpenSource
             ? openSourceUpdateFeeDIN
