@@ -54,10 +54,20 @@ class DinContext:
 
     @property
     def session(self) -> DinSession:
+        """The single source of truth for network / w3 / account / config.
+
+        The session is built with the FULLY RESOLVED wallet name (--wallet, then
+        DIN_WALLET_NAME, then config wallet_name, then "default") and the CLI's
+        interactive signer. Passing the raw ``self.wallet_name`` here would only
+        honour the --wallet flag, so an env/config-configured wallet would be
+        displayed while the *default* key signed (remediation R2/R5).
+        """
         if self._session is None:
+            from dincli.cli.signer import InteractiveKeystoreSigner
             self._session = DinSession(
                 network=self.network_arg,
-                wallet=self.wallet_name,
+                wallet=self.resolved_wallet_name,
+                signer=InteractiveKeystoreSigner(self.resolved_wallet_name),
             )
         return self._session
 
@@ -77,8 +87,10 @@ class DinContext:
     def account(self):
         if self._account is None:
             try:
-                name = self.resolved_wallet_name
-                self._account = load_account(name=name)
+                # Delegate to the session so there is exactly ONE account
+                # resolution (and one keystore decrypt) per invocation — the
+                # CLI's interactive signer is already injected there (R5/M1).
+                self._account = self.session.account
             except Exception as e:
                 self.console.print(f"[red]Error loading account: {e}[/red]")
                 import sys
