@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from web3 import Web3
 from web3.contract.contract import ContractEvent, ContractFunction
+from web3.exceptions import TimeExhausted, TransactionNotFound
 from web3.types import TxReceipt
 
 from dincli.sdk.errors import TransactionError
@@ -259,7 +260,11 @@ def send(
     honours caller-supplied nonce overrides (§3g).
     """
     w3 = session.w3
-    account = session.account
+    # Sign via the SignerProvider protocol only (address/can_decrypt/
+    # sign_transaction). Never touch session.account / signer.local_account —
+    # those are outside the published contract, so a daemon or hardware adapter
+    # written to the protocol would break here (remediation R4).
+    signer = session.signer
     nonce_mgr = NonceManager.for_session(session)
     network = session.network
 
@@ -286,8 +291,11 @@ def send(
 
     # --- build + sign ---
     tx = contract_function.build_transaction(base_params)
-    signed = account.sign_transaction(tx)
-    tx_hash = signed.hash.hex()
+    signed = signer.sign_transaction(tx)
+    # HexBytes.hex() is UNPREFIXED (hexbytes>=1.0), so prefix explicitly —
+    # keeps events/details consistent with TxReceiptInfo.tx_hash (R/M5).
+    raw_hash = signed.hash.hex()
+    tx_hash = raw_hash if raw_hash.startswith("0x") else "0x" + raw_hash
 
     _emit(on_event, "broadcasting", {"tx_hash": tx_hash, "nonce": nonce})
 
@@ -333,20 +341,39 @@ def send(
     _emit(on_event, "submitted", {"tx_hash": tx_hash, "nonce": nonce})
 
     # --- wait for receipt ---
-    start = time.monotonic()
-    while True:
-        receipt = w3.eth.get_transaction_receipt(tx_hash)
-        if receipt is not None:
-            break
-        elapsed = time.monotonic() - start
-        if elapsed > timeout_s:
-            _emit(on_event, "timeout", {"tx_hash": tx_hash, "nonce": nonce})
+    # NOTE: w3.eth.get_transaction_receipt RAISES TransactionNotFound for an
+    # unmined tx — it never returns None. Use web3's own waiter, which handles
+    # that polling correctly (remediation R1).
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(
+            tx_hash, timeout=timeout_s, poll_latency=poll_interval_s
+        )
+    except TimeExhausted as e:
+        # Distinguish "still pending" from "dropped out of the mempool" — a
+        # daemon retries those differently.
+        try:
+            w3.eth.get_transaction(tx_hash)
+        except TransactionNotFound:
+            _emit(on_event, "receipt_missing", {"tx_hash": tx_hash, "nonce": nonce})
             raise TransactionError(
-                f"Transaction {tx_hash} not confirmed within {timeout_s}s.",
-                code=TX_TIMEOUT,
+                f"Transaction {tx_hash} was broadcast but is no longer known to the node.",
+                code=RECEIPT_MISSING,
                 details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True},
-            )
-        time.sleep(poll_interval_s)
+            ) from e
+        _emit(on_event, "timeout", {"tx_hash": tx_hash, "nonce": nonce})
+        raise TransactionError(
+            f"Transaction {tx_hash} not confirmed within {timeout_s}s.",
+            code=TX_TIMEOUT,
+            details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True},
+        ) from e
+
+    if receipt is None:
+        _emit(on_event, "receipt_missing", {"tx_hash": tx_hash, "nonce": nonce})
+        raise TransactionError(
+            f"No receipt returned for {tx_hash}.",
+            code=RECEIPT_MISSING,
+            details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True},
+        )
 
     # --- returned from wait with a receipt ---
     info = TxReceiptInfo.from_receipt(receipt, w3)

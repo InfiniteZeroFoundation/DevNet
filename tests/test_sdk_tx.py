@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 from eth_account import Account
 from web3.datastructures import AttributeDict
+from web3.exceptions import TimeExhausted, TransactionNotFound
 
 from dincli.sdk import tx as sdk_tx
 from dincli.sdk.tx import (
@@ -42,8 +43,15 @@ def _make_mock_session(w3=None, address=DUMMY_ADDR, network="local"):
     session = MagicMock(spec=DinSession)
     session.w3 = w3 or MagicMock()
     session.address = address
-    session.account = MagicMock()
     session.network = network
+    # send() signs via the SignerProvider protocol; give it a realistic
+    # SignedTransaction so tx_hash is a real 0x string, not a MagicMock.
+    signed = MagicMock()
+    signed.hash.hex.return_value = "de" * 32
+    signed.raw_transaction = b"\xde\xad"
+    session.signer.sign_transaction.return_value = signed
+    session.account = MagicMock()
+    session.account.sign_transaction.return_value = signed
     return session
 
 
@@ -293,6 +301,7 @@ class TestSendHappyPath:
         receipt = _make_mock_receipt()
         w3.eth.send_raw_transaction.return_value = b"\xde\xad"
         w3.eth.get_transaction_receipt.return_value = receipt
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
 
         session = _make_mock_session(w3=w3)
         session.account.sign_transaction.return_value = MagicMock(
@@ -311,6 +320,7 @@ class TestSendHappyPath:
         receipt = _make_mock_receipt()
         w3.eth.send_raw_transaction.return_value = b"\xde\xad"
         w3.eth.get_transaction_receipt.return_value = receipt
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
 
         session = _make_mock_session(w3=w3)
         session.account.sign_transaction.return_value = MagicMock(
@@ -332,6 +342,7 @@ class TestSendHappyPath:
         receipt = _make_mock_receipt()
         w3.eth.send_raw_transaction.return_value = b"\xde\xad"
         w3.eth.get_transaction_receipt.return_value = receipt
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
 
         session = _make_mock_session(w3=w3)
         session.account.sign_transaction.return_value = MagicMock(
@@ -424,7 +435,9 @@ class TestSendFailurePaths:
     def test_timeout(self):
         w3 = _w3_mock(pending_nonce=0)
         w3.eth.send_raw_transaction.return_value = b"\xde\xad"
-        w3.eth.get_transaction_receipt.return_value = None
+        w3.eth.get_transaction_receipt.side_effect = TransactionNotFound('unmined')
+        w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted('timed out')
+        w3.eth.get_transaction.return_value = {'hash': b'\xab\xcd'}  # still pending
 
         session = _make_mock_session(w3=w3)
         session.account.sign_transaction.return_value = MagicMock(
@@ -444,6 +457,7 @@ class TestSendFailurePaths:
         receipt = _make_mock_receipt(status=0)
         w3.eth.send_raw_transaction.return_value = b"\xde\xad"
         w3.eth.get_transaction_receipt.return_value = receipt
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
 
         session = _make_mock_session(w3=w3)
         session.account.sign_transaction.return_value = MagicMock(

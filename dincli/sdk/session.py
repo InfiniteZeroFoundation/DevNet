@@ -67,6 +67,30 @@ def _resolve_w3(network: str) -> Web3:
         ) from e
 
 
+class _SignerAccount:
+    """Minimal ``LocalAccount``-shaped view over a protocol-only SignerProvider.
+
+    Exposes just what CLI call sites read off ``ctx.account`` (``.address``) plus
+    ``sign_transaction`` delegation, so a signer that never holds a decrypted
+    key in process still satisfies those callers.
+    """
+
+    __slots__ = ("_signer",)
+
+    def __init__(self, signer: "SignerProvider"):
+        self._signer = signer
+
+    @property
+    def address(self) -> str:
+        return self._signer.address()
+
+    def sign_transaction(self, tx: dict):
+        return self._signer.sign_transaction(tx)
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"<SignerAccount {self.address}>"
+
+
 class DinSession:
     """Lazily resolves network, web3, account, config. No printing, no exit, no prompts.
 
@@ -113,9 +137,18 @@ class DinSession:
 
     @property
     def account(self):
-        """Lazily resolved via signer. Raises SignerUnavailable / WalletError."""
+        """Lazily resolved via the signer. Raises SignerUnavailable / WalletError.
+
+        ``local_account`` is NOT part of the SignerProvider protocol, so signers
+        that only implement the published contract (daemon adapters, hardware
+        or remote signers) have none. For those we return a thin adapter that
+        exposes the ``.address`` / ``.sign_transaction`` surface callers rely on.
+        Signing inside the SDK always goes through ``self.signer`` directly —
+        never through this property (remediation R4).
+        """
         if not hasattr(self, "_account"):
-            self._account = self.signer.local_account
+            local = getattr(self.signer, "local_account", None)
+            self._account = local if local is not None else _SignerAccount(self.signer)
         return self._account
 
     @property
