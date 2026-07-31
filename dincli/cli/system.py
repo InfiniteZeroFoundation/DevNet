@@ -745,6 +745,7 @@ def send_eth(
     # Build and send raw ETH transfer
     from dincli.sdk.tx import NonceManager
     nonce = None
+    broadcast = False
     nonce_mgr = NonceManager.for_session(ctx.obj.session)
     try:
         tx_params = ctx.obj.get_tx_params()
@@ -757,6 +758,9 @@ def send_eth(
         console.print(f"[bold green]Sending {amount} ETH to {to}...[/bold green]")
 
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        # Past this point the nonce is spent on-chain: it moves to inflight and
+        # must NOT be released, or a later tx would reuse it.
+        broadcast = True
         if nonce is not None:
             nonce_mgr.mark_broadcast(nonce)
         print_tx_info(tx_hash, effective_network)
@@ -768,11 +772,13 @@ def send_eth(
             raise typer.Exit(1)
 
     except typer.Exit:
-        if nonce is not None:
+        # Only reclaim a nonce that never reached the network. Releasing after
+        # broadcast was a no-op that read like a bug (M8).
+        if nonce is not None and not broadcast:
             nonce_mgr.release(nonce)
         raise
     except Exception as e:
-        if nonce is not None:
+        if nonce is not None and not broadcast:
             nonce_mgr.release(nonce)
         console.print(f"[bold red]✗ Transaction failed: {e}[/bold red]")
         raise typer.Exit(1)

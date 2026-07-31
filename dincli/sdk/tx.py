@@ -38,8 +38,12 @@ _RESERVATION_TTL_S = 90.0
 # ---------------------------------------------------------------------------
 
 
-def _normalize_log(log_entry) -> dict:
-    """Recursively normalize web3 AttributeDict / HexBytes → standard Python types."""
+def _normalize_log(log_entry) -> Any:
+    """Recursively normalize web3 AttributeDict / HexBytes → standard Python types.
+
+    Returns whatever shape it was handed (dict, list, str, int) — not always a
+    dict, hence the Any (M10).
+    """
     if isinstance(log_entry, (bytes, bytearray)):
         return "0x" + log_entry.hex()
     if isinstance(log_entry, dict):
@@ -71,7 +75,14 @@ class TxReceiptInfo:
     _raw: TxReceipt = field(repr=False, metadata={"json": "omit"})
 
     @classmethod
-    def from_receipt(cls, receipt: TxReceipt, w3: Web3 | None = None) -> "TxReceiptInfo":
+    def from_receipt(cls, receipt: TxReceipt, w3: Web3 | None = None,
+                     *, nonce: int) -> "TxReceiptInfo":
+        """Build from a web3 receipt.
+
+        ``nonce`` is required rather than defaulted: a receipt does not carry
+        it, and silently returning ``nonce=0`` would put a wrong value on the
+        retry surface a daemon keys off (M9).
+        """
         tx_hash = receipt.transactionHash
         if isinstance(tx_hash, bytes):
             tx_hash = "0x" + tx_hash.hex()
@@ -83,7 +94,7 @@ class TxReceiptInfo:
             status=receipt.status,
             block_number=receipt.blockNumber,
             gas_used=receipt.gasUsed,
-            nonce=0,  # filled in by send() after tx build
+            nonce=nonce,
             contract_address=_to_checksum(w3, receipt.contractAddress),
             logs=logs,
             _raw=receipt,
@@ -393,8 +404,7 @@ def send(
         )
 
     # --- returned from wait with a receipt ---
-    info = TxReceiptInfo.from_receipt(receipt, w3)
-    info.nonce = nonce  # patch in the nonce we know
+    info = TxReceiptInfo.from_receipt(receipt, w3, nonce=nonce)
 
     if receipt.status == 0:
         _emit(on_event, "reverted", {"tx_hash": tx_hash,
@@ -429,5 +439,14 @@ def send(
 
 def decode_events(receipt_info: TxReceiptInfo,
                   contract_event: ContractEvent) -> list[dict]:
-    """Wrap ``contract_event.process_receipt(receipt._raw)``."""
-    return contract_event.process_receipt(receipt_info._raw)
+    """Decode one event type from a receipt, e.g.
+    ``registry.events.ModelRegistrationRequested()``.
+
+    Wraps web3's ``process_receipt`` over the retained raw receipt, then
+    normalizes the result so callers get plain JSON-safe dicts rather than
+    AttributeDict/HexBytes. Without that, the future operations layer would hit
+    exactly the serialization failure TxReceiptInfo.logs already guards against
+    (M6).
+    """
+    decoded = contract_event.process_receipt(receipt_info._raw)
+    return [_normalize_log(entry) for entry in decoded]

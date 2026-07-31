@@ -94,7 +94,7 @@ def _w3_mock(chain_id=1337, gas_price=10_000_000_000, max_priority_fee=1_000_000
 class TestTxReceiptInfo:
     def test_fields_from_receipt(self):
         receipt = _make_mock_receipt(status=1, tx_hash="0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd")
-        info = TxReceiptInfo.from_receipt(receipt)
+        info = TxReceiptInfo.from_receipt(receipt, nonce=5)
         assert info.status == 1
         assert info.block_number == 12345
         assert info.gas_used == 21000
@@ -102,7 +102,7 @@ class TestTxReceiptInfo:
 
     def test_contract_address_present(self):
         receipt = _make_mock_receipt(contract_address="0xdef")
-        info = TxReceiptInfo.from_receipt(receipt)
+        info = TxReceiptInfo.from_receipt(receipt, nonce=5)
         assert info.contract_address == "0xdef"
 
     def test_logs_normalized(self):
@@ -113,7 +113,7 @@ class TestTxReceiptInfo:
                 "topics": [b"\xff" * 32],
             })
         ])
-        info = TxReceiptInfo.from_receipt(receipt)
+        info = TxReceiptInfo.from_receipt(receipt, nonce=5)
         assert len(info.logs) == 1
         log = info.logs[0]
         assert log["address"] == "0xlog"
@@ -127,8 +127,7 @@ class TestTxReceiptInfo:
             "data": b"\x00\x01",
             "topics": [b"\xff" * 32],
         })])
-        info = TxReceiptInfo.from_receipt(receipt)
-        info.nonce = 5
+        info = TxReceiptInfo.from_receipt(receipt, nonce=5)
         d = {f.name: getattr(info, f.name)
              for f in info.__dataclass_fields__.values()
              if f.metadata.get("json") != "omit"}
@@ -510,8 +509,7 @@ class TestSendEthNoncePath:
 class TestDecodeEvents:
     def test_decode_delegates(self):
         receipt = _make_mock_receipt()
-        info = TxReceiptInfo.from_receipt(receipt)
-        info.nonce = 5
+        info = TxReceiptInfo.from_receipt(receipt, nonce=5)
         contract_event = MagicMock()
         contract_event.process_receipt.return_value = [{"event": "Test"}]
 

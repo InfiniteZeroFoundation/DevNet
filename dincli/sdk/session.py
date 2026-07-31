@@ -19,9 +19,16 @@ Daemon adapter contract (D3):
   mid-run, and any missing credential raises ``SignerUnavailable`` for the job
   layer to turn into a job error. This is explicitly not a raw env-var lookup.
 
-  A reference implementation of the daemon adapter lives under ``tests/``
-  (see test_sdk_session.py::TestDaemonAdapter) — it is the real CLI adapter
-  only, and no code edits land on ``feat/din-daemon`` this task.
+  The CLI's own adapter (``dincli/cli/signer.py::InteractiveKeystoreSigner``)
+  is the only component permitted to prompt. A reference implementation of the
+  *daemon* adapter lives under ``tests/`` — see
+  ``test_sdk_session.py::TestDaemonAdapter`` and
+  ``test_sdk_regressions.py::MinimalSigner`` — so the contract is exercised
+  without landing daemon code on ``feat/din-daemon`` in this task.
+
+  Note that ``local_account`` is deliberately NOT part of the protocol: signers
+  that never hold a decrypted key in process (hardware, remote, or agent-backed)
+  must remain possible. Nothing in the SDK's signing path may depend on it.
 """
 from __future__ import annotations
 
@@ -44,27 +51,15 @@ class SignerProvider(Protocol):
 
 
 def _resolve_w3(network: str) -> Web3:
-    """Lazy web3 factory for DinSession."""
-    from dincli.sdk.config import resolve_network_value
+    """Lazy web3 factory for DinSession.
 
-    rpc_url = resolve_network_value(network, "rpc_url")
-    try:
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        if not w3.is_connected():
-            raise NetworkError(
-                f"Could not connect to Ethereum node at {rpc_url}",
-                code=RPC_UNREACHABLE,
-                details={"endpoint_host": rpc_url},
-            )
-        return w3
-    except NetworkError:
-        raise
-    except Exception as e:
-        raise NetworkError(
-            f"Could not connect to Ethereum node for network '{network}': {e}",
-            code=RPC_UNREACHABLE,
-            details={"endpoint_host": rpc_url},
-        ) from e
+    Delegates to sdk.web3.get_w3 rather than duplicating the connect-and-check
+    logic — two copies would drift, and get_w3 already raises
+    NetworkError(code=rpc_unreachable) with a sanitized endpoint host (M4).
+    """
+    from dincli.sdk.web3 import get_w3
+
+    return get_w3(network)
 
 
 class _SignerAccount:
