@@ -87,6 +87,16 @@ def load_account(name: str = "default") -> Account:
     except SignerUnavailable:
         pass
     except WalletError:
+        # A missing/unreadable keystore is NOT a password problem — reporting it
+        # as one tells a brand-new user their password is wrong. Re-raise it with
+        # the legacy FileNotFoundError text before falling into the retry branch
+        # (remediation R3).
+        wallet_path, exists = resolve_wallet_path(name)
+        if not exists:
+            raise FileNotFoundError(
+                f"No wallet found for name '{name}' at {wallet_path}. "
+                f"Run `dincli system register-wallet --name {name}` first."
+            )
         if not _clear_memory_cache(name):
             raise ValueError("Invalid password or corrupted keystore.")
         console.print("[yellow]Cached password failed, prompting...[/yellow]")

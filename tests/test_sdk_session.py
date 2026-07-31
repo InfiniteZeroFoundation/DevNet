@@ -54,7 +54,7 @@ class TestSignerProviderProtocol:
 class TestResolveW3:
     def test_raises_network_error(self, monkeypatch):
         monkeypatch.setattr(
-            "dincli.sdk.config.resolve_network_value",
+            "dincli.sdk.web3.resolve_network_value",
             lambda *a, **kw: "http://dead:8545",
         )
         with pytest.raises(NetworkError) as exc:
@@ -101,7 +101,7 @@ class TestDinSessionLazy:
             lambda arg: "local",
         )
         monkeypatch.setattr(
-            "dincli.sdk.config.resolve_network_value",
+            "dincli.sdk.web3.resolve_network_value",
             lambda *a, **kw: "http://dead:8545",
         )
         session = DinSession(network="local")

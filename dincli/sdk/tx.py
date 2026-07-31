@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from web3 import Web3
 from web3.contract.contract import ContractEvent, ContractFunction
+from web3.exceptions import TimeExhausted, TransactionNotFound
 from web3.types import TxReceipt
 
 from dincli.sdk.errors import TransactionError
@@ -37,8 +38,12 @@ _RESERVATION_TTL_S = 90.0
 # ---------------------------------------------------------------------------
 
 
-def _normalize_log(log_entry) -> dict:
-    """Recursively normalize web3 AttributeDict / HexBytes → standard Python types."""
+def _normalize_log(log_entry) -> Any:
+    """Recursively normalize web3 AttributeDict / HexBytes → standard Python types.
+
+    Returns whatever shape it was handed (dict, list, str, int) — not always a
+    dict, hence the Any (M10).
+    """
     if isinstance(log_entry, (bytes, bytearray)):
         return "0x" + log_entry.hex()
     if isinstance(log_entry, dict):
@@ -70,7 +75,14 @@ class TxReceiptInfo:
     _raw: TxReceipt = field(repr=False, metadata={"json": "omit"})
 
     @classmethod
-    def from_receipt(cls, receipt: TxReceipt, w3: Web3 | None = None) -> "TxReceiptInfo":
+    def from_receipt(cls, receipt: TxReceipt, w3: Web3 | None = None,
+                     *, nonce: int) -> "TxReceiptInfo":
+        """Build from a web3 receipt.
+
+        ``nonce`` is required rather than defaulted: a receipt does not carry
+        it, and silently returning ``nonce=0`` would put a wrong value on the
+        retry surface a daemon keys off (M9).
+        """
         tx_hash = receipt.transactionHash
         if isinstance(tx_hash, bytes):
             tx_hash = "0x" + tx_hash.hex()
@@ -82,7 +94,7 @@ class TxReceiptInfo:
             status=receipt.status,
             block_number=receipt.blockNumber,
             gas_used=receipt.gasUsed,
-            nonce=0,  # filled in by send() after tx build
+            nonce=nonce,
             contract_address=_to_checksum(w3, receipt.contractAddress),
             logs=logs,
             _raw=receipt,
@@ -173,7 +185,10 @@ class NonceManager:
             self._inflight.add(nonce)
 
     def release(self, nonce: int) -> None:
-        self._reserved.pop(nonce, None)
+        # Mutex-guarded like every other mutator (M2) — an unguarded pop could
+        # race a concurrent reserve()'s free-slot scan.
+        with self._mutex:
+            self._reserved.pop(nonce, None)
 
     def resync(self, w3) -> None:
         with self._mutex:
@@ -259,7 +274,11 @@ def send(
     honours caller-supplied nonce overrides (§3g).
     """
     w3 = session.w3
-    account = session.account
+    # Sign via the SignerProvider protocol only (address/can_decrypt/
+    # sign_transaction). Never touch session.account / signer.local_account —
+    # those are outside the published contract, so a daemon or hardware adapter
+    # written to the protocol would break here (remediation R4).
+    signer = session.signer
     nonce_mgr = NonceManager.for_session(session)
     network = session.network
 
@@ -286,8 +305,11 @@ def send(
 
     # --- build + sign ---
     tx = contract_function.build_transaction(base_params)
-    signed = account.sign_transaction(tx)
-    tx_hash = signed.hash.hex()
+    signed = signer.sign_transaction(tx)
+    # HexBytes.hex() is UNPREFIXED (hexbytes>=1.0), so prefix explicitly —
+    # keeps events/details consistent with TxReceiptInfo.tx_hash (R/M5).
+    raw_hash = signed.hash.hex()
+    tx_hash = raw_hash if raw_hash.startswith("0x") else "0x" + raw_hash
 
     _emit(on_event, "broadcasting", {"tx_hash": tx_hash, "nonce": nonce})
 
@@ -296,17 +318,20 @@ def send(
         tx_hash_raw = w3.eth.send_raw_transaction(signed.raw_transaction)
     except Exception as e:
         msg_lower = str(e).lower()
-        is_already_known = _ALREADY_KNOWN in msg_lower or "nonce too low" in msg_lower and _NONCE_TOO_LOW in msg_lower
 
         if _NONCE_TOO_LOW in msg_lower and _ALREADY_KNOWN not in msg_lower:
+            # Rejected outright — nothing was submitted. Emitting "submitted"
+            # here made the CLI print a tx hash and an explorer URL for a
+            # transaction that never existed (R8). broadcast=False is correct:
+            # the node refused it, so the caller may safely rebuild.
             nonce_mgr.resync(w3)
-            _emit(on_event, "submitted", {"tx_hash": tx_hash, "nonce": nonce})
             raise TransactionError(
                 "Nonce too low — transaction rejected.",
                 code=TX_NONCE_CONFLICT,
                 details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": False},
             ) from e
         if _ALREADY_KNOWN in msg_lower:
+            # The node already holds this exact raw tx — it IS in flight.
             nonce_mgr.mark_broadcast(nonce)
             _emit(on_event, "submitted", {"tx_hash": tx_hash, "nonce": nonce})
             raise TransactionError(
@@ -322,35 +347,64 @@ def send(
                 details={"nonce": nonce, "broadcast": False},
             ) from e
 
-        nonce_mgr.release(nonce)
+        # Unclassified broadcast failure — estimation already succeeded, so
+        # tx_estimation_failed was simply the wrong code (R6). Use the base
+        # tx_failed subcode.
+        #
+        # broadcast=True is deliberate and conservative. A socket timeout or
+        # dropped connection during send_raw_transaction may well have reached
+        # the node, and §10 uses this flag to choose between "safe to rebuild"
+        # (False) and "must confirm the existing tx, do not resend" (True).
+        # On an unknown outcome, claiming False risks a double-send; claiming
+        # True costs only a confirmation lookup. The tx_hash is known from
+        # signing (§3c), so the consumer has what it needs to check.
+        nonce_mgr.mark_broadcast(nonce)
         raise TransactionError(
             str(e),
-            code=TX_ESTIMATION_FAILED,  # best-effort fallback
-            details={"reason": str(e)[:256], "broadcast": False},
+            details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True,
+                     "reason": str(e)[:256]},
         ) from e
 
     nonce_mgr.mark_broadcast(nonce)
     _emit(on_event, "submitted", {"tx_hash": tx_hash, "nonce": nonce})
 
     # --- wait for receipt ---
-    start = time.monotonic()
-    while True:
-        receipt = w3.eth.get_transaction_receipt(tx_hash)
-        if receipt is not None:
-            break
-        elapsed = time.monotonic() - start
-        if elapsed > timeout_s:
-            _emit(on_event, "timeout", {"tx_hash": tx_hash, "nonce": nonce})
+    # NOTE: w3.eth.get_transaction_receipt RAISES TransactionNotFound for an
+    # unmined tx — it never returns None. Use web3's own waiter, which handles
+    # that polling correctly (remediation R1).
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(
+            tx_hash, timeout=timeout_s, poll_latency=poll_interval_s
+        )
+    except TimeExhausted as e:
+        # Distinguish "still pending" from "dropped out of the mempool" — a
+        # daemon retries those differently.
+        try:
+            w3.eth.get_transaction(tx_hash)
+        except TransactionNotFound:
+            _emit(on_event, "receipt_missing", {"tx_hash": tx_hash, "nonce": nonce})
             raise TransactionError(
-                f"Transaction {tx_hash} not confirmed within {timeout_s}s.",
-                code=TX_TIMEOUT,
+                f"Transaction {tx_hash} was broadcast but is no longer known to the node.",
+                code=RECEIPT_MISSING,
                 details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True},
-            )
-        time.sleep(poll_interval_s)
+            ) from e
+        _emit(on_event, "timeout", {"tx_hash": tx_hash, "nonce": nonce})
+        raise TransactionError(
+            f"Transaction {tx_hash} not confirmed within {timeout_s}s.",
+            code=TX_TIMEOUT,
+            details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True},
+        ) from e
+
+    if receipt is None:
+        _emit(on_event, "receipt_missing", {"tx_hash": tx_hash, "nonce": nonce})
+        raise TransactionError(
+            f"No receipt returned for {tx_hash}.",
+            code=RECEIPT_MISSING,
+            details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True},
+        )
 
     # --- returned from wait with a receipt ---
-    info = TxReceiptInfo.from_receipt(receipt, w3)
-    info.nonce = nonce  # patch in the nonce we know
+    info = TxReceiptInfo.from_receipt(receipt, w3, nonce=nonce)
 
     if receipt.status == 0:
         _emit(on_event, "reverted", {"tx_hash": tx_hash,
@@ -385,5 +439,14 @@ def send(
 
 def decode_events(receipt_info: TxReceiptInfo,
                   contract_event: ContractEvent) -> list[dict]:
-    """Wrap ``contract_event.process_receipt(receipt._raw)``."""
-    return contract_event.process_receipt(receipt_info._raw)
+    """Decode one event type from a receipt, e.g.
+    ``registry.events.ModelRegistrationRequested()``.
+
+    Wraps web3's ``process_receipt`` over the retained raw receipt, then
+    normalizes the result so callers get plain JSON-safe dicts rather than
+    AttributeDict/HexBytes. Without that, the future operations layer would hit
+    exactly the serialization failure TxReceiptInfo.logs already guards against
+    (M6).
+    """
+    decoded = contract_event.process_receipt(receipt_info._raw)
+    return [_normalize_log(entry) for entry in decoded]
