@@ -15,14 +15,6 @@ from platformdirs import user_cache_dir, user_config_dir
 from rich.console import Console
 from web3 import Web3
 
-_ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_PASSWORD_TTL_DEFAULT = 900
-_PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
-
-# Sentinel so callers can inject an already-fetched DIN_WALLET_PASSWORD value
-# (fetched once per unlock) while callers that omit it self-fetch as before.
-_UNSET = object()
-
 from dincli.cli.log import logger
 
 console = Console()
@@ -41,136 +33,63 @@ from dincli.sdk.manifest import (
     get_manifest, get_manifest_path, get_manifest_key,
     is_ethereum_address, download_manifest, get_model_info,
 )
-WALLET_FILE = CONFIG_DIR / "wallet.json"
-WALLETS_DIR = CONFIG_DIR / "wallets"
-
-LEGACY_WALLET_FILE = WALLET_FILE
+from dincli.sdk.wallet import (  # moved to SDK — re-exported for CLI compatibility
+    _ACCOUNT_NAME_RE,
+    _PASSWORD_TTL_DEFAULT,
+    _PASSWORD_CACHE,
+    _UNSET,
+    WALLET_FILE,
+    WALLETS_DIR,
+    LEGACY_WALLET_FILE,
+    validate_account_name,
+    wallet_path_for_name,
+    resolve_wallet_path,
+    ensure_wallets_dir,
+    atomic_write_wallet,
+    _extract_keystore,
+    get_demo_private_key,
+    get_demo_account_index,
+    _cache_password_in_memory,
+    _clear_memory_cache,
+    _clean_stale_session_file,
+    load_account_noninteractive,
+    load_keystore,
+    account_from_keystore,
+    resolve_password,
+    KeystoreSigner,
+    PrivateKeySigner,
+)
+from dincli.sdk.errors import SignerUnavailable, WalletError
 
 MIN_STAKE = 10*10**18
 
-def validate_account_name(name: str) -> str:
-    name = name.strip()
-    if not _ACCOUNT_NAME_RE.match(name):
-        raise ValueError(
-            f"Invalid account name '{name}'. Must be 1-64 chars of A-Z, a-z, 0-9, '-', '_'."
-        )
-    return name
-
-
-def wallet_path_for_name(name: str) -> Path:
-    resolved = validate_account_name(name)
-    return WALLETS_DIR / f"wallet_{resolved}.json"
-
-
-def resolve_wallet_path(name: str) -> tuple[Path, bool]:
-    named_path = wallet_path_for_name(name)
-    if named_path.exists():
-        return named_path, True
-    if name == "default" and LEGACY_WALLET_FILE.exists():
-        return LEGACY_WALLET_FILE, True
-    return named_path, False
-
-
-def ensure_wallets_dir() -> None:
-    WALLETS_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(WALLETS_DIR, 0o700)
-    except OSError:
-        pass
-
-
-def atomic_write_wallet(path: Path, data: dict) -> None:
-    ensure_wallets_dir()
-    tmp_path = path.with_suffix(".json.tmp")
-    try:
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp_path, path)
-    finally:
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-
-
-def _extract_keystore(data: dict) -> dict:
-    if isinstance(data, dict) and "keystore" in data:
-        inner = data["keystore"]
-        if isinstance(inner, dict) and "crypto" in inner:
-            return inner
-    if isinstance(data, dict) and "crypto" in data:
-        return data
-    raise ValueError("Data is not a recognised keystore (wrapper, bare, or demo).")
-
 
 def _cleanup_stale_session() -> None:
-    session_file = CONFIG_DIR / ".session"
-    if session_file.exists():
-        try:
-            session_file.unlink()
-            console.print("[dim]Removed stale .session cache from previous dincli version.[/dim]")
-        except OSError:
-            pass
+    """CLI-side wrapper: removes stale session file, prints message.
 
-
-def get_demo_private_key(account_index: int) -> str:
-    """Load private key for Hardhat dev account by index."""
-    # Path to accounts.json (relative to dincli package)
-    accounts_file = files("dincli").joinpath("config", "accounts.json")
-    
-    if not accounts_file.exists():
-        raise FileNotFoundError(
-            f"Demo accounts file not found: {accounts_file}\n"
-            "Run `npx hardhat export-accounts` to generate it."
-        )
-    
-    with open(accounts_file) as f:
-        data = json.load(f)
-    
-    accounts = data.get("hardhat", [])
-    if account_index < 0 or account_index >= len(accounts):
-        raise IndexError(
-            f"Account index {account_index} out of range. "
-            f"Available: 0–{len(accounts) - 1}"
-        )
-    
-    return accounts[account_index]["private_key"]
-
-
-def get_demo_account_index(address: str) -> int:
-    """Find index of Hardhat dev account by address."""
-    # Path to accounts.json (relative to dincli package)
-    accounts_file = Path(__file__).parent / "config" / "accounts.json"
-
-    if not accounts_file.exists():
-        raise FileNotFoundError(
-            f"Demo accounts file not found: {accounts_file}\n"
-            "Run `npx hardhat export-accounts` to generate it."
-        )
-
-    with open(accounts_file) as f:
-        data = json.load(f)
-
-    accounts = data.get("hardhat", [])
-    
-    # Normalize input address
-    target_address = address.lower()
-    
-    for idx, account in enumerate(accounts):
-        if account["address"].lower() == target_address:
-            return idx
-            
-    raise ValueError(f"Address {address} not found in demo accounts.")
+    SDK's _clean_stale_session_file() does the I/O; the console message stays
+    here — deliberate divergence from PR #31 review finding No. 1.
+    """
+    if _clean_stale_session_file():
+        console.print("[dim]Removed stale .session cache from previous dincli version.[/dim]")
 
 
 def load_account(name: str = "default") -> Account:
-    """Load a named wallet, falling back to legacy wallet.json for 'default'."""
+    """Load a named wallet, falling back to legacy wallet.json for 'default'.
+
+    Fast path: non-interactive via env/TTL cache (load_account_noninteractive).
+    Falls back to interactive prompt only when no non-interactive password is
+    available (SignerUnavailable) or when the cached password is stale.
+    """
+
+    try:
+        return load_account_noninteractive(name)
+    except SignerUnavailable:
+        pass
+    except WalletError:
+        if not _clear_memory_cache(name):
+            raise ValueError("Invalid password or corrupted keystore.")
+        console.print("[yellow]Cached password failed, prompting...[/yellow]")
 
     wallet_path, exists = resolve_wallet_path(name)
     if not exists:
@@ -182,34 +101,20 @@ def load_account(name: str = "default") -> Account:
     with open(wallet_path) as f:
         data = json.load(f)
 
-    # Demo mode: plaintext private key
     if data.get("demo_mode") is True:
         private_key = data["private_key"]
         return Account.from_key(private_key)
 
     keystore_data = _extract_keystore(data)
-
-    # Fetch DIN_WALLET_PASSWORD once and thread it through the password helpers so a
-    # single unlock parses .env once rather than twice (get_env_key has no memoization).
     env_pass = get_env_key("DIN_WALLET_PASSWORD")
 
-    password = _get_password(name, env_pass=env_pass)
+    password = getpass("Enter wallet password: ")
     try:
         private_key = Account.decrypt(keystore_data, password)
         _cache_password_in_memory(name, password, env_pass=env_pass)
         _cleanup_stale_session()
         return Account.from_key(private_key)
     except ValueError:
-        if _clear_memory_cache(name):
-            console.print("[yellow]Cached password failed, prompting...[/yellow]")
-            password = getpass("Enter wallet password: ")
-            try:
-                private_key = Account.decrypt(keystore_data, password)
-                _cache_password_in_memory(name, password, env_pass=env_pass)
-                _cleanup_stale_session()
-                return Account.from_key(private_key)
-            except ValueError:
-                pass
         raise ValueError("Invalid password or corrupted keystore.")
 
 
@@ -250,22 +155,6 @@ def _get_password(name: str = "default", prompt: bool = True,
         return getpass("Enter wallet password: ")
     
     return ""
-
-
-def _cache_password_in_memory(name: str, password: str, env_pass=_UNSET) -> None:
-    if env_pass is _UNSET:
-        env_pass = get_env_key("DIN_WALLET_PASSWORD")
-    if env_pass:
-        return
-    ttl = int(os.environ.get("DIN_PASSWORD_TTL", _PASSWORD_TTL_DEFAULT))
-    _PASSWORD_CACHE[name] = (password, time.time() + ttl)
-
-
-def _clear_memory_cache(name: str | None = None) -> bool:
-    if name is not None:
-        return _PASSWORD_CACHE.pop(name, None) is not None
-    _PASSWORD_CACHE.clear()
-    return True
 
 
 def list_accounts(active_name: str = "default") -> list[dict]:
@@ -459,46 +348,41 @@ def build_and_send_tx(
     exit_on_failure: bool = True,
     show_tx_hash: bool = True,
 ):
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    base_tx_params = ctx.obj.get_tx_params()
-    if tx_params:
-        base_tx_params.update(tx_params)
+    from dincli.sdk.tx import send as sdk_send
+    from dincli.sdk.tx import build_tx_params
+    from dincli.sdk.errors import TransactionError, TX_ESTIMATION_FAILED, TX_REVERTED
+
+    ctx_obj = ctx.obj
+    effective_network, w3, account, console = ctx_obj.get_en_w3_account_console()
+    session = ctx_obj.session
+
+    def _on_event(name, payload):
+        if name == "broadcasting":
+            console.print(f"[bold green]{action_msg}...[/bold green]")
+        elif name == "submitted":
+            if show_tx_hash:
+                print_tx_info(payload["tx_hash"], effective_network)
+        # confirmed is handled in the return; reverted/timeout in the except
 
     try:
-        base_tx_params["gas"] = int(w3.eth.estimate_gas(contract_function.build_transaction(base_tx_params)) * 1.1)
-    except Exception as e:
-        console.print(f"[bold red] X Transaction estimation failed: {e}[/bold red]")
+        info = sdk_send(session, contract_function, tx_params=tx_params,
+                        on_event=_on_event)
+    except TransactionError as err:
+        if err.code == TX_ESTIMATION_FAILED:
+            reason = err.__cause__ or err.message
+            console.print(f"[bold red] X Transaction estimation failed: {reason}[/bold red]")
+        elif err.code == TX_REVERTED:
+            console.print(f"[bold red] X {error_msg}[/bold red]")
+        else:
+            reason = err.__cause__ or err.message
+            console.print(f"[bold red]✗ {error_msg}[/bold red]")
+            console.print(f"[bold red]Exception: {reason}[/bold red]")
         if exit_on_failure:
-            raise typer.Exit(1)
+            raise typer.Exit(1) from err
         return None
 
-    try:
-        tx = contract_function.build_transaction(base_tx_params)
-        signed_tx = account.sign_transaction(tx)
-        console.print(f"[bold green]{action_msg}...[/bold green]")
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        if show_tx_hash:
-            print_tx_info(tx_hash, effective_network)
-        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-        if tx_receipt.status == 1:
-            console.print(f"[bold green] ✓ {success_msg}[/bold green]")
-            return tx_receipt
-        console.print(f"[bold red] X {error_msg}[/bold red]")
-        if exit_on_failure:
-            raise typer.Exit(1)
-        return None
-    except Exception as e:
-        console.print(
-            f"[bold red]✗ {error_msg}[/bold red]"
-        )
-        console.print(
-            f"[bold red]Exception: {e}[/bold red]"
-        )
-
-        if exit_on_failure:
-            raise typer.Exit(1)
-
-        return None
+    console.print(f"[bold green] ✓ {success_msg}[/bold green]")
+    return info._raw  # unchanged return contract (D5)
     
 def print_tx_info(tx_hash, network=None, print_url = True):
     #ensure tx_hash is hex string
