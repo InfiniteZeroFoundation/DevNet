@@ -16,10 +16,11 @@ from rich.console import Console
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger, logging
 from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
-                              get_config, get_manifest, get_manifest_key, get_w3,
+                              get_config, get_manifest, get_manifest_key,
                               load_account, load_config, load_din_info,
                               resolve_network, get_active_account_name,
                               validate_account_name, resolve_wallet_path)
+from dincli.sdk.session import DinSession
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
 
@@ -43,33 +44,34 @@ class DinContext:
         self._logger = logger
         self.network_arg = network_arg
         self.wallet_name: Optional[str] = None
-        self._resolved_network: Optional[str] = None
         self._resolved_wallet_name: Optional[str] = None
-        self._w3 = None
         self._account = None
-        self._config = None
+        self._session: DinSession | None = None
 
         # Initialize logging
         log_level_str = get_config("log_level", default="INFO")
         self._logger.setLevel(getattr(logging, log_level_str.upper(), logging.INFO))
 
     @property
+    def session(self) -> DinSession:
+        if self._session is None:
+            self._session = DinSession(
+                network=self.network_arg,
+                wallet=self.wallet_name,
+            )
+        return self._session
+
+    @property
     def network(self) -> str:
-        if self._resolved_network is None:
-            self._resolved_network = resolve_network(self.network_arg)
-        return self._resolved_network
+        return self.session.network
 
     @property
     def config(self) -> dict:
-        if self._config is None:
-            self._config = load_config()
-        return self._config
+        return self.session.config
 
     @property
     def w3(self):
-        if self._w3 is None:
-            self._w3 = get_w3(self.network)
-        return self._w3
+        return self.session.w3
 
     @property
     def account(self):
@@ -109,24 +111,18 @@ class DinContext:
         return self.network, self.w3, self.account, self.console
     
     def get_tx_params(self):
-        return {
-            "from": self.account.address,  
-            "maxFeePerGas": self.w3.eth.gas_price * 2, # Strategy to ensure inclusion
-            "maxPriorityFeePerGas": self.w3.eth.max_priority_fee, # The "tip" to the miner/validator
-            "chainId": self.w3.eth.chain_id,
-            "nonce": self.w3.eth.get_transaction_count(self.account.address),
-        } 
+        from dincli.sdk.tx import build_tx_params
+        return build_tx_params(self.session)
     
     def select_network(self, network: Optional[str]):
-        """Update network selection and invalidate w3 cache if changed."""
+        """Update network selection and invalidate session cache if changed."""
         if network:
             self.network_arg = network
-            self._resolved_network = None
-            self._w3 = None
+            self._session = None
         return self
 
     def select_wallet(self, name: Optional[str]):
-        """Update wallet selection and invalidate account cache if changed."""
+        """Update wallet selection and invalidate account/session cache if changed."""
         if name:
             try:
                 validate_account_name(name)
@@ -143,13 +139,14 @@ class DinContext:
             self.wallet_name = name
             self._resolved_wallet_name = None
             self._account = None
+            self._session = None
         return self
 
     def select_demo_account(self, index: Optional[int]):
         """DEMO MODE ONLY: sign this invocation with Hardhat dev account `index`.
 
         Loads the private key straight from the bundled demo accounts file and
-        caches the Account on the context — the named-wallet machinery
+        injects a PrivateKeySigner into the session — the named-wallet machinery
         (wallet files, keystore encryption/decryption, password prompts) is
         bypassed entirely. Takes precedence over every wallet-name source
         (--wallet / DIN_WALLET_NAME / config wallet_name) because it fills the
@@ -165,6 +162,7 @@ class DinContext:
             )
             raise typer.Exit(1)
         from dincli.cli.utils import get_demo_private_key
+        from dincli.sdk.wallet import PrivateKeySigner
         try:
             private_key = get_demo_private_key(index)
         except (FileNotFoundError, IndexError) as e:
@@ -174,6 +172,12 @@ class DinContext:
         self._account = Account.from_key(private_key)
         # Display-only label; never resolved against wallet files.
         self._resolved_wallet_name = f"demo-{index}"
+        # Rebuild session with demo signer so get_tx_params uses correct address.
+        self._session = DinSession(
+            network=self.network_arg,
+            wallet=self.wallet_name,
+            signer=PrivateKeySigner(private_key),
+        )
         return self
     
     def get_deployed_din_coordinator_contract(self, verbose: bool = True):

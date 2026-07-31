@@ -49,6 +49,18 @@ def temp_config(tmp_path):
     sys_orig_wallet_file = getattr(system_mod, "WALLET_FILE", None)
     sys_orig_worker_cache = getattr(system_mod, "WORKER_CACHE_DIR", None)
 
+    # SDK wallet constants — now the canonical home for WALLETS_DIR etc.
+    from dincli.sdk import wallet as sdk_wallet
+    sdk_orig_config = sdk_wallet.CONFIG_DIR
+    sdk_orig_wallets = sdk_wallet.WALLETS_DIR
+    sdk_orig_wallet_file = sdk_wallet.WALLET_FILE
+    sdk_orig_legacy = sdk_wallet.LEGACY_WALLET_FILE
+
+    sdk_wallet.CONFIG_DIR = config_dir
+    sdk_wallet.WALLETS_DIR = wallets_dir
+    sdk_wallet.WALLET_FILE = config_dir / "wallet.json"
+    sdk_wallet.LEGACY_WALLET_FILE = config_dir / "wallet.json"
+
     utils_mod.CONFIG_DIR = config_dir
     utils_mod.CACHE_DIR = cache_dir
     utils_mod.WALLETS_DIR = wallets_dir
@@ -73,6 +85,12 @@ def temp_config(tmp_path):
             "cache_dir": cache_dir,
         }
     finally:
+        from dincli.sdk import wallet as sdk_wallet
+        sdk_wallet.CONFIG_DIR = sdk_orig_config
+        sdk_wallet.WALLETS_DIR = sdk_orig_wallets
+        sdk_wallet.WALLET_FILE = sdk_orig_wallet_file
+        sdk_wallet.LEGACY_WALLET_FILE = sdk_orig_legacy
+
         utils_mod.CONFIG_DIR = orig_config
         utils_mod.CACHE_DIR = orig_cache
         utils_mod.WALLETS_DIR = orig_wallets
@@ -511,6 +529,7 @@ class TestCLICommands:
 class TestFixARegression:
     def test_demo_mode_creates_wallets_dir(self, monkeypatch):
         bare = tempfile.mkdtemp()
+        from dincli.sdk import wallet as sdk_wallet
         try:
             config_dir = Path(bare) / "config"
             config_dir.mkdir()
@@ -520,6 +539,14 @@ class TestFixARegression:
             orig_wallets = utils_mod.WALLETS_DIR
             orig_wallet_file = utils_mod.WALLET_FILE
             orig_legacy = utils_mod.LEGACY_WALLET_FILE
+            sdk_orig_config = sdk_wallet.CONFIG_DIR
+            sdk_orig_wallets = sdk_wallet.WALLETS_DIR
+            sdk_orig_wallet_file = sdk_wallet.WALLET_FILE
+            sdk_orig_legacy = sdk_wallet.LEGACY_WALLET_FILE
+            sdk_wallet.CONFIG_DIR = config_dir
+            sdk_wallet.WALLETS_DIR = wallets_dir
+            sdk_wallet.WALLET_FILE = config_dir / "wallet.json"
+            sdk_wallet.LEGACY_WALLET_FILE = config_dir / "wallet.json"
             utils_mod.CONFIG_DIR = config_dir
             utils_mod.WALLETS_DIR = wallets_dir
             utils_mod.WALLET_FILE = config_dir / "wallet.json"
@@ -536,6 +563,10 @@ class TestFixARegression:
                 saved = wallets_dir / "wallet_default.json"
                 assert saved.exists()
             finally:
+                sdk_wallet.CONFIG_DIR = sdk_orig_config
+                sdk_wallet.WALLETS_DIR = sdk_orig_wallets
+                sdk_wallet.WALLET_FILE = sdk_orig_wallet_file
+                sdk_wallet.LEGACY_WALLET_FILE = sdk_orig_legacy
                 utils_mod.CONFIG_DIR = orig_config
                 utils_mod.WALLETS_DIR = orig_wallets
                 utils_mod.WALLET_FILE = orig_wallet_file
