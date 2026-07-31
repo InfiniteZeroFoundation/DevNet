@@ -315,6 +315,11 @@ contract DinValidatorStake is
         emit ValidatorUnblacklisted(validator);
     }
 
+    /// @notice Returns the minimum token amount required to become an active validator.
+    function minStake() external view returns (uint256) {
+        return MIN_STAKE;
+    }
+
     /// @notice Updates the minimum stake required to become an active validator.
     function setMinStake(uint256 newMinStake) external onlyOwner {
         if (newMinStake == 0) revert InvalidMinStake();
