@@ -743,8 +743,12 @@ def send_eth(
             raise typer.Exit(0)
 
     # Build and send raw ETH transfer
+    from dincli.sdk.tx import NonceManager
+    nonce = None
+    nonce_mgr = NonceManager.for_session(ctx.obj.session)
     try:
         tx_params = ctx.obj.get_tx_params()
+        nonce = tx_params.get("nonce")
         tx_params.update({"to": to, "value": amount_wei, "from": account.address})
 
         tx_params["gas"] = int(w3.eth.estimate_gas(tx_params) * 1.1)
@@ -753,6 +757,8 @@ def send_eth(
         console.print(f"[bold green]Sending {amount} ETH to {to}...[/bold green]")
 
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        if nonce is not None:
+            nonce_mgr.mark_broadcast(nonce)
         print_tx_info(tx_hash, effective_network)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
         if receipt.status == 1:
@@ -762,8 +768,12 @@ def send_eth(
             raise typer.Exit(1)
 
     except typer.Exit:
+        if nonce is not None:
+            nonce_mgr.release(nonce)
         raise
     except Exception as e:
+        if nonce is not None:
+            nonce_mgr.release(nonce)
         console.print(f"[bold red]✗ Transaction failed: {e}[/bold red]")
         raise typer.Exit(1)
 
