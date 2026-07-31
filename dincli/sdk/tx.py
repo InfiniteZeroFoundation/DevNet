@@ -174,7 +174,10 @@ class NonceManager:
             self._inflight.add(nonce)
 
     def release(self, nonce: int) -> None:
-        self._reserved.pop(nonce, None)
+        # Mutex-guarded like every other mutator (M2) — an unguarded pop could
+        # race a concurrent reserve()'s free-slot scan.
+        with self._mutex:
+            self._reserved.pop(nonce, None)
 
     def resync(self, w3) -> None:
         with self._mutex:
@@ -304,17 +307,20 @@ def send(
         tx_hash_raw = w3.eth.send_raw_transaction(signed.raw_transaction)
     except Exception as e:
         msg_lower = str(e).lower()
-        is_already_known = _ALREADY_KNOWN in msg_lower or "nonce too low" in msg_lower and _NONCE_TOO_LOW in msg_lower
 
         if _NONCE_TOO_LOW in msg_lower and _ALREADY_KNOWN not in msg_lower:
+            # Rejected outright — nothing was submitted. Emitting "submitted"
+            # here made the CLI print a tx hash and an explorer URL for a
+            # transaction that never existed (R8). broadcast=False is correct:
+            # the node refused it, so the caller may safely rebuild.
             nonce_mgr.resync(w3)
-            _emit(on_event, "submitted", {"tx_hash": tx_hash, "nonce": nonce})
             raise TransactionError(
                 "Nonce too low — transaction rejected.",
                 code=TX_NONCE_CONFLICT,
                 details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": False},
             ) from e
         if _ALREADY_KNOWN in msg_lower:
+            # The node already holds this exact raw tx — it IS in flight.
             nonce_mgr.mark_broadcast(nonce)
             _emit(on_event, "submitted", {"tx_hash": tx_hash, "nonce": nonce})
             raise TransactionError(
@@ -330,11 +336,22 @@ def send(
                 details={"nonce": nonce, "broadcast": False},
             ) from e
 
-        nonce_mgr.release(nonce)
+        # Unclassified broadcast failure — estimation already succeeded, so
+        # tx_estimation_failed was simply the wrong code (R6). Use the base
+        # tx_failed subcode.
+        #
+        # broadcast=True is deliberate and conservative. A socket timeout or
+        # dropped connection during send_raw_transaction may well have reached
+        # the node, and §10 uses this flag to choose between "safe to rebuild"
+        # (False) and "must confirm the existing tx, do not resend" (True).
+        # On an unknown outcome, claiming False risks a double-send; claiming
+        # True costs only a confirmation lookup. The tx_hash is known from
+        # signing (§3c), so the consumer has what it needs to check.
+        nonce_mgr.mark_broadcast(nonce)
         raise TransactionError(
             str(e),
-            code=TX_ESTIMATION_FAILED,  # best-effort fallback
-            details={"reason": str(e)[:256], "broadcast": False},
+            details={"tx_hash": tx_hash, "nonce": nonce, "broadcast": True,
+                     "reason": str(e)[:256]},
         ) from e
 
     nonce_mgr.mark_broadcast(nonce)

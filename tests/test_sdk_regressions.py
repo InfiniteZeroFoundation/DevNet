@@ -273,3 +273,134 @@ class TestR4SignerProtocolIsSufficient:
 
         info = txmod.send(session, contract_fn, poll_interval_s=0.001)
         assert info.status == 1
+
+
+# ---------------------------------------------------------------------------
+# R6 / R8 / M2 — broadcast-failure classification and nonce-manager locking
+# ---------------------------------------------------------------------------
+
+
+def _session_for_broadcast(w3):
+    session = MagicMock(spec=DinSession)
+    session.w3 = w3
+    session.address = DUMMY_ADDR
+    session.network = "local"
+    signed = MagicMock()
+    signed.hash.hex.return_value = "ef" * 32
+    signed.raw_transaction = b"raw"
+    session.signer.sign_transaction.return_value = signed
+    return session
+
+
+class TestR6BroadcastFailureClassification:
+    """Estimation has already succeeded by the time we broadcast, so an
+    unclassified broadcast error is not tx_estimation_failed. And because a
+    socket-level failure may still have reached the node, the retry surface
+    must say broadcast=True — claiming False risks a double-send (§10).
+    """
+
+    def setup_method(self):
+        # NonceManager caches one instance per (chain_id, address) for the life
+        # of the process, so reservations leak between tests sharing an address.
+        from dincli.sdk.tx import NonceManager
+        NonceManager._instances.clear()
+
+    def test_unclassified_broadcast_failure_is_not_estimation_failed(self):
+        from dincli.sdk import tx as txmod
+        from dincli.sdk.errors import TransactionError, TX_ESTIMATION_FAILED
+
+        w3 = _w3_mock()
+        w3.eth.send_raw_transaction.side_effect = ConnectionError("socket hung up")
+        session = _session_for_broadcast(w3)
+
+        with pytest.raises(TransactionError) as exc:
+            txmod.send(session, MagicMock())
+
+        assert exc.value.code != TX_ESTIMATION_FAILED
+        assert exc.value.code == "tx_failed"
+
+    def test_unclassified_broadcast_failure_reports_broadcast_true(self):
+        from dincli.sdk import tx as txmod
+        from dincli.sdk.errors import TransactionError
+
+        w3 = _w3_mock()
+        w3.eth.send_raw_transaction.side_effect = ConnectionError("socket hung up")
+        session = _session_for_broadcast(w3)
+
+        with pytest.raises(TransactionError) as exc:
+            txmod.send(session, MagicMock())
+
+        details = exc.value.details
+        assert details.get("broadcast") is True, (
+            "unknown broadcast outcome must not claim it is safe to resend"
+        )
+        assert details.get("tx_hash"), "consumer needs the hash to confirm the tx"
+        assert details.get("nonce") == 5
+
+
+class TestR8NoSubmittedEventOnRejection:
+    def setup_method(self):
+        from dincli.sdk.tx import NonceManager
+        NonceManager._instances.clear()
+
+    def test_nonce_too_low_does_not_emit_submitted(self):
+        """The CLI maps `submitted` to print_tx_info — emitting it for a
+        rejected tx printed a hash and explorer URL for something that never
+        existed."""
+        from dincli.sdk import tx as txmod
+        from dincli.sdk.errors import TransactionError
+
+        w3 = _w3_mock()
+        w3.eth.send_raw_transaction.side_effect = ValueError("nonce too low")
+        session = _session_for_broadcast(w3)
+
+        seen = []
+        with pytest.raises(TransactionError):
+            txmod.send(session, MagicMock(), on_event=lambda n, p: seen.append(n))
+
+        assert "submitted" not in seen, f"emitted {seen} for a rejected tx"
+
+    def test_already_known_does_emit_submitted(self):
+        """Contrast: the node holds this exact raw tx, so it IS in flight."""
+        from dincli.sdk import tx as txmod
+        from dincli.sdk.errors import TransactionError
+
+        w3 = _w3_mock()
+        w3.eth.send_raw_transaction.side_effect = ValueError("already known")
+        session = _session_for_broadcast(w3)
+
+        seen = []
+        with pytest.raises(TransactionError) as exc:
+            txmod.send(session, MagicMock(), on_event=lambda n, p: seen.append(n))
+
+        assert "submitted" in seen
+        assert exc.value.details.get("broadcast") is True
+
+
+class TestM2ReleaseIsThreadSafe:
+
+    def test_concurrent_reserve_and_release_keeps_nonces_distinct(self):
+        import threading
+        from dincli.sdk.tx import NonceManager
+
+        w3 = _w3_mock(pending_nonce=0)
+        mgr = NonceManager(1337, DUMMY_ADDR)
+        taken, errors = [], []
+
+        def worker():
+            try:
+                for _ in range(25):
+                    n = mgr.reserve(w3)
+                    taken.append(n)
+                    mgr.release(n)
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert len(taken) == 200
