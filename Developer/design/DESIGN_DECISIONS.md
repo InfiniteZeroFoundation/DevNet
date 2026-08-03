@@ -15,8 +15,9 @@ Some design questions surface mid-review (PR comments, contributor follow-ups) r
 
 | No | Name | Raised By | Description | Options | Status | Phase | Branch | Chosen | Resolved By | Why | Links | Date |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| DD-1 | Validator governance voting power | robertocarlous | Validators already lock DIN in `DinValidatorStake`. Stage C (`DinGovernanceStaking`/stDIN) requires a *separate* DIN lock to get governance voting power — should that be a second lock, or should voting power derive from existing validator stake? | A. Double-lock (current) · B. Stake-bridge · C. Hybrid | pending | P4 (din-dao, Stage C) | `feat/din-dao` | — | umeradl | — | [PR #27](https://github.com/InfiniteZeroFoundation/DevNet/pull/27), [issue #23](https://github.com/InfiniteZeroFoundation/DevNet/issues/23) | 2026-07-31 |
+| DD-1 | Validator governance voting power | robertocarlous | Validators already lock DIN in `DinValidatorStake`. Stage C (`DinGovernanceStaking`/stDIN) requires a *separate* DIN lock to get governance voting power — should that be a second lock, or should voting power derive from existing validator stake? | A. Double-lock (current) · B. Stake-bridge · C. Hybrid | pending | P4 (din-dao, Stage C) | `feat/din-dao` | A (leaning, open for input) | umeradl | Branch's own architecture doc (§5) already documents a conflict-of-interest rationale against B/C: validators voting with slashable-stake-derived power on `Operational`-category proposals (slasher auth, blacklisting) would be voting on rules that could slash them. A avoids this; B/C would need a category-scoped carve-out or per-proposal recusal mitigation, both non-trivial on stock OZ `Governor`. Opened for team input on A vs. B/C-with-mitigation. | [PR #27](https://github.com/InfiniteZeroFoundation/DevNet/pull/27), [issue #23](https://github.com/InfiniteZeroFoundation/DevNet/issues/23), [discussion #69](https://github.com/InfiniteZeroFoundation/DevNet/discussions/69) | 2026-07-31 |
 | DD-2 | DAO voting power model | umeradl | White paper §8 calls for "non-coin-based voting credits" (anti-plutocracy/DPPs); `decentralized-governance.md` recommends token-weighted (locked/staked DIN) and explicitly rejects raw quadratic voting; PR #27 Stage C implements plain coin-weighted voting (stDIN, 1:1). The three don't currently agree. | A. Coin-weighted (current) · B. Quadratic · C. Non-coin-based credits | pending | P4 (din-dao, Stage C) | `feat/din-dao` | — | umeradl | — | [PR #27](https://github.com/InfiniteZeroFoundation/DevNet/pull/27), [issue #23](https://github.com/InfiniteZeroFoundation/DevNet/issues/23), [decentralized-governance.md](../issues/decentralized-governance.md), [whitepaper-summary.md §8](whitepaper-summary.md) | 2026-07-31 |
+| DD-3 | Initial `DinMultisig` signer composition (Stage A) | robertocarlous | Architecture doc says "3-of-5 for v1" but names no signers. `DinMultisig`'s signer list + per-category thresholds are immutable after construction (changing signers means deploying a new multisig and migrating timelock roles) — if all five keys are held by the same team, Stage A provides no real governance legitimacy despite being "live." Who are the initial signers, and what's the selection process? | A. All-internal (team-held) · B. Mixed internal + external · C. Fully external/community-selected | pending | P4 (din-dao, Stage A) | `feat/din-dao` | — | umeradl | — | [PR #27](https://github.com/InfiniteZeroFoundation/DevNet/pull/27), [issue #23](https://github.com/InfiniteZeroFoundation/DevNet/issues/23), [discussion #70](https://github.com/InfiniteZeroFoundation/DevNet/discussions/70) | 2026-08-03 |
 
 ---
 
@@ -40,18 +41,32 @@ Keep the two contracts fully independent. Validators who want a governance voice
 Derive governance voting power directly from a validator's `DinValidatorStake` balance — e.g., a read-only adapter that reports validator stake as `IVotes`-compatible voting power, with no second lock.
 
 - **Pros:** no double-locking; governance power tracks actual protocol commitment (slashable stake) rather than a parallel, unslashable pool.
-- **Cons:** couples governance power to a balance that can shrink via slashing mid-proposal (checkpoint/snapshot semantics get more complex); blurs the "no free-balance voting" boundary the design already drew for the general case since validator stake wasn't designed with vote-checkpointing in mind; more contract surface to audit before Stage C activation.
+- **Cons:** couples governance power to a balance that can shrink via slashing mid-proposal (checkpoint/snapshot semantics get more complex); blurs the "no free-balance voting" boundary the design already drew for the general case since validator stake wasn't designed with vote-checkpointing in mind; more contract surface to audit before Stage C activation; **conflict of interest** — see below.
 
 ### Option C — Hybrid
 
 Allow both paths to contribute to voting power: a validator can rely on stake-bridged votes *and/or* lock stDIN like any other participant; a non-validator token holder can still only use the stDIN path.
 
 - **Pros:** flexible; doesn't force validators to choose.
-- **Cons:** most complex option to specify and audit — two independent power sources feeding one quorum invites double-counting or gaming edge cases (e.g., unstake-then-relock timing around snapshots) that need explicit design before any code is written.
+- **Cons:** most complex option to specify and audit — two independent power sources feeding one quorum invites double-counting or gaming edge cases (e.g., unstake-then-relock timing around snapshots) that need explicit design before any code is written; inherits B's conflict of interest on its bridged-vote component.
+
+### Conflict-of-interest argument for Option A
+
+`Documentation/technical/din-dao/README.md` §5 (Voting Power Model), already on the `feat/din-dao` branch, records this rationale from when Stage C was designed:
+
+> Validator stake in `DinValidatorStake` is not counted toward governance power in v1. Hybrid stake-voting would create a conflict of interest when governance votes on slashing conditions or blacklisting appeals.
+
+`DinGovernor`'s `Operational` proposal category (§4.1) covers exactly this — slasher authorization, blacklisting, model disable/enable. A validator voting with stake-derived power on those proposals is voting on rules that could slash them. B and C both inherit this wherever bridged stake can vote on `Operational` proposals.
+
+**Possible mitigations if bridging is still wanted:**
+1. **Category-scoped carve-out** — bridged voting power counts for `Parameter`/`Treasury`/`Upgrade` only, zero weight on `Operational`. Requires a custom voting/weight module; stock OZ `Governor`/`GovernorVotes` doesn't support per-category voter weight.
+2. **Per-proposal recusal** — a validator who is the explicit subject of a pending slashing/blacklist proposal has their bridged votes excluded from that proposal only. Finer-grained, more engineering (Governor needs to cross-reference proposal calldata against voter identity).
+
+Both add real scope on top of B/C's already-larger audit surface.
 
 ### Status
 
-Open. Not addressed in `Developer/design/whitepaper-summary.md` or Abraham's Slack answers (`discuss-44-45-46.md`, `araham_slack_reply.md`) — those cover slashing economics, tokenomics, and white-paper scope calls, not this. This is a new decision, and moot in the very near term since Stage C is trailing PR #27 into its own follow-up (nothing activates before devnet 3.0 / testnet 1.0 regardless).
+Pending, open for team input: [discussion #69](https://github.com/InfiniteZeroFoundation/DevNet/discussions/69) (cc Santiago, Similoluwa, Robert, Abraham). Umer's leaning is now **Option A**, given the conflict-of-interest argument above — still open to B/C-with-mitigation if the team weighs validator capital-efficiency as worth the added `Governor` complexity. Not addressed in `Developer/design/whitepaper-summary.md` or Abraham's Slack answers (`discuss-44-45-46.md`, `araham_slack_reply.md`). Moot in the very near term since Stage C is trailing PR #27 into its own follow-up (nothing activates before devnet 3.0 / testnet 1.0 regardless) — discussion opened now to get ahead of the design work rather than to unblock anything immediate.
 
 ---
 
@@ -90,3 +105,38 @@ Voting power decoupled from DIN holdings entirely — e.g., one-identity-one-vot
 ### Status
 
 Open. `decentralized-governance.md`'s existing recommendation (Option A) and the white paper/Abraham ask (leaning toward C, with B explicitly weighed and rejected in the same doc) are not currently reconciled anywhere in writing. Minimum near-term action per Abraham's instruction: document *why* Stage C chose coin-weighted over non-coin-based (Sybil resistance, no DID system yet) rather than leaving the conflict implicit — this doesn't require resolving the full question now, since Stage C is trailing PR #27 into a follow-up and nothing activates before testnet 1.0.
+
+---
+
+## DD-3 — Initial `DinMultisig` signer composition (Stage A)
+
+### Problem
+
+`Documentation/technical/din-dao/README.md` §4.1 sets `DinMultisig` at "3-of-5 for v1" but never names the five signers or how they're chosen. Per `foundry/src/dao/DinMultisig.sol`'s own NatSpec, the signer list and per-category thresholds are **immutable after construction** — changing signers later means deploying an entirely new `DinMultisig` and migrating `PROPOSER_ROLE`/`CANCELLER_ROLE` on both timelocks via an Upgrade-category proposal through the existing instance. That makes the initial choice unusually costly to get wrong.
+
+Flagged by Robert on PR #27: if all five keys are held by the same team, Stage A is technically "live" (per the activation schedule, shadow-only at Devnet 2.0) but provides no real governance legitimacy — it's the existing admin key in a 3-of-5 costume. Before the PR is marked ready, who are the initial signers, or what's the process for selecting them?
+
+### Option A — All-internal (team-held)
+
+All five keys held by DIN core team / DIN-Representative-adjacent individuals.
+
+- **Pros:** fastest to bootstrap; no external coordination or vetting needed; matches where the project actually is pre-Devnet-3.0 (Stage A is shadow-only, no on-chain authority yet).
+- **Cons:** exactly the centralization Robert flagged — no real legitimacy gain over the current single admin key, just more keys held by the same trust set.
+
+### Option B — Mixed internal + external
+
+Some seats held by the core team, remainder by external contributors/community members (e.g., active contributors or trusted community figures).
+
+- **Pros:** meaningfully reduces single-party control while still being achievable before Devnet 3.0; external signers have visible skin in the project already.
+- **Cons:** needs a real vetting/trust process for who qualifies; key management overhead for people outside the core team; still has to answer "who picks the external half," which just pushes the legitimacy question down one level.
+
+### Option C — Fully external / community-selected
+
+All five signers selected via some open nomination + selection process, none held by the core team by default.
+
+- **Pros:** most legitimate reading of "decentralized" for Stage A.
+- **Cons:** chicken-and-egg — there's no DAO or voting mechanism yet to run a legitimate selection (that's what Stages B–D are for); realistically too slow/heavy for where the project is now; risk of selecting signers with no actual stake in DIN's success.
+
+### Status
+
+Open, posted as [discussion #70](https://github.com/InfiniteZeroFoundation/DevNet/discussions/70) for team input (cc Santiago, Similoluwa, Robert, Abraham) — needs actual names or a concrete process, not resolvable from docs alone. Doesn't block PR #27 merging on its own, but per Robert's own point, does need an answer before Stage A is considered legitimate/"ready," and the immutability constraint means it's worth getting right rather than fast.
