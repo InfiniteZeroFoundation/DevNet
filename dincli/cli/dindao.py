@@ -463,6 +463,9 @@ def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None,
     if normalized_type in (None, "model"):
         console.print("[bold cyan]Pending Model Registration Requests:[/bold cyan]")
         found_model = False
+        # Known limit: subgraph silently truncates results beyond the first
+        # 1000 unprocessed requests. Fine for DevNet scale; the RPC-fallback
+        # path below does not share this cap.
         gql_data = _query_subgraph(
             "{ modelRegistrationRequests(where: { processed: false }, first: 1000)"
             " { requestId requester isOpenSource feePaid } }"
@@ -492,6 +495,9 @@ def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None,
     if normalized_type in (None, "manifest"):
         console.print("[bold cyan]Pending Manifest Update Requests:[/bold cyan]")
         found_manifest = False
+        # Known limit: subgraph silently truncates results beyond the first
+        # 1000 unprocessed requests. Fine for DevNet scale; the RPC-fallback
+        # path below does not share this cap.
         gql_data = _query_subgraph(
             "{ manifestUpdateRequests(where: { processed: false }, first: 1000)"
             " { requestId model { modelId } requester feePaid } }"
