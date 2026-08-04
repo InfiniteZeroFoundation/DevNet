@@ -6,6 +6,12 @@ import {
   ValidatorWithdrawalClaimed,
   ValidatorBlacklisted,
   ValidatorUnblacklisted,
+  ValidatorJailed,
+  ValidatorReactivated,
+  MinStakeUpdated,
+  UnbondingPeriodUpdated,
+  ModelStakeBoundsUpdated,
+  MaxConcurrentRegistrationsPerStakeUnitUpdated,
   SlasherContractAdded,
   SlasherContractRemoved,
 } from "../generated/DinValidatorStake/DinValidatorStake"
@@ -14,7 +20,10 @@ import {
   SlashEvent,
   UnstakeRequest,
   WithdrawalClaim,
+  JailEvent,
   SlasherRegistration,
+  StakeGovernance,
+  ModelStakeBounds,
 } from "../generated/schema"
 import { eventId, loadOrCreateValidator, syncValidatorStatus } from "./utils"
 
@@ -135,6 +144,94 @@ export function handleValidatorUnblacklisted(
   v.blacklisted = false
   syncValidatorStatus(v)
   v.save()
+}
+
+// ─── Jail / reactivate ────────────────────────────────────────────────────────
+
+export function handleValidatorJailed(event: ValidatorJailed): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.jailedUntil = BigInt.fromI64(event.params.jailedUntil as i64)
+  syncValidatorStatus(v)
+  v.save()
+
+  let j = new JailEvent(eventId(event.transaction.hash, event.logIndex))
+  j.validator       = event.params.validator.toHexString()
+  j.jailedUntil     = BigInt.fromI64(event.params.jailedUntil as i64)
+  j.reason          = event.params.reason
+  j.slasherContract = event.params.slasher
+  j.blockNumber     = event.block.number
+  j.blockTimestamp  = event.block.timestamp
+  j.transactionHash = event.transaction.hash
+  j.save()
+}
+
+export function handleValidatorReactivated(
+  event: ValidatorReactivated
+): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.jailedUntil = null
+  syncValidatorStatus(v)
+  v.save()
+}
+
+// ─── Governable parameters ────────────────────────────────────────────────────
+
+/** Load the StakeGovernance singleton, seeding initialize() defaults. */
+function loadOrCreateStakeGovernance(): StakeGovernance {
+  let g = StakeGovernance.load("singleton")
+  if (g == null) {
+    g = new StakeGovernance("singleton")
+    g.minStake = BigInt.fromString("10000000000000000000") // 10 DIN — initialize() default
+    g.unbondingPeriod = BigInt.fromI64(7 * 24 * 60 * 60 as i64) // 7 days
+    g.maxConcurrentRegistrationsPerStakeUnit = BigInt.zero()
+    g.updatedAtBlock = BigInt.zero()
+    g.updatedAtTimestamp = BigInt.zero()
+  }
+  return g!
+}
+
+export function handleMinStakeUpdated(event: MinStakeUpdated): void {
+  let g = loadOrCreateStakeGovernance()
+  g.minStake = event.params.newMinStake
+  g.updatedAtBlock = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
+}
+
+export function handleUnbondingPeriodUpdated(
+  event: UnbondingPeriodUpdated
+): void {
+  let g = loadOrCreateStakeGovernance()
+  g.unbondingPeriod = BigInt.fromI64(event.params.newPeriod as i64)
+  g.updatedAtBlock = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
+}
+
+export function handleMaxConcurrentRegistrationsPerStakeUnitUpdated(
+  event: MaxConcurrentRegistrationsPerStakeUnitUpdated
+): void {
+  let g = loadOrCreateStakeGovernance()
+  g.maxConcurrentRegistrationsPerStakeUnit = event.params.value
+  g.updatedAtBlock = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
+}
+
+export function handleModelStakeBoundsUpdated(
+  event: ModelStakeBoundsUpdated
+): void {
+  let id = event.params.modelId.toString()
+  let b = ModelStakeBounds.load(id)
+  if (b == null) {
+    b = new ModelStakeBounds(id)
+    b.modelId = event.params.modelId
+  }
+  b.min = event.params.min
+  b.max = event.params.max
+  b.updatedAtBlock = event.block.number
+  b.updatedAtTimestamp = event.block.timestamp
+  b.save()
 }
 
 // ─── Slasher registry ─────────────────────────────────────────────────────────

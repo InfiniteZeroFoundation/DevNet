@@ -116,7 +116,10 @@ dataSources:
         - SlashEvent
         - UnstakeRequest
         - WithdrawalClaim
+        - JailEvent
         - SlasherRegistration
+        - StakeGovernance
+        - ModelStakeBounds
       abis:
         - name: DinValidatorStake
           file: ./abis/DinValidatorStake.json
@@ -133,6 +136,18 @@ dataSources:
           handler: handleValidatorBlacklisted
         - event: ValidatorUnblacklisted(indexed address)
           handler: handleValidatorUnblacklisted
+        - event: ValidatorJailed(indexed address,uint64,indexed bytes32,indexed address)
+          handler: handleValidatorJailed
+        - event: ValidatorReactivated(indexed address)
+          handler: handleValidatorReactivated
+        - event: MinStakeUpdated(uint256)
+          handler: handleMinStakeUpdated
+        - event: UnbondingPeriodUpdated(uint64)
+          handler: handleUnbondingPeriodUpdated
+        - event: ModelStakeBoundsUpdated(indexed uint256,uint256,uint256)
+          handler: handleModelStakeBoundsUpdated
+        - event: MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256)
+          handler: handleMaxConcurrentRegistrationsPerStakeUnitUpdated
 
         # SlasherContractAdded/Removed are emitted by both DinCoordinator and
         # DinValidatorStake with identical signatures (see event-coverage-audit.md §5).

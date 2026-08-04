@@ -202,10 +202,14 @@ type Validator @entity {
 
   blacklisted: Boolean!
 
+  "Timestamp until which the validator is jailed, or null if not jailed. Cleared on reactivation."
+  jailedUntil: BigInt
+
   stakeEvents: [StakeEvent!]! @derivedFrom(field: "validator")
   slashEvents: [SlashEvent!]! @derivedFrom(field: "validator")
   unstakeRequests: [UnstakeRequest!]! @derivedFrom(field: "validator")
   withdrawalClaims: [WithdrawalClaim!]! @derivedFrom(field: "validator")
+  jailEvents: [JailEvent!]! @derivedFrom(field: "validator")
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -269,6 +273,71 @@ type WithdrawalClaim @entity {
   blockNumber: BigInt!
   blockTimestamp: BigInt!
   transactionHash: Bytes!
+}
+
+"""
+A jail applied to a validator (extend-only). A validator stays Jailed until
+they call reactivate() after the jail period expires — there is no silent
+auto-return (see DinValidatorStake._syncValidatorStatus()).
+"""
+type JailEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+
+  "Timestamp until which the validator is jailed"
+  jailedUntil: BigInt!
+
+  "Arbitrary slasher-supplied reason (e.g. keccak('offline'))"
+  reason: Bytes!
+
+  "Address of the slasher contract that issued the jail"
+  slasherContract: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — governance parameters
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+Singleton (id "singleton") mirroring the DAO-settable parameters on
+DinValidatorStake. Kept up to date by the MinStakeUpdated,
+UnbondingPeriodUpdated, and MaxConcurrentRegistrationsPerStakeUnitUpdated
+handlers. Defaults to the initialize() values (minStake = 10 DIN,
+unbondingPeriod = 7 days).
+"""
+type StakeGovernance @entity {
+  "singleton"
+  id: ID!
+
+  minStake: BigInt!
+  unbondingPeriod: BigInt!
+  maxConcurrentRegistrationsPerStakeUnit: BigInt!
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""
+DAO-level per-model stake bounds. Inert storage on the contract (not yet
+consumed by task-contract registration); indexed here for governance
+audit-trail visibility.
+"""
+type ModelStakeBounds @entity {
+  "modelId as string"
+  id: ID!
+
+  modelId: BigInt!
+  min: BigInt!
+  max: BigInt!
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -409,9 +478,9 @@ type GlobalIteration @entity {
   "Back-reference to the platform-level Model entity"
   model: Model!
 
-  "Current GIstates enum value as uint8.
+  """Current GIstates enum value as uint8.
   Populated once GIStateChanged event lands [PENDING — audit §4.1].
-  Starts at 5 (GIstarted) — the first state reachable after model registration."
+  Starts at 5 (GIstarted) — the first state reachable after model registration."""
   currentState: Int!
 
   aggregatorRegistrations: [AggregatorRegistration!]! @derivedFrom(field: "globalIteration")
