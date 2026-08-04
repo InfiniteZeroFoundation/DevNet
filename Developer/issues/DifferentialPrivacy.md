@@ -4,7 +4,7 @@
 
 This issue covers improvements to the differential privacy pipeline used by Infinite Zero Network during local client training and update submission.
 
-The DevNet baseline in [client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py) now supports three manifest-driven DP mechanisms:
+The DevNet baseline in [client.py](../../cache_model_0/services/client.py) now supports three manifest-driven DP mechanisms:
 
 - `post_training_gaussian`
 - `post_training_laplace`
@@ -14,7 +14,7 @@ That is still a starter privacy layer rather than a production-ready one. The ne
 
 ## manifest
 
-The model manifest at [manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json) can be used to define differential privacy parameters for a task.
+The model manifest at [manifest.json](../../cache_model_0/manifest.json) can be used to define differential privacy parameters for a task.
 
 That means DP behavior should not be limited to hardcoded values inside `client.py`. A model owner should be able to place DP-related settings in the manifest and let services read them at runtime.
 
@@ -71,7 +71,7 @@ This is why the runtime context was added: `dincli` resolves the manifest once f
 
 ## Implemented DevNet Baseline
 
-Current behavior in [client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py):
+Current behavior in [client.py](../../cache_model_0/services/client.py):
 
 - `post_training_gaussian`: clips the final model weights and adds Gaussian noise tensor-by-tensor.
 - `post_training_laplace`: clips the final model weights and adds Laplace noise tensor-by-tensor.
@@ -94,8 +94,8 @@ Compatibility notes:
 
 Current lineage for the DevNet client-side DP implementation:
 
-- The shipped implementation in [client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py) was written directly for this repository and is the authoritative source for the current behavior.
-- The manifest/runtime access pattern is based on the local `dincli` runtime context in [runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py), not on an external DP library.
+- The shipped implementation in [client.py](../../cache_model_0/services/client.py) was written directly for this repository and is the authoritative source for the current behavior.
+- The manifest/runtime access pattern is based on the local `dincli` runtime context in [runtime.py](../../dincli/services/runtime.py), not on an external DP library.
 - The current mechanisms use plain PyTorch tensor operations and do not directly vendor code from an external privacy library or from the data-valuation repositories below.
 
 Related research and repository references that informed the direction:
@@ -598,16 +598,15 @@ Important framing:
 
 Please review these local files first:
 
-- [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py)
-- [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json)
-- [cache_model_0/services/aggregator.py](/home/azureuser/projects/devnet/cache_model_0/services/aggregator.py)
-- [dincli/services/runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py)
-- [dincli/cli/client.py](/home/azureuser/projects/devnet/dincli/cli/client.py)
-- [dincli/services/client.py](/home/azureuser/projects/devnet/dincli/services/client.py)
-- [tests/test_cache_client_dp.py](/home/azureuser/projects/devnet/tests/test_cache_client_dp.py)
-- [Documentation/technical/services/clients.md](/home/azureuser/projects/devnet/Documentation/technical/services/clients.md)
-- [Documentation/technical/manifest.md](/home/azureuser/projects/devnet/Documentation/technical/manifest.md)
-- [Developer/CONTRIBUTING.md](/home/azureuser/projects/devnet/Developer/CONTRIBUTING.md)
+- [cache_model_0/services/client.py](../../cache_model_0/services/client.py)
+- [cache_model_0/manifest.json](../../cache_model_0/manifest.json)
+- [cache_model_0/services/aggregator.py](../../cache_model_0/services/aggregator.py)
+- [dincli/services/runtime.py](../../dincli/services/runtime.py)
+- [dincli/cli/client.py](../../dincli/cli/client.py)
+- [tests/test_cache_client_dp.py](../../tests/test_cache_client_dp.py)
+- [Documentation/technical/services/clients.md](../../Documentation/technical/services/clients.md)
+- [Documentation/technical/manifest.md](../../Documentation/technical/manifest.md)
+- [Developer/CONTRIBUTING.md](../../Developer/CONTRIBUTING.md)
 
 Useful reference material (Note: TKNN-Shapley is rejected for client model scoring due to FL privacy constraints - see [Rejected Ideas: TKNN-Shapley](../rejected-ideas/tknn-shapley.md)):
 

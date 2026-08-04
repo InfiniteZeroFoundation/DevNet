@@ -1,0 +1,97 @@
+# DIN Protocol — local Graph node stack
+#
+# Runs a self-hosted graph-node, IPFS, and Postgres against the local anvil
+# chain (chainId 1337) for subgraph development and testing.
+#
+# Quick start
+# ───────────
+#   1. Start the local anvil chain first:
+#        ./foundry/anvil.sh                                  (from repo root)
+#
+#   2. Deploy the platform contracts and copy their addresses into
+#      subgraph.yaml (replace the 0x0000...0001–0004 placeholders):
+#        cd hardhat && npx hardhat run scripts/deploy.ts --network localhost
+#
+#   3. Start the Graph node stack:
+#        cd subgraph && docker compose up -d
+#
+#   4. Wait ~10 s for graph-node to connect to Postgres and IPFS, then
+#      create and deploy the subgraph:
+#        npm run codegen
+#        npm run build
+#        npm run create:local
+#        npm run deploy:local
+#
+#   5. Query at http://localhost:8000/subgraphs/name/din-protocol/graphql
+#
+# Teardown
+# ────────
+#   docker compose down -v       # removes containers AND volumes (fresh slate)
+#   docker compose down          # stops containers, keeps indexed data
+
+services:
+
+  graph-node:
+    image: graphprotocol/graph-node:v0.34.1
+    ports:
+      - "8000:8000"   # GraphQL HTTP endpoint
+      - "8001:8001"   # GraphQL WebSocket endpoint
+      - "8020:8020"   # Admin / subgraph deploy RPC
+      - "8030:8030"   # Index-node status API
+      - "8040:8040"   # Prometheus metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_started
+    environment:
+      postgres_host: postgres
+      postgres_user: graph-node
+      postgres_pass: din-graph-local
+      postgres_db: graph-node
+      ipfs: "ipfs:5001"
+      # din-local must match the network name in subgraph.yaml.
+      # host.docker.internal resolves to the host on Docker Desktop (macOS/Win).
+      # On Linux replace with the Docker bridge IP: 172.17.0.1
+      ethereum: "din-local:http://host.docker.internal:8545"
+      GRAPH_LOG: info
+      # Allow the graph-node to connect to a chain that has not finalised
+      # many blocks (local anvil produces blocks on demand).
+      GRAPH_ETHEREUM_TARGET_TRIGGERS_PER_BLOCK_RANGE: "1"
+    restart: unless-stopped
+
+  ipfs:
+    image: ipfs/kubo:v0.27.0
+    ports:
+      - "5001:5001"   # IPFS API (used by graph-node and graph deploy)
+    volumes:
+      - ipfs-data:/data/ipfs
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: din-graph-local
+      POSTGRES_DB: graph-node
+      # Required by graph-node to use TOAST compression for large bytea values.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graph-node -d graph-node"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  ipfs-data:
+  postgres-data:

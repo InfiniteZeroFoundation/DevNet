@@ -1,18 +1,7 @@
 {
   "abi": [
     {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "dinToken",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "dinCoordinator",
-          "type": "address"
-        }
-      ],
+      "inputs": [],
       "stateMutability": "nonpayable",
       "type": "constructor"
     },
@@ -24,6 +13,11 @@
     {
       "inputs": [],
       "name": "InvalidAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidInitialization",
       "type": "error"
     },
     {
@@ -49,6 +43,11 @@
     {
       "inputs": [],
       "name": "NotEnoughStake",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotInitializing",
       "type": "error"
     },
     {
@@ -123,6 +122,19 @@
       "inputs": [],
       "name": "WithdrawalNotReady",
       "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "version",
+          "type": "uint64"
+        }
+      ],
+      "name": "Initialized",
+      "type": "event"
     },
     {
       "anonymous": false,
@@ -391,6 +403,24 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "dinToken",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "dinCoordinator",
+          "type": "address"
+        }
+      ],
+      "name": "initialize",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {

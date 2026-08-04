@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 import typer
 from typer.testing import CliRunner
-
+from rich.console import Console
 from dincli.cli import dintoken
 from dincli.main import app as main_app
 
@@ -52,15 +52,15 @@ class DummyTokenFunctions:
 
 class DummyStakeFunctions:
     def __init__(self, stake):
-        self.stake = stake
+        self._stake = stake
 
     def stake(self, amount):
-        self.stake.stakes.append(amount)
+        self._stake.stakes.append(amount)
         return ("stake", amount)
 
     def getStake(self, address):
-        self.stake.get_stake_calls.append(address)
-        return DummyCall(self.stake.current_stake)
+        self._stake.get_stake_calls.append(address)
+        return DummyCall(self._stake.current_stake)
 
 
 class DummyCoordinatorFunctions:
@@ -98,7 +98,7 @@ class DummyCoordinator:
 
 class DummyContextObj:
     def __init__(self, token_balance=100 * 10**18, current_stake=12 * 10**18):
-        self.console = DummyConsole()
+        self.console = Console()
         self.w3 = DummyWeb3()
         self.account = SimpleNamespace(address="0xAccount")
         self.token = DummyToken(token_balance)
@@ -106,6 +106,7 @@ class DummyContextObj:
         self.coordinator = DummyCoordinator()
 
     def get_en_w3_account_console(self):
+        self.console.print(f"[bold green]✓ Active Wallet:[/bold green] {self.account.address}")
         return "local", self.w3, self.account, self.console
 
     def get_deployed_din_token_contract(self):

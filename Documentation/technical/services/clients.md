@@ -1,6 +1,6 @@
 # Client Service
 
-Technical documentation for the DevNet reference client service at [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py).
+Technical documentation for the DevNet reference client service at [cache_model_0/services/client.py](../../../cache_model_0/services/client.py).
 
 ## Overview
 
@@ -35,9 +35,9 @@ The service is normally invoked by `dincli`, not by importing it directly.
 
 Relevant call path:
 
-- CLI entrypoint: [dincli/cli/client.py](/home/azureuser/projects/devnet/dincli/cli/client.py)
-- Runtime builder: [dincli/services/runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py)
-- Manifest service entry: [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json)
+- CLI entrypoint: [dincli/cli/client.py](../../../dincli/cli/client.py)
+- Runtime builder: [dincli/services/runtime.py](../../../dincli/services/runtime.py)
+- Manifest service entry: [cache_model_0/manifest.json](../../../cache_model_0/manifest.json)
 
 Flow summary:
 
@@ -177,7 +177,7 @@ Only floating tensors are clipped/noised. Integer buffers or counters are copied
 
 Regardless of mechanism, the service uploads a PyTorch `state_dict`, not a custom delta payload.
 
-That constraint is important because the current aggregator in [cache_model_0/services/aggregator.py](/home/azureuser/projects/devnet/cache_model_0/services/aggregator.py) averages full state dictionaries.
+That constraint is important because the current aggregator in [cache_model_0/services/aggregator.py](../../../cache_model_0/services/aggregator.py) averages full state dictionaries.
 
 This means:
 
@@ -199,11 +199,11 @@ Current limitations of the service:
 
 Primary local sources:
 
-- client implementation: [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py)
-- runtime manifest access: [dincli/services/runtime.py](/home/azureuser/projects/devnet/dincli/services/runtime.py)
-- CLI invocation path: [dincli/cli/client.py](/home/azureuser/projects/devnet/dincli/cli/client.py)
-- sample manifest: [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json)
-- DP issue/design notes: [Developer/issues/DifferentialPrivacy.md](/home/azureuser/projects/devnet/Developer/issues/DifferentialPrivacy.md)
+- client implementation: [cache_model_0/services/client.py](../../../cache_model_0/services/client.py)
+- runtime manifest access: [dincli/services/runtime.py](../../../dincli/services/runtime.py)
+- CLI invocation path: [dincli/cli/client.py](../../../dincli/cli/client.py)
+- sample manifest: [cache_model_0/manifest.json](../../../cache_model_0/manifest.json)
+- DP issue/design notes: [Developer/issues/DifferentialPrivacy.md](../../../Developer/issues/DifferentialPrivacy.md)
 
 Related research and reference repositories:
 

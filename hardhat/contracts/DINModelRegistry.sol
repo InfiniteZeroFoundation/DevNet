@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
-/// @title DIN Model Registry (v2 - Request/Approval Based)
-/// @author InfiniteZero Foundation
-/// @notice Secure registry with approval layer for manifests
-/// @dev Minimal, auditable, DAO-controlled primitive
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 interface IDinValidatorStake {
     function isSlasherContract(
@@ -16,11 +14,10 @@ interface IOwnable {
     function owner() external view returns (address);
 }
 
-contract DINModelRegistry {
-    /*//////////////////////////////////////////////////////////////
-                                ERRORS
-    //////////////////////////////////////////////////////////////*/
-    error NotDINDAOAdmin();
+/// @title DIN Model Registry
+/// @notice Manages model registration requests, manifest updates, and per-model
+///         lifecycle controls. Deployed once per network behind a Transparent Proxy.
+contract DINModelRegistry is Initializable, OwnableUpgradeable {
     error NotModelOwner();
     error InvalidModelId();
     error InvalidRequestId();
@@ -33,22 +30,18 @@ contract DINModelRegistry {
     error TaskCoordinatorAlreadyRegistered();
     error TaskAuditorAlreadyRegistered();
     error ZeroAddress();
-    // Approval-time revalidation errors
     error CoordinatorNoLongerSlasher();
     error AuditorNoLongerSlasher();
     error CoordinatorOwnershipChanged();
     error AuditorOwnershipChanged();
+    error TransferFailed();
 
-    /*//////////////////////////////////////////////////////////////
-                                EVENTS
-    //////////////////////////////////////////////////////////////*/
     event ModelRegistrationRequested(
         uint256 indexed requestId,
         address indexed requester
     );
     event ModelApproved(uint256 indexed requestId, uint256 indexed modelId);
     event ModelRejected(uint256 indexed requestId);
-
     event ManifestUpdateRequested(
         uint256 indexed requestId,
         uint256 indexed modelId
@@ -59,31 +52,21 @@ contract DINModelRegistry {
         bytes32 newCID
     );
     event ManifestUpdateRejected(uint256 indexed requestId);
-
-    // Kill-switch events
     event ModelDisabled(uint256 indexed modelId);
     event ModelEnabled(uint256 indexed modelId);
-
-    // Individual fee events (granular tracking)
     event OpenSourceFeeUpdated(uint256 newFee);
     event ProprietaryFeeUpdated(uint256 newFee);
     event OpenSourceUpdateFeeUpdated(uint256 newFee);
     event ProprietaryUpdateFeeUpdated(uint256 newFee);
-
-    // Combined fee event (atomic governance proposals)
     event FeesUpdated(
         uint256 openSourceFee,
         uint256 proprietaryFee,
         uint256 openSourceUpdateFee,
         uint256 proprietaryUpdateFee
     );
-
     event FeesWithdrawn(address indexed to, uint256 amount);
     event DAOAdminUpdated(address indexed oldAdmin, address indexed newAdmin);
 
-    /*//////////////////////////////////////////////////////////////
-                                STRUCTS
-    //////////////////////////////////////////////////////////////*/
     struct Model {
         address owner;
         bool isOpenSource;
@@ -114,36 +97,40 @@ contract DINModelRegistry {
         bool approved;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
-    //////////////////////////////////////////////////////////////*/
-    address public daoAdmin;
     IDinValidatorStake public dinValidatorStake;
 
-    // Registration fees
-    uint256 public openSourceFee = 0.000001 ether;
-    uint256 public proprietaryFee = 0.00001 ether;
-
-    // Manifest update fees
-    uint256 public openSourceUpdateFee = 0.0000001 ether;
-    uint256 public proprietaryUpdateFee = 0.000001 ether;
+    uint256 public openSourceFee;
+    uint256 public proprietaryFee;
+    uint256 public openSourceUpdateFee;
+    uint256 public proprietaryUpdateFee;
 
     Model[] private models;
     ModelRequest[] public modelRequests;
     ManifestUpdateRequest[] public manifestRequests;
 
-    mapping(address => uint256) private _modelIdByTaskCoordinator; // Stores modelId + 1
-    mapping(address => uint256) private _modelIdByTaskAuditor; // Stores modelId + 1
-
-    // Kill-switch: disabled models cannot have manifests updated or participate
+    mapping(address => uint256) private _modelIdByTaskCoordinator;
+    mapping(address => uint256) private _modelIdByTaskAuditor;
     mapping(uint256 => bool) public modelDisabled;
 
-    /*//////////////////////////////////////////////////////////////
-                              MODIFIERS
-    //////////////////////////////////////////////////////////////*/
-    modifier onlyDAOAdmin() {
-        if (msg.sender != daoAdmin) revert NotDINDAOAdmin();
-        _;
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initialises the proxy, wires the validator stake contract, and sets
+    ///         default registration and update fees.
+    /// @param dinValidatorStake_ Address of the DinValidatorStake proxy.
+    function initialize(address dinValidatorStake_) external initializer {
+        if (dinValidatorStake_ == address(0)) revert ZeroAddress();
+        __Ownable_init(msg.sender);
+        dinValidatorStake = IDinValidatorStake(dinValidatorStake_);
+        openSourceFee = 0.000001 ether;
+        proprietaryFee = 0.00001 ether;
+        openSourceUpdateFee = 0.0000001 ether;
+        proprietaryUpdateFee = 0.000001 ether;
     }
 
     modifier onlyModelOwner(uint256 modelId) {
@@ -157,24 +144,14 @@ contract DINModelRegistry {
         _;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                              CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
-    constructor(address _dinValidatorStake) {
-        daoAdmin = msg.sender; // DIN DAO representative
-        dinValidatorStake = IDinValidatorStake(_dinValidatorStake);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                    MODEL REGISTRATION REQUEST
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Submit a model registration request for DAO review
-    /// @param manifestCID IPFS CID (bytes32) containing the model manifest
-    /// @param taskCoordinator Address of the registered task coordinator slasher contract
-    /// @param taskAuditor    Address of the registered task auditor slasher contract
-    /// @param isOpenSource   Whether the model is open-source or proprietary
-    /// @return requestId     ID of the pending request
+    /// @notice Submits a model registration request for DIN-Representative review.
+    /// @dev Both task contracts must be registered slashers and owned by msg.sender
+    ///      at submission time. These conditions are re-validated at approval.
+    /// @param manifestCID IPFS CID of the model manifest.
+    /// @param taskCoordinator Address of the model's DINTaskCoordinator contract.
+    /// @param taskAuditor Address of the model's DINTaskAuditor contract.
+    /// @param isOpenSource True for open-source fee tier; false for proprietary.
+    /// @return requestId Index of the created request in the modelRequests array.
     function requestModelRegistration(
         bytes32 manifestCID,
         address taskCoordinator,
@@ -184,14 +161,10 @@ contract DINModelRegistry {
         uint256 requiredFee = isOpenSource ? openSourceFee : proprietaryFee;
         if (msg.value < requiredFee) revert InsufficientFee();
 
-        require(
-            dinValidatorStake.isSlasherContract(taskCoordinator),
-            "Invalid Coordinator"
-        );
-        require(
-            dinValidatorStake.isSlasherContract(taskAuditor),
-            "Invalid Auditor"
-        );
+        if (!dinValidatorStake.isSlasherContract(taskCoordinator))
+            revert CoordinatorNoLongerSlasher();
+        if (!dinValidatorStake.isSlasherContract(taskAuditor))
+            revert AuditorNoLongerSlasher();
 
         if (taskCoordinator == taskAuditor)
             revert TaskCoordinatorEqualsTaskAuditor();
@@ -220,24 +193,21 @@ contract DINModelRegistry {
         emit ModelRegistrationRequested(requestId, msg.sender);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        APPROVE / REJECT MODEL
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice DAO approves a pending model registration
-    function approveModel(uint256 requestId) external onlyDAOAdmin {
+    /// @notice Approves a pending registration request and adds the model to the registry.
+    /// @dev Re-validates slasher status and ownership at approval time to guard against
+    ///      state changes between submission and approval.
+    /// @param requestId Index into the modelRequests array.
+    function approveModel(uint256 requestId) external onlyOwner {
         if (requestId >= modelRequests.length) revert InvalidRequestId();
 
         ModelRequest storage req = modelRequests[requestId];
         if (req.processed) revert AlreadyProcessed();
 
-        // Guard against reusing the same coordinator or auditor across models
         if (_modelIdByTaskCoordinator[req.taskCoordinator] != 0)
             revert TaskCoordinatorAlreadyRegistered();
         if (_modelIdByTaskAuditor[req.taskAuditor] != 0)
             revert TaskAuditorAlreadyRegistered();
 
-        // Revalidate: slasher status or ownership may have changed since the request was submitted
         if (!dinValidatorStake.isSlasherContract(req.taskCoordinator))
             revert CoordinatorNoLongerSlasher();
         if (!dinValidatorStake.isSlasherContract(req.taskAuditor))
@@ -260,7 +230,6 @@ contract DINModelRegistry {
             })
         );
 
-        // Store modelId + 1 to distinguish from the zero-value default
         _modelIdByTaskCoordinator[req.taskCoordinator] = modelId + 1;
         _modelIdByTaskAuditor[req.taskAuditor] = modelId + 1;
 
@@ -270,8 +239,9 @@ contract DINModelRegistry {
         emit ModelApproved(requestId, modelId);
     }
 
-    /// @notice DAO rejects a pending model registration (fee is retained)
-    function rejectModel(uint256 requestId) external onlyDAOAdmin {
+    /// @notice Rejects a pending registration request without adding a model.
+    /// @param requestId Index into the modelRequests array.
+    function rejectModel(uint256 requestId) external onlyOwner {
         if (requestId >= modelRequests.length) revert InvalidRequestId();
 
         ModelRequest storage req = modelRequests[requestId];
@@ -283,14 +253,10 @@ contract DINModelRegistry {
         emit ModelRejected(requestId);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                    MANIFEST UPDATE REQUEST
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Submit a manifest update request for DAO review (model owner only)
-    /// @param modelId       ID of the model to update
-    /// @param newManifestCID New IPFS CID (bytes32) for the model manifest
-    /// @return requestId    ID of the pending manifest update request
+    /// @notice Submits a manifest update request for an existing model.
+    /// @param modelId ID of the model to update.
+    /// @param newManifestCID IPFS CID of the new manifest.
+    /// @return requestId Index of the created request in the manifestRequests array.
     function requestManifestUpdate(
         uint256 modelId,
         bytes32 newManifestCID
@@ -325,18 +291,14 @@ contract DINModelRegistry {
         emit ManifestUpdateRequested(requestId, modelId);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                APPROVE / REJECT MANIFEST UPDATE
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice DAO approves a pending manifest update
-    function approveManifestUpdate(uint256 requestId) external onlyDAOAdmin {
+    /// @notice Approves a manifest update and writes the new CID to the model record.
+    /// @param requestId Index into the manifestRequests array.
+    function approveManifestUpdate(uint256 requestId) external onlyOwner {
         if (requestId >= manifestRequests.length) revert InvalidRequestId();
 
         ManifestUpdateRequest storage req = manifestRequests[requestId];
         if (req.processed) revert AlreadyProcessed();
 
-        // Prevent approving updates for a model that has since been disabled
         if (modelDisabled[req.modelId]) revert ModelIsDisabled(req.modelId);
 
         models[req.modelId].manifestCID = req.newManifestCID;
@@ -347,8 +309,9 @@ contract DINModelRegistry {
         emit ManifestUpdated(requestId, req.modelId, req.newManifestCID);
     }
 
-    /// @notice DAO rejects a pending manifest update (fee is retained)
-    function rejectManifestUpdate(uint256 requestId) external onlyDAOAdmin {
+    /// @notice Rejects a pending manifest update request.
+    /// @param requestId Index into the manifestRequests array.
+    function rejectManifestUpdate(uint256 requestId) external onlyOwner {
         if (requestId >= manifestRequests.length) revert InvalidRequestId();
 
         ManifestUpdateRequest storage req = manifestRequests[requestId];
@@ -360,10 +323,14 @@ contract DINModelRegistry {
         emit ManifestUpdateRejected(requestId);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            VIEW FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
+    /// @notice Returns the full record for a registered model.
+    /// @param modelId ID of the model to query.
+    /// @return owner Address of the model owner.
+    /// @return isOpenSource True if the model is open-source.
+    /// @return manifestCID IPFS CID of the current manifest.
+    /// @return createdAt Block timestamp at registration.
+    /// @return taskCoordinator Address of the model's DINTaskCoordinator.
+    /// @return taskAuditor Address of the model's DINTaskAuditor.
     function getModel(
         uint256 modelId
     )
@@ -390,93 +357,103 @@ contract DINModelRegistry {
         );
     }
 
+    /// @notice Returns the total number of approved models in the registry.
+    /// @return Count of registered models.
     function totalModels() external view returns (uint256) {
         return models.length;
     }
 
+    /// @notice Returns the total number of model registration requests submitted.
+    /// @return Count of entries in the modelRequests array.
     function totalModelRequests() external view returns (uint256) {
         return modelRequests.length;
     }
 
+    /// @notice Returns the total number of manifest update requests submitted.
+    /// @return Count of entries in the manifestRequests array.
     function totalManifestRequests() external view returns (uint256) {
         return manifestRequests.length;
     }
 
-    /// @notice Look up the model ID registered for a given task coordinator
+    /// @notice Looks up the model ID associated with a given task coordinator address.
+    /// @param taskCoordinator Address to query.
+    /// @return exists True if a model is registered for this coordinator.
+    /// @return modelId The model's ID (only meaningful if exists is true).
     function getModelIdByTaskCoordinator(
         address taskCoordinator
     ) external view returns (bool exists, uint256 modelId) {
         uint256 val = _modelIdByTaskCoordinator[taskCoordinator];
         if (val == 0) return (false, 0);
-        return (true, val - 1); // subtract 1 to convert back to 0-indexed modelId
+        return (true, val - 1);
     }
 
-    /// @notice Look up the model ID registered for a given task auditor
+    /// @notice Looks up the model ID associated with a given task auditor address.
+    /// @param taskAuditor Address to query.
+    /// @return exists True if a model is registered for this auditor.
+    /// @return modelId The model's ID (only meaningful if exists is true).
     function getModelIdByTaskAuditor(
         address taskAuditor
     ) external view returns (bool exists, uint256 modelId) {
         uint256 val = _modelIdByTaskAuditor[taskAuditor];
         if (val == 0) return (false, 0);
-        return (true, val - 1); // subtract 1 to convert back to 0-indexed modelId
+        return (true, val - 1);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        DAO ADMIN FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    // ── Kill switch ────────────────────────────────────────────────────────
-
-    /// @notice Immediately disable a model — blocks manifest updates and
-    ///         any downstream contract that checks modelDisabled(modelId)
-    function disableModel(uint256 modelId) external onlyDAOAdmin {
+    /// @notice Disables a model, blocking manifest updates and new GI registrations.
+    /// @param modelId ID of the model to disable.
+    function disableModel(uint256 modelId) external onlyOwner {
         if (modelId >= models.length) revert InvalidModelId();
         modelDisabled[modelId] = true;
         emit ModelDisabled(modelId);
     }
 
-    /// @notice Re-enable a previously disabled model
-    function enableModel(uint256 modelId) external onlyDAOAdmin {
+    /// @notice Re-enables a previously disabled model.
+    /// @param modelId ID of the model to enable.
+    function enableModel(uint256 modelId) external onlyOwner {
         if (modelId >= models.length) revert InvalidModelId();
         modelDisabled[modelId] = false;
         emit ModelEnabled(modelId);
     }
 
-    // ── Individual fee setters ─────────────────────────────────────────────
-
-    /// @notice Update the open-source model registration fee
-    function setOpenSourceFee(uint256 newFee) external onlyDAOAdmin {
+    /// @notice Updates the registration fee for open-source models.
+    /// @param newFee New fee in wei.
+    function setOpenSourceFee(uint256 newFee) external onlyOwner {
         openSourceFee = newFee;
         emit OpenSourceFeeUpdated(newFee);
     }
 
-    /// @notice Update the proprietary model registration fee
-    function setProprietaryFee(uint256 newFee) external onlyDAOAdmin {
+    /// @notice Updates the registration fee for proprietary models.
+    /// @param newFee New fee in wei.
+    function setProprietaryFee(uint256 newFee) external onlyOwner {
         proprietaryFee = newFee;
         emit ProprietaryFeeUpdated(newFee);
     }
 
-    /// @notice Update the open-source manifest update fee
-    function setOpenSourceUpdateFee(uint256 newFee) external onlyDAOAdmin {
+    /// @notice Updates the manifest update fee for open-source models.
+    /// @param newFee New fee in wei.
+    function setOpenSourceUpdateFee(uint256 newFee) external onlyOwner {
         openSourceUpdateFee = newFee;
         emit OpenSourceUpdateFeeUpdated(newFee);
     }
 
-    /// @notice Update the proprietary manifest update fee
-    function setProprietaryUpdateFee(uint256 newFee) external onlyDAOAdmin {
+    /// @notice Updates the manifest update fee for proprietary models.
+    /// @param newFee New fee in wei.
+    function setProprietaryUpdateFee(uint256 newFee) external onlyOwner {
         proprietaryUpdateFee = newFee;
         emit ProprietaryUpdateFeeUpdated(newFee);
     }
 
-    // ── Combined setter (atomic governance) ────────────────────────────────
-
-    /// @notice Atomically update all four protocol fees in a single transaction
-    /// @dev Prefer this for governance proposals to avoid inconsistent fee states
+    /// @notice Updates all four fee tiers in a single transaction.
+    /// @param _openSourceFee Open-source registration fee in wei.
+    /// @param _proprietaryFee Proprietary registration fee in wei.
+    /// @param _openSourceUpdateFee Open-source manifest update fee in wei.
+    /// @param _proprietaryUpdateFee Proprietary manifest update fee in wei.
     function setFees(
         uint256 _openSourceFee,
         uint256 _proprietaryFee,
         uint256 _openSourceUpdateFee,
         uint256 _proprietaryUpdateFee
-    ) external onlyDAOAdmin {
+    ) external onlyOwner {
         openSourceFee = _openSourceFee;
         proprietaryFee = _proprietaryFee;
         openSourceUpdateFee = _openSourceUpdateFee;
@@ -490,21 +467,31 @@ contract DINModelRegistry {
         );
     }
 
-    /// @notice Withdraw accumulated fees to a designated address
-    function withdrawFees(address payable to) external onlyDAOAdmin {
+    /// @notice Transfers the contract's entire ETH balance to the specified address.
+    /// @param to Destination address for the fee withdrawal.
+    function withdrawFees(address payable to) external onlyOwner {
         uint256 balance = address(this).balance;
-        to.transfer(balance);
+        (bool success, ) = to.call{value: balance}("");
+        if (!success) revert TransferFailed();
         emit FeesWithdrawn(to, balance);
     }
 
-    // ── DAO admin transfer ─────────────────────────────────────────────────
+    // Backward-compat shims — dincli calls daoAdmin() / setDAOAdmin().
+    // Underlying auth model is OwnableUpgradeable; these are read-through facades.
 
-    /// @notice Transfer DAO admin role (multisig / timelock migration path)
-    /// @dev Emits DAOAdminUpdated so indexers can track governance handover
-    function setDAOAdmin(address newAdmin) external onlyDAOAdmin {
-        if (newAdmin == address(0)) revert ZeroAddress();
-        address old = daoAdmin;
-        daoAdmin = newAdmin;
+    /// @notice Returns the current admin address. Delegates to OwnableUpgradeable.owner().
+    /// @dev Compatibility shim preserving the pre-upgrade daoAdmin() ABI surface.
+    /// @return The current owner address.
+    function daoAdmin() external view returns (address) {
+        return owner();
+    }
+
+    /// @notice Transfers ownership and emits DAOAdminUpdated for off-chain indexers.
+    /// @dev Compatibility shim preserving the pre-upgrade setDAOAdmin() ABI surface.
+    /// @param newAdmin Address to transfer ownership to.
+    function setDAOAdmin(address newAdmin) external onlyOwner {
+        address old = owner();
+        transferOwnership(newAdmin);
         emit DAOAdminUpdated(old, newAdmin);
     }
 }

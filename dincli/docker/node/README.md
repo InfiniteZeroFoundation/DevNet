@@ -267,8 +267,8 @@ $DIN_STATE_DIR/
   but **not for production**.
 - **Production:** Import an **encrypted keystore** using `--keystore` into a named
   account, then select it via `--wallet` or `DIN_WALLET_NAME`. See
-  [wallet-setup.md](../../../Documentation/guides/wallet-setup.md) and
-  [keystore-migration.md](../../../Documentation/guides/keystore-migration.md).
+  [wallet-setup.md](../../../Documentation/public/guides/wallet-setup.md) and
+  [keystore-migration.md](../../../Documentation/public/guides/keystore-migration.md).
 
 
 > The commands below use `$DIN_STATE_DIR`. `docker compose` reads `.env`
