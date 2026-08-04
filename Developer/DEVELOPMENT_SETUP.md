@@ -2,7 +2,7 @@
 
 This file is the minimal setup entrypoint for contributors working on DevNet.
 
-**Prerequisite:** [Wallet Setup](../Documentation/guides/wallet-setup.md) — for development, use demo mode or `ETH_PRIVATE_KEY_<n>` in `.env`. Never commit real keys.
+**Prerequisite:** [Wallet Setup](../Documentation/public/guides/wallet-setup.md) — for development, use demo mode or `ETH_PRIVATE_KEY_<n>` in `.env`. Never commit real keys.
 
 ## Local Python Setup
 
@@ -15,6 +15,6 @@ If you are working on the ML or DP service code, make sure your environment also
 
 ## Where To Start
 
-- general contribution flow: [CONTRIBUTING.md](/home/azureuser/projects/devnet/Developer/CONTRIBUTING.md)
-- beginner and scoped issue list: [GOOD_FIRST_ISSUES.md](/home/azureuser/projects/devnet/Developer/GOOD_FIRST_ISSUES.md)
+- general contribution flow: [CONTRIBUTING.md](CONTRIBUTING.md)
+- beginner and scoped issue list: [GOOD_FIRST_ISSUES.md](GOOD_FIRST_ISSUES.md)
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-import "./DinToken.sol"; // Import the DINToken contract interface
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "./DinToken.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 interface IDinValidatorStake {
@@ -11,11 +12,22 @@ interface IDinValidatorStake {
     function removeSlasherContract(address slasherContract) external;
 }
 
-contract DinCoordinator is Ownable, ReentrancyGuardTransient {
-    DinToken public immutable dinToken;
+/// @title DIN Coordinator
+/// @notice Central hub for ETH-to-DIN token exchange and slasher contract
+///         administration. Deployed once per network behind a Transparent Proxy.
+contract DinCoordinator is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardTransient
+{
+    DinToken public dinToken;
     IDinValidatorStake public dinValidatorStakeContract;
 
-    uint256 public dinPerEth = 1_000_000 * 1e18; // 1M DIN tokens (with 18 decimals)
+    uint256 public dinPerEth;
+
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
+
     event EthDepositAndDINminted(
         address indexed user,
         uint256 ethAmount,
@@ -31,28 +43,44 @@ contract DinCoordinator is Ownable, ReentrancyGuardTransient {
     error ZeroValue();
     error TransferFailed();
 
-    constructor() Ownable(msg.sender) {
-        // Deploy DINToken
-        dinToken = new DinToken(address(this));
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
 
-    /// @notice User deposits ETH → receives DIN tokens
+    /// @notice Initialises the proxy with the DIN token address and sets the
+    ///         default exchange rate to 1,000,000 DIN per ETH.
+    /// @param dinToken_ Address of the DinToken proxy.
+    function initialize(address dinToken_) external initializer {
+        if (dinToken_ == address(0)) revert InvalidAddress();
+        __Ownable_init(msg.sender);
+        dinToken = DinToken(dinToken_);
+        dinPerEth = 1_000_000 * 1e18;
+    }
+
+    /// @notice Deposits ETH and mints the equivalent amount of DIN tokens to
+    ///         the caller at the current exchange rate.
+    /// @dev Rate is a fixed-point value scaled by 1e18.
     function depositAndMint() external payable nonReentrant {
         if (msg.value == 0) revert ZeroValue();
 
-        uint256 mintAmount = (msg.value * dinPerEth) / 1e18; // ✅ Safe decimal math
+        uint256 mintAmount = (msg.value * dinPerEth) / 1e18;
         dinToken.mint(msg.sender, mintAmount);
 
         emit EthDepositAndDINminted(msg.sender, msg.value, mintAmount);
     }
 
+    /// @notice Withdraws the contract's entire ETH balance to the owner address.
     function withdraw() external onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
-        if (balance == 0) return; // ✅ No-op if empty
+        if (balance == 0) return;
         (bool success, ) = payable(owner()).call{value: balance}("");
         if (!success) revert TransferFailed();
     }
 
+    /// @notice Registers a task contract as an authorised slasher on the
+    ///         validator stake contract.
+    /// @param slasherContract Address of the task contract to authorise.
     function addSlasherContract(address slasherContract) external onlyOwner {
         if (slasherContract == address(0)) revert InvalidAddress();
         if (address(dinValidatorStakeContract) == address(0))
@@ -61,6 +89,8 @@ contract DinCoordinator is Ownable, ReentrancyGuardTransient {
         emit SlasherContractAdded(slasherContract);
     }
 
+    /// @notice Removes a task contract's slasher authorisation.
+    /// @param slasherContract Address of the task contract to deauthorise.
     function removeSlasherContract(address slasherContract) external onlyOwner {
         if (slasherContract == address(0)) revert InvalidAddress();
         if (address(dinValidatorStakeContract) == address(0))
@@ -69,6 +99,10 @@ contract DinCoordinator is Ownable, ReentrancyGuardTransient {
         emit SlasherContractRemoved(slasherContract);
     }
 
+    /// @notice Points the coordinator at the DinValidatorStake proxy address.
+    /// @dev Called once during initial deployment wiring. No guard prevents a
+    ///      second call; the owner is responsible for operational safety.
+    /// @param validatorStakeContract Address of the DinValidatorStake proxy.
     function updateValidatorStakeContract(
         address validatorStakeContract
     ) external onlyOwner {
@@ -77,7 +111,8 @@ contract DinCoordinator is Ownable, ReentrancyGuardTransient {
         emit ValidatorStakeContractUpdated(validatorStakeContract);
     }
 
-    // ✅ Optional: Update exchange rate (with safeguards)
+    /// @notice Updates the DIN-per-ETH exchange rate used by depositAndMint.
+    /// @param newRate New rate scaled by 1e18 (e.g. 1_000_000 * 1e18 = 1 M DIN per ETH).
     function updateDinPerEth(uint256 newRate) external onlyOwner {
         if (newRate == 0) revert ZeroValue();
         dinPerEth = newRate;

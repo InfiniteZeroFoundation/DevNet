@@ -29,14 +29,29 @@ contract DinValidatorStake is
     error PendingWithdrawalExists();
     error NoPendingWithdrawal();
     error WithdrawalNotReady();
+    error InvalidMinStake();
+    error InvalidUnbondingPeriod();
+    error InvalidStakeBounds();
+    error InvalidJailDuration();
+    error NotJailed();
+    error JailPeriodNotExpired();
+    error StakeBelowFloor();
 
     IERC20 public DIN_TOKEN;
     address public DIN_COORDINATOR;
 
     using SafeERC20 for IERC20;
 
-    uint256 public constant MIN_STAKE = 10 * 1e18;
-    uint64 public constant UNBONDING_PERIOD = 7 days;
+    // Governable parameters — set in initialize(), adjustable via setters (§5a)
+    uint256 public MIN_STAKE;
+    uint64 public UNBONDING_PERIOD;
+
+    // Unenforced stake-bounds storage — stored here for DAO governance round-trips;
+    // wiring into task-contract registration is explicit follow-up work (§5b)
+    struct ModelStakeBounds { uint256 min; uint256 max; }
+    mapping(uint256 => ModelStakeBounds) public modelMinStakeBounds;
+    uint256 public maxConcurrentRegistrationsPerStakeUnit;
+
     mapping(address => bool) public slasherContracts;
 
     enum ValidatorStatus {
@@ -72,11 +87,18 @@ contract DinValidatorStake is
     event ValidatorUnblacklisted(address indexed validator);
     event SlasherContractAdded(address indexed slasher);
     event SlasherContractRemoved(address indexed slasher);
+    event MinStakeUpdated(uint256 newMinStake);
+    event UnbondingPeriodUpdated(uint64 newPeriod);
+    event ModelStakeBoundsUpdated(uint256 indexed modelId, uint256 min, uint256 max);
+    event MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256 value);
+    event ValidatorJailed(address indexed validator, uint64 jailedUntil, bytes32 indexed reason, address indexed slasher);
+    event ValidatorReactivated(address indexed validator);
 
     mapping(address => ValidatorInfo) public validators;
 
     // Reserved for future state variables at this inheritance level.
-    uint256[50] private __gap;
+    // Reduced from [50] by 4: MIN_STAKE, UNBONDING_PERIOD, modelMinStakeBounds, maxConcurrentRegistrationsPerStakeUnit
+    uint256[46] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -96,6 +118,8 @@ contract DinValidatorStake is
         __Ownable_init(msg.sender);
         DIN_TOKEN = IERC20(dinToken);
         DIN_COORDINATOR = dinCoordinator;
+        MIN_STAKE = 10 * 1e18;
+        UNBONDING_PERIOD = 7 days;
     }
 
     modifier onlyDinCoordinator() {
@@ -277,9 +301,69 @@ contract DinValidatorStake is
     }
 
     /// @notice Returns the minimum token amount required to become an active validator.
-    /// @return The MIN_STAKE constant in wei.
-    function minStake() external pure returns (uint256) {
+    function minStake() external view returns (uint256) {
         return MIN_STAKE;
+    }
+
+    /// @notice Updates the network-wide minimum stake floor.
+    function setMinStake(uint256 newMinStake) external onlyOwner {
+        if (newMinStake == 0) revert InvalidMinStake();
+        MIN_STAKE = newMinStake;
+        emit MinStakeUpdated(newMinStake);
+    }
+
+    /// @notice Updates the unbonding period applied to new unstake requests.
+    /// @dev Does not retroactively affect in-flight pending withdrawals whose
+    ///      withdrawAvailableAt was already computed at unstake() time.
+    function setUnbondingPeriod(uint64 newPeriod) external onlyOwner {
+        if (newPeriod == 0) revert InvalidUnbondingPeriod();
+        UNBONDING_PERIOD = newPeriod;
+        emit UnbondingPeriodUpdated(newPeriod);
+    }
+
+    /// @notice Sets DAO-level per-model stake bounds for a given model ID.
+    /// @dev Inert storage only — not yet consumed by task-contract registration.
+    function setModelStakeBounds(uint256 modelId, uint256 min, uint256 max) external onlyOwner {
+        if (min > max) revert InvalidStakeBounds();
+        modelMinStakeBounds[modelId] = ModelStakeBounds(min, max);
+        emit ModelStakeBoundsUpdated(modelId, min, max);
+    }
+
+    /// @notice Sets the DAO-level concurrent-registration cap per stake unit.
+    /// @dev Inert storage only — not yet consumed by task-contract registration.
+    function setMaxConcurrentRegistrationsPerStakeUnit(uint256 value) external onlyOwner {
+        maxConcurrentRegistrationsPerStakeUnit = value;
+        emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
+    }
+
+    /// @notice Jails a validator for a fixed duration, preventing GI registration.
+    /// @dev Callable by registered slasher contracts only. Extends an existing jail;
+    ///      never shortens it. Cannot jail a blacklisted validator.
+    function jailValidator(address validator, uint64 duration, bytes32 reason)
+        external onlySlasherContract
+    {
+        if (validator == address(0)) revert InvalidAddress();
+        if (duration == 0) revert InvalidJailDuration();
+        ValidatorInfo storage v = validators[validator];
+        if (v.status == ValidatorStatus.Blacklisted) revert ValidatorIsBlacklisted();
+        uint64 newJailedUntil = uint64(block.timestamp) + duration;
+        if (newJailedUntil > v.jailedUntil) v.jailedUntil = newJailedUntil;
+        v.status = ValidatorStatus.Jailed;
+        emit ValidatorJailed(validator, v.jailedUntil, reason, msg.sender);
+    }
+
+    /// @notice Explicitly re-activates the caller after their jail period expires.
+    /// @dev Operator must call this themselves to confirm the node is back online.
+    ///      Reverts if still jailed, or if stake has dropped below the current floor.
+    function reactivate() external nonReentrant {
+        ValidatorInfo storage v = validators[msg.sender];
+        if (v.status != ValidatorStatus.Jailed) revert NotJailed();
+        if (block.timestamp < v.jailedUntil) revert JailPeriodNotExpired();
+        if (v.activeStake < MIN_STAKE) revert StakeBelowFloor();
+        v.jailedUntil = 0;
+        v.status = ValidatorStatus.None; // clear Jailed before sync so _sync can set the correct status
+        _syncValidatorStatus(v);
+        emit ValidatorReactivated(msg.sender);
     }
 
     /// @notice Returns true if the validator's status is Active.
@@ -320,10 +404,9 @@ contract DinValidatorStake is
             return;
         }
 
-        if (
-            validator.status == ValidatorStatus.Jailed &&
-            validator.jailedUntil > block.timestamp
-        ) {
+        // Jailed validators stay Jailed until reactivate() explicitly clears the status.
+        // No silent auto-return: the operator must prove the node is back online first.
+        if (validator.status == ValidatorStatus.Jailed) {
             return;
         }
 
