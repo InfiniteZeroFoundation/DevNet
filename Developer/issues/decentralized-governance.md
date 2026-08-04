@@ -630,3 +630,69 @@ The recommended default is not raw quadratic voting on transferable DIN. A stron
 - timelocked execution
 
 `DINModelRegistry` fee updates and validator blacklisting are good examples, but the broader scope is all platform-level authority that should eventually be governed by the DAO rather than a centralized admin.
+
+---
+
+## Decisions Made (feat/din-dao)
+
+The following decisions were reached during the design phase and are recorded here as
+the rationale record. The specification is in `Documentation/technical/din-dao/README.md`.
+
+### Voting power
+
+**Decision: locked DIN (stDIN).**
+Implemented in `DinGovernanceStaking.sol`. Voting power comes from locking DIN
+tokens into a non-transferable ERC-20 (stDIN) implementing OZ `IVotes`. Validator
+stake in `DinValidatorStake` is not counted in v1 to avoid conflicts of interest when
+governance votes on slashing conditions or blacklisting appeals.
+
+### Quadratic voting
+
+**Decision: no on-chain quadratic voting.**
+Non-binding signaling off-chain only, if ever. Raw quadratic voting on freely
+transferable DIN would be trivially gameable via address splitting.
+
+### Proxy pattern (from Discussion #17)
+
+**Decision: UUPS with timelock-gated `_authorizeUpgrade` once Stage B is live.**
+Transparent proxy is retained for the current devnet deployment (PR #13). Migration
+to UUPS is planned before mainnet deployment via a governance proposal through
+`DinTimelockLong`. Upgrade validity is enforced by `upgrades.validateUpgrade()` as a
+CI gate before any proposal reaches the timelock.
+
+### Own multisig vs. Gnosis Safe
+
+**Decision: build `DinMultisig` for devnet; plan Safe migration for mainnet.**
+See `Documentation/technical/din-dao/README.md §6`.
+
+### Timelock delays
+
+**Decision: two instances — 24 h (short) and 48 h (long).**
+Short for Parameter and Operational proposals; long for Treasury and Upgrade proposals.
+See design doc §7 for rationale.
+
+### Blacklisting vs. unblacklisting threshold
+
+**Decision: different thresholds.**
+Blacklisting is `Operational` category (lower threshold; also available as guardian
+emergency action). Unblacklisting is `Operational` via full governance only — no
+emergency path for restorative actions.
+
+### Treasury and upgrade supermajority
+
+**Decision: yes, ≥66% of participating votes with higher quorum (15–20%).**
+See design doc §4.2.
+
+### One chamber vs. separated by role
+
+**Decision: one chamber for v1.** Bicameral governance (validators vs. token holders)
+is deferred to Phase 4 in the suggested governance roadmap.
+
+### Stage activation schedule
+
+| Stage | Contracts                                  | Target milestone |
+|-------|--------------------------------------------|------------------|
+| A     | DinMultisig                                | Devnet 2.0       |
+| B     | DinTimelockShort, DinTimelockLong          | Devnet 3.0       |
+| C     | DinGovernanceStaking, DinGovernor          | Testnet 1.0      |
+| D     | DinGuardian                                | Testnet 1.0–2.0  |

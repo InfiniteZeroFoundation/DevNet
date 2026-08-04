@@ -203,6 +203,130 @@ dincli dindao registry set-admin <new_admin_address>
 
 ---
 
+## 5a. Ownership-Transfer Runbook — Stage B Activation (devnet 3.0)
+
+This runbook transfers `owner()` of each platform contract from the DIN-Representative
+EOA to the appropriate `DinTimelock` instance. Execute steps in the exact order listed.
+The entire sequence must be rehearsed on Optimism Sepolia devnet before any testnet
+deployment.
+
+### Prerequisites
+
+- `DinMultisig` deployed with production signers and thresholds verified.
+- `DinTimelockShort` (24 h delay) deployed; `DinMultisig` holds `PROPOSER_ROLE` and
+  `CANCELLER_ROLE`; `DEFAULT_ADMIN_ROLE` renounced.
+- `DinTimelockLong` (48 h delay) deployed; same role wiring as above.
+- Both timelocks verified on Optimism Sepolia Blockscout.
+- All four platform contract proxies deployed (PR #13): `DinCoordinator`,
+  `DinToken`, `DinValidatorStake`, `DINModelRegistry`.
+
+### Step 1 — Transfer DINModelRegistry ownership
+
+`DINModelRegistry` uses OZ two-step `Ownable2Step`. Initiate from the DIN-Representative
+EOA, then accept from the timelock side via a scheduled call.
+
+```bash
+# 1a. Initiate transfer (DIN-Representative signs)
+dincli dindao registry set-admin <DinTimelockLong_address>
+
+# 1b. Build the acceptance call and schedule it through DinMultisig
+#     Target:   DINModelRegistry proxy address
+#     Calldata: acceptOwnership()
+#     Category: Upgrade
+#     Timelock: DinTimelockLong (48 h)
+```
+
+After the 48 h delay, execute the scheduled timelock operation. Verify:
+```bash
+# Confirm new owner
+cast call <DINModelRegistry_proxy> "owner()(address)" --rpc-url $RPC
+# Expected: DinTimelockLong address
+```
+
+> [!IMPORTANT]
+> Do not proceed to Step 2 until Step 1 is confirmed on-chain.
+
+### Step 2 — Transfer DinValidatorStake ownership
+
+```bash
+# DIN-Representative initiates
+cast send <DinValidatorStake_proxy> "transferOwnership(address)" \
+  <DinTimelockLong_address> \
+  --private-key $DIN_REP_KEY --rpc-url $RPC
+
+# Schedule acceptance through DinMultisig (Upgrade category → DinTimelockLong)
+# Calldata: acceptOwnership() on DinValidatorStake proxy
+```
+
+Verify after 48 h execution:
+```bash
+cast call <DinValidatorStake_proxy> "owner()(address)" --rpc-url $RPC
+# Expected: DinTimelockLong address
+```
+
+### Step 3 — Transfer DinCoordinator ownership
+
+```bash
+cast send <DinCoordinator_proxy> "transferOwnership(address)" \
+  <DinTimelockLong_address> \
+  --private-key $DIN_REP_KEY --rpc-url $RPC
+
+# Schedule acceptance (Upgrade category → DinTimelockLong)
+```
+
+### Step 4 — Transfer DinToken ownership
+
+`DinToken` ownership controls the mint-authority wiring to `DinCoordinator`.
+Transfer to `DinTimelockLong`.
+
+```bash
+cast send <DinToken_proxy> "transferOwnership(address)" \
+  <DinTimelockLong_address> \
+  --private-key $DIN_REP_KEY --rpc-url $RPC
+```
+
+### Step 5 — Transfer ProxyAdmin ownership (upgrade governance)
+
+The `ProxyAdmin` created in PR #13 controls implementation upgrades for all four
+proxy contracts. Transfer it to `DinTimelockLong`.
+
+```bash
+cast send <ProxyAdmin_address> "transferOwnership(address)" \
+  <DinTimelockLong_address> \
+  --private-key $DIN_REP_KEY --rpc-url $RPC
+```
+
+> [!CAUTION]
+> After this step, no platform contract upgrade can proceed without a successful
+> governance proposal through `DinTimelockLong`. Ensure the multisig signers are
+> active and the timelock role wiring is verified before completing this step.
+
+### Step 6 — Verify end state
+
+```bash
+# All four contracts should report DinTimelockLong as owner
+for PROXY in $COORDINATOR $VALIDATOR_STAKE $MODEL_REGISTRY $DIN_TOKEN; do
+  echo "Owner of $PROXY:"
+  cast call $PROXY "owner()(address)" --rpc-url $RPC
+done
+
+# ProxyAdmin owner
+cast call $PROXY_ADMIN "owner()(address)" --rpc-url $RPC
+```
+
+### Rollback
+
+If the ownership transfer must be reversed before `acceptOwnership()` is called:
+1. The pending transfer can be cancelled by calling `transferOwnership(address(0))` on
+   the relevant contract from the still-active DIN-Representative EOA.
+2. Once `acceptOwnership()` has been called by the timelock (Step 1b etc.), the transfer
+   is complete and cannot be rolled back via EOA. Recovery requires a governance proposal
+   through the timelock to call `transferOwnership` again.
+
+This is why the runbook must be rehearsed end-to-end on devnet before mainnet execution.
+
+---
+
 ## Workflow
 
 1. **Deploy** — Coordinator → Validator Stake → Model Registry (in order).
@@ -211,4 +335,5 @@ dincli dindao registry set-admin <new_admin_address>
 4. **Process Manifest Update Requests** — Review pending `ManifestUpdateRequest` entries.
 5. **Monitor** — Use registry commands to track network growth and model status.
 6. **Emergency** — Use `disable-model` if a model needs to be stopped immediately.
+7. **Stage B Activation** — See §5a for the ordered runbook to transfer ownership to the timelocks.
 
