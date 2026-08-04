@@ -1,639 +1,941 @@
 {
   "abi": [
     {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "dinToken",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "dinCoordinator",
-          "type": "address"
-        }
-      ],
-      "stateMutability": "nonpayable",
-      "type": "constructor"
-    },
-    {
+      "type": "constructor",
       "inputs": [],
-      "name": "AmountLessThanMinStake",
-      "type": "error"
+      "stateMutability": "nonpayable"
     },
     {
-      "inputs": [],
-      "name": "InvalidAddress",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "InvalidSlashAmount",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "InvalidUnstakeAmount",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NoPendingWithdrawal",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NotDINCoordinator",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NotEnoughStake",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NotSlasherContract",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "owner",
-          "type": "address"
-        }
-      ],
-      "name": "OwnableInvalidOwner",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "account",
-          "type": "address"
-        }
-      ],
-      "name": "OwnableUnauthorizedAccount",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "PendingWithdrawalExists",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "ReentrancyGuardReentrantCall",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "token",
-          "type": "address"
-        }
-      ],
-      "name": "SafeERC20FailedOperation",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "SlasherContractAlreadyAdded",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "SlasherContractNotAdded",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "ValidatorIsBlacklisted",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "ValidatorNotBlacklisted",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "WithdrawalNotReady",
-      "type": "error"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "previousOwner",
-          "type": "address"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "newOwner",
-          "type": "address"
-        }
-      ],
-      "name": "OwnershipTransferred",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "slasher",
-          "type": "address"
-        }
-      ],
-      "name": "SlasherContractAdded",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "slasher",
-          "type": "address"
-        }
-      ],
-      "name": "SlasherContractRemoved",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        }
-      ],
-      "name": "ValidatorBlacklisted",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        },
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "reason",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "slasher",
-          "type": "address"
-        }
-      ],
-      "name": "ValidatorSlashed",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "ValidatorStaked",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        }
-      ],
-      "name": "ValidatorUnblacklisted",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "withdrawAvailableAt",
-          "type": "uint64"
-        }
-      ],
-      "name": "ValidatorUnstakeRequested",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "ValidatorWithdrawalClaimed",
-      "type": "event"
-    },
-    {
-      "inputs": [],
+      "type": "function",
       "name": "DIN_COORDINATOR",
+      "inputs": [],
       "outputs": [
         {
-          "internalType": "address",
           "name": "",
-          "type": "address"
+          "type": "address",
+          "internalType": "address"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "stateMutability": "view"
     },
     {
-      "inputs": [],
+      "type": "function",
       "name": "DIN_TOKEN",
+      "inputs": [],
       "outputs": [
         {
-          "internalType": "contract IERC20",
           "name": "",
-          "type": "address"
+          "type": "address",
+          "internalType": "contract IERC20"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "stateMutability": "view"
     },
     {
-      "inputs": [],
+      "type": "function",
       "name": "MIN_STAKE",
+      "inputs": [],
       "outputs": [
         {
-          "internalType": "uint256",
           "name": "",
-          "type": "uint256"
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "stateMutability": "view"
     },
     {
-      "inputs": [],
+      "type": "function",
       "name": "UNBONDING_PERIOD",
+      "inputs": [],
       "outputs": [
         {
-          "internalType": "uint64",
           "name": "",
-          "type": "uint64"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "stateMutability": "view"
     },
     {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "slasherContract",
-          "type": "address"
-        }
-      ],
+      "type": "function",
       "name": "addSlasherContract",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
+          "name": "slasherContract",
+          "type": "address",
+          "internalType": "address"
         }
       ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "blacklistValidator",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
       "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "stateMutability": "nonpayable"
     },
     {
-      "inputs": [],
+      "type": "function",
       "name": "claimUnstaked",
+      "inputs": [],
       "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "stateMutability": "nonpayable"
     },
     {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        }
-      ],
+      "type": "function",
       "name": "getStake",
-      "outputs": [
-        {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "address",
-          "name": "slasherContract",
-          "type": "address"
+          "name": "validator",
+          "type": "address",
+          "internalType": "address"
         }
       ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initialize",
+      "inputs": [
+        {
+          "name": "dinToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "dinCoordinator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "isSlasherContract",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "",
-          "type": "bool"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "address",
-          "name": "validator",
-          "type": "address"
-        }
-      ],
-      "name": "isValidatorActive",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "",
-          "type": "bool"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "minStake",
-      "outputs": [
-        {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
-        }
-      ],
-      "stateMutability": "pure",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "owner",
-      "outputs": [
-        {
-          "internalType": "address",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
           "name": "slasherContract",
-          "type": "address"
+          "type": "address",
+          "internalType": "address"
         }
       ],
-      "name": "removeSlasherContract",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
-      "inputs": [],
-      "name": "renounceOwnership",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
+      "type": "function",
+      "name": "isValidatorActive",
       "inputs": [
         {
-          "internalType": "address",
           "name": "validator",
-          "type": "address"
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "jailValidator",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "internalType": "address"
         },
         {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
+          "name": "duration",
+          "type": "uint64",
+          "internalType": "uint64"
         },
         {
-          "internalType": "bytes32",
           "name": "reason",
-          "type": "bytes32"
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "maxConcurrentRegistrationsPerStakeUnit",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "minStake",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "modelMinStakeBounds",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "min",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "reactivate",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "removeSlasherContract",
+      "inputs": [
+        {
+          "name": "slasherContract",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setMaxConcurrentRegistrationsPerStakeUnit",
+      "inputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setMinStake",
+      "inputs": [
+        {
+          "name": "newMinStake",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setModelStakeBounds",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "min",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setUnbondingPeriod",
+      "inputs": [
+        {
+          "name": "newPeriod",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "slash",
-      "outputs": [
-        {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
-        }
-      ],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "address",
           "name": "validator",
-          "type": "address"
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "slashableStakeOf",
-      "outputs": [
-        {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "address",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "name": "slasherContracts",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "",
-          "type": "bool"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "stake",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "newOwner",
-          "type": "address"
-        }
-      ],
-      "name": "transferOwnership",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
           "name": "validator",
-          "type": "address"
+          "type": "address",
+          "internalType": "address"
         }
       ],
-      "name": "unblacklistValidator",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "unstake",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "name": "validators",
       "outputs": [
         {
-          "internalType": "uint256",
-          "name": "activeStake",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "pendingWithdrawals",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint64",
-          "name": "withdrawAvailableAt",
-          "type": "uint64"
-        },
-        {
-          "internalType": "uint64",
-          "name": "jailedUntil",
-          "type": "uint64"
-        },
-        {
-          "internalType": "enum DinValidatorStake.ValidatorStatus",
-          "name": "status",
-          "type": "uint8"
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "slasherContracts",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "stake",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "unblacklistValidator",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "unstake",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "validators",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "activeStake",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "pendingWithdrawals",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "withdrawAvailableAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "jailedUntil",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "status",
+          "type": "uint8",
+          "internalType": "enum DinValidatorStake.ValidatorStatus"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "Initialized",
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MaxConcurrentRegistrationsPerStakeUnitUpdated",
+      "inputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MinStakeUpdated",
+      "inputs": [
+        {
+          "name": "newMinStake",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ModelStakeBoundsUpdated",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "min",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SlasherContractAdded",
+      "inputs": [
+        {
+          "name": "slasher",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SlasherContractRemoved",
+      "inputs": [
+        {
+          "name": "slasher",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "UnbondingPeriodUpdated",
+      "inputs": [
+        {
+          "name": "newPeriod",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorBlacklisted",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorJailed",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "jailedUntil",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "reason",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "slasher",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorReactivated",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorSlashed",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "slasher",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorStaked",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorUnblacklisted",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorUnstakeRequested",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "withdrawAvailableAt",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorWithdrawalClaimed",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "AmountLessThanMinStake",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidAddress",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidInitialization",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidJailDuration",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidMinStake",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidSlashAmount",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidStakeBounds",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidUnbondingPeriod",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidUnstakeAmount",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JailPeriodNotExpired",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NoPendingWithdrawal",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotDINCoordinator",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotEnoughStake",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotInitializing",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotJailed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotSlasherContract",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PendingWithdrawalExists",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ReentrancyGuardReentrantCall",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SlasherContractAlreadyAdded",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SlasherContractNotAdded",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "StakeBelowFloor",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ValidatorIsBlacklisted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ValidatorNotBlacklisted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "WithdrawalNotReady",
+      "inputs": []
     }
   ]
 }
