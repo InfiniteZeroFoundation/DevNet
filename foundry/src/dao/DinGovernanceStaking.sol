@@ -80,7 +80,7 @@ contract DinGovernanceStaking is ERC20, ERC20Votes, ReentrancyGuard, IDinGoverna
     // ─── Non-transferability ──────────────────────────────────────────────────
 
     /// @dev Reverts unconditionally; stDIN cannot be moved between accounts.
-    function transfer(address, uint256) public pure override(ERC20, IERC20) returns (bool) {
+    function transfer(address, uint256) public pure override(ERC20) returns (bool) {
         revert GS_NonTransferable();
     }
 
@@ -88,7 +88,7 @@ contract DinGovernanceStaking is ERC20, ERC20Votes, ReentrancyGuard, IDinGoverna
     function transferFrom(address, address, uint256)
         public
         pure
-        override(ERC20, IERC20)
+        override(ERC20)
         returns (bool)
     {
         revert GS_NonTransferable();
