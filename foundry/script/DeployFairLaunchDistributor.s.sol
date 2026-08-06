@@ -51,17 +51,17 @@ contract DeployFairLaunchDistributor is Script {
         // Env-var overrides (fall back to placeholder defaults with a console warning)
         address treasuryAdmin = vm.envOr("TREASURY_ADMIN", msg.sender);
         if (treasuryAdmin == msg.sender) {
-            console.log("[WARN] TREASURY_ADMIN not set — using broadcaster as owner (testnet only)");
+            console.log("[WARN] TREASURY_ADMIN not set - using broadcaster as owner (testnet only)");
         }
 
         uint64 cliffSeconds = uint64(vm.envOr("CLIFF_DURATION_SECONDS", uint256(DEFAULT_CLIFF_SECONDS)));
         uint64 vestingSeconds = uint64(vm.envOr("VESTING_DURATION_SECONDS", uint256(DEFAULT_VESTING_SECONDS)));
 
         if (cliffSeconds == DEFAULT_CLIFF_SECONDS) {
-            console.log("[WARN] CLIFF_DURATION_SECONDS not set — using placeholder 90-day cliff");
+            console.log("[WARN] CLIFF_DURATION_SECONDS not set - using placeholder 90-day cliff");
         }
         if (vestingSeconds == DEFAULT_VESTING_SECONDS) {
-            console.log("[WARN] VESTING_DURATION_SECONDS not set — using placeholder 365-day vesting");
+            console.log("[WARN] VESTING_DURATION_SECONDS not set - using placeholder 365-day vesting");
         }
 
         console.log("dinToken:         ", dinToken);
