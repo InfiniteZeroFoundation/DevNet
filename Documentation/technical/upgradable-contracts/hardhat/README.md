@@ -57,7 +57,7 @@ Each platform contract follows the same recipe:
    reserving 50 slots for future variables without shifting anything below in the inheritance chain.
 6. **Reentrancy protection via `ReentrancyGuardTransient`.** `DinCoordinator` and `DinValidatorStake` use the transient-storage variant (EIP-1153 `TSTORE`/`TLOAD`, hence the `cancun` EVM requirement). Because the lock lives in transient storage, it occupies **zero** persistent slots — no storage-layout impact and no `__ReentrancyGuard_init()` call needed.
 
-Full slot-by-slot inventories and the append-only upgrade rules are in `Developer/Documentation/technical/storage_layout.md`.
+Full slot-by-slot inventories and the append-only upgrade rules are in [`storage_layout.md`](../../storage_layout.md).
 
 ## 4. Contract-by-contract design
 
