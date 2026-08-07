@@ -28,8 +28,7 @@ contract DinCoordinator is
     address public treasury;
 
     // Reserved for future state variables at this inheritance level.
-    // Reduced from [50] by 1: treasury
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     event EthDepositAndDINminted(
         address indexed user,

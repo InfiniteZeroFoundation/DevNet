@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
@@ -17,7 +15,6 @@ interface IOwnable {
 }
 
 interface IDinFeeRouter {
-    function routeFeeDIN(address payer, uint256 amount) external;
     function routeFeeETH(address payer) external payable;
 }
 
@@ -25,7 +22,6 @@ interface IDinFeeRouter {
 /// @notice Manages model registration requests, manifest updates, and per-model
 ///         lifecycle controls. Deployed once per network behind a Transparent Proxy.
 contract DINModelRegistry is Initializable, OwnableUpgradeable {
-    using SafeERC20 for IERC20;
     error NotModelOwner();
     error InvalidModelId();
     error InvalidRequestId();
@@ -42,7 +38,6 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     error AuditorNoLongerSlasher();
     error CoordinatorOwnershipChanged();
     error AuditorOwnershipChanged();
-    error TransferFailed();
     error FeeRouterNotSet();
 
     event ModelRegistrationRequested(
@@ -73,16 +68,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         uint256 openSourceUpdateFee,
         uint256 proprietaryUpdateFee
     );
-    event FeesWithdrawn(address indexed to, uint256 amount);
-    event DAOAdminUpdated(address indexed oldAdmin, address indexed newAdmin);
-    event DinTokenUpdated(address indexed dinToken);
     event FeeRouterUpdated(address indexed feeRouter);
-    event DinFeesUpdated(
-        uint256 openSource,
-        uint256 proprietary,
-        uint256 openSourceUpdate,
-        uint256 proprietaryUpdate
-    );
+    event FeesSweptToRouter(uint256 amount);
 
     struct Model {
         address owner;
@@ -129,18 +116,10 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     mapping(address => uint256) private _modelIdByTaskAuditor;
     mapping(uint256 => bool) public modelDisabled;
 
-    IERC20 public dinToken;
     IDinFeeRouter public feeRouter;
-    uint256 public openSourceFeeDIN;
-    uint256 public proprietaryFeeDIN;
-    uint256 public openSourceUpdateFeeDIN;
-    uint256 public proprietaryUpdateFeeDIN;
-    mapping(uint256 => bool) public modelRequestPaidInDIN;
-    mapping(uint256 => bool) public manifestRequestPaidInDIN;
 
     // Reserved for future state variables at this inheritance level.
-    // Reduced from [50] by 8: dinToken, feeRouter, 4× DIN fees, 2× payment-flag mappings.
-    uint256[42] private __gap;
+    uint256[50] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -216,10 +195,6 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
                 createdAt: block.timestamp
             })
         );
-
-        if (msg.value > 0 && address(feeRouter) != address(0)) {
-            feeRouter.routeFeeETH{value: msg.value}(msg.sender);
-        }
 
         emit ModelRegistrationRequested(requestId, msg.sender);
     }
@@ -318,10 +293,6 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
                 approved: false
             })
         );
-
-        if (msg.value > 0 && address(feeRouter) != address(0)) {
-            feeRouter.routeFeeETH{value: msg.value}(msg.sender);
-        }
 
         emit ManifestUpdateRequested(requestId, modelId);
     }
@@ -502,138 +473,24 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         );
     }
 
-    /// @notice Sets the DIN token address used for DIN-denominated fee paths.
-    function setDinToken(address dinToken_) external onlyOwner {
-        if (dinToken_ == address(0)) revert ZeroAddress();
-        dinToken = IERC20(dinToken_);
-        emit DinTokenUpdated(dinToken_);
-    }
-
-    /// @notice Sets the fee router used to split and route DIN and ETH fees.
+    /// @notice Sets the fee router used to split and route accumulated ETH fees.
     function setFeeRouter(address feeRouter_) external onlyOwner {
         if (feeRouter_ == address(0)) revert ZeroAddress();
         feeRouter = IDinFeeRouter(feeRouter_);
         emit FeeRouterUpdated(feeRouter_);
     }
 
-    /// @notice Sets all four DIN-denominated fee tiers. Must be called after wiring.
-    ///         Default is 0, which allows free registrations — do not skip this call.
-    function setDinFees(
-        uint256 _openSourceFeeDIN,
-        uint256 _proprietaryFeeDIN,
-        uint256 _openSourceUpdateFeeDIN,
-        uint256 _proprietaryUpdateFeeDIN
-    ) external onlyOwner {
-        openSourceFeeDIN = _openSourceFeeDIN;
-        proprietaryFeeDIN = _proprietaryFeeDIN;
-        openSourceUpdateFeeDIN = _openSourceUpdateFeeDIN;
-        proprietaryUpdateFeeDIN = _proprietaryUpdateFeeDIN;
-        emit DinFeesUpdated(
-            _openSourceFeeDIN,
-            _proprietaryFeeDIN,
-            _openSourceUpdateFeeDIN,
-            _proprietaryUpdateFeeDIN
-        );
-    }
-
-    /// @notice Submits a model registration request paying with DIN.
-    /// @dev Payer must approve DinFeeRouter (not this contract) for the fee amount
-    ///      before calling, as the router's routeFeeDIN executes the transferFrom.
-    function requestModelRegistrationDIN(
-        bytes32 manifestCID,
-        address taskCoordinator,
-        address taskAuditor,
-        bool isOpenSource
-    ) external returns (uint256 requestId) {
+    /// @notice Sweeps the contract's entire accumulated ETH balance to the fee
+    ///         router in one call, which splits it across treasury/validator-pool/
+    ///         storage/public-goods per its configured split.
+    /// @dev Fees accrue here per-request (no per-request router call) and get
+    ///      batched through this sweep to amortize the router's external-call
+    ///      cost across many registrations/updates instead of paying it on each one.
+    function sweepFeesToRouter() external onlyOwner {
         if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
-        if (!dinValidatorStake.isSlasherContract(taskCoordinator))
-            revert CoordinatorNoLongerSlasher();
-        if (!dinValidatorStake.isSlasherContract(taskAuditor))
-            revert AuditorNoLongerSlasher();
-        if (taskCoordinator == taskAuditor)
-            revert TaskCoordinatorEqualsTaskAuditor();
-        if (IOwnable(taskCoordinator).owner() != msg.sender)
-            revert NotOwnerOfTaskCoordinator();
-        if (IOwnable(taskAuditor).owner() != msg.sender)
-            revert NotOwnerOfTaskAuditor();
-
-        uint256 requiredFee = isOpenSource ? openSourceFeeDIN : proprietaryFeeDIN;
-        requestId = modelRequests.length;
-        modelRequests.push(
-            ModelRequest({
-                requester: msg.sender,
-                isOpenSource: isOpenSource,
-                manifestCID: manifestCID,
-                taskCoordinator: taskCoordinator,
-                taskAuditor: taskAuditor,
-                feePaid: requiredFee,
-                processed: false,
-                approved: false,
-                createdAt: block.timestamp
-            })
-        );
-        modelRequestPaidInDIN[requestId] = true;
-        if (requiredFee > 0) feeRouter.routeFeeDIN(msg.sender, requiredFee);
-        emit ModelRegistrationRequested(requestId, msg.sender);
-    }
-
-    /// @notice Submits a manifest update request paying with DIN.
-    /// @dev Same DinFeeRouter approval requirement as requestModelRegistrationDIN.
-    function requestManifestUpdateDIN(
-        uint256 modelId,
-        bytes32 newManifestCID
-    )
-        external
-        onlyModelOwner(modelId)
-        notDisabled(modelId)
-        returns (uint256 requestId)
-    {
-        if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
-        Model storage m = models[modelId];
-        uint256 requiredFee = m.isOpenSource
-            ? openSourceUpdateFeeDIN
-            : proprietaryUpdateFeeDIN;
-        requestId = manifestRequests.length;
-        manifestRequests.push(
-            ManifestUpdateRequest({
-                modelId: modelId,
-                newManifestCID: newManifestCID,
-                requester: msg.sender,
-                feePaid: requiredFee,
-                processed: false,
-                approved: false
-            })
-        );
-        manifestRequestPaidInDIN[requestId] = true;
-        if (requiredFee > 0) feeRouter.routeFeeDIN(msg.sender, requiredFee);
-        emit ManifestUpdateRequested(requestId, modelId);
-    }
-
-    /// @notice Transfers the contract's entire ETH balance to the specified address.
-    /// @param to Destination address for the fee withdrawal.
-    function withdrawFees(address payable to) external onlyOwner {
         uint256 balance = address(this).balance;
-        (bool success, ) = to.call{value: balance}("");
-        if (!success) revert TransferFailed();
-        emit FeesWithdrawn(to, balance);
-    }
-
-    // Backward-compat shims — dincli calls daoAdmin() / setDAOAdmin().
-    // Underlying auth model is OwnableUpgradeable; these are read-through facades.
-
-    /// @notice Returns the current admin address. Delegates to OwnableUpgradeable.owner().
-    /// @dev Compatibility shim preserving the pre-upgrade daoAdmin() ABI surface.
-    /// @return The current owner address.
-    function daoAdmin() external view returns (address) {
-        return owner();
-    }
-
-    /// @notice Transfers ownership and emits DAOAdminUpdated for off-chain indexers.
-    /// @dev Compatibility shim preserving the pre-upgrade setDAOAdmin() ABI surface.
-    /// @param newAdmin Address to transfer ownership to.
-    function setDAOAdmin(address newAdmin) external onlyOwner {
-        address old = owner();
-        transferOwnership(newAdmin);
-        emit DAOAdminUpdated(old, newAdmin);
+        if (balance == 0) return;
+        feeRouter.routeFeeETH{value: balance}(address(this));
+        emit FeesSweptToRouter(balance);
     }
 }

@@ -52,7 +52,7 @@ contract DinTreasury is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     /// @param token Token contract address.
     /// @param to Destination address.
     /// @param amount Token amount.
-    function withdrawERC20(address token, address to, uint256 amount) external onlyOwner {
+    function withdrawERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (token == address(0) || to == address(0)) revert InvalidAddress();
         IERC20(token).safeTransfer(to, amount);
         emit ERC20Withdrawn(token, to, amount);

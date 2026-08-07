@@ -12,7 +12,7 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 
-/// @notice Deploys the four DIN platform contracts behind Transparent Proxies
+/// @notice Deploys the six DIN platform contracts behind Transparent Proxies
 ///         on a local anvil chain, wires them together, and writes
 ///         foundry/deployments/localhost.json in the same schema as
 ///         hardhat/deployments/localhost.json so dincli import-deployments
@@ -102,24 +102,14 @@ contract DeployPlatform is Script {
         );
         console.log("DINModelRegistry proxy: ", dinModelRegistryProxy);
 
-        // 10. Wire DINModelRegistry → DinToken
-        DINModelRegistry(dinModelRegistryProxy).setDinToken(dinTokenProxy);
-        console.log("DINModelRegistry dinToken wired");
-
-        // 11. Authorise DINModelRegistry as a fee source on DinFeeRouter
-        //     Must come before setFeeRouter (step 12): once the registry knows about the
-        //     router, any fee-paying DIN registration reverts NotFeeSource until this is set.
+        // 10. Authorise DINModelRegistry as a fee source on DinFeeRouter, so its
+        //     later sweepFeesToRouter() calls are accepted (onlyFeeSource).
         DinFeeRouter(dinFeeRouterProxy).addFeeSource(dinModelRegistryProxy);
         console.log("DINModelRegistry added as fee source");
 
-        // 12. Wire DINModelRegistry → DinFeeRouter
+        // 11. Wire DINModelRegistry → DinFeeRouter
         DINModelRegistry(dinModelRegistryProxy).setFeeRouter(dinFeeRouterProxy);
         console.log("DINModelRegistry feeRouter wired");
-
-        // 13. Set DIN-denominated fees on DINModelRegistry (do not skip)
-        //     Values: openSource=1 DIN, proprietary=10 DIN, osUpdate=0.1 DIN, propUpdate=1 DIN
-        DINModelRegistry(dinModelRegistryProxy).setDinFees(1e18, 10e18, 1e17, 1e18);
-        console.log("DINModelRegistry DIN fees set");
 
         // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all six
         address proxyAdminTreasury    = Upgrades.getAdminAddress(dinTreasuryProxy);
@@ -137,6 +127,7 @@ contract DeployPlatform is Script {
 
         vm.stopBroadcast();
 
+        // 12. Write deployments JSON — same schema as hardhat/deployments/localhost.json
         _writeDeployments(
             dinTreasuryProxy,
             dinTokenProxy,

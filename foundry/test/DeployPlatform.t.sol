@@ -106,17 +106,12 @@ abstract contract PlatformTest is Test {
             abi.encodeCall(DINModelRegistry.initialize, (address(p.dinValidatorStake)))
         ));
 
-        // Step 10: wire DINModelRegistry → DinToken
-        p.dinModelRegistry.setDinToken(address(p.dinToken));
-
-        // Step 11: wire DINModelRegistry → DinFeeRouter
+        // Step 10: wire DINModelRegistry → DinFeeRouter
         p.dinModelRegistry.setFeeRouter(address(p.dinFeeRouter));
 
-        // Step 12: authorise DINModelRegistry as a fee source on DinFeeRouter
+        // Step 11: authorise DINModelRegistry as a fee source on DinFeeRouter
+        //          (used by sweepFeesToRouter(), not per-request routing)
         p.dinFeeRouter.addFeeSource(address(p.dinModelRegistry));
-
-        // Step 13: set DIN-denominated fees (must not be skipped; defaults are 0)
-        p.dinModelRegistry.setDinFees(1e18, 10e18, 1e17, 1e18);
     }
 
     function _mintDin(
@@ -202,21 +197,12 @@ contract ProxyWiringTest is PlatformTest {
         assertEq(p.dinFeeRouter.treasury(), address(p.dinTreasury));
     }
 
-    function test_dinModelRegistry_dinTokenWired() public view {
-        assertEq(address(p.dinModelRegistry.dinToken()), address(p.dinToken));
-    }
-
     function test_dinModelRegistry_feeRouterWired() public view {
         assertEq(address(p.dinModelRegistry.feeRouter()), address(p.dinFeeRouter));
     }
 
     function test_dinFeeRouter_modelRegistryIsFeeSource() public view {
         assertTrue(p.dinFeeRouter.feeSources(address(p.dinModelRegistry)));
-    }
-
-    function test_dinModelRegistry_dinFeesSet() public view {
-        assertEq(p.dinModelRegistry.openSourceFeeDIN(), 1e18);
-        assertEq(p.dinModelRegistry.proprietaryFeeDIN(), 10e18);
     }
 
     function test_depositAndMint_mintsDinViaProxy() public {

@@ -24,6 +24,11 @@ contract MockTaskContractRegistry {
     }
 }
 
+/// @notice Registry stays ETH-only (see PR #51 comment thread) — no DIN fee
+///         tiers or DIN-paying entry points. Fees accumulate in the registry
+///         per request, then sweepFeesToRouter() batches the whole balance
+///         through DinFeeRouter in one call instead of paying the router's
+///         external-call cost on every registration/update.
 contract DINModelRegistryTest is Test {
     DinToken token;
     DinCoordinator coordinator;
@@ -36,12 +41,6 @@ contract DINModelRegistryTest is Test {
 
     address taskCoordinator;
     address taskAuditor;
-
-    // DIN fees set in setUp
-    uint256 constant OS_FEE_DIN   = 1e18;
-    uint256 constant PROP_FEE_DIN = 10e18;
-    uint256 constant OS_UPDATE_FEE_DIN   = 1e17;
-    uint256 constant PROP_UPDATE_FEE_DIN = 1e18;
 
     function setUp() public {
         // ── deploy DinTreasury ──────────────────────────────────────────────
@@ -129,11 +128,9 @@ contract DINModelRegistryTest is Test {
             )
         );
 
-        // ── wire fee path (steps 10–13) ─────────────────────────────────────
-        registry.setDinToken(address(token));
+        // ── wire fee router (used only by sweepFeesToRouter, not per-request) ──
         registry.setFeeRouter(address(router));
         router.addFeeSource(address(registry));
-        registry.setDinFees(OS_FEE_DIN, PROP_FEE_DIN, OS_UPDATE_FEE_DIN, PROP_UPDATE_FEE_DIN);
 
         // ── deploy task contract stubs owned by alice ───────────────────────
         taskCoordinator = address(new MockTaskContractRegistry(alice));
@@ -142,100 +139,13 @@ contract DINModelRegistryTest is Test {
         coordinator.addSlasherContract(taskCoordinator);
         coordinator.addSlasherContract(taskAuditor);
 
-        // ── fund alice with DIN for fee payments ────────────────────────────
         vm.deal(alice, 10 ether);
-        vm.prank(alice);
-        coordinator.depositAndMint{value: 0.1 ether}(); // 100,000 DIN
-        // alice approves the router to spend DIN (required for DIN fee path)
-        vm.prank(alice);
-        token.approve(address(router), type(uint256).max);
     }
 
-    // ── DIN registration path ─────────────────────────────────────────────────
+    // ── ETH registration: fees accumulate in registry, not forwarded per-request ──
 
-    function test_requestModelRegistrationDIN_chargesCorrectFeeOpenSource() public {
-        uint256 aliceBefore = token.balanceOf(alice);
-
-        vm.prank(alice);
-        registry.requestModelRegistrationDIN(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            true // open source
-        );
-
-        assertEq(aliceBefore - token.balanceOf(alice), OS_FEE_DIN);
-    }
-
-    function test_requestModelRegistrationDIN_chargesCorrectFeeProprietary() public {
-        uint256 aliceBefore = token.balanceOf(alice);
-
-        vm.prank(alice);
-        registry.requestModelRegistrationDIN(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            false // proprietary
-        );
-
-        assertEq(aliceBefore - token.balanceOf(alice), PROP_FEE_DIN);
-    }
-
-    function test_requestModelRegistrationDIN_setsPaymentFlag() public {
-        vm.prank(alice);
-        uint256 requestId = registry.requestModelRegistrationDIN(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            true
-        );
-
-        assertTrue(registry.modelRequestPaidInDIN(requestId));
-    }
-
-    function test_requestModelRegistrationDIN_feeRoutedThroughRouter() public {
-        vm.prank(alice);
-        registry.requestModelRegistrationDIN(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            true
-        );
-
-        // The fee is pulled by routeFeeDIN and either burned, sent to treasury,
-        // or accrued — but none of it stays in the registry.
-        assertEq(token.balanceOf(address(registry)), 0, "Registry should hold no DIN");
-        // At least some should have been processed (default split sends 5% to treasury)
-        // or stays in router as accrued validator pool
-        assertGe(
-            router.accruedDin(keccak256("validatorPool")) +
-            token.balanceOf(address(treasury)),
-            0
-        );
-    }
-
-    function test_requestManifestUpdateDIN_setsPaymentFlag() public {
-        // First register a model
-        vm.prank(alice);
-        registry.requestModelRegistrationDIN(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            true
-        );
-        registry.approveModel(0);
-
-        vm.prank(alice);
-        uint256 reqId = registry.requestManifestUpdateDIN(0, keccak256("manifest-v2"));
-
-        assertTrue(registry.manifestRequestPaidInDIN(reqId));
-    }
-
-    // ── ETH registration path: routed when feeRouter wired ───────────────────
-
-    function test_requestModelRegistration_ethRoutedThroughFeeRouter() public {
+    function test_requestModelRegistration_ethAccumulatesInRegistry() public {
         uint256 fee = registry.openSourceFee();
-        vm.deal(alice, fee);
         vm.prank(alice);
         registry.requestModelRegistration{value: fee}(
             keccak256("manifest"),
@@ -244,16 +154,31 @@ contract DINModelRegistryTest is Test {
             true
         );
 
-        // ETH should NOT remain in registry — forwarded to router
-        assertEq(address(registry).balance, 0, "Registry should hold no ETH when feeRouter is set");
-        // Router + treasury collectively hold the fee
-        assertGe(address(router).balance + address(treasury).balance, 0);
+        // Accumulate-then-sweep design: ETH stays in the registry per request,
+        // regardless of whether feeRouter is wired — sweepFeesToRouter() batches
+        // it later instead of paying the router's external-call cost every time.
+        assertEq(address(registry).balance, fee, "ETH should accumulate in registry");
+        assertEq(address(router).balance, 0, "Router should not receive per-request ETH");
     }
 
-    // ── ETH registration path: stays in registry without feeRouter ───────────
+    function test_requestModelRegistration_multipleFeesAccumulate() public {
+        uint256 osFee = registry.openSourceFee();
+        uint256 propFee = registry.proprietaryFee();
 
-    function test_requestModelRegistration_ethStaysInRegistryWithoutRouter() public {
-        // Deploy a fresh registry with no feeRouter wired
+        vm.startPrank(alice);
+        registry.requestModelRegistration{value: osFee}(
+            keccak256("manifest1"), taskCoordinator, taskAuditor, true
+        );
+        registry.requestModelRegistration{value: propFee}(
+            keccak256("manifest2"), taskCoordinator, taskAuditor, false
+        );
+        vm.stopPrank();
+
+        assertEq(address(registry).balance, osFee + propFee);
+    }
+
+    function test_requestModelRegistration_accumulatesRegardlessOfFeeRouterWiring() public {
+        // Fresh registry with no feeRouter set at all.
         DINModelRegistry bareRegistryImpl = new DINModelRegistry();
         DINModelRegistry bareRegistry = DINModelRegistry(
             address(
@@ -266,7 +191,6 @@ contract DINModelRegistryTest is Test {
         );
 
         uint256 fee = bareRegistry.openSourceFee();
-        vm.deal(alice, fee);
         vm.prank(alice);
         bareRegistry.requestModelRegistration{value: fee}(
             keccak256("manifest"),
@@ -275,17 +199,93 @@ contract DINModelRegistryTest is Test {
             true
         );
 
-        // Without feeRouter, ETH stays in registry — legacy withdrawFees() path
-        assertEq(address(bareRegistry).balance, fee, "ETH should stay in registry without router");
+        // Request succeeds either way — feeRouter wiring only matters at sweep time.
+        assertEq(address(bareRegistry).balance, fee);
     }
 
-    // ── setters ───────────────────────────────────────────────────────────────
+    // ── sweepFeesToRouter ──────────────────────────────────────────────────────
 
-    function test_setDinToken_onlyOwner() public {
+    function test_sweepFeesToRouter_revertsWhenFeeRouterNotSet() public {
+        DINModelRegistry bareRegistryImpl = new DINModelRegistry();
+        DINModelRegistry bareRegistry = DINModelRegistry(
+            address(
+                new TransparentUpgradeableProxy(
+                    address(bareRegistryImpl),
+                    address(this),
+                    abi.encodeCall(DINModelRegistry.initialize, (address(stake)))
+                )
+            )
+        );
+
+        vm.expectRevert(DINModelRegistry.FeeRouterNotSet.selector);
+        bareRegistry.sweepFeesToRouter();
+    }
+
+    function test_sweepFeesToRouter_onlyOwner() public {
+        uint256 fee = registry.openSourceFee();
+        vm.prank(alice);
+        registry.requestModelRegistration{value: fee}(
+            keccak256("manifest"), taskCoordinator, taskAuditor, true
+        );
+
         vm.prank(alice);
         vm.expectRevert();
-        registry.setDinToken(address(token));
+        registry.sweepFeesToRouter();
     }
+
+    function test_sweepFeesToRouter_noopOnZeroBalance() public {
+        registry.sweepFeesToRouter(); // must not revert
+    }
+
+    function test_sweepFeesToRouter_forwardsFullBalanceToRouter() public {
+        uint256 fee = registry.openSourceFee();
+        vm.prank(alice);
+        registry.requestModelRegistration{value: fee}(
+            keccak256("manifest"), taskCoordinator, taskAuditor, true
+        );
+
+        registry.sweepFeesToRouter();
+
+        assertEq(address(registry).balance, 0, "Registry balance should be swept to zero");
+        // Fee is now fully accounted for between the router (accrued buckets,
+        // held as router's own balance) and treasury (paid out directly).
+        assertEq(address(router).balance + address(treasury).balance, fee);
+    }
+
+    function test_sweepFeesToRouter_emitsFeesSweptToRouterEvent() public {
+        uint256 fee = registry.openSourceFee();
+        vm.prank(alice);
+        registry.requestModelRegistration{value: fee}(
+            keccak256("manifest"), taskCoordinator, taskAuditor, true
+        );
+
+        vm.expectEmit(false, false, false, true, address(registry));
+        emit DINModelRegistry.FeesSweptToRouter(fee);
+        registry.sweepFeesToRouter();
+    }
+
+    function test_sweepFeesToRouter_batchesMultipleRequestsInOneCall() public {
+        uint256 osFee = registry.openSourceFee();
+        uint256 propFee = registry.proprietaryFee();
+
+        vm.startPrank(alice);
+        registry.requestModelRegistration{value: osFee}(
+            keccak256("manifest1"), taskCoordinator, taskAuditor, true
+        );
+        registry.requestModelRegistration{value: propFee}(
+            keccak256("manifest2"), taskCoordinator, taskAuditor, false
+        );
+        vm.stopPrank();
+
+        uint256 totalFees = osFee + propFee;
+        vm.expectEmit(false, false, false, true, address(registry));
+        emit DINModelRegistry.FeesSweptToRouter(totalFees);
+        registry.sweepFeesToRouter();
+
+        assertEq(address(registry).balance, 0);
+    }
+
+    // ── setFeeRouter ─────────────────────────────────────────────────────────
 
     function test_setFeeRouter_onlyOwner() public {
         vm.prank(alice);
@@ -293,66 +293,8 @@ contract DINModelRegistryTest is Test {
         registry.setFeeRouter(address(router));
     }
 
-    function test_setDinFees_onlyOwner() public {
-        vm.prank(alice);
-        vm.expectRevert();
-        registry.setDinFees(1, 2, 3, 4);
-    }
-
-    function test_setDinFees_updatesAllFourTiers() public {
-        registry.setDinFees(1e18, 2e18, 3e17, 4e17);
-        assertEq(registry.openSourceFeeDIN(), 1e18);
-        assertEq(registry.proprietaryFeeDIN(), 2e18);
-        assertEq(registry.openSourceUpdateFeeDIN(), 3e17);
-        assertEq(registry.proprietaryUpdateFeeDIN(), 4e17);
-    }
-
-    // ── FeeRouterNotSet guard ─────────────────────────────────────────────────
-
-    function _registryWithoutFeeRouter() internal returns (DINModelRegistry) {
-        DINModelRegistry impl = new DINModelRegistry();
-        DINModelRegistry r = DINModelRegistry(
-            address(
-                new TransparentUpgradeableProxy(
-                    address(impl),
-                    address(this),
-                    abi.encodeCall(DINModelRegistry.initialize, (address(stake)))
-                )
-            )
-        );
-        r.setDinToken(address(token));
-        // feeRouter intentionally not set
-        r.setDinFees(OS_FEE_DIN, PROP_FEE_DIN, OS_UPDATE_FEE_DIN, PROP_UPDATE_FEE_DIN);
-        return r;
-    }
-
-    function test_requestModelRegistrationDIN_revertsWhenFeeRouterNotSet() public {
-        DINModelRegistry r = _registryWithoutFeeRouter();
-        vm.expectRevert(DINModelRegistry.FeeRouterNotSet.selector);
-        vm.prank(alice);
-        r.requestModelRegistrationDIN(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            true
-        );
-    }
-
-    function test_requestManifestUpdateDIN_revertsWhenFeeRouterNotSet() public {
-        // Register + approve a model via ETH path in the unwired registry so
-        // onlyModelOwner passes, then confirm FeeRouterNotSet fires.
-        DINModelRegistry r = _registryWithoutFeeRouter();
-        vm.prank(alice);
-        r.requestModelRegistration{value: 0.000001 ether}(
-            keccak256("manifest"),
-            taskCoordinator,
-            taskAuditor,
-            true
-        );
-        r.approveModel(0);
-
-        vm.expectRevert(DINModelRegistry.FeeRouterNotSet.selector);
-        vm.prank(alice);
-        r.requestManifestUpdateDIN(0, keccak256("newManifest"));
+    function test_setFeeRouter_revertsOnZeroAddress() public {
+        vm.expectRevert(DINModelRegistry.ZeroAddress.selector);
+        registry.setFeeRouter(address(0));
     }
 }
