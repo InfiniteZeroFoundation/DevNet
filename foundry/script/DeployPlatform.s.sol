@@ -9,6 +9,8 @@ import {DinToken} from "../src/DinToken.sol";
 import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
+import {DinTreasury} from "../src/DinTreasury.sol";
+import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 
 /// @notice Deploys the four DIN platform contracts behind Transparent Proxies
 ///         on a local anvil chain, wires them together, and writes
@@ -33,7 +35,15 @@ contract DeployPlatform is Script {
     function run() external {
         vm.startBroadcast();
 
-        // 1. DinToken — no init args
+        // 1. DinTreasury — no dependencies
+        address dinTreasuryProxy = Upgrades.deployTransparentProxy(
+            "DinTreasury.sol:DinTreasury",
+            msg.sender,
+            abi.encodeCall(DinTreasury.initialize, ())
+        );
+        console.log("DinTreasury proxy:      ", dinTreasuryProxy);
+
+        // 2. DinToken — no init args
         address dinTokenProxy = Upgrades.deployTransparentProxy(
             "DinToken.sol:DinToken",
             msg.sender,
@@ -41,7 +51,7 @@ contract DeployPlatform is Script {
         );
         console.log("DinToken proxy:         ", dinTokenProxy);
 
-        // 2. DinCoordinator — receives the DinToken proxy address
+        // 3. DinCoordinator — receives the DinToken proxy address
         address dinCoordinatorProxy = Upgrades.deployTransparentProxy(
             "DinCoordinator.sol:DinCoordinator",
             msg.sender,
@@ -49,11 +59,23 @@ contract DeployPlatform is Script {
         );
         console.log("DinCoordinator proxy:   ", dinCoordinatorProxy);
 
-        // 3. Wire DinToken → DinCoordinator (one-shot setter)
+        // 4. Wire DinToken → DinCoordinator (one-shot setter)
         DinToken(dinTokenProxy).setCoordinator(dinCoordinatorProxy);
         console.log("DinToken coordinator wired");
 
-        // 4. DinValidatorStake — receives both token and coordinator proxies
+        // 5. Wire DinCoordinator → DinTreasury
+        DinCoordinator(payable(dinCoordinatorProxy)).setTreasury(dinTreasuryProxy);
+        console.log("DinCoordinator treasury wired");
+
+        // 6. DinFeeRouter — receives DinToken and DinTreasury proxies
+        address dinFeeRouterProxy = Upgrades.deployTransparentProxy(
+            "DinFeeRouter.sol:DinFeeRouter",
+            msg.sender,
+            abi.encodeCall(DinFeeRouter.initialize, (dinTokenProxy, dinTreasuryProxy))
+        );
+        console.log("DinFeeRouter proxy:     ", dinFeeRouterProxy);
+
+        // 7. DinValidatorStake — receives both token and coordinator proxies
         address dinValidatorStakeProxy = Upgrades.deployTransparentProxy(
             "DinValidatorStake.sol:DinValidatorStake",
             msg.sender,
@@ -64,12 +86,12 @@ contract DeployPlatform is Script {
         );
         console.log("DinValidatorStake proxy:", dinValidatorStakeProxy);
 
-        // 5. Wire DinCoordinator → DinValidatorStake
+        // 8. Wire DinCoordinator → DinValidatorStake
         DinCoordinator(payable(dinCoordinatorProxy))
             .updateValidatorStakeContract(dinValidatorStakeProxy);
         console.log("DinCoordinator stake contract wired");
 
-        // 6. DINModelRegistry — receives the stake proxy
+        // 9. DINModelRegistry — receives the stake proxy
         address dinModelRegistryProxy = Upgrades.deployTransparentProxy(
             "DINModelRegistry.sol:DINModelRegistry",
             msg.sender,
@@ -80,48 +102,82 @@ contract DeployPlatform is Script {
         );
         console.log("DINModelRegistry proxy: ", dinModelRegistryProxy);
 
-        // 7. ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all four
+        // 10. Wire DINModelRegistry → DinToken
+        DINModelRegistry(dinModelRegistryProxy).setDinToken(dinTokenProxy);
+        console.log("DINModelRegistry dinToken wired");
+
+        // 11. Authorise DINModelRegistry as a fee source on DinFeeRouter
+        //     Must come before setFeeRouter (step 12): once the registry knows about the
+        //     router, any fee-paying DIN registration reverts NotFeeSource until this is set.
+        DinFeeRouter(dinFeeRouterProxy).addFeeSource(dinModelRegistryProxy);
+        console.log("DINModelRegistry added as fee source");
+
+        // 12. Wire DINModelRegistry → DinFeeRouter
+        DINModelRegistry(dinModelRegistryProxy).setFeeRouter(dinFeeRouterProxy);
+        console.log("DINModelRegistry feeRouter wired");
+
+        // 13. Set DIN-denominated fees on DINModelRegistry (do not skip)
+        //     Values: openSource=1 DIN, proprietary=10 DIN, osUpdate=0.1 DIN, propUpdate=1 DIN
+        DINModelRegistry(dinModelRegistryProxy).setDinFees(1e18, 10e18, 1e17, 1e18);
+        console.log("DINModelRegistry DIN fees set");
+
+        // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all six
+        address proxyAdminTreasury    = Upgrades.getAdminAddress(dinTreasuryProxy);
         address proxyAdminToken       = Upgrades.getAdminAddress(dinTokenProxy);
         address proxyAdminCoordinator = Upgrades.getAdminAddress(dinCoordinatorProxy);
+        address proxyAdminFeeRouter   = Upgrades.getAdminAddress(dinFeeRouterProxy);
         address proxyAdminStake       = Upgrades.getAdminAddress(dinValidatorStakeProxy);
         address proxyAdminRegistry    = Upgrades.getAdminAddress(dinModelRegistryProxy);
+        console.log("ProxyAdmin (treasury):  ", proxyAdminTreasury);
         console.log("ProxyAdmin (token):     ", proxyAdminToken);
         console.log("ProxyAdmin (coord):     ", proxyAdminCoordinator);
+        console.log("ProxyAdmin (feeRouter): ", proxyAdminFeeRouter);
         console.log("ProxyAdmin (stake):     ", proxyAdminStake);
         console.log("ProxyAdmin (registry):  ", proxyAdminRegistry);
 
         vm.stopBroadcast();
 
-        // 8. Write deployments JSON — same schema as hardhat/deployments/localhost.json
         _writeDeployments(
+            dinTreasuryProxy,
             dinTokenProxy,
             dinCoordinatorProxy,
+            dinFeeRouterProxy,
             dinValidatorStakeProxy,
             dinModelRegistryProxy,
+            proxyAdminTreasury,
             proxyAdminToken,
             proxyAdminCoordinator,
+            proxyAdminFeeRouter,
             proxyAdminStake,
             proxyAdminRegistry
         );
     }
 
     function _writeDeployments(
+        address dinTreasury,
         address dinToken,
         address dinCoordinator,
+        address dinFeeRouter,
         address dinValidatorStake,
         address dinModelRegistry,
+        address proxyAdminTreasury,
         address proxyAdminToken,
         address proxyAdminCoordinator,
+        address proxyAdminFeeRouter,
         address proxyAdminStake,
         address proxyAdminRegistry
     ) internal {
         string memory json = "deployments";
+        vm.serializeAddress(json, "dinTreasury", dinTreasury);
         vm.serializeAddress(json, "dinToken", dinToken);
         vm.serializeAddress(json, "dinCoordinator", dinCoordinator);
+        vm.serializeAddress(json, "dinFeeRouter", dinFeeRouter);
         vm.serializeAddress(json, "dinValidatorStake", dinValidatorStake);
         vm.serializeAddress(json, "dinModelRegistry", dinModelRegistry);
+        vm.serializeAddress(json, "proxyAdminTreasury", proxyAdminTreasury);
         vm.serializeAddress(json, "proxyAdminToken", proxyAdminToken);
         vm.serializeAddress(json, "proxyAdminCoordinator", proxyAdminCoordinator);
+        vm.serializeAddress(json, "proxyAdminFeeRouter", proxyAdminFeeRouter);
         vm.serializeAddress(json, "proxyAdminStake", proxyAdminStake);
         string memory finalJson = vm.serializeAddress(
             json,

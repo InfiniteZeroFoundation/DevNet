@@ -25,8 +25,11 @@ contract DinCoordinator is
 
     uint256 public dinPerEth;
 
+    address public treasury;
+
     // Reserved for future state variables at this inheritance level.
-    uint256[50] private __gap;
+    // Reduced from [50] by 1: treasury
+    uint256[49] private __gap;
 
     event EthDepositAndDINminted(
         address indexed user,
@@ -37,11 +40,13 @@ contract DinCoordinator is
     event SlasherContractRemoved(address indexed slasher);
     event ValidatorStakeContractUpdated(address indexed validatorStakeContract);
     event DinPerEthUpdated(uint256 newRate);
+    event TreasuryUpdated(address indexed treasury);
 
     error InvalidAddress();
     error ValidatorStakeContractNotSet();
     error ZeroValue();
     error TransferFailed();
+    error TreasuryNotSet();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -70,12 +75,21 @@ contract DinCoordinator is
         emit EthDepositAndDINminted(msg.sender, msg.value, mintAmount);
     }
 
-    /// @notice Withdraws the contract's entire ETH balance to the owner address.
+    /// @notice Withdraws the contract's entire ETH balance to the treasury address.
+    /// @dev Reverts if treasury has not been set.
     function withdraw() external onlyOwner nonReentrant {
+        if (treasury == address(0)) revert TreasuryNotSet();
         uint256 balance = address(this).balance;
         if (balance == 0) return;
-        (bool success, ) = payable(owner()).call{value: balance}("");
+        (bool success, ) = payable(treasury).call{value: balance}("");
         if (!success) revert TransferFailed();
+    }
+
+    /// @notice Sets the treasury address. Required before withdraw() can be called.
+    function setTreasury(address treasury_) external onlyOwner {
+        if (treasury_ == address(0)) revert InvalidAddress();
+        treasury = treasury_;
+        emit TreasuryUpdated(treasury_);
     }
 
     /// @notice Registers a task contract as an authorised slasher on the

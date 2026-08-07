@@ -15,6 +15,8 @@ import {DinToken} from "../src/DinToken.sol";
 import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
+import {DinTreasury} from "../src/DinTreasury.sol";
+import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {GIstates} from "../src/DINShared.sol";
@@ -34,58 +36,66 @@ contract SecurityFindingsTest is Test {
     DinCoordinator coordinator;
     DinValidatorStake stake;
     DINModelRegistry registry;
+    DinTreasury treasury;
+    DinFeeRouter feeRouter;
 
     address admin = makeAddr("admin");
 
     function _deployPlatform() internal {
         vm.startPrank(admin);
+        _deployTreasury();
+        _deployTokenAndCoordinator();
+        _deployFeeRouter();
+        _deployStakeAndRegistry();
+        vm.stopPrank();
+    }
 
-        // 1. DinToken proxy
+    function _deployTreasury() private {
+        treasury = DinTreasury(payable(address(new TransparentUpgradeableProxy(
+            address(new DinTreasury()), admin, abi.encodeCall(DinTreasury.initialize, ())
+        ))));
+    }
+
+    function _deployTokenAndCoordinator() private {
         tokenImpl = new DinToken();
-        TransparentUpgradeableProxy tokenProxy = new TransparentUpgradeableProxy(
-            address(tokenImpl),
-            admin,
-            abi.encodeCall(DinToken.initialize, ())
-        );
-        token = DinToken(address(tokenProxy));
+        token = DinToken(address(new TransparentUpgradeableProxy(
+            address(tokenImpl), admin, abi.encodeCall(DinToken.initialize, ())
+        )));
 
-        // 2. DinCoordinator proxy
         coordinatorImpl = new DinCoordinator();
-        TransparentUpgradeableProxy coordinatorProxy = new TransparentUpgradeableProxy(
-            address(coordinatorImpl),
-            admin,
-            abi.encodeCall(DinCoordinator.initialize, (address(token)))
-        );
-        coordinator = DinCoordinator(address(coordinatorProxy));
+        coordinator = DinCoordinator(address(new TransparentUpgradeableProxy(
+            address(coordinatorImpl), admin, abi.encodeCall(DinCoordinator.initialize, (address(token)))
+        )));
 
-        // 3. one-shot wiring
         token.setCoordinator(address(coordinator));
+        coordinator.setTreasury(address(treasury));
+    }
 
-        // 4. DinValidatorStake proxy
+    function _deployFeeRouter() private {
+        feeRouter = DinFeeRouter(address(new TransparentUpgradeableProxy(
+            address(new DinFeeRouter()), admin,
+            abi.encodeCall(DinFeeRouter.initialize, (address(token), address(treasury)))
+        )));
+    }
+
+    function _deployStakeAndRegistry() private {
         stakeImpl = new DinValidatorStake();
-        TransparentUpgradeableProxy stakeProxy = new TransparentUpgradeableProxy(
-            address(stakeImpl),
-            admin,
-            abi.encodeCall(
-                DinValidatorStake.initialize,
-                (address(token), address(coordinator))
-            )
-        );
-        stake = DinValidatorStake(address(stakeProxy));
-
-        // 5. wire stake into coordinator
+        stake = DinValidatorStake(address(new TransparentUpgradeableProxy(
+            address(stakeImpl), admin,
+            abi.encodeCall(DinValidatorStake.initialize, (address(token), address(coordinator)))
+        )));
         coordinator.updateValidatorStakeContract(address(stake));
 
-        // 6. DINModelRegistry proxy
         registryImpl = new DINModelRegistry();
-        TransparentUpgradeableProxy registryProxy = new TransparentUpgradeableProxy(
-            address(registryImpl),
-            admin,
+        registry = DINModelRegistry(address(new TransparentUpgradeableProxy(
+            address(registryImpl), admin,
             abi.encodeCall(DINModelRegistry.initialize, (address(stake)))
-        );
-        registry = DINModelRegistry(address(registryProxy));
+        )));
 
-        vm.stopPrank();
+        registry.setDinToken(address(token));
+        registry.setFeeRouter(address(feeRouter));
+        feeRouter.addFeeSource(address(registry));
+        registry.setDinFees(1e18, 10e18, 1e17, 1e18);
     }
 
     // ─────────────────────────────────────────────────────────────────────
