@@ -73,23 +73,25 @@ abstract contract PlatformTest is Test {
             "DinToken.sol:DinToken", address(this), abi.encodeCall(DinToken.initialize, ())
         ));
 
-        // Step 3: DinCoordinator
+        // Step 3: DinFeeRouter
+        p.dinFeeRouter = DinFeeRouter(Upgrades.deployTransparentProxy(
+            "DinFeeRouter.sol:DinFeeRouter", address(this),
+            abi.encodeCall(DinFeeRouter.initialize, (address(p.dinToken), address(p.dinTreasury)))
+        ));
+
+        // Step 4: DinCoordinator
         p.dinCoordinator = DinCoordinator(payable(Upgrades.deployTransparentProxy(
             "DinCoordinator.sol:DinCoordinator", address(this),
             abi.encodeCall(DinCoordinator.initialize, (address(p.dinToken)))
         )));
 
-        // Step 4: wire DinToken → DinCoordinator (one-shot)
+        // Step 5: wire DinToken → DinCoordinator (one-shot)
         p.dinToken.setCoordinator(address(p.dinCoordinator));
 
-        // Step 5: wire DinCoordinator → DinTreasury
-        p.dinCoordinator.setTreasury(address(p.dinTreasury));
-
-        // Step 6: DinFeeRouter
-        p.dinFeeRouter = DinFeeRouter(Upgrades.deployTransparentProxy(
-            "DinFeeRouter.sol:DinFeeRouter", address(this),
-            abi.encodeCall(DinFeeRouter.initialize, (address(p.dinToken), address(p.dinTreasury)))
-        ));
+        // Step 6: wire DinCoordinator → DinFeeRouter, authorise it as a fee source
+        //         (used by sweepFeesToRouter(), not per-request routing)
+        p.dinCoordinator.setFeeRouter(address(p.dinFeeRouter));
+        p.dinFeeRouter.addFeeSource(address(p.dinCoordinator));
 
         // Step 7: DinValidatorStake
         p.dinValidatorStake = DinValidatorStake(Upgrades.deployTransparentProxy(
@@ -100,16 +102,19 @@ abstract contract PlatformTest is Test {
         // Step 8: wire DinCoordinator → DinValidatorStake
         p.dinCoordinator.updateValidatorStakeContract(address(p.dinValidatorStake));
 
-        // Step 9: DINModelRegistry
+        // Step 9: wire DinValidatorStake → DinTreasury for slash distribution
+        p.dinValidatorStake.setSlashTreasury(address(p.dinTreasury));
+
+        // Step 10: DINModelRegistry
         p.dinModelRegistry = DINModelRegistry(Upgrades.deployTransparentProxy(
             "DINModelRegistry.sol:DINModelRegistry", address(this),
             abi.encodeCall(DINModelRegistry.initialize, (address(p.dinValidatorStake)))
         ));
 
-        // Step 10: wire DINModelRegistry → DinFeeRouter
+        // Step 11: wire DINModelRegistry → DinFeeRouter
         p.dinModelRegistry.setFeeRouter(address(p.dinFeeRouter));
 
-        // Step 11: authorise DINModelRegistry as a fee source on DinFeeRouter
+        // Step 12: authorise DINModelRegistry as a fee source on DinFeeRouter
         //          (used by sweepFeesToRouter(), not per-request routing)
         p.dinFeeRouter.addFeeSource(address(p.dinModelRegistry));
     }
@@ -160,6 +165,10 @@ contract ProxyWiringTest is PlatformTest {
         );
     }
 
+    function test_dinValidatorStake_slashTreasuryWired() public view {
+        assertEq(p.dinValidatorStake.slashTreasury(), address(p.dinTreasury));
+    }
+
     function test_allProxyAdminsOwnedByDeployer() public view {
         // OZ v5 TransparentUpgradeableProxy deploys one ProxyAdmin per proxy,
         // so admin addresses differ. The invariant is that each admin's owner
@@ -185,8 +194,12 @@ contract ProxyWiringTest is PlatformTest {
         );
     }
 
-    function test_dinCoordinator_treasuryWired() public view {
-        assertEq(p.dinCoordinator.treasury(), address(p.dinTreasury));
+    function test_dinCoordinator_feeRouterWired() public view {
+        assertEq(address(p.dinCoordinator.feeRouter()), address(p.dinFeeRouter));
+    }
+
+    function test_dinFeeRouter_coordinatorIsFeeSource() public view {
+        assertTrue(p.dinFeeRouter.feeSources(address(p.dinCoordinator)));
     }
 
     function test_dinFeeRouter_dinTokenWired() public view {

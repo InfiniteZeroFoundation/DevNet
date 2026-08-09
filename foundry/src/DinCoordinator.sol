@@ -12,6 +12,10 @@ interface IDinValidatorStake {
     function removeSlasherContract(address slasherContract) external;
 }
 
+interface IDinFeeRouter {
+    function routeFeeETH(address payer) external payable;
+}
+
 /// @title DIN Coordinator
 /// @notice Central hub for ETH-to-DIN token exchange and slasher contract
 ///         administration. Deployed once per network behind a Transparent Proxy.
@@ -25,7 +29,10 @@ contract DinCoordinator is
 
     uint256 public dinPerEth;
 
-    address public treasury;
+    bool public faucetRetired;    // one-way flag
+    uint256 public mintCap;       // 0 = uncapped (DevNet default)
+    uint256 public totalMinted;
+    IDinFeeRouter public feeRouter;
 
     // Reserved for future state variables at this inheritance level.
     uint256[50] private __gap;
@@ -39,13 +46,17 @@ contract DinCoordinator is
     event SlasherContractRemoved(address indexed slasher);
     event ValidatorStakeContractUpdated(address indexed validatorStakeContract);
     event DinPerEthUpdated(uint256 newRate);
-    event TreasuryUpdated(address indexed treasury);
+    event MintCapUpdated(uint256 newCap);
+    event FaucetRetiredEvent();
+    event FeeRouterUpdated(address indexed feeRouter);
+    event FeesSweptToRouter(uint256 amount);
 
     error InvalidAddress();
     error ValidatorStakeContractNotSet();
     error ZeroValue();
-    error TransferFailed();
-    error TreasuryNotSet();
+    error FaucetRetired();
+    error MintCapExceeded();
+    error FeeRouterNotSet();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -64,31 +75,49 @@ contract DinCoordinator is
 
     /// @notice Deposits ETH and mints the equivalent amount of DIN tokens to
     ///         the caller at the current exchange rate.
-    /// @dev Rate is a fixed-point value scaled by 1e18.
+    /// @dev Rate is a fixed-point value scaled by 1e18. Reverts if the faucet
+    ///      has been retired or if minting would exceed the cap (when set).
     function depositAndMint() external payable nonReentrant {
+        if (faucetRetired) revert FaucetRetired();
         if (msg.value == 0) revert ZeroValue();
-
         uint256 mintAmount = (msg.value * dinPerEth) / 1e18;
+        if (mintCap > 0 && totalMinted + mintAmount > mintCap) revert MintCapExceeded();
+        totalMinted += mintAmount;
         dinToken.mint(msg.sender, mintAmount);
-
         emit EthDepositAndDINminted(msg.sender, msg.value, mintAmount);
     }
 
-    /// @notice Withdraws the contract's entire ETH balance to the treasury address.
-    /// @dev Reverts if treasury has not been set.
-    function withdraw() external onlyOwner nonReentrant {
-        if (treasury == address(0)) revert TreasuryNotSet();
+    /// @notice Sweeps the contract's entire accumulated ETH balance to the fee
+    ///         router in one call, which splits it across treasury/validator-pool/
+    ///         storage/public-goods per its configured split.
+    function sweepFeesToRouter() external onlyOwner nonReentrant {
+        if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
         uint256 balance = address(this).balance;
         if (balance == 0) return;
-        (bool success, ) = payable(treasury).call{value: balance}("");
-        if (!success) revert TransferFailed();
+        feeRouter.routeFeeETH{value: balance}(address(this));
+        emit FeesSweptToRouter(balance);
     }
 
-    /// @notice Sets the treasury address. Required before withdraw() can be called.
-    function setTreasury(address treasury_) external onlyOwner {
-        if (treasury_ == address(0)) revert InvalidAddress();
-        treasury = treasury_;
-        emit TreasuryUpdated(treasury_);
+     /// @notice Sets a cap on the total DIN that can be minted via depositAndMint.
+    ///         0 = uncapped. Cannot be changed after retireFaucet().
+    function setMintCap(uint256 newCap) external onlyOwner {
+        if (faucetRetired) revert FaucetRetired();
+        mintCap = newCap;
+        emit MintCapUpdated(newCap);
+    }
+
+    /// @notice Permanently disables depositAndMint. Cannot be undone.
+    function retireFaucet() external onlyOwner {
+        if (faucetRetired) revert FaucetRetired();
+        faucetRetired = true;
+        emit FaucetRetiredEvent();
+    }
+
+    /// @notice Sets the fee router used to split and route accumulated ETH.
+    function setFeeRouter(address feeRouter_) external onlyOwner {
+        if (feeRouter_ == address(0)) revert InvalidAddress();
+        feeRouter = IDinFeeRouter(feeRouter_);
+        emit FeeRouterUpdated(feeRouter_);
     }
 
     /// @notice Registers a task contract as an authorised slasher on the

@@ -83,7 +83,6 @@ contract DINModelRegistryTest is Test {
             )
         );
         token.setCoordinator(address(coordinator));
-        coordinator.setTreasury(address(treasury));
 
         // ── deploy DinFeeRouter ─────────────────────────────────────────────
         DinFeeRouter routerImpl = new DinFeeRouter();
@@ -99,6 +98,10 @@ contract DINModelRegistryTest is Test {
                 )
             )
         );
+
+        // ── wire DinCoordinator → DinFeeRouter (sweepFeesToRouter) ──────────
+        coordinator.setFeeRouter(address(router));
+        router.addFeeSource(address(coordinator));
 
         // ── deploy DinValidatorStake ────────────────────────────────────────
         DinValidatorStake stakeImpl = new DinValidatorStake();

@@ -68,7 +68,6 @@ contract SecurityFindingsTest is Test {
         )));
 
         token.setCoordinator(address(coordinator));
-        coordinator.setTreasury(address(treasury));
     }
 
     function _deployFeeRouter() private {
@@ -76,6 +75,9 @@ contract SecurityFindingsTest is Test {
             address(new DinFeeRouter()), admin,
             abi.encodeCall(DinFeeRouter.initialize, (address(token), address(treasury)))
         )));
+
+        coordinator.setFeeRouter(address(feeRouter));
+        feeRouter.addFeeSource(address(coordinator));
     }
 
     function _deployStakeAndRegistry() private {
@@ -94,6 +96,7 @@ contract SecurityFindingsTest is Test {
 
         registry.setFeeRouter(address(feeRouter));
         feeRouter.addFeeSource(address(registry));
+        stake.setSlashTreasury(address(treasury));
     }
 
     // ─────────────────────────────────────────────────────────────────────

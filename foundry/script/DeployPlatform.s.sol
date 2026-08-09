@@ -51,7 +51,15 @@ contract DeployPlatform is Script {
         );
         console.log("DinToken proxy:         ", dinTokenProxy);
 
-        // 3. DinCoordinator — receives the DinToken proxy address
+        // 3. DinFeeRouter — receives DinToken and DinTreasury proxies
+        address dinFeeRouterProxy = Upgrades.deployTransparentProxy(
+            "DinFeeRouter.sol:DinFeeRouter",
+            msg.sender,
+            abi.encodeCall(DinFeeRouter.initialize, (dinTokenProxy, dinTreasuryProxy))
+        );
+        console.log("DinFeeRouter proxy:     ", dinFeeRouterProxy);
+
+        // 4. DinCoordinator — receives the DinToken proxy address
         address dinCoordinatorProxy = Upgrades.deployTransparentProxy(
             "DinCoordinator.sol:DinCoordinator",
             msg.sender,
@@ -59,21 +67,15 @@ contract DeployPlatform is Script {
         );
         console.log("DinCoordinator proxy:   ", dinCoordinatorProxy);
 
-        // 4. Wire DinToken → DinCoordinator (one-shot setter)
+        // 5. Wire DinToken → DinCoordinator (one-shot setter)
         DinToken(dinTokenProxy).setCoordinator(dinCoordinatorProxy);
         console.log("DinToken coordinator wired");
 
-        // 5. Wire DinCoordinator → DinTreasury
-        DinCoordinator(payable(dinCoordinatorProxy)).setTreasury(dinTreasuryProxy);
-        console.log("DinCoordinator treasury wired");
-
-        // 6. DinFeeRouter — receives DinToken and DinTreasury proxies
-        address dinFeeRouterProxy = Upgrades.deployTransparentProxy(
-            "DinFeeRouter.sol:DinFeeRouter",
-            msg.sender,
-            abi.encodeCall(DinFeeRouter.initialize, (dinTokenProxy, dinTreasuryProxy))
-        );
-        console.log("DinFeeRouter proxy:     ", dinFeeRouterProxy);
+        // 6. Wire DinCoordinator → DinFeeRouter, and authorise it as a fee
+        //    source so its sweepFeesToRouter() calls are accepted (onlyFeeSource).
+        DinCoordinator(payable(dinCoordinatorProxy)).setFeeRouter(dinFeeRouterProxy);
+        DinFeeRouter(dinFeeRouterProxy).addFeeSource(dinCoordinatorProxy);
+        console.log("DinCoordinator feeRouter wired");
 
         // 7. DinValidatorStake — receives both token and coordinator proxies
         address dinValidatorStakeProxy = Upgrades.deployTransparentProxy(
@@ -91,7 +93,11 @@ contract DeployPlatform is Script {
             .updateValidatorStakeContract(dinValidatorStakeProxy);
         console.log("DinCoordinator stake contract wired");
 
-        // 9. DINModelRegistry — receives the stake proxy
+        // 9. Wire DinValidatorStake → DinTreasury for slash distribution
+        DinValidatorStake(dinValidatorStakeProxy).setSlashTreasury(dinTreasuryProxy);
+        console.log("DinValidatorStake slashTreasury wired");
+
+        // 10. DINModelRegistry — receives the stake proxy
         address dinModelRegistryProxy = Upgrades.deployTransparentProxy(
             "DINModelRegistry.sol:DINModelRegistry",
             msg.sender,
@@ -102,12 +108,12 @@ contract DeployPlatform is Script {
         );
         console.log("DINModelRegistry proxy: ", dinModelRegistryProxy);
 
-        // 10. Authorise DINModelRegistry as a fee source on DinFeeRouter, so its
+        // 11. Authorise DINModelRegistry as a fee source on DinFeeRouter, so its
         //     later sweepFeesToRouter() calls are accepted (onlyFeeSource).
         DinFeeRouter(dinFeeRouterProxy).addFeeSource(dinModelRegistryProxy);
         console.log("DINModelRegistry added as fee source");
 
-        // 11. Wire DINModelRegistry → DinFeeRouter
+        // 12. Wire DINModelRegistry → DinFeeRouter
         DINModelRegistry(dinModelRegistryProxy).setFeeRouter(dinFeeRouterProxy);
         console.log("DINModelRegistry feeRouter wired");
 
@@ -127,7 +133,7 @@ contract DeployPlatform is Script {
 
         vm.stopBroadcast();
 
-        // 12. Write deployments JSON — same schema as hardhat/deployments/localhost.json
+        // 13. Write deployments JSON — same schema as hardhat/deployments/localhost.json
         _writeDeployments(
             dinTreasuryProxy,
             dinTokenProxy,
