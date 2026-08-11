@@ -72,12 +72,18 @@ dincli system configure-demo --mode <yes|no>
 **Connect a wallet:**
 
 ```bash
-dincli system connect-wallet
+dincli system connect-wallet --account 0
 ```
 
+`--account N` is the recommended form for the `.env`-based onboarding flow. Without it,
+`connect-wallet` prompts for a pasted private key, and pasting anything other than the key
+already in your `.env` produces a keystore for a **different address than the one you
+funded** — with a zero balance as the only symptom.
+
 Options:
-- `--key-file <path>` — Import a private key from a file.
 - `--account <index>` — Connect an account by index. Reads `ETH_PRIVATE_KEY_<index>` from your `.env` file.
+- `--key-file <path>` — Import a private key from a file.
+- No option — interactive prompt for a pasted private key (see the caution above).
 
 > [!IMPORTANT]
 > To use your own wallet (non-demo mode), ensure demo mode is disabled first:

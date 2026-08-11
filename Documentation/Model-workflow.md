@@ -21,8 +21,13 @@ dincli system configure-network --network "sepolia_op_devnet"
 Also each actor/stakeholder needs to have a wallet address to interact with the DIN Protocol. Before executing any command, the actor/stakeholder needs to connect their wallet to the DIN CLI.
 
 ```bash
+dincli system configure-demo --mode no
 dincli system connect-wallet --account <account_id>
 ```
+
+> [!WARNING]
+> Disable demo mode first. With demo mode on, `connect-wallet --account` loads a
+> **publicly known Hardhat dev key** and stores it in plaintext.
 
 > [!NOTE]
 > More on wallet configuration can be found in the [DIN CLI Documentation](common.md).
@@ -227,8 +232,9 @@ dincli model-owner gi reg aggregators-open <model_id>
 **Aggregators** buy tokens, stake, and register (repeat for each aggregator):
 
 ```bash
-# buy DIN tokens
-dincli aggregator dintoken buy 0.00001
+# buy DIN tokens — 0.00001 mints exactly MIN_STAKE (10 DIN) with zero margin;
+# 0.0001 mints ~100 DIN and leaves a reserve. See GettingStarted.md.
+dincli aggregator dintoken buy 0.0001
 # stake DIN tokens
 dincli aggregator dintoken stake 10
 # read stake
@@ -261,8 +267,9 @@ dincli model-owner gi reg auditors-open <model_id>
 **Auditors** buy tokens, stake, and register (repeat for each auditor):
 
 ```bash
-# buy DIN tokens
-dincli auditor dintoken buy 0.00001
+# buy DIN tokens — 0.00001 mints exactly MIN_STAKE (10 DIN) with zero margin;
+# 0.0001 mints ~100 DIN and leaves a reserve. See GettingStarted.md.
+dincli auditor dintoken buy 0.0001
 # stake DIN tokens
 dincli auditor dintoken stake 10
 # read stake

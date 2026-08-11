@@ -165,13 +165,17 @@ def configure_logging(ctx: typer.Context,
 def connect_wallet(ctx: typer.Context,
     privatekey: Optional[str] = typer.Argument(None, help="Your Ethereum private key (0x...)"),
     key_file: Optional[Path] = typer.Option(None, "--key-file", "-f", help="Path to file containing private key"),
-    account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index (0-69)"),
+    account: Optional[int] = typer.Option(None, "--account", "-a", help="Account index. Reads ETH_PRIVATE_KEY_N from .env (demo off) or Hardhat dev key (demo on)."),
 ):
     """
     Connect a wallet to DIN CLI.
     
     Usage:
-      # Interactive prompt (Recommended)
+      # Connect using account index — recommended for the .env-indexed
+      # onboarding flow in setup.md, with demo mode disabled
+      dincli system connect-wallet --account 0
+
+      # Interactive prompt
       dincli system connect-wallet
 
       # Connect using a key file (Secure)
@@ -180,11 +184,8 @@ def connect_wallet(ctx: typer.Context,
       # Connect with explicit private key (Not recommended due to logs/history)
       dincli system connect-wallet 0x123...
       
-      # Connect Hardhat dev account by index (auto demo mode)
-      dincli system connect-wallet --account 3
-    
     Encrypt and store the user's wallet for DIN CLI.
-    In demo mode (--yes), stores plaintext key for Hardhat testing.
+    In demo mode, stores plaintext key for Hardhat testing.
     """
 
     # Validate mutual exclusivity
