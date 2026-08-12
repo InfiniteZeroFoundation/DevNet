@@ -195,15 +195,45 @@ def resolve_network_value(
     )
     
         
-def get_w3(effective_network):  
-    try:  
-        rpc_url = resolve_network_value(effective_network,"rpc_url")
+class ChainIdMismatchError(Exception):
+    """The configured RPC endpoint is on a different chain than the selected network."""
+
+
+def get_w3(effective_network):
+    # Stage 1 — resolve and connect.
+    try:
+        rpc_url = resolve_network_value(effective_network, "rpc_url")
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
-            raise ConnectionError(f"Could not connect to Ethereum node at {rpc_url}")
-        return w3
+            raise ConnectionError("endpoint did not respond")
     except Exception as e:
-        raise ConnectionError(f"Could not connect to Ethereum node for network '{effective_network}': {e}") from e
+        # No rpc_url and no {e} here: the URL may carry an API key, and provider
+        # exceptions can echo request paths or response bodies derived from it.
+        # `from e` keeps the original for debugging without printing it.
+        raise ConnectionError(
+            f"Could not connect to the configured Ethereum node for network '{effective_network}'"
+        ) from e
+
+    expected = load_din_info().get(effective_network, {}).get("chain_id")
+    if expected is None:
+        return w3
+
+    # Stage 2 — read the chain id. A node can answer is_connected() and still fail here.
+    try:
+        actual = w3.eth.chain_id
+    except Exception as e:
+        raise ConnectionError(
+            f"Connected to the RPC for network '{effective_network}', but could not read its chain id"
+        ) from e
+
+    # Stage 3 — compare, outside both boundaries above.
+    if actual != expected:
+        raise ChainIdMismatchError(
+            f"RPC chain mismatch for network '{effective_network}': "
+            f"the endpoint reports chain id {actual}, expected {expected}. "
+            f"Check {effective_network.upper()}_RPC_URL in your .env — it points at a different chain."
+        )
+    return w3
     
 
 def get_demo_private_key(account_index: int) -> str:
