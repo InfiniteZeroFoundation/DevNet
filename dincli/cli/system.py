@@ -53,7 +53,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset"]:
+    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
