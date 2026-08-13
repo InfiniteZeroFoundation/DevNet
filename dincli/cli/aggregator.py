@@ -242,7 +242,7 @@ def aggregate_t1(
         model_cids = []
         for j in range(len(idxs)):
             time.sleep(0.1)
-            (client, modelCID, submittedAt, eligible, evaluated, approved, finalAvgScore) = taskAuditor_contract.functions.lmSubmissions(curr_GI, idxs[j]).call()
+            (client, modelCID, submittedAt, eligible, evaluated, approved, finalMedianScore) = taskAuditor_contract.functions.lmSubmissions(curr_GI, idxs[j]).call()
             model_cids.append(get_cid_from_bytes32(modelCID.hex()))
 
         console.print(f"Aggregating Assigned T1 batch {bid} for aggregator {account.address} with model cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
