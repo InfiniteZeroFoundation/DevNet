@@ -27,9 +27,14 @@ contract DINTaskAuditor is Ownable {
         bytes32 modelCID;
         uint40 submittedAt;
         bool eligible; // majority vote result (basic conformance)
-        bool evaluated; // scoring quorum reached & avg computed
-        bool approved; // approvedForAggregation (avg >= passScore)
-        uint256 finalAvgScore; // 0..100, signed for future expansions
+        bool evaluated; // scoring quorum reached & finalAvgScore computed
+        bool approved; // approvedForAggregation (finalAvgScore >= passScore)
+        // 0..100. Despite the field name (kept for ABI stability -- see
+        // finalizeEvaluation), this is the MEDIAN score across the auditor
+        // batch, not a mean, per MECHANISM_DESIGN.md §6's median-consensus
+        // requirement. Canonical per-model score for both S3 slashing and
+        // the reward basis.
+        uint256 finalAvgScore;
     }
 
     // Per-round params (tune for demo vs spec)
@@ -43,6 +48,44 @@ contract DINTaskAuditor is Ownable {
     }
 
     Params public params;
+
+    /// @notice S3 auditor-deviation threshold (task_210726_6 §1d), on the
+    ///         same 0-100 scale as scores. `|auditorScore - median| >
+    ///         s3DeviationThreshold` is computed and emitted via
+    ///         AuditorScoreDeviation in finalizeEvaluation, but does NOT gate
+    ///         or slash anything yet -- shadow mode. MECHANISM_DESIGN.md §6:
+    ///         "start with a wide threshold + warning-only shadow mode for
+    ///         the first weeks of DevNet 2.0, then tighten" once empirically
+    ///         validated. This placeholder default (40, i.e. a 40-point
+    ///         swing on a 0-100 scale) is deliberately wide and is NOT a
+    ///         validated production value -- don't treat it as tuned.
+    uint256 public s3DeviationThreshold = 40;
+
+    event S3DeviationThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    event AuditorScoreDeviation(
+        uint256 indexed gi,
+        uint indexed batchId,
+        uint modelIndex,
+        address indexed auditor,
+        uint256 auditorScore,
+        uint256 medianScore,
+        uint256 deviation,
+        bool exceedsThreshold
+    );
+
+    /// @notice Updates the S3 shadow-mode deviation threshold.
+    /// @dev Shadow mode only -- changing this does not gate or slash
+    ///      anything by itself; it only changes what AuditorScoreDeviation
+    ///      reports as `exceedsThreshold`. Wiring this into actual slashing
+    ///      is explicitly out of scope for task_210726_6 (needs empirical
+    ///      validation first, per MECHANISM_DESIGN.md §6).
+    /// @param newThreshold New deviation threshold, 0..100 scale.
+    function setS3DeviationThreshold(uint256 newThreshold) external onlyOwner {
+        if (newThreshold > 100) revert TA_InvalidDeviationThreshold();
+        uint256 old = s3DeviationThreshold;
+        s3DeviationThreshold = newThreshold;
+        emit S3DeviationThresholdUpdated(old, newThreshold);
+    }
 
     mapping(uint => LMSubmission[]) public lmSubmissions;
 
@@ -307,6 +350,35 @@ contract DINTaskAuditor is Ownable {
         }
     }
 
+    /// @notice Computes the median of the first `count` entries of `scores`.
+    /// @dev Insertion sort — O(n^2), but n is bounded by params.auditorsPerBatch
+    ///      (demo: 3, spec target: up to ~10), so this is cheap in practice and
+    ///      avoids pulling in a sorting library for a handful of elements.
+    ///      Even-length batches median as the integer-divided average of the
+    ///      two middle elements, consistent with this contract's existing
+    ///      integer-division-for-scores convention.
+    /// @param scores Score array; only indices [0, count) are considered.
+    /// @param count Number of valid entries in `scores` (may be < scores.length).
+    function _medianOf(
+        uint256[] memory scores,
+        uint256 count
+    ) internal pure returns (uint256) {
+        for (uint256 i = 1; i < count; i++) {
+            uint256 key = scores[i];
+            uint256 j = i;
+            while (j > 0 && scores[j - 1] > key) {
+                scores[j] = scores[j - 1];
+                j--;
+            }
+            scores[j] = key;
+        }
+
+        if (count % 2 == 1) {
+            return scores[count / 2];
+        }
+        return (scores[count / 2 - 1] + scores[count / 2]) / 2;
+    }
+
     /// @notice Partitions active auditors and submitted models into audit batches.
     /// @dev Called by the paired DINTaskCoordinator. Auditors are filtered to those
     ///      still Active at call time, then shuffled with blockhash-based entropy.
@@ -543,9 +615,9 @@ contract DINTaskAuditor is Ownable {
         _tryFinalizeEligibility(gi, batchId, modelIndex);
     }
 
-    /// @notice Computes final average scores and approval status for all submitted models.
+    /// @notice Computes final median scores and approval status for all submitted models.
     /// @dev Iterates all batches and models; a model is approved if eligible and its
-    ///      average score meets or exceeds passScore. Returns true if at least one
+    ///      median score meets or exceeds passScore. Returns true if at least one
     ///      model was finalised; reverts if GI state is not LMSevaluationStarted.
     /// @param _GI Current GI index.
     /// @return True if at least one model reached score quorum and was finalised.
@@ -580,29 +652,72 @@ contract DINTaskAuditor is Ownable {
                     _tryFinalizeEligibility(_GI, b, modelIndex);
                 }
 
-                // Compute average score from auditors who actually voted
-                uint sum;
+                // Collect scores from auditors who actually voted. Bounded by
+                // batch.auditors.length (params.auditorsPerBatch, demo: 3,
+                // spec: up to 10), so an in-memory sort here is cheap.
+                uint256[] memory votedScores = new uint256[](batch.auditors.length);
+                address[] memory votedAuditors = new address[](batch.auditors.length);
                 uint votes;
 
                 for (uint a = 0; a < batch.auditors.length; a++) {
                     address auditor = batch.auditors[a];
                     if (hasAuditedLM[_GI][b][auditor][modelIndex]) {
-                        sum += auditScores[_GI][b][auditor][modelIndex];
+                        votedScores[votes] = auditScores[_GI][b][auditor][modelIndex];
+                        votedAuditors[votes] = auditor;
                         votes++;
                     }
                 }
 
                 // Only finalize a model's score if score quorum is met
                 if (votes >= params.minScoreQuorum) {
-                    uint256 avg = sum / votes; // integer division
+                    // MECHANISM_DESIGN.md §6 / task_210726_6 §1c: the canonical
+                    // per-model score is the MEDIAN across the auditor batch,
+                    // not a mean — a mean lets a single dishonest auditor drag
+                    // the score arbitrarily far; a median tolerates < 50%
+                    // dishonest auditors (BlockFlow Algorithm 1). `sum/votes`
+                    // here previously computed a mean despite the field name
+                    // `finalAvgScore` implying otherwise; fixed to a true
+                    // median. Field name kept as `finalAvgScore` for ABI/ABI
+                    // JSON stability (dincli reads this positionally, not by
+                    // name, but external indexers may not) -- NatSpec above
+                    // the struct documents the actual semantics.
+                    //
+                    // _medianOf sorts votedScores in place, which would break
+                    // its index alignment with votedAuditors -- compute the
+                    // median first, then re-read each auditor's raw score
+                    // from the source-of-truth mapping (not the now-sorted
+                    // array) when emitting deviations below.
+                    uint256 median = _medianOf(votedScores, votes);
 
-                    sub.finalAvgScore = avg;
+                    sub.finalAvgScore = median;
                     sub.evaluated = true;
 
-                    // Approval requires (i) eligible == true and (ii) avg >= passScore
-                    sub.approved = (sub.eligible && avg >= params.passScore);
+                    // Approval requires (i) eligible == true and (ii) median >= passScore
+                    sub.approved = (sub.eligible && median >= params.passScore);
 
                     finalizedCount++;
+
+                    // §1d: S3 deviation, shadow mode -- computed and emitted
+                    // for every auditor who voted on this model, but does not
+                    // gate approval or trigger any slashing. See
+                    // s3DeviationThreshold's NatSpec.
+                    for (uint i = 0; i < votes; i++) {
+                        address votedAuditor = votedAuditors[i];
+                        uint256 auditorScore = auditScores[_GI][b][votedAuditor][modelIndex];
+                        uint256 deviation = auditorScore > median
+                            ? auditorScore - median
+                            : median - auditorScore;
+                        emit AuditorScoreDeviation(
+                            _GI,
+                            b,
+                            modelIndex,
+                            votedAuditor,
+                            auditorScore,
+                            median,
+                            deviation,
+                            deviation > s3DeviationThreshold
+                        );
+                    }
                 }
             }
         }
