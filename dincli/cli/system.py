@@ -19,6 +19,7 @@ from dincli.cli.contract_utils import erc20_abi, router_abi
 from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, CONFIG_FILE,
                               _get_password, get_config, get_demo_private_key,
                               get_env_key, load_config, load_din_info, save_config)
+from dincli.services import bridge as bridge_service
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
 
@@ -53,7 +54,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset"]:
+    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "read_wallet", "show_index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "bridge-eth"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -806,6 +807,154 @@ def get_proprietary_fee(ctx: typer.Context):
 
     wei_to_eth = w3.from_wei(proprietary_fee, 'ether')
     console.print(f"[bold green]Proprietary fee: {wei_to_eth} ETH[/bold green]")
+
+
+@app.command("bridge-eth")
+def bridge_eth(
+    ctx: typer.Context,
+    amount: str = typer.Option(..., "--amount", help="ETH amount to deposit (e.g. 0.01)"),
+    l1_rpc_url: Optional[str] = typer.Option(None, "--l1-rpc-url", help="L1 RPC URL override (else SEPOLIA_L1_RPC_URL)"),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for the L2 balance increase (default) or return after L1 inclusion"),
+    timeout: int = typer.Option(360, "--timeout", help="L2 poll timeout in seconds (with --wait)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Simulate every check and print the tx without signing"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+):
+    """
+    Deposit ETH from Ethereum Sepolia L1 to the same address on OP Sepolia.
+
+    Deposits only: withdrawals are L2→L1, take ~7 days, and need separate
+    prove and finalize steps. Reorg protection is out of scope — L1 inclusion
+    is reported, never "confirmation".
+    """
+    console = ctx.obj.console
+
+    try:
+        # ---- Stage 1: static preflight -------------------------------- #
+        # Input validation (no RPC)
+        amount_wei = bridge_service.parse_amount(amount)
+        if timeout < 0:
+            raise bridge_service.PreflightRejected("timeout must be non-negative")
+
+        # Selected network, before any RPC (§3.1)
+        network = ctx.obj.network
+        if network != "sepolia_op_devnet":
+            raise bridge_service.PreflightRejected(
+                f"bridge-eth requires network 'sepolia_op_devnet', got '{network}'"
+            )
+
+        # L1 RPC resolution + connection (§3.6)
+        l1_url = bridge_service.resolve_l1_rpc(l1_rpc_url, get_env_key)
+        l1_w3 = bridge_service.connect_l1_rpc(l1_url)
+
+        # Account, then L2 w3 (§3.1 order)
+        account = ctx.obj.account
+        l2_w3 = ctx.obj.w3
+
+        # Chain ids, bridge bytecode/paused, sender + recipient code (§4.2)
+        bridge_service.static_preflight(
+            network=network,
+            l1_w3=l1_w3,
+            l2_w3=l2_w3,
+            sender=account.address,
+        )
+
+        # ---- Stage 2: prepare ------------------------------------------ #
+        tx, estimated_gas = bridge_service.prepare_transaction(
+            l1_w3=l1_w3,
+            sender=account.address,
+            amount_wei=amount_wei,
+        )
+
+        # ---- Stage 3: financial preflight ------------------------------ #
+        bridge_service.affordability_check(
+            l1_w3=l1_w3,
+            sender=account.address,
+            value=amount_wei,
+            gas_limit=tx["gas"],
+            max_fee_per_gas=tx["maxFeePerGas"],
+        )
+
+        # ---- Stage 4: summary → dry-run or send ------------------------ #
+        max_possible_fee = tx["gas"] * tx["maxFeePerGas"]
+        console.print("[bold]Bridge deposit summary[/bold]")
+        console.print(f"  From (L1):           {account.address}")
+        console.print(f"  To (L2):             {account.address} (same address)")
+        console.print(f"  Bridge proxy (L1):   {bridge_service.L1_STANDARD_BRIDGE_SEPOLIA}")
+        console.print(f"  Amount:              {l1_w3.from_wei(amount_wei, 'ether')} ETH")
+        console.print(f"  Nonce:               {tx['nonce']}")
+        console.print(f"  Estimated gas:       {estimated_gas}")
+        console.print(f"  Signed gas limit:    {tx['gas']}")
+        console.print(f"  Max priority fee:    {l1_w3.from_wei(tx['maxPriorityFeePerGas'], 'gwei')} gwei")
+        console.print(f"  Max fee per gas:     {l1_w3.from_wei(tx['maxFeePerGas'], 'gwei')} gwei")
+        console.print(f"  Max possible fee:    {l1_w3.from_wei(max_possible_fee, 'ether')} ETH")
+
+        if dry_run:
+            # Dry-run: no prompt, no L2 baseline read, no signing (§5.2).
+            # Print the exact unsigned tx params (data hexified for display).
+            display_tx = {
+                **tx,
+                "data": "0x",
+            }
+            console.print("[bold]Unsigned transaction[/bold]")
+            console.print(f"  {display_tx}")
+            return
+
+        # Live: confirm unless --yes
+        if not yes:
+            if not typer.confirm("Send this deposit?"):
+                console.print("Operation cancelled — nothing signed.")
+                raise typer.Exit(0)
+
+        # Read L2 baseline ONLY when waiting (§5.2)
+        baseline_wei = None
+        if wait:
+            baseline_wei = l2_w3.eth.get_balance(account.address)
+
+        # Sign and print the locally computed hash BEFORE broadcast (§3.2)
+        signed, tx_hash = bridge_service.sign_deposit(
+            sender_account=account,
+            tx=tx,
+        )
+        console.print(f"Transaction hash: {tx_hash}")
+
+        # Broadcast once — never auto-retry (§3.2)
+        tx_hash, block_number = bridge_service.broadcast_and_wait(
+            l1_w3=l1_w3,
+            signed=signed,
+            tx_hash=tx_hash,
+            l1_timeout=bridge_service.L1_RECEIPT_TIMEOUT,
+        )
+        console.print(f"included in block {block_number}")
+        console.print(f"Sepolia explorer: https://sepolia.etherscan.io/tx/{tx_hash}")
+
+        if wait:
+            arrived = bridge_service.poll_l2_balance(
+                l2_w3=l2_w3,
+                address=account.address,
+                baseline_wei=baseline_wei,
+                timeout=timeout,
+            )
+            if arrived:
+                console.print(
+                    f"balance increase observed on L2 for {account.address} "
+                    f"(L1 hash remains the durable reference: {tx_hash})"
+                )
+            else:
+                console.print(
+                    f"not visible yet on L2 — check the L1 hash: {tx_hash}"
+                )
+        else:
+            console.print(f"submitted, delivery pending — hash: {tx_hash}")
+
+    except bridge_service.BridgeError as e:
+        # One sanitized line; every failure outcome in §3.2b maps to exit 1.
+        console.print(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
+    except ConnectionError:
+        # #83 handles this globally once merged; local handling closes the
+        # gap on plain main and stays harmless afterwards.
+        console.print("[red]❌ could not connect to a blockchain RPC endpoint[/red]")
+        raise typer.Exit(1)
 
 
 
