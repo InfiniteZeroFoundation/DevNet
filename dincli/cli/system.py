@@ -124,7 +124,7 @@ def configure_network(ctx: typer.Context):
 
 @app.command("configure-demo")
 def configure_demo(ctx: typer.Context,
-    mode: str = typer.Option("yes", "--mode", help="Set demo mode: yes or no")
+    mode: str = typer.Option("no", "--mode", help="Set demo mode: yes or no")
 ):
     """
     Enable/disable demo mode (plaintext wallet storage, no password).
@@ -205,12 +205,14 @@ def connect_wallet(ctx: typer.Context,
     console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
     
     demo_mode = get_config("demo_mode")
+    demo_key_is_public = False
 
     
     if account is not None and demo_mode:
         # Load from demo accounts
         try:
             privatekey = get_demo_private_key(account)
+            demo_key_is_public = True
         except (FileNotFoundError, IndexError) as e:
             console.print(f"[red]❌ {e}[/red]")
             raise typer.Exit(1)
@@ -268,7 +270,9 @@ def connect_wallet(ctx: typer.Context,
         }
         with open(WALLET_FILE, "w") as f:
             json.dump(wallet_data, f, indent=4)
-        console.print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
+        console.print("[red]⚠️  Wallet saved in DEMO MODE — the private key is stored unencrypted on disk.[/red]")
+        if demo_key_is_public:
+            console.print("[red]This is a publicly known Hardhat development key that anyone can derive. Never fund this wallet.[/red]")
         console.print(f"[yellow]Address:[/yellow] {acct.address}")
         console.print(f"[cyan]File:[/cyan] {WALLET_FILE}")
         

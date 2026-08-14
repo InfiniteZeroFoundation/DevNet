@@ -4,7 +4,7 @@ import time
 import typer
 from rich.table import Table
 from web3 import Web3
-from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key
+from dincli.cli.utils import CACHE_DIR, MIN_STAKE, get_manifest_key, read_after_write
 from dincli.services.auditor import Score_model_by_auditor
 from dincli.services.cid_utils import get_cid_from_bytes32
 
@@ -31,6 +31,8 @@ def buy(ctx: typer.Context,
 
     console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
 
+    pre_write_balance = DinToken_contract.functions.balanceOf(account.address).call()
+
     try:
         tx_params = ctx.obj.get_tx_params()
         tx_params["value"] = w3.to_wei(amount, "ether")
@@ -47,7 +49,17 @@ def buy(ctx: typer.Context,
     
         if tx_receipt.status == 1:
             console.print(f"[bold green]✓ DINTokens bought at:[/bold green] {tx_receipt.transactionHash.hex()}")
-            console.print("Auditor DINToken balance: ", Web3.from_wei(DinToken_contract.functions.balanceOf(account.address).call(), "ether"))
+            result = read_after_write(
+                DinToken_contract.functions.balanceOf(account.address).call,
+                baseline=pre_write_balance,
+            )
+            if result.settled:
+                console.print("Auditor DINToken balance: ", Web3.from_wei(result.value, "ether"))
+            elif result.observed:
+                console.print("Auditor DINToken balance: ", Web3.from_wei(result.value, "ether"))
+                console.print("[yellow]Balance may not reflect the purchase yet — the RPC endpoint may be lagging.[/yellow]")
+            else:
+                console.print(f"[yellow]Balance read failed after the purchase. Pre-purchase balance was {Web3.from_wei(result.value, 'ether')} DIN.[/yellow]")
         else:
             console.print(f"[bold red]✗ Transaction failed! Could not buy DINTokens {tx_receipt.transactionHash.hex()}[/bold red]")
     except Exception as e:
@@ -61,11 +73,15 @@ def stake(ctx: typer.Context, amount: int):
     DinToken_contract, DinStake_contract = ctx.obj.get_deployed_din_token_contract(), ctx.obj.get_deployed_din_stake_contract()
     
     validator_Din_token_balance = DinToken_contract.functions.balanceOf(account.address).call()
+    stake_amount = Web3.to_wei(amount, "ether")
     
     console.print("[bold green]Auditor ETH balance:[/bold green] ", Web3.from_wei(w3.eth.get_balance(account.address), "ether"))
     console.print("[bold green]Auditor DINToken balance:[/bold green] ", Web3.from_wei(validator_Din_token_balance, "ether"))
     
-    if validator_Din_token_balance < MIN_STAKE:
+    if stake_amount < MIN_STAKE:
+        console.print(f"[bold red]✗ Could not stake DINTokens. Minimum stake is {Web3.from_wei(MIN_STAKE, 'ether')} DINTokens.[/bold red]")
+        raise typer.Exit()
+    elif validator_Din_token_balance < stake_amount:
         console.print(f"[bold red]✗ Could not stake DINTokens. Not enough DINTokens.[/bold red]")
         raise typer.Exit()
     else:
@@ -73,8 +89,8 @@ def stake(ctx: typer.Context, amount: int):
 
         try:
             tx_params = ctx.obj.get_tx_params()
-            tx_params["gas"] = int(w3.eth.estimate_gas(DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, MIN_STAKE).build_transaction(tx_params)
+            tx_params["gas"] = int(w3.eth.estimate_gas(DinToken_contract.functions.approve(DinStake_contract.address, stake_amount).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+            tx_approve = DinToken_contract.functions.approve(DinStake_contract.address, stake_amount).build_transaction(tx_params)
 
             signed_tx_approve = account.sign_transaction(tx_approve)
             tx_hash_approve = w3.eth.send_raw_transaction(signed_tx_approve.raw_transaction)
@@ -89,8 +105,8 @@ def stake(ctx: typer.Context, amount: int):
             time.sleep(5)
 
             tx_params = ctx.obj.get_tx_params()
-            tx_params["gas"] = int(w3.eth.estimate_gas(DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
-            tx_stake = DinStake_contract.functions.stake(MIN_STAKE).build_transaction(tx_params)
+            tx_params["gas"] = int(w3.eth.estimate_gas(DinStake_contract.functions.stake(stake_amount).build_transaction(tx_params)) * 1.1)  # Add 10% buffer
+            tx_stake = DinStake_contract.functions.stake(stake_amount).build_transaction(tx_params)
 
             signed_tx_stake = account.sign_transaction(tx_stake)
             tx_hash_stake = w3.eth.send_raw_transaction(signed_tx_stake.raw_transaction)
