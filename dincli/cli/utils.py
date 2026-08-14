@@ -88,15 +88,19 @@ def resolve_ipfs_config():
     """
     default = "local"
 
-    ipfs_api_url_add = "None"
-    ipfs_api_url_retrieve = "None"
+    ipfs_api_url_add = None
+    ipfs_api_url_retrieve = None
 
-    # 2. Check .env (ignore empty strings)
-    from_env = get_env_key("ipfs_api_url_add".upper())
+    # 2. Check .env (ignore empty strings).
+    # verbose=False: an absent value is not an error here. Both call sites in
+    # services/ipfs.py now raise their own actionable message, and the default
+    # red ❌ fired on every retrieval — including successful ones — naming the
+    # upload variable that retrieval does not use.
+    from_env = get_env_key("ipfs_api_url_add".upper(), verbose=False)
     if from_env and isinstance(from_env, str) and from_env.strip():
         ipfs_api_url_add = from_env.strip()
 
-    from_env = get_env_key("ipfs_api_url_retrieve".upper())
+    from_env = get_env_key("ipfs_api_url_retrieve".upper(), verbose=False)
     if from_env and isinstance(from_env, str) and from_env.strip():
         ipfs_api_url_retrieve = from_env.strip()
 
