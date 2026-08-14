@@ -6,7 +6,7 @@ from datetime import datetime
 from getpass import getpass
 from importlib.resources import files
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import typer
 from eth_account import Account
@@ -301,10 +301,12 @@ def _get_password(prompt: bool = True) -> str:
 
 
     # 1. Environment variable
-    env_pass = get_env_key("DIN_WALLET_PASSWORD")
+    env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
     if env_pass:
         console.print(f"[green]Got Wallet Password DIN_WALLET_PASSWORD from {os.getcwd()}/.env[/green]")
         return env_pass
+
+    console.print("[yellow]DIN_WALLET_PASSWORD not found in environment; checking session cache or prompting...[/yellow]")
 
     # 2. Session cache
     session_file = CONFIG_DIR / ".session"
@@ -330,7 +332,7 @@ def _get_password(prompt: bool = True) -> str:
 
 def _cache_password_if_needed(password: str):
     """Save password to session cache if not from env var."""
-    if get_env_key("DIN_WALLET_PASSWORD"):
+    if get_env_key("DIN_WALLET_PASSWORD", verbose=False):
         return
 
     session_file = CONFIG_DIR / ".session"
@@ -576,6 +578,44 @@ def get_manifest_key( network: str, key: str, model_id: int = None, task_coordin
 def is_ethereum_address(s: str) -> bool:
     """Check if string looks like a valid Ethereum address (case-insensitive, 42 chars, starts with 0x)."""
     return bool(re.fullmatch(r'0x[a-fA-F0-9]{40}', s))
+
+
+class ReadResult(NamedTuple):
+    value: int       # best value available (see `observed`)
+    settled: bool    # True iff a read showed value > baseline
+    observed: bool   # False iff every read raised; then `value` is the baseline
+
+
+def read_after_write(read_fn, *, baseline, attempts=5, delay=2.0) -> ReadResult:
+    """Poll a read that follows a confirmed write, tolerating RPC lag.
+
+    Public endpoints are load-balanced and eventually consistent, so a read
+    issued straight after a receipt can land on a node behind the block.
+    Does not propagate ordinary read_fn exceptions.
+    """
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+
+    last_observed = baseline
+    observed = False
+
+    for attempt in range(attempts):
+        try:
+            value = read_fn()
+        except Exception:
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+            continue
+
+        observed = True
+        last_observed = value
+        if value > baseline:
+            return ReadResult(value=value, settled=True, observed=True)
+
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+
+    return ReadResult(value=last_observed, settled=False, observed=observed)
 
 
 

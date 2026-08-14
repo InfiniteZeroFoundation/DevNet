@@ -7,7 +7,7 @@ name = "dincli"
 version = "0.1.0"
 description = "Command-line interface for Decentralized Intelligence Network"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
   { name = "Umer Majeed", email = "umermjd11@gmail.com"},
   { name = "Abraham Nash", email = "abrahamnash@protonmail.com"}
