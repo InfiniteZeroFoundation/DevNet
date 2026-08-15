@@ -26,7 +26,7 @@ dincli system connect-wallet --account <account_id>
 ```
 
 > [!WARNING]
-> Disable demo mode first. With demo mode on, `connect-wallet --account` loads a
+> Disable demo mode first. With demo mode on, `connect-wallet --account` can load a
 > **publicly known Hardhat dev key** and stores it in plaintext.
 
 > [!NOTE]
