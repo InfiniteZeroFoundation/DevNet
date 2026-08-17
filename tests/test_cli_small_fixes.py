@@ -351,7 +351,7 @@ class TestPythonFloor:
 
         data = tomllib.loads(text)
 
-        assert data["project"]["requires-python"] == ">=3.10"
+        assert data["project"]["requires-python"] == ">=3.12"
         assert data["project"]["version"] == "0.1.0"
 
 

@@ -194,7 +194,9 @@ class TestFallbackContract:
             return_value=(True, DEFAULT_PUBLIC_GATEWAY),
         ) as mock_fb, mock.patch(
             "dincli.services.ipfs.requests.request"
-        ) as mock_req:
+        ) as mock_req, mock.patch(
+            "dincli.services.ipfs._verify_downloaded_cid", return_value=None
+        ):
 
             mock_resp = mock.MagicMock()
             mock_resp.status_code = 200
@@ -306,7 +308,9 @@ class TestRetrieveBehaviour:
             return_value=(None, "http://localhost:5001/api/v0"),
         ), mock.patch(
             "dincli.services.ipfs.requests.request"
-        ) as mock_req, tempfile.TemporaryDirectory() as td:
+        ) as mock_req, mock.patch(
+            "dincli.services.ipfs._verify_downloaded_cid", return_value=None
+        ), tempfile.TemporaryDirectory() as td:
             mock_req.return_value = resp
             dest = Path(td) / "out.bin"
             ipfs_mod.retrieve_from_ipfs(VALID_V0, str(dest))
@@ -328,7 +332,9 @@ class TestRetrieveBehaviour:
             return_value=(None, "https://ipfs.io/ipfs"),
         ), mock.patch(
             "dincli.services.ipfs.requests.request"
-        ) as mock_req, tempfile.TemporaryDirectory() as td:
+        ) as mock_req, mock.patch(
+            "dincli.services.ipfs._verify_downloaded_cid", return_value=None
+        ), tempfile.TemporaryDirectory() as td:
             mock_req.return_value = resp
             dest = Path(td) / "out.bin"
             ipfs_mod.retrieve_from_ipfs(VALID_V0, str(dest))
@@ -350,7 +356,9 @@ class TestRetrieveBehaviour:
             },
         ), mock.patch(
             "dincli.services.ipfs.requests.post"
-        ) as mock_post, tempfile.TemporaryDirectory() as td:
+        ) as mock_post, mock.patch(
+            "dincli.services.ipfs._verify_downloaded_cid", return_value=None
+        ), tempfile.TemporaryDirectory() as td:
             mock_post.return_value = resp
             dest = Path(td) / "out.bin"
             ipfs_mod.retrieve_from_ipfs(VALID_V0, str(dest))
@@ -403,7 +411,9 @@ class TestRetrieveBehaviour:
             "dincli.services.ipfs.requests.request"
         ) as mock_req, mock.patch(
             "dincli.services.ipfs.logger.warning"
-        ) as mock_warn, tempfile.TemporaryDirectory() as td:
+        ) as mock_warn, mock.patch(
+            "dincli.services.ipfs._verify_downloaded_cid", return_value=None
+        ), tempfile.TemporaryDirectory() as td:
             mock_req.return_value = resp
             ipfs_mod._warned_fallback = False
 
@@ -461,6 +471,8 @@ class TestAtomicity:
         ), mock.patch(
             "dincli.services.ipfs.requests.request",
             return_value=resp,
+        ), mock.patch(
+            "dincli.services.ipfs._verify_downloaded_cid", return_value=None
         ), tempfile.TemporaryDirectory() as td:
             dest = Path(td) / "out.bin"
             status = ipfs_mod.retrieve_from_ipfs(VALID_V0, str(dest))
