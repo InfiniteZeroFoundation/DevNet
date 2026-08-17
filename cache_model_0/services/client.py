@@ -86,7 +86,15 @@ def add_laplace_noise(weights, scale):
 
     # Sample from U(-0.5, 0.5) and transform it into Laplace noise.
     uniform = torch.rand_like(weights) - 0.5
-    noise = -scale * torch.sign(uniform) * torch.log1p(-2 * torch.abs(uniform))
+
+    # torch.rand_like samples from [0, 1), so `uniform` can be exactly -0.5.
+    # That makes log1p(-2 * 0.5) evaluate to log1p(-1) = -inf, which poisons
+    # the tensor and propagates to NaN through aggregation. Clamp the
+    # magnitude just inside the open interval so the transform stays finite.
+    magnitude = torch.abs(uniform).clamp(
+        max=0.5 - torch.finfo(uniform.dtype).eps
+    )
+    noise = -scale * torch.sign(uniform) * torch.log1p(-2 * magnitude)
     return weights + noise
 
 
