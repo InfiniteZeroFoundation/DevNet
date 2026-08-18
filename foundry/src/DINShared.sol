@@ -131,6 +131,10 @@ error TA_AlreadyVoted();
 error TA_CannotFinalizeEvaluation();
 /// @dev Auditor's validator status is not Active.
 error TA_AuditorNotActive();
+/// @dev Maximum auditor registrations for this GI has been reached.
+error TA_RegistrationCapReached();
+/// @dev GI state does not permit slashing auditors at this time.
+error TA_CannotSlashAuditors();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator
@@ -222,3 +226,9 @@ error TC_FailedToFinalizeEvaluation();
 error TC_AggregatorNotActive();
 /// @dev The call to DINTaskAuditor.slashAuditors() returned false.
 error TC_FailedToSlashAuditors();
+/// @dev Aggregation CID cannot be bytes32(0); zero is reserved as the "no submission" sentinel.
+error TC_ZeroCID();
+/// @dev Maximum aggregator registrations for this GI has been reached.
+error TC_RegistrationCapReached();
+/// @dev Fewer aggregators submitted than the required quorum for this batch.
+error TC_InsufficientSubmissions();
