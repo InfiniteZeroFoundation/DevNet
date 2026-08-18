@@ -46,6 +46,7 @@ contract DinValidatorStake is
 
     using SafeERC20 for IERC20;
 
+    // Governable parameters — set in initialize(), adjustable via setters
     uint256 public MIN_STAKE;
     uint64 public UNBONDING_PERIOD;
     mapping(address => bool) public slasherContracts;
@@ -316,7 +317,7 @@ contract DinValidatorStake is
         emit ValidatorUnblacklisted(validator);
     }
 
-/// @notice Updates the minimum stake required to become an active validator.
+/// @notice Updates the network-wide minimum stake floor required to become an active validator.
     function setMinStake(uint256 newMinStake) external onlyOwner {
         if (newMinStake == 0) revert InvalidMinStake();
         MIN_STAKE = newMinStake;
@@ -353,7 +354,7 @@ contract DinValidatorStake is
         emit SlashTreasuryUpdated(treasury_);
     }
 
-    /// @notice Jails a validator for the given duration. Callable only by a registered
+    /// @notice Jails a validator for the given duration preventing GI registration. Callable only by a registered
     ///         slasher contract. Extends an existing jail if the new deadline is later.
     function jailValidator(
         address validator,
@@ -378,6 +379,7 @@ contract DinValidatorStake is
         if (block.timestamp < v.jailedUntil) revert JailPeriodNotExpired();
         if (v.activeStake < MIN_STAKE) revert StakeBelowFloor();
         v.jailedUntil = 0;
+        
         _syncValidatorStatus(v);
         emit ValidatorReactivated(msg.sender);
     }

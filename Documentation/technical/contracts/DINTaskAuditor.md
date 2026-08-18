@@ -65,8 +65,8 @@ struct LMSubmission {
     uint40 submittedAt;    // Block timestamp
     bool eligible;         // Passed basic conformance check (majority vote)
     bool evaluated;        // Score quorum reached and avg computed
-    bool approved;         // eligible == true AND finalAvgScore >= passScore
-    uint256 finalAvgScore; // Integer average score (0–100)
+    bool approved;         // eligible == true AND finalMedianScore >= passScore
+    uint256 finalMedianScore; // Integer average score (0–100)
 }
 ```
 
@@ -216,7 +216,7 @@ For each batch:
     Re-attempt eligibility finalization if not yet eligible.
     Compute avg = sum(scores from voters) / voterCount
     If votes >= minScoreQuorum:
-      sub.finalAvgScore = avg
+      sub.finalMedianScore = avg
       sub.evaluated = true
       sub.approved = (sub.eligible AND avg >= params.passScore)
 Return true if finalizedCount > 0.
@@ -224,7 +224,7 @@ Return true if finalizedCount > 0.
 
 **Approval condition (both must hold):**
 - `eligible == true` (majority voted conformant)
-- `finalAvgScore >= passScore`
+- `finalMedianScore >= passScore`
 
 ### 9.4 `approvedModelIndexes`
 

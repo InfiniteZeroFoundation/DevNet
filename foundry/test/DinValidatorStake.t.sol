@@ -143,11 +143,37 @@ contract DinValidatorStakeTest is Test {
         stake.setModelStakeBounds(1, 50e18, 5e18);
     }
 
+    function test_setModelStakeBounds_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        stake.setModelStakeBounds(1, 5e18, 50e18);
+    }
+
+    function test_setModelStakeBounds_doesNotAffectStaking() public {
+        // Bounds are inert storage for now — must not gate staking/registration
+        stake.setModelStakeBounds(1, 999e18, 9999e18);
+        _mintAndStake(alice, MIN);
+        assertTrue(stake.isValidatorActive(alice));
+    }
+
     // ── maxConcurrentRegistrationsPerStakeUnit ────────────────────────────────
 
     function test_setMaxConcurrentRegistrationsPerStakeUnit_roundTrip() public {
         stake.setMaxConcurrentRegistrationsPerStakeUnit(3);
         assertEq(stake.maxConcurrentRegistrationsPerStakeUnit(), 3);
+    }
+
+    function test_setMaxConcurrent_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        stake.setMaxConcurrentRegistrationsPerStakeUnit(3);
+    }
+
+    function test_setMaxConcurrent_doesNotAffectStaking() public {
+        // Also inert storage for now — must not gate staking/registration
+        stake.setMaxConcurrentRegistrationsPerStakeUnit(1);
+        _mintAndStake(alice, MIN);
+        assertTrue(stake.isValidatorActive(alice));
     }
 
     // ── setSlashTreasury ──────────────────────────────────────────────────────
@@ -322,6 +348,29 @@ contract DinValidatorStakeTest is Test {
 
         (,,,, DinValidatorStake.ValidatorStatus status) = stake.validators(alice);
         assertEq(uint256(status), uint256(DinValidatorStake.ValidatorStatus.Active));
+    }
+
+    function test_reactivate_requiresTopUpIfSlashedBelowFloor() public {
+        _mintAndStake(alice, MIN);
+        vm.prank(slasher);
+        stake.slash(alice, MIN / 2, bytes32("penalised"));
+        vm.prank(slasher);
+        stake.jailValidator(alice, 1 days, bytes32("offline"));
+
+        vm.warp(block.timestamp + 1 days + 1);
+
+        // Still below floor — fails
+        vm.prank(alice);
+        vm.expectRevert(DinValidatorStake.StakeBelowFloor.selector);
+        stake.reactivate();
+
+        // Top up back to (at least) the floor. The jail timer has already
+        // expired, so `stake()`'s own `_syncValidatorStatus` call clears
+        // Jailed as a side effect — no further `reactivate()` call needed
+        // (a second call here would revert with `NotJailed`).
+        vm.prank(alice);
+        stake.stake(MIN);
+        assertTrue(stake.isValidatorActive(alice));
     }
 
     function test_reactivate_allowsRestaking() public {

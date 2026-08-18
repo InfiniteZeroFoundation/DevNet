@@ -135,6 +135,10 @@ error TA_AuditorNotActive();
 error TA_RegistrationCapReached();
 /// @dev GI state does not permit slashing auditors at this time.
 error TA_CannotSlashAuditors();
+/// @dev S3 deviation threshold must be in the range [0, 100].
+error TA_InvalidDeviationThreshold();
+/// @dev _medianOf requires at least one entry to compute a median over.
+error TA_EmptyScoreSet();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator
