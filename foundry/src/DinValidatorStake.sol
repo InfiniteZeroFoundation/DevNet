@@ -148,9 +148,9 @@ contract DinValidatorStake is
             revert ValidatorIsBlacklisted();
         }
 
-        DIN_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
         validator.activeStake += amount;
         _syncValidatorStatus(validator);
+        DIN_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
 
         emit ValidatorStaked(msg.sender, amount);
     }
