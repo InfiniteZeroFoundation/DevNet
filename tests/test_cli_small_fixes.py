@@ -306,28 +306,36 @@ class TestBuyRetry:
 # ------------------------------------------------------------------ #
 
 class TestDemoMode:
-    def test_account_path_warns_about_public_key(self, monkeypatch, tmp_path):
+    def test_connect_demo_wallet_warns_about_public_key(self, monkeypatch, tmp_path):
         config_file, _ = _patch_config_paths(monkeypatch, tmp_path)
         config_file.write_text('{"demo_mode": true}', encoding="utf-8")
         key = "0x" + Account.create().key.hex()
         monkeypatch.setattr(system, "get_demo_private_key", lambda index: key)
 
-        result = runner.invoke(app, ["--network", "local", "system", "connect-wallet", "--account", "0"])
+        result = runner.invoke(app, ["--network", "local", "system", "connect-demo-wallet", "--account", "0"])
 
         assert result.exit_code == 0
         assert "unencrypted on disk" in result.output
         assert "publicly known Hardhat development key" in result.output
 
-    def test_pasted_key_path_does_not_call_it_public(self, monkeypatch, tmp_path):
+    def test_connect_demo_wallet_refuses_with_demo_mode_off(self, monkeypatch, tmp_path):
+        config_file, _ = _patch_config_paths(monkeypatch, tmp_path)
+        config_file.write_text('{"demo_mode": false}', encoding="utf-8")
+
+        result = runner.invoke(app, ["--network", "local", "system", "connect-demo-wallet", "--account", "0"])
+
+        assert result.exit_code == 1
+        assert "only works with demo mode on" in result.output
+
+    def test_connect_wallet_refuses_with_demo_mode_on(self, monkeypatch, tmp_path):
         config_file, _ = _patch_config_paths(monkeypatch, tmp_path)
         config_file.write_text('{"demo_mode": true}', encoding="utf-8")
         key = "0x" + Account.create().key.hex()
 
         result = runner.invoke(app, ["--network", "local", "system", "connect-wallet", key])
 
-        assert result.exit_code == 0
-        assert "unencrypted on disk" in result.output
-        assert "publicly known Hardhat development key" not in result.output
+        assert result.exit_code == 1
+        assert "refuses to run" in result.output
 
     def test_configure_demo_defaults_to_no(self, monkeypatch, tmp_path):
         config_file, _ = _patch_config_paths(monkeypatch, tmp_path)

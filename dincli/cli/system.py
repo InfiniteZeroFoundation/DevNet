@@ -54,7 +54,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "bridge-eth"]:
+    if ctx.invoked_subcommand in ["connect-wallet", "connect-demo-wallet", "init", "welcome", "where", "get-config-dir", "get-cache-dir", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "bridge-eth"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -101,12 +101,11 @@ def get_config_dir():
 
 @app.command("init")
 def initialize():
-    """Initialize DIN CLI by creating config/cache directories and an empty config file."""
+    """Initialize DIN CLI by creating config/cache directories and a config file with demo mode off."""
     initialize_directories()
     if not CONFIG_FILE.exists():
-        # Write an empty JSON object (valid JSON)
-        CONFIG_FILE.write_text("{}\n", encoding="utf-8")
-        Console().print(f"[green]✅ Created empty config file at: {CONFIG_FILE}[/green]")
+        CONFIG_FILE.write_text(json.dumps({"demo_mode": False}, indent=4) + "\n", encoding="utf-8")
+        Console().print(f"[green]✅ Created config file (demo mode off) at: {CONFIG_FILE}[/green]")
  
 @app.command("configure-network")
 def configure_network(ctx: typer.Context):
@@ -166,14 +165,14 @@ def configure_logging(ctx: typer.Context,
 def connect_wallet(ctx: typer.Context,
     privatekey: Optional[str] = typer.Argument(None, help="Your Ethereum private key (0x...)"),
     key_file: Optional[Path] = typer.Option(None, "--key-file", "-f", help="Path to file containing private key"),
-    account: Optional[int] = typer.Option(None, "--account", "-a", help="Account index. Reads ETH_PRIVATE_KEY_N from .env (demo off) or Hardhat dev key (demo on)."),
+    account: Optional[int] = typer.Option(None, "--account", "-a", help="Account index. Reads ETH_PRIVATE_KEY_N from .env."),
 ):
     """
-    Connect a wallet to DIN CLI.
-    
+    Connect your own wallet to DIN CLI (encrypted keystore).
+
     Usage:
       # Connect using account index — recommended for the .env-indexed
-      # onboarding flow in setup.md, with demo mode disabled
+      # onboarding flow in setup.md
       dincli system connect-wallet --account 0
 
       # Interactive prompt
@@ -181,13 +180,25 @@ def connect_wallet(ctx: typer.Context,
 
       # Connect using a key file (Secure)
       dincli system connect-wallet --key-file ~/.dincli/wallet.key
-      
+
       # Connect with explicit private key (Not recommended due to logs/history)
       dincli system connect-wallet 0x123...
-      
-    Encrypt and store the user's wallet for DIN CLI.
-    In demo mode, stores plaintext key for Hardhat testing.
+
+    Encrypts and stores the connected key. Requires demo mode off — for local
+    Hardhat testing with the well-known dev accounts, use `connect-demo-wallet`.
     """
+    console = ctx.obj.console
+
+    if get_config("demo_mode"):
+        console.print(
+            "[red]❌ Demo mode is on — connect-wallet refuses to run, to avoid ever "
+            "writing a real key to disk unencrypted.[/red]"
+        )
+        console.print(
+            "[yellow]Run `dincli system configure-demo --mode no` first, or use "
+            "`dincli system connect-demo-wallet` for local Hardhat testing.[/yellow]"
+        )
+        raise typer.Exit(1)
 
     # Validate mutual exclusivity
     auth_methods = [
@@ -196,110 +207,124 @@ def connect_wallet(ctx: typer.Context,
         (account, "account index")
     ]
     provided_methods = [name for val, name in auth_methods if val is not None]
-    console = ctx.obj.console
-    
+
     if len(provided_methods) > 1:
         console.print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
         raise typer.Exit(1)
 
     console.print(f"[green] ⚙️  Connecting wallet... to new account[/green]")
-    
-    demo_mode = get_config("demo_mode")
-    demo_key_is_public = False
 
-    
-    if account is not None and demo_mode:
-        # Load from demo accounts
-        try:
-            privatekey = get_demo_private_key(account)
-            demo_key_is_public = True
-        except (FileNotFoundError, IndexError) as e:
-            console.print(f"[red]❌ {e}[/red]")
-            raise typer.Exit(1)
-    elif account is not None and not demo_mode:
+    if account is not None:
         privatekey = get_env_key("ETH_PRIVATE_KEY_"+str(account))
         if privatekey is None:
             raise typer.Exit(1)
-            
+
     elif key_file is not None:
         # Load from file
-        key_file = key_file.expanduser() 
+        key_file = key_file.expanduser()
         if not key_file.exists():
             console.print(f"[red]❌ Key file not found: {key_file}[/red]")
             raise typer.Exit(1)
         try:
             with open(key_file, 'r') as f:
                 privatekey = f.read().strip()
-            config = load_config()
-            demo_mode = config.get("demo_mode", False)
         except Exception as e:
             console.print(f"[red]❌ Failed to read key file: {e}[/red]")
             raise typer.Exit(1)
-            
+
     elif privatekey is not None:
         # Explicit argument
         console.print("[yellow]⚠️  Warning: Providing private key as argument is insecure (saved in shell history). Use interactive mode or --key-file instead.[/yellow]")
-        config = load_config()
-        demo_mode = config.get("demo_mode", False)
-        
+
     else:
         # Interactive prompt
         console.print("[cyan]Enter your Ethereum private key (input will be hidden):[/cyan]")
         privatekey = getpass("Private Key: ").strip()
-        config = load_config()
-        demo_mode = config.get("demo_mode", False)
 
     # Validate format (for all methods)
     if not privatekey.startswith("0x") or len(privatekey) != 66:
         console.print("[red]❌ Invalid private key format! Must be 0x + 64 hex chars.[/red]")
         raise typer.Exit(1)
-    
+
     # Ensure config dir exists
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Derive address
     acct = Account.from_key(privatekey)
 
+    password = _get_password(False)
 
-    if demo_mode:
-        # Save plaintext private key (for Hardhat/local testing ONLY)
-        wallet_data = {
-            "address": acct.address,
-            "private_key": privatekey,  # ⚠️ PLAINTEXT — ONLY FOR MOCK!
-            "demo_mode": True
-        }
-        with open(WALLET_FILE, "w") as f:
-            json.dump(wallet_data, f, indent=4)
-        console.print("[red]⚠️  Wallet saved in DEMO MODE — the private key is stored unencrypted on disk.[/red]")
-        if demo_key_is_public:
-            console.print("[red]This is a publicly known Hardhat development key that anyone can derive. Never fund this wallet.[/red]")
-        console.print(f"[yellow]Address:[/yellow] {acct.address}")
-        console.print(f"[cyan]File:[/cyan] {WALLET_FILE}")
-        
-    else:
+    if password == "":
+        # Ask for encryption password
+        password = getpass("Create wallet password: ")
+        confirm = getpass("Confirm password: ")
 
-        password = _get_password(False)
+        if password != confirm:
+            console.print("[red]Passwords do not match![/red]")
+            raise typer.Exit()
 
-        if password == "":
-            # Ask for encryption password
-            password = getpass("Create wallet password: ")
-            confirm = getpass("Confirm password: ")
+    # Use eth-account to create an encrypted keystore
+    keystore = Account.encrypt(privatekey, password)
 
-            if password != confirm:
-                console.print("[red]Passwords do not match![/red]")
-                raise typer.Exit()
+    # Save encrypted wallet locally
+    with open(WALLET_FILE, "w") as f:
+        json.dump(keystore, f, indent=4)
 
-        # Use eth-account to create an encrypted keystore
-        keystore = Account.encrypt(privatekey, password)
+    console.print(f"[green]Wallet connected successfully![/green]")
+    console.print(f"[green] Active Account Address:[/green] {acct.address}")
+    console.print(f"[green]Encrypted keystore saved at:[/green] {WALLET_FILE}")
 
-        # Save encrypted wallet locally
-        with open(WALLET_FILE, "w") as f:
-            json.dump(keystore, f, indent=4)
 
-        console.print(f"[green]Wallet connected successfully![/green]")
-        console.print(f"[green] Active Account Address:[/green] {acct.address}")
-        console.print(f"[green]Encrypted keystore saved at:[/green] {WALLET_FILE}")
-    
+@app.command("connect-demo-wallet")
+def connect_demo_wallet(ctx: typer.Context,
+    account: int = typer.Option(..., "--account", "-a", help="Hardhat dev account index."),
+):
+    """
+    Connect a well-known Hardhat dev account for local testing only.
+
+    dincli system connect-demo-wallet --account 0
+
+    Requires demo mode on (`dincli system configure-demo --mode yes`). Stores the
+    key in PLAINTEXT — these keys are publicly derivable, never fund this address
+    on a real network. For your own wallet, use `connect-wallet` instead.
+    """
+    console = ctx.obj.console
+
+    if not get_config("demo_mode"):
+        console.print(
+            "[red]❌ Demo mode is off — connect-demo-wallet only works with demo "
+            "mode on.[/red]"
+        )
+        console.print(
+            "[yellow]Run `dincli system configure-demo --mode yes` first, or use "
+            "`dincli system connect-wallet` to connect your own key.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"[green] ⚙️  Connecting demo wallet...[/green]")
+
+    try:
+        privatekey = get_demo_private_key(account)
+    except (FileNotFoundError, IndexError) as e:
+        console.print(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    acct = Account.from_key(privatekey)
+
+    wallet_data = {
+        "address": acct.address,
+        "private_key": privatekey,  # ⚠️ PLAINTEXT — ONLY FOR MOCK!
+        "demo_mode": True
+    }
+    with open(WALLET_FILE, "w") as f:
+        json.dump(wallet_data, f, indent=4)
+
+    console.print("[red]⚠️  Wallet saved in DEMO MODE — the private key is stored unencrypted on disk.[/red]")
+    console.print("[red]This is a publicly known Hardhat development key that anyone can derive. Never fund this wallet.[/red]")
+    console.print(f"[yellow]Address:[/yellow] {acct.address}")
+    console.print(f"[cyan]File:[/cyan] {WALLET_FILE}")
+
 @app.command()
 def read_wallet(ctx: typer.Context):
     """
@@ -771,7 +796,7 @@ def dump_abi(
 # dincli system
 @app.command("configure-ipfs")
 def configure_ipfs(ctx: typer.Context,
-    provider: str = typer.Option(None, "--provider", "-p", help="IPFS application name [filebase, custom]"),
+    provider: str = typer.Option(None, "--provider", "-p", help="IPFS application name [filebase, env]"),
     api_key: str = typer.Option(None, "--api-key", "-k", help="API key"),
     api_secret: str = typer.Option(None, "--api-secret", "-s", help="API secret"),
    ):
@@ -782,7 +807,7 @@ def configure_ipfs(ctx: typer.Context,
         ctx.obj.console.print("[red]❌ Please specify a provider.[/red]")
         raise typer.Exit(1)
 
-    configured_providers = {"filebase", "custom"}
+    configured_providers = {"filebase", "env"}
 
     if provider:
         if provider not in configured_providers:
@@ -791,7 +816,9 @@ def configure_ipfs(ctx: typer.Context,
         if provider == "filebase" and not api_key:
             ctx.obj.console.print("[red]❌ Please specify an API key for filebase provider.[/red]")
             raise typer.Exit(1)
-        config["ipfs_provider"] = provider
+        # "env" is the CLI-facing name for the default node/URL path; the
+        # service layer (dincli/services/ipfs.py) keys off "ipfs node".
+        config["ipfs_provider"] = "ipfs node" if provider == "env" else provider
 
     if api_key:
         config["ipfs_api_key"] = api_key
