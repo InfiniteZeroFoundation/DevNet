@@ -98,7 +98,7 @@ The system is **fully verifiable end-to-end**:
 
 # 📦 Data Availability Layer (IPFS via Filebase)
 
-The protocol uses IPFS (commonly through Filebase) as a decentralised storage layer for
+The protocol uses IPFS (recommended through Filebase) as a decentralised storage layer for
 protocol artifacts.
 
 This includes:
@@ -150,7 +150,7 @@ specialised hardware.
 ### Minimum Requirements
 
 - RAM: 4 GB
-- Disk: ~30 GB
+- Disk: ~15 GB
 - CPU: Standard CPU (GPU not required)
 - Python 3 + virtual environment
 
@@ -305,8 +305,11 @@ dincli task gi show-state 0
 
 > [!NOTE]
 > The rate (`dinPerEth` on `DinCoordinator`) is owner-mutable, so these amounts hold only
-> at the current rate. There is no `dincli` command to read it — the values above were
-> confirmed against the deployed contract in August 2026.
+> at the current rate. Check it yourself before buying:
+> ```bash
+> dincli aggregator dintoken read-din-per-eth
+> ```
+> The values above were confirmed against the deployed contract in August 2026.
 
 ```bash
 # Buy DIN tokens (see the table above before choosing an amount)
@@ -439,7 +442,7 @@ dincli auditor lms-evaluation evaluate 0 --submit
 
 Auditor slashing exists on the published contracts as a stub — `slashAuditors` on the
 coordinator carries a placeholder comment and the deployed `DINTaskAuditor` has no
-`slashAuditors` function. The real implementation lives on `develop`. Auditor economic
+`slashAuditors` function. The real implementation lives on `develop` which will be released in devnet 2.0 onwards. Auditor economic
 accountability is not enforced on the current devnet deployment.
 
 ---
@@ -540,6 +543,11 @@ dincli system get-cache-dir
 ```
 
 ## Training Process
+
+### Explore Model
+```bash
+dincli task explore 0 --update
+```
 
 ### Check Global Iteration State
 
