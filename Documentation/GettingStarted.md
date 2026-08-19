@@ -11,6 +11,10 @@ The Infinite Zero Network coordinates decentralised AI training, auditing, aggre
 validation through Ethereum smart contracts, off-chain distributed compute, and
 decentralised storage.
 
+> [!TIP]
+> Hit an error or need help with installation or troubleshooting? Post it in the
+> [bugs & installation troubleshooting discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/94).
+
 ---
 
 # 🧭 Protocol Overview
@@ -245,9 +249,12 @@ A non-exhaustive funding source for L1:
 
 Funds arrive on **chain 11155111** and must be bridged to **11155420**.
 
-If you are unable to obtain funds through faucets or bridging, you may also request
-Sepolia Optimism ETH through the Infinite Zero Foundation Telegram and Signal community
-groups.
+If you are unable to obtain funds through faucets or bridging, the recommended way to
+request Sepolia Optimism ETH is the
+[Faucet discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/93) —
+post your Optimism Sepolia address there and a maintainer will send funds. The Infinite
+Zero Foundation Telegram and Signal community groups (above) are also available as a
+secondary option.
 
 ---
 
@@ -375,7 +382,7 @@ The real present-tense consequence of a missed or divergent submission is that
 `slashAggregators` cannot produce the `AggregatorsSlashed` state, and `endGI` requires
 exactly that state — so **the Global Iteration cannot be ended at all**. What happens
 when a GI is wedged is not a slashing question; it is a protocol-liveness question and
-is still under discussion.
+is still under discussion. A fix is planned soon.
 
 ---
 

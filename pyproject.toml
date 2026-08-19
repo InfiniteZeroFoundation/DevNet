@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dincli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Command-line interface for Decentralized Intelligence Network"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,3 +37,9 @@ dincli = "dincli.main:app"
 [tool.setuptools.packages.find]
 where = ["."]  # look in project root
 include = ["dincli*"]  # only include dincli and subpackages
+
+# accounts.json is gitignored, local-only runtime state (populated by
+# `dincli system register-wallet`) — never ship whatever happens to be on
+# the build machine's disk.
+[tool.setuptools.exclude-package-data]
+"dincli.config" = ["accounts.json"]

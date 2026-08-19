@@ -4,6 +4,10 @@ This guide walks you through the complete setup process for the DIN CLI (`dincli
 installation to a verified ready state. Every aggregator, auditor, and client should
 complete this before entering a Global Iteration for any model.
 
+> [!TIP]
+> Hit an error or get stuck anywhere in this guide? Post it in the
+> [bugs & installation troubleshooting discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/94).
+
 ---
 
 ## 1. Requirements
@@ -281,9 +285,12 @@ command.
 
 ### 8.3 Community Funding
 
-If you are unable to obtain funds through faucets or bridging, you may also request
-Sepolia Optimism ETH through the Infinite Zero Foundation Telegram and Signal community
-groups (see Appendix).
+If you are unable to obtain funds through faucets or bridging, the recommended way to
+request Sepolia Optimism ETH is the
+[Faucet discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/93) —
+post your Optimism Sepolia address there and a maintainer will send funds. The Infinite
+Zero Foundation Telegram and Signal community groups (see Appendix) are also available
+as a secondary option.
 
 ---
 
