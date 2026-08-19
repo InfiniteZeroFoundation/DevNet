@@ -334,9 +334,16 @@ def resolve_network_value(
     
         
 def get_w3(effective_network):
-    # Stage 1 — resolve and connect.
+    # Stage 0 — resolve. Deliberately outside stage 1's handler: an unresolvable
+    # rpc_url is a configuration error, and resolve_network_value already raises
+    # an actionable KeyError naming the env var and config path it checked.
+    # Wrapping it would report a missing endpoint as an unreachable one, which is
+    # the exact class of misleading error this function exists to remove. Its
+    # message carries no URL value, so letting it propagate leaks nothing.
+    rpc_url = resolve_network_value(effective_network, "rpc_url")
+
+    # Stage 1 — connect.
     try:
-        rpc_url = resolve_network_value(effective_network, "rpc_url")
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
             raise ConnectionError("endpoint did not respond")

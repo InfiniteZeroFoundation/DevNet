@@ -71,6 +71,45 @@ def _invoke_group_with(error):
 # Stage 1 — resolve + connect
 # ---------------------------------------------------------------------------
 
+class TestStage0:
+    """Resolution failures must stay distinguishable from connection failures."""
+
+    @patch("dincli.cli.utils.load_din_info")
+    @patch("dincli.cli.utils.Web3")
+    def test_unresolvable_rpc_url_propagates_its_own_error(
+        self, mock_web3_cls, mock_load_info
+    ):
+        """A missing rpc_url is a config error, not an unreachable endpoint.
+
+        resolve_network_value raises a KeyError naming the env var and the config
+        path it checked. Wrapping that in stage 1 would tell an operator with no
+        RPC configured at all that their node is unreachable -- the same class of
+        misleading error this whole function exists to remove.
+        """
+        guidance = KeyError(
+            "Could not resolve 'rpc_url' for network 'sepolia_op_devnet'.\n"
+            "-> Checked .env for 'SEPOLIA_OP_DEVNET_RPC_URL'"
+        )
+        with patch("dincli.cli.utils.resolve_network_value", side_effect=guidance):
+            with pytest.raises(KeyError) as exc_info:
+                get_w3(NETWORK)
+
+        assert "SEPOLIA_OP_DEVNET_RPC_URL" in str(exc_info.value)
+        # Never reached the transport: nothing was constructed or dialled.
+        mock_web3_cls.assert_not_called()
+
+    @patch("dincli.cli.utils.load_din_info")
+    @patch("dincli.cli.utils.Web3")
+    def test_resolution_error_is_not_masked_as_connection_error(
+        self, mock_web3_cls, mock_load_info
+    ):
+        with patch("dincli.cli.utils.resolve_network_value", side_effect=KeyError("no rpc_url")):
+            with pytest.raises(Exception) as exc_info:
+                get_w3(NETWORK)
+
+        assert not isinstance(exc_info.value, ConnectionError)
+
+
 class TestStage1:
     @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
     @patch("dincli.cli.utils.load_din_info")
