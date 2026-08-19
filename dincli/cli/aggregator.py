@@ -121,6 +121,18 @@ def stake(ctx: typer.Context, amount: int):
         except Exception as e:
             console.print(f"[bold red]✗ Could not stake DINTokens. {e}[/bold red]")
 
+@dintoken_app.command("read-din-per-eth", help="Read the current DIN-per-ETH exchange rate")
+def read_din_per_eth(ctx: typer.Context):
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    DinCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
+
+    raw = DinCoordinator_contract.functions.dinPerEth().call()
+
+    console.print(f"DIN per ETH (raw, 18 decimals): {raw} ({raw:.0e})")
+    console.print(f"DIN per ETH: {Web3.from_wei(raw, 'ether')}")
+
 @dintoken_app.command("read-stake", help="Check stake")
 def read_stake(ctx: typer.Context):
 
