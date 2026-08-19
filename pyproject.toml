@@ -17,6 +17,7 @@ keywords = ["blockchain", "federated-learning", "privacy", "cli", "fastapi", "DI
 
 dependencies = [
   "typer>=0.9.0",
+  "click>=8.1.0",
   "python-dotenv>=1.0.0",
   "web3>=6.0.0",
   "platformdirs>=4.3.0",

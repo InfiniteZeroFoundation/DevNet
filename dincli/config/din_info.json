@@ -1,5 +1,6 @@
 {
   "local": {
+    "chain_id": 1337,
     "coordinator": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
     "token": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
     "stake": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
@@ -28,6 +29,7 @@
     "proxy_admin": "0xCafac3dD18aC6c6e92c921884f9E4176737C052c"
   },
   "sepolia_op_devnet": {
+    "chain_id": 11155420,
     "coordinator": "0xC5B5B125dcF5d51190f78e2685F7Bc97923Ad46a",
     "token": "0x22d38a1965d35478941060dbf39847f36AD443d6",
     "stake": "0x5088D7a568E79c6bec0795258591f2435649139a",

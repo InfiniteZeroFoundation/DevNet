@@ -1,9 +1,13 @@
 # dincli/core.py
 from __future__ import annotations
 
+import sys
 from typing import List
 
+import click
 from typer.core import TyperGroup
+
+from dincli.cli.utils import ChainIdMismatchError
 
 
 class GlobalOptionsGroup(TyperGroup):
@@ -29,3 +33,10 @@ class GlobalOptionsGroup(TyperGroup):
 
         super().parse_args(ctx, global_args + remaining)
         return remaining
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except (ChainIdMismatchError, ConnectionError) as e:
+            click.secho(str(e), err=True, fg="red")
+            sys.exit(1)
