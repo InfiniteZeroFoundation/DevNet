@@ -1,5 +1,7 @@
 import importlib.util
 import os
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -14,7 +16,11 @@ from dincli.cli.utils import (
     get_env_key,
     resolve_ipfs_config,
 )
-from dincli.services.cid_utils import get_cidv1base32_from_cid, validate_cid
+from dincli.services.cid_utils import (
+    get_bytes32_from_cid,
+    get_cidv1base32_from_cid,
+    validate_cid,
+)
 
 console = Console()
 
@@ -35,8 +41,17 @@ _FALLBACK_MSG = (
     "accepting that tradeoff."
 )
 
+_NO_VERIFY_MSG = (
+    "Downloaded content was NOT verified against the requested CID — no "
+    "usable local `ipfs` binary found. Install kubo "
+    "(https://docs.ipfs.tech/install/command-line/) and run `ipfs init` "
+    "once to enable this check. Both are fast, offline, one-time steps — no "
+    "daemon needs to run afterward and no data needs to sync."
+)
+
 _warned_fallback = False
 _warned_no_provider = False
+_warned_no_verify = False
 
 def _ensure_file_exists(file_path: Path):
     if not file_path.exists():
@@ -94,6 +109,67 @@ def _require_custom_service_path(config):
 def _build_add_url(raw_url: str) -> str:
     url = raw_url.rstrip("/")
     return url if url.endswith("/add") else f"{url}/add"
+
+
+def _compute_ipfs_cid_local(file_path: Path) -> str | None:
+    """Best-effort: recompute a file's CID with a local `ipfs` binary (kubo).
+
+    Uses the same code path that mints CIDs on upload, so a claimed CID can
+    be checked without trusting whichever provider supplied the content.
+    `ipfs add -n` (only-hash) needs no running daemon and no synced data —
+    just the binary and a one-time offline `ipfs init`.
+
+    Never raises: returns None when a local `ipfs` binary isn't usable
+    (missing, never initialised, timeout), which the caller treats as
+    "verification unavailable" rather than a failure. A local node is
+    optional as a provider here, so it must stay optional for hashing too.
+    """
+    ipfs_bin = shutil.which("ipfs")
+    if not ipfs_bin:
+        return None
+
+    try:
+        result = subprocess.run(
+            [ipfs_bin, "add", "-n", "-Q", str(file_path)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+        return result.stdout.strip() or None
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
+def _verify_downloaded_cid(file_path: Path, requested_cid: str, provider: str) -> None:
+    """Compare what was downloaded against what was requested.
+
+    Raises ValueError on a genuine mismatch; degrades to a one-time warning
+    when no local `ipfs` binary is available.
+
+    Skipped for the `custom` provider: it is a user-supplied path that may
+    use different chunking or CID settings, so comparing against kubo's
+    defaults there risks rejecting legitimately good downloads.
+    """
+    if provider == "custom":
+        return
+
+    global _warned_no_verify
+
+    computed_cid = _compute_ipfs_cid_local(file_path)
+    if computed_cid is None:
+        if not _warned_no_verify:
+            logger.warning(_NO_VERIFY_MSG)
+            _warned_no_verify = True
+        return
+
+    if get_bytes32_from_cid(computed_cid) != get_bytes32_from_cid(requested_cid):
+        raise ValueError(
+            f"CID mismatch: downloaded content hashes to {computed_cid}, not "
+            f"the requested CID ({requested_cid[:12]}...). Refusing to save — "
+            "the provider may be misbehaving, or the content may have been "
+            "tampered with."
+        )
 
 
 def _is_kubo_path(path: str) -> bool:
@@ -326,14 +402,16 @@ def _retrieve_via_filebase(config, cid: str) -> requests.Response:
     return response
 
 
-def _write_response_to_file(response: requests.Response, destination: Path):
-    """Stream ``response`` to ``destination`` atomically.
+def _write_response_to_file(
+    response: requests.Response, destination: Path, cid: str, provider: str
+):
+    """Stream ``response`` to ``destination`` atomically, verifying its CID.
 
     Writing straight to the destination left a truncated file behind when a
     download failed mid-stream, and callers treat any existing file as a
     cache hit — so a partial model would be silently reused. Write to a
-    sibling temp file, fsync, then rename: the destination either does not
-    exist or is complete.
+    sibling temp file, fsync, verify, then rename: the destination either
+    does not exist or holds complete, CID-checked content.
     """
     tmp_fd, tmp_name = tempfile.mkstemp(dir=str(destination.parent), prefix=".ipfs_")
     tmp_path = Path(tmp_name)
@@ -344,6 +422,8 @@ def _write_response_to_file(response: requests.Response, destination: Path):
                     handle.write(chunk)
             handle.flush()
             os.fsync(handle.fileno())
+
+        _verify_downloaded_cid(tmp_path, cid, provider)
 
         os.replace(tmp_path, destination)
         tmp_path = None  # ownership transferred to destination
@@ -375,11 +455,11 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
     try:
         if provider == "env":
             response = _retrieve_via_env(config, hash_value)
-            _write_response_to_file(response, safe_path)
+            _write_response_to_file(response, safe_path, hash_value, provider)
             status_code = response.status_code
         elif provider == "filebase":
             response = _retrieve_via_filebase(config, hash_value)
-            _write_response_to_file(response, safe_path)
+            _write_response_to_file(response, safe_path, hash_value, provider)
             status_code = response.status_code
         elif provider == "custom":
             fn = _load_custom_fn(_require_custom_service_path(config), "retrieve_from_ipfs")
