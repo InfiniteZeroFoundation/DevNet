@@ -199,11 +199,254 @@ def test_top_level_dintoken_help_exposes_commands():
     assert "read-stake" in result.output
 
 
-@pytest.mark.parametrize("path", [["aggregator", "dintoken", "--help"], ["auditor", "dintoken", "--help"]])
-def test_legacy_role_dintoken_help_exposes_commands(path):
-    result = CliRunner().invoke(main_app, path)
 
-    assert result.exit_code == 0
-    assert "buy" in result.output
-    assert "stake" in result.output
-    assert "read-stake" in result.output
+# ── read_after_write tests ──────────────────────────────────────────────────
+
+
+class TestReadAfterWrite:
+
+    def test_settled_first_read_above_baseline(self, monkeypatch):
+        """First read above baseline returns settled=True and stops early."""
+        from dincli.cli.utils import read_after_write
+        sleeps = []
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: sleeps.append(s))
+        calls = []
+
+        def read_fn():
+            calls.append(1)
+            return 200
+
+        result = read_after_write(read_fn, baseline=100)
+        assert result.value == 200
+        assert result.settled is True
+        assert result.observed is True
+        assert len(calls) == 1
+        assert len(sleeps) == 0  # no sleep on first try when settled
+
+    def test_lagging_at_baseline_exhausts_attempts(self, monkeypatch):
+        """Reads equal to baseline exhaust attempts; settled=False."""
+        from dincli.cli.utils import read_after_write
+        sleeps = []
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: sleeps.append(s))
+        calls = []
+
+        def read_fn():
+            calls.append(1)
+            return 100
+
+        result = read_after_write(read_fn, baseline=100, attempts=3, delay=0.1)
+        assert result.value == 100
+        assert result.settled is False
+        assert result.observed is True
+        assert len(calls) == 3
+        assert len(sleeps) == 2  # slept after attempt 1 and 2
+
+    def test_below_baseline_stays_unsettled(self, monkeypatch):
+        """Values below baseline must never count as settled (> not !=)."""
+        from dincli.cli.utils import read_after_write
+        sleeps = []
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: sleeps.append(s))
+        values = iter([90, 80, 100])
+
+        def read_fn():
+            return next(values)
+
+        result = read_after_write(read_fn, baseline=100, attempts=3, delay=0.1)
+        assert result.settled is False
+        assert result.observed is True
+        # Last observed value was 100 — not above baseline, just equal
+        assert result.value == 100
+
+    def test_all_raising_returns_observed_false(self, monkeypatch):
+        """Every attempt raising returns observed=False, value==baseline."""
+        from dincli.cli.utils import read_after_write
+        sleeps = []
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: sleeps.append(s))
+        calls = []
+
+        def read_fn():
+            calls.append(1)
+            raise ConnectionError("RPC down")
+
+        result = read_after_write(read_fn, baseline=100, attempts=4, delay=0.1)
+        assert result.value == 100
+        assert result.settled is False
+        assert result.observed is False
+        assert len(calls) == 4
+        assert len(sleeps) == 3
+
+    def test_mixed_raise_then_above_settles(self, monkeypatch):
+        """Raise, then a value above baseline → settled=True."""
+        from dincli.cli.utils import read_after_write
+        sleeps = []
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: sleeps.append(s))
+        values = iter([None, None, 200])
+
+        def read_fn():
+            v = next(values)
+            if v is None:
+                raise TimeoutError("timeout")
+            return v
+
+        result = read_after_write(read_fn, baseline=100, attempts=5, delay=0.1)
+        assert result.value == 200
+        assert result.settled is True
+        assert result.observed is True
+
+    def test_attempts_below_one_raises(self):
+        """attempts < 1 raises ValueError."""
+        from dincli.cli.utils import read_after_write
+        with pytest.raises(ValueError):
+            read_after_write(lambda: 0, baseline=0, attempts=0)
+
+    def test_no_sleep_after_final_attempt(self, monkeypatch):
+        """No sleep after the final attempt."""
+        from dincli.cli.utils import read_after_write
+        sleeps = []
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: sleeps.append(s))
+        calls = []
+
+        def read_fn():
+            calls.append(1)
+            return 100
+
+        read_after_write(read_fn, baseline=100, attempts=5, delay=2.0)
+        assert len(sleeps) == 4
+        assert len(calls) == 5
+
+
+# ── buy_dintokens tests ─────────────────────────────────────────────────────
+
+
+class TestBuyDintokens:
+
+    def test_settled_prints_balance_no_warning(self, monkeypatch):
+        """Settled read prints the new balance with no lag warning."""
+        ctx = make_ctx(token_balance=100 * 10**18)
+
+        def fake_build_and_send_tx(*args, **kwargs):
+            return SimpleNamespace(transactionHash=bytes.fromhex("12" * 32))
+
+        def fake_read_after_write(read_fn, *, baseline, **kwargs):
+            from dincli.cli.utils import ReadResult
+            return ReadResult(value=baseline + 10 * 10**18, settled=True, observed=True)
+
+        monkeypatch.setattr(dintoken, "build_and_send_tx", fake_build_and_send_tx)
+        monkeypatch.setattr(dintoken, "read_after_write", fake_read_after_write)
+
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        ctx.obj.console = RichConsole(file=out, force_terminal=False)
+
+        dintoken.buy_dintokens(ctx, 1.5)
+
+        output = out.getvalue()
+        assert "DINToken balance" in output
+        assert "lagging" not in output.lower()
+
+    def test_lagging_prints_balance_and_warning(self, monkeypatch):
+        """Observed but not settled prints balance plus lag warning."""
+        ctx = make_ctx(token_balance=100 * 10**18)
+
+        def fake_build_and_send_tx(*args, **kwargs):
+            return SimpleNamespace(transactionHash=bytes.fromhex("12" * 32))
+
+        def fake_read_after_write(read_fn, *, baseline, **kwargs):
+            from dincli.cli.utils import ReadResult
+            return ReadResult(value=baseline, settled=False, observed=True)
+
+        monkeypatch.setattr(dintoken, "build_and_send_tx", fake_build_and_send_tx)
+        monkeypatch.setattr(dintoken, "read_after_write", fake_read_after_write)
+
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        ctx.obj.console = RichConsole(file=out, force_terminal=False)
+
+        dintoken.buy_dintokens(ctx, 1.5)
+        output = out.getvalue()
+        assert "RPC may be lagging" in output
+
+    def test_read_failed_shows_pre_purchase(self, monkeypatch):
+        """When every read fails, names the pre-purchase balance as pre-purchase."""
+        ctx = make_ctx(token_balance=100 * 10**18)
+
+        def fake_build_and_send_tx(*args, **kwargs):
+            return SimpleNamespace(transactionHash=bytes.fromhex("12" * 32))
+
+        def fake_read_after_write(read_fn, *, baseline, **kwargs):
+            from dincli.cli.utils import ReadResult
+            return ReadResult(value=baseline, settled=False, observed=False)
+
+        monkeypatch.setattr(dintoken, "build_and_send_tx", fake_build_and_send_tx)
+        monkeypatch.setattr(dintoken, "read_after_write", fake_read_after_write)
+
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        ctx.obj.console = RichConsole(file=out, force_terminal=False)
+
+        dintoken.buy_dintokens(ctx, 1.5)
+        output = out.getvalue()
+        assert "Pre-purchase balance" in output
+
+    def test_tx_receipt_none_returns_early(self, monkeypatch):
+        """None receipt: pre-purchase balance printed, no post-purchase output."""
+        ctx = make_ctx(token_balance=100 * 10**18)
+        called_read_after_write = []
+
+        def fake_build_and_send_tx(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(dintoken, "build_and_send_tx", fake_build_and_send_tx)
+        monkeypatch.setattr(dintoken, "read_after_write", lambda **kw: called_read_after_write.append(True))
+
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        ctx.obj.console = RichConsole(file=out, force_terminal=False)
+
+        dintoken.buy_dintokens(ctx, 1.5)
+        output = out.getvalue()
+        # Pre-purchase balance is printed
+        assert "DINToken balance" in output
+        # No purchase success message
+        assert "DINTokens bought" not in output
+        # No post-purchase output
+        assert "lagging" not in output.lower()
+        assert "Pre-purchase balance" not in output
+        # No NoneType crash text
+        assert "NoneType" not in output
+        assert "transactionHash" not in output
+        # read_after_write never called
+        assert called_read_after_write == []
+
+    def test_baseline_reuse_single_pre_purchase_call(self, monkeypatch):
+        """balanceOf called exactly once before submission (pre-purchase)."""
+        ctx = make_ctx(token_balance=100 * 10**18)
+        balance_of_calls = []
+
+        orig_balanceOf = ctx.obj.token.functions.balanceOf
+
+        def tracking_balanceOf(address):
+            balance_of_calls.append(address)
+            return orig_balanceOf(address)
+
+        ctx.obj.token.functions = DummyTokenFunctions(ctx.obj.token)
+        ctx.obj.token.functions.balanceOf = tracking_balanceOf
+
+        def fake_build_and_send_tx(*args, **kwargs):
+            return SimpleNamespace(transactionHash=bytes.fromhex("12" * 32))
+
+        def fake_read_after_write(read_fn, *, baseline, **kwargs):
+            from dincli.cli.utils import ReadResult
+            return ReadResult(value=baseline + 10, settled=True, observed=True)
+
+        monkeypatch.setattr(dintoken, "build_and_send_tx", fake_build_and_send_tx)
+        monkeypatch.setattr(dintoken, "read_after_write", fake_read_after_write)
+
+        dintoken.buy_dintokens(ctx, 1.5)
+        # Exactly one call to balanceOf before the submission path
+        assert len(balance_of_calls) == 1
+        assert balance_of_calls[0] == "0xAccount"

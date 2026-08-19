@@ -7,7 +7,7 @@ from datetime import datetime
 from getpass import getpass
 from importlib.resources import files
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import typer
 from eth_account import Account
@@ -44,6 +44,33 @@ WALLETS_DIR = CONFIG_DIR / "wallets"
 LEGACY_WALLET_FILE = WALLET_FILE
 
 MIN_STAKE = 10*10**18
+
+
+class ReadResult(NamedTuple):
+    value: int       # last successfully observed value; the baseline if every read raised
+    settled: bool    # True iff a read showed value > baseline
+    observed: bool   # False iff every read raised
+
+
+def read_after_write(read_fn, *, baseline, attempts=5, delay=2.0) -> ReadResult:
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
+    last_value = baseline
+    for i in range(attempts):
+        try:
+            value = read_fn()
+        except Exception:
+            if i == attempts - 1:
+                return ReadResult(value=baseline, settled=False, observed=False)
+            time.sleep(delay)
+            continue
+        last_value = value
+        if value > baseline:
+            return ReadResult(value=value, settled=True, observed=True)
+        if i < attempts - 1:
+            time.sleep(delay)
+    return ReadResult(value=last_value, settled=False, observed=True)
+
 
 def validate_account_name(name: str) -> str:
     name = name.strip()
@@ -412,7 +439,7 @@ def load_account(name: str = "default") -> Account:
 
     # Fetch DIN_WALLET_PASSWORD once and thread it through the password helpers so a
     # single unlock parses .env once rather than twice (get_env_key has no memoization).
-    env_pass = get_env_key("DIN_WALLET_PASSWORD")
+    env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
 
     password = _get_password(name, env_pass=env_pass)
     try:
@@ -452,9 +479,15 @@ def _get_password(name: str = "default", prompt: bool = True,
 
     # 1. Environment variable
     if env_pass is _UNSET:
-        env_pass = get_env_key("DIN_WALLET_PASSWORD")
+        env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
     if env_pass:
         return env_pass
+
+    # 1b. Yellow fallback line — only here, not at the call site
+    console.print(
+        "[yellow]DIN_WALLET_PASSWORD not found in environment; "
+        "checking session cache or prompting...[/yellow]"
+    )
 
     # 2. Session cache
     if not is_new_wallet:
@@ -475,7 +508,7 @@ def _get_password(name: str = "default", prompt: bool = True,
 
 def _cache_password_in_memory(name: str, password: str, env_pass=_UNSET) -> None:
     if env_pass is _UNSET:
-        env_pass = get_env_key("DIN_WALLET_PASSWORD")
+        env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
     if env_pass:
         return
     ttl = int(os.environ.get("DIN_PASSWORD_TTL", _PASSWORD_TTL_DEFAULT))
