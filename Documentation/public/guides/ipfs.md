@@ -52,8 +52,64 @@ IPFS_API_URL_RETRIEVE=http://127.0.0.1:5001/api/v0
 - the full add endpoint, such as `http://127.0.0.1:5001/api/v0/add`
 - the full cat endpoint, such as `http://127.0.0.1:5001/api/v0/cat`
 - a retrieve URL template containing `{cid}`
+- a path-style gateway base, such as `https://ipfs.io/ipfs` (retrieval only)
+
+`IPFS_API_URL_RETRIEVE` may therefore point at either a kubo RPC endpoint or a
+read-only gateway, and `dincli` picks the right call for each:
+
+| Endpoint shape | Request issued |
+|---|---|
+| ends in `/api/v0`, `/api/v0/cat`, or `/cat` | `POST <base>/cat?arg=<cid>` (kubo RPC) |
+| anything else | `GET <base>/<cid>` (gateway) |
+
+A gateway cannot accept uploads, so `IPFS_API_URL_ADD` must still be a kubo RPC
+endpoint.
 
 If you use a local node, make sure uploaded artifacts are pinned or otherwise retained.
+
+## Reading without a configured provider
+
+Retrieval needs an endpoint. If `IPFS_API_URL_RETRIEVE` is unset, `dincli` fails
+with a message naming your options rather than reporting the CID as unavailable.
+
+For read-only access to public content — inspecting a manifest or a global model
+before you have an account anywhere — opt into a public gateway:
+
+```bash
+IPFS_PUBLIC_GATEWAY=1                        # use the default gateway
+IPFS_PUBLIC_GATEWAY=https://dweb.link/ipfs   # or name your own
+```
+
+Accepted values: `1`, `true`, `yes` select the default gateway; `0`, `false`,
+`no` or leaving it unset disables the fallback; anything else is used as the
+gateway base, and must be `http`/`https`, carry a host, and contain no
+credentials or fragment.
+
+This is deliberately opt-in and read-only. It is a best-effort public endpoint,
+so treat it as a convenience for public data, not as a provider:
+
+- **uploads are not covered.** Submitting aggregation or audit results needs a
+  real upload-capable provider — configure `filebase` for that.
+- a configured `IPFS_API_URL_RETRIEVE` always takes precedence over the fallback.
+
+## Content verification
+
+Retrieved content is checked against the CID that was requested before it is
+saved, on every provider except `custom` (whose CID semantics are defined by
+your own module). A mismatch raises and nothing is written.
+
+The check recomputes the CID with a local `ipfs add -n` (only-hash). That needs
+the kubo binary and a one-time `ipfs init`, but **no running daemon and no
+synced data** — both steps are offline and near-instant:
+
+```bash
+ipfs init      # once; safe to run even if you never start a daemon
+```
+
+Without a usable local `ipfs` binary the check is skipped with a warning rather
+than failing, so a local node stays optional. Downloads are written atomically,
+so a transfer that fails midway leaves no partial file behind for a later run to
+mistake for a cached artifact.
 
 ## `filebase` provider
 
