@@ -45,6 +45,11 @@ LEGACY_WALLET_FILE = WALLET_FILE
 
 MIN_STAKE = 10*10**18
 
+
+class ChainIdMismatchError(Exception):
+    """The configured RPC endpoint is on a different chain than the selected network."""
+
+
 def validate_account_name(name: str) -> str:
     name = name.strip()
     if not _ACCOUNT_NAME_RE.match(name):
@@ -328,16 +333,50 @@ def resolve_network_value(
     )
     
         
-def get_w3(effective_network): 
-    rpc_url = resolve_network_value(effective_network,"rpc_url") 
-    try:  
-        
+def get_w3(effective_network):
+    # Stage 0 — resolve. Deliberately outside stage 1's handler: an unresolvable
+    # rpc_url is a configuration error, and resolve_network_value already raises
+    # an actionable KeyError naming the env var and config path it checked.
+    # Wrapping it would report a missing endpoint as an unreachable one, which is
+    # the exact class of misleading error this function exists to remove. Its
+    # message carries no URL value, so letting it propagate leaks nothing.
+    rpc_url = resolve_network_value(effective_network, "rpc_url")
+
+    # Stage 1 — connect.
+    try:
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
-            raise ConnectionError(f"Could not connect to Ethereum node at {rpc_url}")
-        return w3
+            raise ConnectionError("endpoint did not respond")
     except Exception as e:
-        raise ConnectionError(f"Could not connect to Ethereum node for network '{effective_network}': {e}") from e
+        # from None: keeps the credential out of str() and any formatted traceback.
+        # See 2.9 for the exact guarantee and the accepted __context__ residual.
+        logger.debug("connect failed for network '%s': %s", effective_network, type(e).__name__)
+        raise ConnectionError(
+            f"Could not connect to the configured Ethereum node for network '{effective_network}'"
+        ) from None
+
+    expected = load_din_info().get(effective_network, {}).get("chain_id")
+    if expected is None:
+        return w3
+
+    # Stage 2 — read the chain id.
+    try:
+        actual = w3.eth.chain_id
+    except Exception as e:
+        logger.debug("chain id read failed for network '%s': %s", effective_network, type(e).__name__)
+        raise ConnectionError(
+            f"Connected to the RPC for network '{effective_network}', but could not read its chain id"
+        ) from None
+
+    # Stage 3 — compare, outside both boundaries above.
+    if actual != expected:
+        raise ChainIdMismatchError(
+            f"RPC chain mismatch for network '{effective_network}': "
+            f"the endpoint reports chain id {actual}, expected {expected}. "
+            f"Check {effective_network.upper()}_RPC_URL in your .env, or this network's rpc_url "
+            f"in your dincli config — it points at a different chain."
+        )
+    return w3
     
 
 def get_demo_private_key(account_index: int) -> str:
