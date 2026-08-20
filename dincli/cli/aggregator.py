@@ -4,7 +4,8 @@ from typing import Optional
 import typer
 from rich.table import Table
 from web3 import Web3
-from dincli.cli.dintoken import buy_dintokens, read_dintoken_stake, stake_dintokens
+from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
+                                 read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, require_custom_manifest_service)
 from dincli.cli.worker import (
@@ -44,6 +45,11 @@ def stake(
 @dintoken_app.command("read-stake", help="Check stake")
 def read_stake(ctx: typer.Context):
     read_dintoken_stake(ctx, name= "Aggregator")
+
+
+@dintoken_app.command("read-din-per-eth", help="Read the current DIN-per-ETH exchange rate")
+def read_din_per_eth(ctx: typer.Context):
+    read_din_per_eth_rate(ctx)
 
 
 @app.command(help="Register as aggregator")

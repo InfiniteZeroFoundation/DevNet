@@ -116,6 +116,23 @@ def read_dintoken_stake(ctx: typer.Context, name ="Account"):
     console.print(f"[bold green] {name}'s DIN token stake:[/bold green] ", Web3.from_wei(stake, "ether"), "DinTokens")
 
 
+def read_din_per_eth_rate(ctx: typer.Context):
+    """Read the owner-mutable DIN-per-ETH exchange rate from DinCoordinator.
+
+    `buy` spends ETH at whatever rate is live at the time, so this is the only
+    way to know what a given amount will mint before committing to it.
+    """
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    din_coordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
+
+    raw = din_coordinator_contract.functions.dinPerEth().call()
+
+    console.print(f"[bold green]DIN per ETH (raw, 18 decimals):[/bold green] {raw} ({raw:.0e})")
+    console.print(f"[bold green]DIN per ETH:[/bold green] {Web3.from_wei(raw, 'ether')}")
+
+    return raw
+
+
 @app.command(help="Buy DINTokens where amount is ETH to exchange for DINTokens")
 def buy(
     ctx: typer.Context,
@@ -135,3 +152,8 @@ def stake(
 @app.command("read-stake", help="Check stake")
 def read_stake(ctx: typer.Context):
     read_dintoken_stake(ctx)
+
+
+@app.command("read-din-per-eth", help="Read the current DIN-per-ETH exchange rate")
+def read_din_per_eth(ctx: typer.Context):
+    read_din_per_eth_rate(ctx)
