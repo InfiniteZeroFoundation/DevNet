@@ -285,7 +285,28 @@ def prepare_transaction(
         "maxPriorityFeePerGas": priority_fee,
     }
 
-    estimated = l1_w3.eth.estimate_gas(tx)
+    # Gas estimation is the first call that touches the sender's balance, so an
+    # unfunded L1 account fails here — before affordability_check, which is where
+    # the readable message lives. Uncaught, the node's JSON-RPC error surfaced as
+    # a raw traceback on what is the single most likely first run: attempting a
+    # deposit before funding L1. Classify it as a preflight rejection so the CLI's
+    # existing BridgeError handler renders one actionable line.
+    try:
+        estimated = l1_w3.eth.estimate_gas(tx)
+    except Exception as exc:
+        detail = str(exc)
+        if "insufficient funds" in detail.lower():
+            have = l1_w3.eth.get_balance(sender)
+            raise PreflightRejected(
+                f"insufficient L1 funds: the sender holds "
+                f"{Web3.from_wei(have, 'ether')} ETH on Ethereum Sepolia, which "
+                f"does not cover {Web3.from_wei(amount_wei, 'ether')} ETH plus "
+                f"the L1 fee. Fund {sender} on L1 first."
+            ) from None
+        raise PreflightRejected(
+            f"could not estimate gas for the deposit: {type(exc).__name__}"
+        ) from None
+
     # Integer ceiling: ceil(estimate * 1.20)
     gas_limit = int(math.ceil(estimated * 1.20))
 

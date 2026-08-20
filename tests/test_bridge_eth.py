@@ -797,3 +797,74 @@ def test_send_eth_still_reaches_own_callback(monkeypatch):
     assert result.exit_code == 1
     assert "Invalid recipient address" in result.output
     assert "Traceback" not in result.output
+
+
+def test_unfunded_l1_gas_estimate_is_a_preflight_rejection():
+    """An unfunded L1 sender must get one actionable line, not a traceback.
+
+    Gas estimation is the first call that touches the sender's balance, so it
+    fails before affordability_check — where the readable message lives. Found
+    by running --dry-run live against a real Ethereum Sepolia RPC with an
+    unfunded key: the node's Web3RPCError propagated uncaught, because the
+    command handles only BridgeError and ConnectionError. That is the single
+    most likely first run of this command.
+    """
+    class _Eth:
+        def get_block(self, _):
+            return {"baseFeePerGas": 10**9}
+
+        @property
+        def max_priority_fee(self):
+            return 10**8
+
+        def get_transaction_count(self, _sender, _block):
+            return 0
+
+        def estimate_gas(self, _tx):
+            raise Exception("{'code': -32000, 'message': 'insufficient funds for transfer'}")
+
+        def get_balance(self, _sender):
+            return 0
+
+    class _W3:
+        eth = _Eth()
+
+    sender = "0x00000000000000000000000000000000000000aB"
+    with pytest.raises(bridge_service.PreflightRejected) as excinfo:
+        bridge_service.prepare_transaction(
+            l1_w3=_W3(), sender=sender, amount_wei=2 * 10**15
+        )
+
+    message = str(excinfo.value)
+    assert "insufficient L1 funds" in message
+    assert sender in message                    # says which address to fund
+    assert "0.002" in message                   # and how much was attempted
+    assert excinfo.value.__cause__ is None      # no chained node error
+
+
+def test_other_gas_estimate_failures_also_classify():
+    """Any estimation failure becomes a rejection, never a raw traceback."""
+    class _Eth:
+        def get_block(self, _):
+            return {"baseFeePerGas": 10**9}
+
+        @property
+        def max_priority_fee(self):
+            return 10**8
+
+        def get_transaction_count(self, _sender, _block):
+            return 0
+
+        def estimate_gas(self, _tx):
+            raise ValueError("execution reverted: something else entirely")
+
+    class _W3:
+        eth = _Eth()
+
+    with pytest.raises(bridge_service.PreflightRejected) as excinfo:
+        bridge_service.prepare_transaction(
+            l1_w3=_W3(), sender="0x00000000000000000000000000000000000000aB",
+            amount_wei=10**15,
+        )
+    assert "could not estimate gas" in str(excinfo.value)
+    assert "ValueError" in str(excinfo.value)
