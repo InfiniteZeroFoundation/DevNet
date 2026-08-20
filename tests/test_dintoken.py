@@ -199,6 +199,25 @@ def test_top_level_dintoken_help_exposes_commands():
     assert "read-stake" in result.output
 
 
+@pytest.mark.parametrize(
+    "path",
+    [["aggregator", "dintoken", "--help"], ["auditor", "dintoken", "--help"]],
+)
+def test_legacy_role_dintoken_help_exposes_commands(path):
+    """The role sub-apps delegate to these helpers, so they need their own guard.
+
+    Restored: it was dropped while adding the retry tests, which silently
+    removed the only coverage that `aggregator dintoken` and `auditor dintoken`
+    still expose the shared commands.
+    """
+    result = CliRunner().invoke(main_app, path)
+
+    assert result.exit_code == 0
+    assert "buy" in result.output
+    assert "stake" in result.output
+    assert "read-stake" in result.output
+
+
 
 # ── read_after_write tests ──────────────────────────────────────────────────
 
@@ -292,6 +311,30 @@ class TestReadAfterWrite:
         assert result.value == 200
         assert result.settled is True
         assert result.observed is True
+
+    def test_success_then_failing_final_attempt_stays_observed(self, monkeypatch):
+        """A read that succeeded is still observed if a later attempt raises.
+
+        `observed` means "at least one read succeeded", so it cannot be
+        inferred from the outcome of the final attempt alone. Reporting
+        observed=False here would tell the user the balance was unreadable
+        while discarding a value that was actually read, which is the
+        misleading-error class this change exists to remove.
+        """
+        from dincli.cli.utils import read_after_write
+        monkeypatch.setattr("dincli.cli.utils.time.sleep", lambda s: None)
+        values = iter([100, 100, None])
+
+        def read_fn():
+            v = next(values)
+            if v is None:
+                raise TimeoutError("rpc hiccup on the last attempt")
+            return v
+
+        result = read_after_write(read_fn, baseline=100, attempts=3, delay=0.1)
+        assert result.observed is True, "earlier successful reads must count"
+        assert result.settled is False
+        assert result.value == 100
 
     def test_attempts_below_one_raises(self):
         """attempts < 1 raises ValueError."""

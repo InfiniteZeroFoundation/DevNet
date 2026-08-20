@@ -56,20 +56,24 @@ def read_after_write(read_fn, *, baseline, attempts=5, delay=2.0) -> ReadResult:
     if attempts < 1:
         raise ValueError(f"attempts must be >= 1, got {attempts}")
     last_value = baseline
+    # Tracked across attempts, not inferred from the final one: a read that
+    # succeeds and is then followed by a failing final attempt has still been
+    # observed, and its value is more useful than the stale baseline.
+    observed = False
     for i in range(attempts):
         try:
             value = read_fn()
         except Exception:
-            if i == attempts - 1:
-                return ReadResult(value=baseline, settled=False, observed=False)
-            time.sleep(delay)
+            if i < attempts - 1:
+                time.sleep(delay)
             continue
+        observed = True
         last_value = value
         if value > baseline:
             return ReadResult(value=value, settled=True, observed=True)
         if i < attempts - 1:
             time.sleep(delay)
-    return ReadResult(value=last_value, settled=False, observed=True)
+    return ReadResult(value=last_value, settled=False, observed=observed)
 
 
 def validate_account_name(name: str) -> str:
