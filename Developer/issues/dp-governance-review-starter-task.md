@@ -50,4 +50,4 @@ A short written review (markdown, doesn't need to be long) covering the question
 3. Write up your findings against the questions listed.
 4. Open a PR or discussion with your review.
 
-Questions welcome — see [Say hello →](mailto:abrahamnash@protonmail.com).
+Questions welcome — see [Say hello →](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92).
