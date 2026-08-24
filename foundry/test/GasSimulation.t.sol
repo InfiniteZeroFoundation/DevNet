@@ -169,22 +169,25 @@ contract GasSimulationTest is Test {
         _completeEvalAndOpenT1(1);
     }
 
-    /// @dev From T1AggregationStarted: has 1 aggregator per T1 batch submit (consensus),
-    ///      other 2 don't submit (will be slashed). Runs through to T2AggregationDone.
+    /// @dev From T1AggregationStarted: has 2 aggregators per T1 batch submit (quorum met),
+    ///      1 per batch doesn't submit (will be slashed). Runs through to T2AggregationDone.
+    ///      Post-H-1 worst case: minimum quorum (2 of 3) required to reach finalization.
     function _runT1T2WorstCase(uint gi) internal {
         bytes32 cid = bytes32("agreed_cid");
         uint t1Cnt = tc.tier1BatchCount(gi);
         for (uint b = 0; b < t1Cnt; b++) {
             (, address[] memory bAggs,,,) = tc.getTier1Batch(gi, b);
             vm.prank(bAggs[0]); tc.submitT1Aggregation(gi, b, cid);
-            // bAggs[1] and bAggs[2] intentionally do not submit → will be slashed
+            vm.prank(bAggs[1]); tc.submitT1Aggregation(gi, b, cid); // quorum met (2 of 3)
+            // bAggs[2] intentionally does not submit → will be slashed (1 per batch)
         }
         tc.finalizeT1Aggregation(gi);
 
         tc.startT2Aggregation(gi);
         (, address[] memory t2Aggs,,) = tc.getTier2Batch(gi, 0);
         vm.prank(t2Aggs[0]); tc.submitT2Aggregation(gi, 0, cid);
-        // t2Aggs[1] and t2Aggs[2] do not submit → will be slashed
+        vm.prank(t2Aggs[1]); tc.submitT2Aggregation(gi, 0, cid); // quorum met (2 of 3)
+        // t2Aggs[2] does not submit → will be slashed
         tc.finalizeT2Aggregation(gi);
         tc.setTier2Score(gi, 85);
     }
@@ -219,6 +222,7 @@ contract GasSimulationTest is Test {
         for (uint b = 0; b < 3; b++) {
             (, address[] memory a,,,) = tc.getTier1Batch(1, b);
             vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
+            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid")); // quorum needs 2
         }
         uint before = gasleft();
         tc.finalizeT1Aggregation(1);
@@ -230,6 +234,7 @@ contract GasSimulationTest is Test {
         for (uint b = 0; b < 5; b++) {
             (, address[] memory a,,,) = tc.getTier1Batch(1, b);
             vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
+            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid")); // quorum needs 2
         }
         uint before = gasleft();
         tc.finalizeT1Aggregation(1);
@@ -241,6 +246,7 @@ contract GasSimulationTest is Test {
         for (uint b = 0; b < 10; b++) {
             (, address[] memory a,,,) = tc.getTier1Batch(1, b);
             vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
+            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid")); // quorum needs 2
         }
         uint before = gasleft();
         tc.finalizeT1Aggregation(1);
@@ -250,10 +256,11 @@ contract GasSimulationTest is Test {
     /// @dev Per-T2-aggregator cost of submitting a T2 CID.
     function test_gas_s1_submitT2Aggregation() public {
         _setupToT1Open(3);
-        // Complete T1 first
+        // Complete T1 first — quorum requires 2 of 3 per batch
         for (uint b = 0; b < tc.tier1BatchCount(1); b++) {
             (, address[] memory a,,,) = tc.getTier1Batch(1, b);
             vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
+            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid"));
         }
         tc.finalizeT1Aggregation(1);
         tc.startT2Aggregation(1);
@@ -298,7 +305,7 @@ contract GasSimulationTest is Test {
     //                  Worst-case cost = loop overhead + N_missed × marginal slash cost.
     //                  marginal slash cost is visible from slashAggregators measurements.
     //
-    // slashAggregators: 2 of 3 aggregators per T1 batch + 2 of 3 T2 aggregators
+    // slashAggregators: 1 of 3 aggregators per T1 batch + 1 of 3 T2 aggregators
     //                  did not submit → all are slashed. Shows real slash() call cost at scale.
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -335,10 +342,10 @@ contract GasSimulationTest is Test {
         _runT1T2WorstCase(1);
         tc.slashAuditors(1);
 
-        // 3 T1 batches × 2 slashed per batch + 2 T2 slashed = 8 slash() calls
+        // 3 T1 batches × 1 slashed per batch + 1 T2 slashed = 4 slash() calls
         uint before = gasleft();
         tc.slashAggregators(1);
-        console.log("[GAS][S3] slashAggregators (3 T1 batches, 2/3 agg slashed per batch):", before - gasleft());
+        console.log("[GAS][S3] slashAggregators (3 T1 batches, 1/3 agg slashed per batch):", before - gasleft());
     }
 
     function test_gas_s3_slashAggregators_5batches() public {
@@ -346,10 +353,10 @@ contract GasSimulationTest is Test {
         _runT1T2WorstCase(1);
         tc.slashAuditors(1);
 
-        // 5 T1 batches × 2 slashed + 2 T2 slashed = 12 slash() calls
+        // 5 T1 batches × 1 slashed + 1 T2 slashed = 6 slash() calls
         uint before = gasleft();
         tc.slashAggregators(1);
-        console.log("[GAS][S3] slashAggregators (5 T1 batches, 2/3 agg slashed per batch):", before - gasleft());
+        console.log("[GAS][S3] slashAggregators (5 T1 batches, 1/3 agg slashed per batch):", before - gasleft());
     }
 
     function test_gas_s3_slashAggregators_10batches() public {
@@ -357,9 +364,9 @@ contract GasSimulationTest is Test {
         _runT1T2WorstCase(1);
         tc.slashAuditors(1);
 
-        // 10 T1 batches × 2 slashed + 2 T2 slashed = 22 slash() calls
+        // 10 T1 batches × 1 slashed + 1 T2 slashed = 11 slash() calls
         uint before = gasleft();
         tc.slashAggregators(1);
-        console.log("[GAS][S3] slashAggregators (10 T1 batches, 2/3 agg slashed per batch):", before - gasleft());
+        console.log("[GAS][S3] slashAggregators (10 T1 batches, 1/3 agg slashed per batch):", before - gasleft());
     }
 }
