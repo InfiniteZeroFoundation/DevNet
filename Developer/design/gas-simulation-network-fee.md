@@ -5,7 +5,7 @@
 **Tracking:** [GitHub issue #78](https://github.com/InfiniteZeroFoundation/DevNet/issues/78)
 **Simulation code:** `foundry/test/GasSimulation.t.sol`
 **Run:** `forge clean && forge test --match-contract GasSimulationTest -vv`
-**All 14 tests pass.**
+**All 14 tests pass** (re-measured after H-1 quorum fix — see Scenario 3 notes).
 
 ---
 
@@ -54,9 +54,9 @@ paid by the model owner and are not included in the per-validator network fee.
 
 | Call | Gas | ETH @ 0.005 gwei | ETH @ 0.02 gwei |
 |------|-----|-----------------|----------------|
-| `submitT1Aggregation` (cold SSTORE) | 71,490 | 0.000000357 | 0.00000143 |
-| `submitT1Aggregation` (warm, same CID) | 49,578 | 0.000000248 | 0.00000099 |
-| `submitT2Aggregation` (cold SSTORE) | 71,409 | 0.000000357 | 0.00000143 |
+| `submitT1Aggregation` (cold SSTORE) | 71,509 | 0.000000358 | 0.00000143 |
+| `submitT1Aggregation` (warm, same CID) | 49,597 | 0.000000248 | 0.00000099 |
+| `submitT2Aggregation` (cold SSTORE) | 71,428 | 0.000000357 | 0.00000143 |
 
 "Cold" = first submission to a batch slot (SSTORE from zero). "Warm" = second aggregator
 submitting the same CID; the vote counter hits a non-zero slot. Every validator hits the
@@ -69,11 +69,11 @@ is rounding noise from the slightly different storage layout.
 
 | T1 batches | Gas    | ETH @ 0.005 gwei | Notes |
 |-----------|--------|-----------------|-------|
-| 3         | 145,283 | 0.000000726 | |
-| 5         | 240,515 | 0.000001203 | |
-| 10        | 478,595 | 0.000002393 | |
+| 3         | 141,768 | 0.000000709 | |
+| 5         | 234,642 | 0.000001173 | |
+| 10        | 466,827 | 0.000002334 | |
 
-Scales roughly linearly at ~47,800 gas per T1 batch. Validates the "aggregation logic
+Scales roughly linearly at ~46,700 gas per T1 batch. Validates the "aggregation logic
 off-chain, only CID on-chain" design mitigation: even at HIGH (10 batches), finalization
 costs < 0.5M gas — well within block limits.
 
@@ -83,18 +83,18 @@ costs < 0.5M gas — well within block limits.
 
 | Call | Gas | ETH @ 0.005 gwei |
 |------|-----|-----------------|
-| `setAuditScorenEligibility` (cold, below quorum) | 89,891 | 0.000000449 |
-| `setAuditScorenEligibility` (quorum-trigger vote) | 85,101 | 0.000000426 |
+| `setAuditScorenEligibility` (cold, below quorum) | 90,000 | 0.000000450 |
+| `setAuditScorenEligibility` (quorum-trigger vote) | 85,210 | 0.000000426 |
 
 The cold call (first vote for a model) costs slightly more than the quorum-trigger call
 because it hits more cold SSTORE slots. The quorum-trigger call does write `eligible=true`
 on top but benefits from warm storage reads. In practice, the difference is small (~5%).
 
-**For fee-floor purposes: use 89,891 gas per call (cold path, worst case per auditor).**
+**For fee-floor purposes: use 90,000 gas per call (cold path, worst case per auditor).**
 
 **Per-auditor gas per GI** (default 3 models/batch):
 ```
-3 × 89,891 = 269,673 gas
+3 × 90,000 = 270,000 gas
 ```
 
 ---
@@ -109,26 +109,29 @@ slashed in a single model-owner call.
 
 | Audit batches | Auditors | Models checked | Slashed | Gas    |
 |--------------|---------|---------------|---------|--------|
-| 3            | 9       | 27            | 0       | 33,434 |
-| 5            | 15      | 45            | 0       | 51,664 |
-| 10           | 30      | 90            | 0       | 97,239 |
+| 3            | 9       | 27            | 0       | 40,345 |
+| 5            | 15      | 45            | 0       | 60,471 |
+| 10           | 30      | 90            | 0       | 110,786 |
 
 All auditors voted in these runs, so gas is pure loop overhead with zero `slash()` calls.
-Scales at ~9,700 gas per 10 additional models checked.
+Scales at ~11,000 gas per 10 additional models checked.
 
 Worst-case with N auditors actually slashed ≈ loop_overhead + N × marginal_slash_cost.
 Marginal cost per `slash()` call is derivable from `slashAggregators` measurements below
 (~23,500 gas per additional slash call, interpolated from the tier differences).
 
-### `slashAggregators` — 2/3 aggregators slashed per T1 batch + 2/3 T2 (model-owner call)
+### `slashAggregators` — 1/3 aggregator slashed per T1 batch + 1/3 T2 (model-owner call)
+
+Post-H-1 worst case: minimum quorum (2 of 3) submits per batch, so only 1 of 3 aggregators
+is slashed per batch. This is the maximum reachable slash count with finalization succeeding.
 
 | T1 batches | `slash()` calls | Gas     | ETH @ 0.005 gwei |
 |-----------|----------------|---------|-----------------|
-| 3         | 8 (6 T1 + 2 T2) | 192,395 | 0.000000962 |
-| 5         | 12 (10 T1 + 2 T2) | 274,111 | 0.000001371 |
-| 10        | 22 (20 T1 + 2 T2) | 478,402 | 0.000002392 |
+| 3         | 4 (3 T1 + 1 T2) | 120,811 | 0.000000604 |
+| 5         | 6 (5 T1 + 1 T2) | 166,735 | 0.000000834 |
+| 10        | 11 (10 T1 + 1 T2) | 281,545 | 0.000001408 |
 
-Scales at ~28,600 gas per 10 additional `slash()` calls. The model owner bears this cost;
+Scales at ~23,200 gas per 10 additional `slash()` calls. The model owner bears this cost;
 it does not enter the per-validator network fee directly, but a sustained worst-case slash
 rate would signal an unhealthy network.
 
@@ -140,9 +143,9 @@ rate would signal an unhealthy network.
 
 | Role | Gas per GI | ETH @ 0.001 gwei | ETH @ 0.005 gwei | ETH @ 0.02 gwei |
 |------|-----------|-----------------|-----------------|----------------|
-| T1 aggregator | 71,490 | 0.0000000715 | 0.000000357 | 0.00000143 |
-| T2 aggregator | 71,409 | 0.0000000714 | 0.000000357 | 0.00000143 |
-| Auditor (3 models) | 269,673 | 0.000000270 | 0.000001348 | 0.00000539 |
+| T1 aggregator | 71,509 | 0.0000000715 | 0.000000358 | 0.00000143 |
+| T2 aggregator | 71,428 | 0.0000000714 | 0.000000357 | 0.00000143 |
+| Auditor (3 models) | 270,000 | 0.000000270 | 0.000001350 | 0.00000540 |
 
 The **auditor role is the most gas-intensive** at 3× a single aggregator submission.
 The fee floor must be set to cover the auditor's cost, or auditors will lose ETH net of gas.
@@ -150,26 +153,26 @@ The fee floor must be set to cover the auditor's cost, or auditors will lose ETH
 ### Recommended floor
 
 ```
-fee_floor_ETH = 269,673 gas × gas_price_ETH
+fee_floor_ETH = 270,000 gas × gas_price_ETH
 ```
 
 | Gas price | Fee floor per validator per GI |
 |-----------|-------------------------------|
 | 0.001 gwei (L2 quiet) | 0.00000027 ETH (~$0.00086 at $3,200/ETH) |
 | 0.005 gwei (L2 typical) | 0.00000135 ETH (~$0.0043) |
-| 0.02 gwei (L2 busy) | 0.00000539 ETH (~$0.017) |
+| 0.02 gwei (L2 busy) | 0.00000540 ETH (~$0.017) |
 
 These are per-validator figures. The model trainer pays the total across all validators
 participating in their GI. At LOW tier (21 validators) and 0.005 gwei, the total network
-fee per GI would be approximately **0.000028 ETH (~$0.09)**.
+fee per GI would be approximately **0.0000284 ETH (~$0.09)**.
 
 ### Sensitivity table
 
 | Tier | Validators | Total gas (auditor path) | Fee (0.001 gwei) | Fee (0.005 gwei) | Fee (0.02 gwei) |
 |------|-----------|--------------------------|-----------------|-----------------|----------------|
-| LOW (3 batches) | 21 | 5,663,133 | 0.0000057 ETH | 0.0000283 ETH | 0.000113 ETH |
-| MID (5 batches) | 36 | 9,708,228 | 0.0000097 ETH | 0.0000485 ETH | 0.000194 ETH |
-| HIGH (10 batches) | 63 | 16,989,399 | 0.0000170 ETH | 0.0000849 ETH | 0.000340 ETH |
+| LOW (3 batches) | 21 | 5,670,000 | 0.0000057 ETH | 0.0000284 ETH | 0.000114 ETH |
+| MID (5 batches) | 36 | 9,720,000 | 0.0000097 ETH | 0.0000486 ETH | 0.000194 ETH |
+| HIGH (10 batches) | 63 | 17,010,000 | 0.0000170 ETH | 0.0000851 ETH | 0.000340 ETH |
 
 All tiers are profitable at all tested gas prices — the numbers are small enough that the
 network fee is not a participation barrier even at HIGH tier and busy-L2 prices.
