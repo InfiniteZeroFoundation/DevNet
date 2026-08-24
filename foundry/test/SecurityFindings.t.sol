@@ -19,7 +19,7 @@ import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates} from "../src/DINShared.sol";
+import {GIstates, TC_ZeroCID} from "../src/DINShared.sol";
 
 contract SecurityFindingsTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -295,25 +295,12 @@ contract SecurityFindingsTest is Test {
         (, address[] memory t1aggs,,,) = tc.getTier1Batch(1, 0);
         assertEq(t1aggs.length, 3, "sanity: T1 batch should have 3 aggregators");
 
-        // Only ONE of the three assigned aggregators submits, and submits
-        // the zero CID. The other two never submit before the model owner
-        // closes the window (a routine "not everyone responded in time"
-        // scenario, not an edge case).
+        // C-2 regression: bytes32(0) is now rejected at submit time with TC_ZeroCID.
+        // Before the fix this call succeeded and permanently bricked finalizeT1Aggregation
+        // (TC_NoSubmissions at finalize, GI stuck forever).
         vm.prank(t1aggs[0]);
+        vm.expectRevert(TC_ZeroCID.selector);
         tc.submitT1Aggregation(1, 0, bytes32(0));
-
-        // This is the ONLY submission in the batch, so it is unambiguously
-        // the plurality winner (1 vote > 0). Finalization should therefore
-        // either succeed with finalCID == bytes32(0), or explicitly reject
-        // zero-CID submissions at submit time. Instead:
-        vm.expectRevert(); // TC_NoSubmissions — wrongly conflates "no one voted" with "the winning vote was 0x0"
-        tc.finalizeT1Aggregation(1);
-
-        // The GI is now stuck: GIstate is still T1AggregationStarted, the
-        // task contracts are not upgradeable, and there is no admin
-        // function to skip/override a single batch. Every subsequent call
-        // to finalizeT1Aggregation reverts the same way, forever.
-        assertEq(uint256(tc.GIstate()), uint256(GIstates.T1AggregationStarted));
     }
 
     // ─────────────────────────────────────────────────────────────────────
