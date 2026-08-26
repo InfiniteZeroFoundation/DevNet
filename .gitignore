@@ -32,6 +32,11 @@ tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
 /dincli/README.md
 foundry/.github/*
 
+# Bytecode anywhere. The three path-specific rules above predate this and are
+# now redundant; left in place to keep this diff small. Needed because
+# .github/scripts/ is imported by tests, which was not a pycache site before.
+__pycache__/
+
 # build artifacts / local envs picked up while making the tree CI-ready.
 # foundry/out, foundry/cache, hardhat/artifacts, hardhat/cache and
 # hardhat/typechain-types are already covered by foundry/.gitignore and

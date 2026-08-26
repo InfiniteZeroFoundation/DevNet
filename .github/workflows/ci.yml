@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Versions this pipeline was measured against. See plan 2.4 / 2.9.
+  FOUNDRY_VERSION: v1.7.1
+  PIP_CONSTRAINT: .github/constraints-ci.txt
+
+# Actions already defaults to bash on Linux, but ci-ok's result loop relies on
+# word splitting, which zsh (and dash) do not do. Stated rather than assumed.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  solidity:
+    name: Solidity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive   # forge-std + 3 OZ libs; see plan 2.3
+          fetch-depth: 1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            foundry/package-lock.json
+            hardhat/package-lock.json
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          # Pinned rather than `stable`: forge's diagnostics are parsed by the
+          # lint gate and its compiler is blocking. See plan 2.9.
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Record the toolchain actually installed
+        run: forge --version
+
+      # Must precede `forge test`: Upgrades.validateImplementation shells out to
+      # @openzeppelin/upgrades-core over FFI, and letting npx fetch it at test
+      # time races across the parallel tests. See plan 2.2.
+      - name: Install foundry npm deps
+        working-directory: foundry
+        run: npm ci
+
+      - name: forge build
+        working-directory: foundry
+        run: forge build
+
+      - name: forge test
+        working-directory: foundry
+        run: forge test
+
+      # Advisory until PR 3. `--json` writes diagnostics to stderr and cannot be
+      # combined with `--color`; the gate fails closed on a nonzero forge status,
+      # an unparseable stream, or any warning/error. See plan 2.7.
+      - name: forge lint (advisory)
+        working-directory: foundry
+        continue-on-error: true
+        run: |
+          set +e
+          forge lint --json 2> "$RUNNER_TEMP/lint.json"
+          forge_status=$?
+          set -e
+          echo "forge lint exit status: $forge_status"
+          if [ "$forge_status" -ne 0 ]; then
+            echo "::error::forge lint itself failed"
+            cat "$RUNNER_TEMP/lint.json" || true
+            exit 1
+          fi
+          python3 ../.github/scripts/forge_lint_gate.py < "$RUNNER_TEMP/lint.json"
+
+      - name: Install hardhat deps
+        working-directory: hardhat
+        run: npm ci
+
+      - name: hardhat compile
+        working-directory: hardhat
+        run: npx hardhat compile
+
+      - name: hardhat test
+        working-directory: hardhat
+        run: npx hardhat test
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # CPU wheel is 178 MB; the default index resolves a ~4 GB CUDA stack that
+      # nothing here uses. The version comes from PIP_CONSTRAINT. See plan 2.4.
+      - name: Install torch (CPU)
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Install dincli + test deps
+        run: python -m pip install -e ".[test]"
+
+      - name: ruff (advisory)
+        continue-on-error: true
+        run: |
+          python -m pip install ruff
+          ruff check .
+
+      # Excludes tests/dincli/ (Docker + IPFS + live chain) via the directory
+      # hook. pytest exits 5 if this ever selects nothing, so a broken hook
+      # fails rather than passes silently. See plan 2.6.
+      - name: pytest
+        run: pytest -m "not integration" -q
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Relative link check
+        run: python .github/scripts/check_doc_links.py Documentation
+
+  # The only required status check. Keeps branch protection to one context and
+  # avoids the path-filter/required-check deadlock. See plan 2.8.
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [solidity, python, docs]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify every job succeeded
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "job results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a required job did not succeed ($r)"
+              exit 1
+            fi
+          done
+          echo "all jobs succeeded"
