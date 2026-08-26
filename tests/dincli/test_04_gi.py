@@ -42,8 +42,6 @@ SDK candidates:
 import pytest
 from tests.dincli.constants import TORCHENV_PYTHON, TORCHENV_SITE_PACKAGES
 
-pytestmark = pytest.mark.integration
-
 MODEL_ID = "0"
 
 AGGREGATOR_ACCOUNTS = list(range(11, 23))   # 11..22 inclusive

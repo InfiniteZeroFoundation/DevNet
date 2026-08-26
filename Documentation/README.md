@@ -39,7 +39,7 @@ One guide per network role: [Clients](public/roles/clients.md) · [Auditors](pub
 
 | Area | Contents |
 |---|---|
-| [ARCHITECTURE.md](technical/ARCHITECTURE.md) | System architecture reference (first complete draft tracked as P3-DOC1) |
+| ARCHITECTURE.md | System architecture reference (first complete draft tracked as P3-DOC1) |
 | [`contracts/`](technical/contracts/) | Per-contract references: `DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`, `DINTaskCoordinator`, `DINTaskAuditor`, `DINShared` |
 | [`mechanisms/`](technical/mechanisms/) | Currently implemented protocol mechanisms (e.g. [staking](technical/mechanisms/staking-mechanism.md)) |
 | [`services/`](technical/services/) | Reference service internals (e.g. [client service](technical/services/clients.md)) |

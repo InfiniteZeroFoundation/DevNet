@@ -50,8 +50,6 @@ from tests.dincli.constants import (
     DEPLOYMENTS_FILE,
 )
 
-pytestmark = pytest.mark.integration
-
 ARTIFACTS = {
     "coordinator":     ARTIFACT_BASE / "DinCoordinator.sol/DinCoordinator.json",
     "validator_stake": ARTIFACT_BASE / "DinValidatorStake.sol/DinValidatorStake.json",

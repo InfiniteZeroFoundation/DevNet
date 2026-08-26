@@ -28,6 +28,9 @@ dependencies = [
   "py-multibase>=1.0.0"
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=8.0", "torch>=2.6"]
+
 [project.scripts]
 dincli = "dincli.main:app"
 

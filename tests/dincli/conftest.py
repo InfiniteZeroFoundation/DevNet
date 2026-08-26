@@ -503,3 +503,19 @@ def pytest_configure(config):
         "markers",
         "integration: marks tests that require a live Hardhat node, IPFS daemon, and Docker",
     )
+
+
+# Every test in this directory needs a live chain, an IPFS daemon and Docker.
+# Marking happens here rather than per-file so a new module cannot silently
+# opt out and get itself run in CI. The path test is essential, not cosmetic:
+# this hook receives every collected item in the session, not just ours, so
+# without it the whole suite is marked integration and CI passes running
+# nothing. See plan 2.6.
+_INTEGRATION_DIR = Path(__file__).parent
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        path = Path(str(item.fspath))
+        if path == _INTEGRATION_DIR or _INTEGRATION_DIR in path.parents:
+            item.add_marker(pytest.mark.integration)

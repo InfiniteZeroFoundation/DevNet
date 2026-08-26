@@ -18,8 +18,6 @@ from pathlib import Path
 
 from tests.dincli.constants import ARTIFACT_BASE, DIN_INFO_PATH
 
-pytestmark = pytest.mark.integration
-
 ARTIFACTS = {
     "task_coordinator": ARTIFACT_BASE / "DINTaskCoordinator.sol/DINTaskCoordinator.json",
     "task_auditor":     ARTIFACT_BASE / "DINTaskAuditor.sol/DINTaskAuditor.json",
