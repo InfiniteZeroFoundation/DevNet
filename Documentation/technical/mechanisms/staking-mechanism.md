@@ -21,6 +21,43 @@ The key architectural principle is simple:
 
 That matters especially for exits, slashing, blacklisting, and controlled unblacklisting.
 
+> Target design for what comes next (governable parameters, per-model stake, jailing, slashed-stake destination) lives in [`Developer/design/staking-design.md`](../../../Developer/design/staking-design.md); this document describes what is implemented on `develop`.
+
+---
+
+## Implemented Lifecycle and Slashing Semantics (verified July 19, 2026)
+
+### Validator state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active : stake ≥ MIN_STAKE (10 DIN)
+    Active --> Exiting : unstake() → pending withdrawal\n(7-day unbonding, still slashable)
+    Exiting --> Active : re-stake above floor
+    Exiting --> [*] : claimUnstaked() after unbonding
+    Active --> Blacklisted : owner blacklistValidator()
+    Exiting --> Blacklisted : owner blacklistValidator()
+    Blacklisted --> Active : owner unblacklistValidator()\n(via status sync)
+```
+
+`_syncValidatorStatus()` recomputes status on every state-modifying call: `Blacklisted` is sticky until unblacklisted; pending withdrawals force `Exiting`; `activeStake ≥ MIN_STAKE` gives `Active`; a nonzero balance below the floor is `Exiting`; zero is `None`. The `Jailed` status is defined and respected by the sync logic, but **no function currently sets it** — jailing is not reachable on `develop`.
+
+### Implemented behaviour reference
+
+| Mechanic | Behaviour on `develop` |
+|---|---|
+| Stake entry | `stake(amount)` requires `amount ≥ MIN_STAKE` (10 DIN constant), rejects blacklisted callers, transfers DIN in, syncs status |
+| Unbonding | `unstake(amount)` moves stake to a **single** pending withdrawal with `withdrawAvailableAt = now + 7 days` (constant); `claimUnstaked()` pays out after maturity; a second `unstake` while one is pending reverts |
+| Slashability window | `slashableStakeOf = activeStake + pendingWithdrawals` — exit does not escape slashing until the claim |
+| Slashing | `slash(validator, amount, reason)` is **non-blocking**: caps at the slashable balance, consumes active stake before pending withdrawals, returns the actual amount, emits `ValidatorSlashed(validator, amount, reason, slasher)`. Only authorized slasher contracts may call it |
+| Slashed-stake destination | None — slashed DIN remains inside the contract (a de-facto burn; an explicit destination is a design decision, see [`Developer/design/staking-design.md`](../../../Developer/design/staking-design.md)) |
+| Slash amount policy | Task contracts slash a flat `minStake()` per offence (liveness faults only: missed audit vote, missed T1/T2 submission) |
+| Eligibility gates | `DINTaskCoordinator` and `DINTaskAuditor` check `isValidatorActive()` at **registration, batch creation, and submission** — raw `getStake()` is informational only |
+| Threshold source of truth | `minStake()` exposed via the `DINShared` interface; task contracts hold no independent stake-threshold copies |
+| Blacklist | `blacklistValidator`/`unblacklistValidator` are direct `owner()` actions; blacklist freezes `stake`/`unstake`/`claimUnstaked` while funds remain slashable (details in the sections below) |
+
+Per-contract references: [`DinValidatorStake.md`](../contracts/DinValidatorStake.md), [`DINTaskCoordinator.md`](../contracts/DINTaskCoordinator.md), [`DINTaskAuditor.md`](../contracts/DINTaskAuditor.md), [`DinCoordinator.md`](../contracts/DinCoordinator.md).
+
 ---
 
 ## Core Contracts

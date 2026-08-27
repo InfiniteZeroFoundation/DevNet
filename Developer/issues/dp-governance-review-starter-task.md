@@ -23,11 +23,11 @@ None of these currently report measurable privacy guarantees (no epsilon/delta a
 ## Review Packet (read in this order)
 
 1. [Developer/issues/DifferentialPrivacy.md](DifferentialPrivacy.md) — full context, limitations, product direction
-2. [cache_model_0/services/client.py](/home/azureuser/projects/devnet/cache_model_0/services/client.py) — the actual mechanism implementations
-3. [cache_model_0/manifest.json](/home/azureuser/projects/devnet/cache_model_0/manifest.json) — how DP parameters are configured per model
-4. [Documentation/technical/services/clients.md](/home/azureuser/projects/devnet/Documentation/technical/services/clients.md)
-5. [Documentation/technical/manifest.md](/home/azureuser/projects/devnet/Documentation/technical/manifest.md)
-6. [tests/test_cache_client_dp.py](/home/azureuser/projects/devnet/tests/test_cache_client_dp.py) — current test coverage, useful for seeing expected behavior without reading all of client.py in depth
+2. [cache_model_0/services/client.py](../../cache_model_0/services/client.py) — the actual mechanism implementations
+3. [cache_model_0/manifest.json](../../cache_model_0/manifest.json) — how DP parameters are configured per model
+4. [Documentation/technical/services/clients.md](../../Documentation/technical/services/clients.md)
+5. [Documentation/technical/manifest.md](../../Documentation/technical/manifest.md)
+6. [tests/test_cache_client_dp.py](../../tests/test_cache_client_dp.py) — current test coverage, useful for seeing expected behavior without reading all of client.py in depth
 
 You do not need to read the Solidity contracts or `dincli` CLI internals to do this review.
 
@@ -50,4 +50,4 @@ A short written review (markdown, doesn't need to be long) covering the question
 3. Write up your findings against the questions listed.
 4. Open a PR or discussion with your review.
 
-Questions welcome — see [Say hello →](mailto:abrahamnash@protonmail.com).
+Questions welcome — see [Say hello →](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92).

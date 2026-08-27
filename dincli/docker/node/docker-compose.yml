@@ -72,7 +72,13 @@ services:
     # Survive host reboots / daemon restarts; `docker compose down` still stops it.
     restart: unless-stopped
 
-    # Inherited from the image (CMD ["sleep", "infinity"]): dincli is a CLI, not
-    # yet a daemon, so the container idles and operators `exec` in. Stated here
-    # for clarity; remove when the `dind` daemon becomes the entrypoint.
-    command: ["sleep", "infinity"]
+    # din-node now runs the dind daemon as the entrypoint (CMD ["dind","start"]
+    # in the Dockerfile). The container is the long-lived daemon process.
+    command: ["dind", "start"]
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8787/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
