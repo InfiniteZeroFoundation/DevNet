@@ -5,7 +5,10 @@ import socket
 import threading
 import time
 from io import BytesIO
+from pathlib import Path
 
+from dincli.dind import health as health_module
+from dincli.dind.capabilities import resource_snapshot as _real_resource_snapshot
 from dincli.dind.health import HealthHandler, HealthServer
 from dincli.dind.state import StateStore
 
@@ -30,7 +33,15 @@ def _make_handler(store, path="/health"):
     return handler, wfile
 
 
-def test_health_payload_shape(tmp_path):
+def test_health_payload_shape(monkeypatch, tmp_path):
+    captured = {}
+
+    def spy_resource_snapshot(state_dir):
+        captured["state_dir"] = state_dir
+        return _real_resource_snapshot(state_dir)
+
+    monkeypatch.setattr(health_module, "resource_snapshot", spy_resource_snapshot)
+
     store = StateStore(tmp_path / "test.db")
     store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
 
@@ -53,6 +64,8 @@ def test_health_payload_shape(tmp_path):
     assert "ram_total_bytes" in body["resources"]
     assert "ram_free_bytes" in body["resources"]
     assert "cpu_speed_mhz" in body["resources"]
+
+    assert isinstance(captured["state_dir"], Path)
 
     store.close()
 

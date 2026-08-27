@@ -63,7 +63,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 
         queue = self.state.get_job_counts()
 
-        state_dir = str(self.state.db_path.parent)
+        state_dir = self.state.db_path.parent
         snap = resource_snapshot(state_dir)
 
         return {
