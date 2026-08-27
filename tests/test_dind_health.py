@@ -1,10 +1,12 @@
 """Tests for dind/health.py — payload shape + degraded detection."""
 
 import json
+import socket
+import threading
 import time
 from io import BytesIO
 
-from dincli.dind.health import HealthHandler
+from dincli.dind.health import HealthHandler, HealthServer
 from dincli.dind.state import StateStore
 
 
@@ -107,5 +109,34 @@ def test_health_no_network_gpu_probe(monkeypatch, tmp_path):
     parts = wfile.getvalue().split(b"\r\n\r\n", 1)
     body = json.loads(parts[1])
     assert body["status"] == "healthy"
+
+    store.close()
+
+
+def test_health_server_releases_port(tmp_path):
+    store = StateStore(tmp_path / "test.db")
+    server = HealthServer("127.0.0.1", 0, store)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    for _ in range(100):
+        if hasattr(server, "server"):
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("HealthServer never bound")
+
+    host, port = server.server.server_address
+
+    server.shutdown()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    finally:
+        probe.close()
 
     store.close()

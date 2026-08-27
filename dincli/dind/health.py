@@ -101,8 +101,12 @@ class HealthServer:
         self.state.set_meta("health_port", str(actual_port))
 
         logger.info("Health server listening on %s:%d", actual_host, actual_port)
-        self.server.serve_forever(poll_interval=0.5)
+        try:
+            self.server.serve_forever(poll_interval=0.5)
+        finally:
+            self.server.server_close()
 
     def shutdown(self) -> None:
         if hasattr(self, "server") and self.server:
             self.server.shutdown()
+            self.server.server_close()
