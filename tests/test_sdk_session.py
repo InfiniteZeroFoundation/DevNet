@@ -113,7 +113,7 @@ class TestDinSessionLazy:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "nonexistent.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: "testpw")
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: "testpw")
 
         import json
         acct = Account.from_key(DUMMY_KEY)

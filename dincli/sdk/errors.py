@@ -91,6 +91,11 @@ class ConfirmationRequired(DinError):
     code = "confirmation_required"
 
 
+class ChainIdMismatchError(DinError):
+    """The configured RPC endpoint is on a different chain than the selected network."""
+    code = "chain_id_mismatch"
+
+
 # --- Detail sanitization (proposal §4a) -------------------------------------
 # Allowlist-oriented: each error code declares the detail keys it may carry and
 # their type. Anything not listed for a code is DROPPED — free-form details are
@@ -128,6 +133,7 @@ _ALLOWLIST: dict[str, dict[str, str]] = {
     "signer_unavailable": {"account": "str"},
     "config_error": {"key": "str"},
     "confirmation_required": {"operation": "str"},
+    "chain_id_mismatch": {"network": "str", "expected_chain_id": "int", "actual_chain_id": "int"},
 }
 
 
@@ -136,8 +142,20 @@ def _bounded_str(value: Any, limit: int = _MAX_STR) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+_UNPARSABLE_ENDPOINT = "<unparsable-endpoint>"
+
+
 def _sanitize_host(value: Any) -> str:
-    """Strip credentials/query from a URL, keeping scheme://host[:port]/path."""
+    """Reduce a URL to scheme://hostname[:port] — never userinfo, path, query,
+    params or fragment.
+
+    Path-style API keys (``https://mainnet.infura.io/v3/<KEY>``,
+    ``https://eth.alchemy.com/v2/<KEY>``) are how the two largest RPC
+    providers authenticate, so the path is dropped along with the query
+    string and fragment, not just userinfo. Input ``urlsplit`` cannot parse
+    as a URL is never echoed back — it may itself be the secret — and instead
+    yields a fixed placeholder.
+    """
     text = str(value)
     try:
         from urllib.parse import urlsplit
@@ -146,10 +164,10 @@ def _sanitize_host(value: Any) -> str:
             host = parts.hostname or ""
             if parts.port:
                 host = f"{host}:{parts.port}"
-            return _bounded_str(f"{parts.scheme}://{host}{parts.path}")
+            return _bounded_str(f"{parts.scheme}://{host}")
     except Exception:
         pass
-    return _bounded_str(text)
+    return _UNPARSABLE_ENDPOINT
 
 
 def _coerce(kind: str, value: Any) -> Any:

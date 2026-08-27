@@ -883,3 +883,133 @@ class TestSingleEnvParseOnUnlock:
 
 _PASSWORD_TTL_DEFAULT = 900
 
+
+def _make_env_without_password(tmp_path: Path) -> Path:
+    """Create a .env file lacking DIN_WALLET_PASSWORD and return its directory."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("OTHER_VAR=hello\n")
+    return tmp_path
+
+
+class TestPasswordVerboseFalse:
+    """Three independent tests for the three verbose=False call sites (§3.1, §3.3)."""
+
+    # ── Site 1: load_account (:415) ─────────────────────────────────────
+
+    def test_load_account_no_red_x(self, monkeypatch, tmp_path):
+        """load_account: env lacking DIN_WALLET_PASSWORD prints no red X."""
+        from dincli.cli import utils as utils_mod
+        utils_mod._PASSWORD_CACHE.clear()
+        env_dir = _make_env_without_password(tmp_path)
+        monkeypatch.chdir(env_dir)
+
+        # Isolate config/cache into a temp area
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        wallets_dir = config_dir / "wallets"
+        wallets_dir.mkdir()
+        orig_config = utils_mod.CONFIG_DIR
+        orig_wallets = utils_mod.WALLETS_DIR
+        utils_mod.CONFIG_DIR = config_dir
+        utils_mod.WALLETS_DIR = wallets_dir
+
+        try:
+            ks = Account.encrypt(DUMMY_KEY_0, DUMMY_PW)
+            acct = Account.from_key(DUMMY_KEY_0)
+            wrapper = {"version": 1, "address": acct.address, "keystore": ks,
+                       "source": "created", "name": "default"}
+            (wallets_dir / "wallet_default.json").write_text(json.dumps(wrapper))
+
+            monkeypatch.setattr(utils_mod, "getpass", lambda prompt: DUMMY_PW)
+            monkeypatch.setattr(utils_mod, "_cleanup_stale_session", lambda: None)
+
+            # Capture console output
+            import io
+            from rich.console import Console as RichConsole
+            out = io.StringIO()
+            orig_console = utils_mod.console
+            utils_mod.console = RichConsole(file=out, force_terminal=False)
+
+            try:
+                loaded = utils_mod.load_account(name="default")
+                assert loaded.address == acct.address
+                output = out.getvalue()
+                # No red X
+                assert "❌" not in output
+                # Unlike develop's load_account (which delegates password
+                # resolution to _get_password and so emits its yellow fallback
+                # line), the SDK-extracted load_account resolves the env var
+                # itself via get_env_key(..., verbose=False) and never calls
+                # _get_password — so no yellow line is emitted here either.
+                # The verbose=False fix (no "❌ not found" red text) is what
+                # this test actually guards; site 2 below covers the yellow
+                # line's own call site (_get_password) directly.
+                assert "DIN_WALLET_PASSWORD not found in environment" not in output
+            finally:
+                utils_mod.console = orig_console
+        finally:
+            utils_mod.CONFIG_DIR = orig_config
+            utils_mod.WALLETS_DIR = orig_wallets
+
+    # ── Site 2: _get_password self-fetch (:455) ──────────────────────────
+
+    def test_get_password_self_fetch_no_red_x(self, monkeypatch, tmp_path):
+        """_get_password self-fetch: no red X, yellow line emitted."""
+        from dincli.cli import utils as utils_mod
+        utils_mod._PASSWORD_CACHE.clear()
+        env_dir = _make_env_without_password(tmp_path)
+        monkeypatch.chdir(env_dir)
+
+        # Isolate config dir (wallets not needed for this call)
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        orig_config = utils_mod.CONFIG_DIR
+        utils_mod.CONFIG_DIR = config_dir
+
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        orig_console = utils_mod.console
+        utils_mod.console = RichConsole(file=out, force_terminal=False)
+
+        try:
+            monkeypatch.setattr(utils_mod, "getpass", lambda prompt: "prompted-pw")
+
+            # Call _get_password directly with env_pass=_UNSET so it self-fetches
+            pw = utils_mod._get_password(name="test-acct")
+            assert pw == "prompted-pw"
+            output = out.getvalue()
+            # No red X
+            assert "❌" not in output
+            # Yellow line appears
+            assert "DIN_WALLET_PASSWORD not found in environment" in output
+        finally:
+            utils_mod.console = orig_console
+            utils_mod.CONFIG_DIR = orig_config
+
+    # ── Site 3: _cache_password_in_memory self-fetch (:478) ─────────────
+
+    def test_cache_password_in_memory_self_fetch_no_red_x(self, monkeypatch, tmp_path):
+        """_cache_password_in_memory self-fetch: no red X, no yellow line (message in _get_password)."""
+        from dincli.cli import utils as utils_mod
+        utils_mod._PASSWORD_CACHE.clear()
+        env_dir = _make_env_without_password(tmp_path)
+        monkeypatch.chdir(env_dir)
+
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        orig_console = utils_mod.console
+        utils_mod.console = RichConsole(file=out, force_terminal=False)
+
+        try:
+            # Call _cache_password_in_memory with env_pass=_UNSET so it self-fetches
+            utils_mod._cache_password_in_memory("test-acct", "some-pw")
+            output = out.getvalue()
+            # No red X
+            assert "❌" not in output
+            # No yellow message either — this helper does not emit it
+            assert "DIN_WALLET_PASSWORD not found in environment" not in output
+        finally:
+            utils_mod.console = orig_console
+

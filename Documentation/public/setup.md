@@ -2,6 +2,10 @@
 
 This guide walks you through the complete setup process for the DIN CLI (`dincli`) from installation to first use.
 
+> [!TIP]
+> Hit an error or get stuck anywhere in this guide? Post it in the
+> [DevNet 2.0 pre-launch discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/102).
+
 ---
 
 ## 1. Virtual Environment

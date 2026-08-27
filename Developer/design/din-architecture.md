@@ -3,7 +3,7 @@
 **Status:** Working design document — target architecture for the full DIN stack (DevNet → testnet)
 **Owner:** Umer
 **Scope:** How every DIN component — on-chain contracts, indexer, SDK, CLI, daemon, IPFS layer, and the on-device node/worker pair — fits together; which parts exist today and which are planned.
-**Roadmap anchors:** P4 (SDK extraction, `dind` daemon, DIN Indexer); DIN DAO staged from devnet 2.0 onward.
+**Roadmap anchors:** P4 (SDK extraction, `dind` daemon, DIN Indexer); DIN DAO deferred to post-mainnet (2026-08-04 — see [DESIGN_DECISIONS.md DD-3](DESIGN_DECISIONS.md#dd-3--initial-dinmultisig-signer-composition-stage-a)), off-chain governance until then.
 
 > The wiki pages under [DIN Components](https://github.com/InfiniteZeroFoundation/DevNet/wiki) describe each component individually; this document is the one place that shows the whole system and the dependency order between the parts.
 
@@ -15,7 +15,7 @@ DIN is organized as six layers. Everything above the chain exists to make partic
 
 | Layer | Components | Status |
 |---|---|---|
-| Governance | DIN DAO contracts (Multisig, Timelock, Governance staking, Governor, Guardian) | 📋 Planned (staged; Multisig shadow from devnet 2.0) |
+| Governance | DIN DAO contracts (Multisig, Timelock, Governance staking, Governor, Guardian) | ⏳ Deferred (post-mainnet; off-chain team/forum governance until then) |
 | On-chain coordination | Platform contracts: `DinCoordinator`, `DinToken`, `DinValidatorStake`, `DinModelRegistry` | ✅ Deployed (Optimism Sepolia) |
 | | Task contracts (per model): `DINTaskCoordinator`, `DINTaskAuditor` | ✅ Deployed per model |
 | Read layer | DIN Indexer (subgraph or lighter equivalent) | 📋 Planned (P4) |
@@ -34,7 +34,7 @@ DIN is organized as six layers. Everything above the chain exists to make partic
 ```mermaid
 flowchart TB
     subgraph chain["⛓ Blockchain — Optimism"]
-        DAO["DIN DAO 📋<br/>Multisig · Timelock · Governor · Guardian"]
+        DAO["DIN DAO ⏳<br/>Multisig · Timelock · Governor · Guardian<br/>(deferred, post-mainnet)"]
         subgraph platform["Platform contracts (deployed once)"]
             COORD["DinCoordinator"]
             TOKEN["DinToken"]
@@ -75,15 +75,17 @@ flowchart TB
     WORKER -- "job inputs (read-only) /<br/>outputs via mounted dirs only" --- node
 ```
 
-📋 = planned component; everything else exists on `develop` today.
+📋 = planned component; ⏳ = deferred to post-mainnet; everything else exists on `develop` today.
 
 ---
 
 ## 3. Layers, top to bottom
 
-### 3.1 DIN DAO contracts (planned)
+### 3.1 DIN DAO contracts (deferred, post-mainnet)
 
-Today the DIN-Representative admin key controls platform parameters (fees, slasher authorization, model registration approval, blacklisting, treasury withdrawal). The DIN DAO replaces that single key with governance contracts — Multisig, Timelock, governance staking (locked non-transferable DIN), Governor, and a Guardian emergency path — rolled out in stages (Multisig shadowing from devnet 2.0, Timelock ownership from devnet 3.0, full Governor voting on testnet). The DAO sits *above* the platform contracts: it owns them; it does not participate in training rounds. Until it lands, near-term contract work deliberately uses plain owner-controlled setters — exactly the surface the Timelock will later govern without redesign.
+Today the DIN-Representative admin key controls platform parameters (fees, slasher authorization, model registration approval, blacklisting, treasury withdrawal). The original plan was for the DIN DAO to replace that single key with governance contracts — Multisig, Timelock, governance staking (locked non-transferable DIN), Governor, and a Guardian emergency path — rolled out in stages (Multisig shadowing from devnet 2.0, Timelock ownership from devnet 3.0, full Governor voting on testnet).
+
+**As of 2026-08-04, that staged rollout is deferred to post-mainnet.** Abraham's decision (see [DESIGN_DECISIONS.md DD-3](DESIGN_DECISIONS.md#dd-3--initial-dinmultisig-signer-composition-stage-a)): DIN follows Ethereum's off-chain governance model until well past testing — team coordination and public discussion (forums), no `DinMultisig` sitting between the community and protocol upgrades, no immutable signer set locked in before there's real demand or a legitimate selection process. Any near-term multisig is a plain Gnosis Safe scoped to treasury/fund management only, never the protocol-role authority (`PROPOSER_ROLE`/`CANCELLER_ROLE`) this section originally described. On-chain governance gets progressively revisited post-mainnet. Near-term contract work keeps using plain owner-controlled setters, as it already does — there is no Timelock to eventually govern them, so this is no longer a staging step toward one, just how the contracts stay.
 
 ### 3.2 Platform contracts (deployed once)
 
@@ -163,7 +165,7 @@ The build sequence follows the arrows in the diagram, bottom-up on the off-chain
 1. **Contracts stabilize first** — indexer mappings and SDK contract interfaces are built against stable events/ABIs, not moving targets.
 2. **SDK before daemon** — `dind` imports the SDK; extracting the SDK while the CLI keeps working is the low-risk first step of P4.
 3. **Indexer before event-driven automation** — `dind` can launch in a degraded RPC-polling mode, but its preference-driven job selection assumes indexer queries.
-4. **DAO last and staged** — governance wraps the platform contracts' existing owner surface; it changes *who* calls the setters, not the setters themselves.
+4. **DAO deferred, not sequenced into P4 at all** — governance would wrap the platform contracts' existing owner surface (changing *who* calls the setters, not the setters themselves), but per §3.1 it's now post-mainnet work, not a P4 build step.
 
 ---
 

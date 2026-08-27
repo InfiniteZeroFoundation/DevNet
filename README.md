@@ -84,7 +84,8 @@ If you care about privacy-preserving ML, decentralised systems, or just building
 - [White Paper](https://github.com/InfiniteZeroFoundation/White-Paper)
 - [Documentation](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)
 - [Support the network on Giveth](https://giveth.io/project/infinitezero-network)
-- [Say hello](mailto:abrahamnash@protonmail.com)
+- [Say hello](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92)
+- [Email us](mailto:abrahamnash@protonmail.com)
 
 ---
 

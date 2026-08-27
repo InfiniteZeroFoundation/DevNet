@@ -191,13 +191,13 @@ class TestPasswordCache:
         sdk_wallet._clear_memory_cache()
 
     def test_cache_and_retrieve(self, monkeypatch):
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         sdk_wallet._cache_password_in_memory("test", "secret")
         result = sdk_wallet.resolve_password("test")
         assert result == "secret"
 
     def test_cache_skipped_when_env_set(self, monkeypatch):
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: "env_pass")
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: "env_pass")
         sdk_wallet._cache_password_in_memory("test", "secret", env_pass="env_pass")
         assert "test" not in sdk_wallet._PASSWORD_CACHE
 
@@ -216,7 +216,7 @@ class TestPasswordCache:
         assert sdk_wallet.resolve_password("b") is None
 
     def test_cache_expiry(self, monkeypatch):
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         monkeypatch.setattr(time, "time", lambda: 1000.0)
         sdk_wallet._cache_password_in_memory("test", "secret")
         monkeypatch.setattr(time, "time", lambda: 1000.0 + 901)
@@ -236,19 +236,19 @@ class TestResolvePassword:
         sdk_wallet._clear_memory_cache()
 
     def test_env_takes_priority(self, monkeypatch):
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: "env_val")
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: "env_val")
         sdk_wallet._cache_password_in_memory("test", "cached")
         result = sdk_wallet.resolve_password("test")
         assert result == "env_val"
 
     def test_cache_when_no_env(self, monkeypatch):
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         sdk_wallet._cache_password_in_memory("test", "cached")
         result = sdk_wallet.resolve_password("test")
         assert result == "cached"
 
     def test_none_when_no_sources(self, monkeypatch):
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         assert sdk_wallet.resolve_password("test") is None
 
     def test_injected_env_pass(self):
@@ -318,7 +318,7 @@ class TestLoadAccountNoninteractive:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: DUMMY_PW)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: DUMMY_PW)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         acct = sdk_wallet.load_account_noninteractive("default")
@@ -328,7 +328,7 @@ class TestLoadAccountNoninteractive:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         sdk_wallet._cache_password_in_memory("default", DUMMY_PW)
@@ -339,7 +339,7 @@ class TestLoadAccountNoninteractive:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         with pytest.raises(SignerUnavailable):
@@ -349,7 +349,7 @@ class TestLoadAccountNoninteractive:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: "wrongpassword")
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: "wrongpassword")
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         with pytest.raises(WalletError, match="Invalid password or corrupted keystore."):
@@ -379,7 +379,7 @@ class TestKeystoreSigner:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: DUMMY_PW)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: DUMMY_PW)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         signer = sdk_wallet.KeystoreSigner("default")
@@ -389,7 +389,7 @@ class TestKeystoreSigner:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: DUMMY_PW)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: DUMMY_PW)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         signer = sdk_wallet.KeystoreSigner("default")
@@ -399,7 +399,7 @@ class TestKeystoreSigner:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: None)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: None)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         signer = sdk_wallet.KeystoreSigner("default")
@@ -409,7 +409,7 @@ class TestKeystoreSigner:
         monkeypatch.setattr(sdk_wallet, "WALLETS_DIR", tmp_path)
         monkeypatch.setattr(sdk_wallet, "LEGACY_WALLET_FILE",
                             tmp_path / "no_wallet.json")
-        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k: DUMMY_PW)
+        monkeypatch.setattr(sdk_wallet, "get_env_key", lambda k, **kw: DUMMY_PW)
         wrapper = _make_keystore_wrapper(DUMMY_KEY, DUMMY_PW)
         _write_wallet(tmp_path, "default", wrapper)
         signer = sdk_wallet.KeystoreSigner("default")

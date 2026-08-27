@@ -171,4 +171,4 @@ We welcome contributors from AI/ML, cryptography, distributed systems, blockchai
 
 [Contribution Guide →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/CONTRIBUTING.md)  
 [Getting Started →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)  
-[Say hello →](mailto:abrahamnash@protonmail.com)
+[Say hello →](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92)

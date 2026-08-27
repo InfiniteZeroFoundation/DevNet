@@ -6,7 +6,7 @@
 
 ## Why this document exists
 
-P4 (din-dao, din-sdk, din-daemon, din-indexer — [board 7](https://github.com/orgs/InfiniteZeroFoundation/projects/7)) is the currently active phase, but **P3, the cryptoeconomic layer, is delayed because finalized designs for its mechanisms do not exist yet**. The design *material* exists — [MECHANISM_DESIGN.md](MECHANISM_DESIGN.md), the [white paper summary](whitepaper-summary.md), and the per-mechanism write-ups in [`../issues/`](../issues/) — but the open decisions are unresolved and none of it was tracked on GitHub. This page maps every P3 mechanism to its design sources, its GitHub issue, and the decisions blocking it, so the designs can be closed out and P3 can start.
+P4 (din-sdk, din-daemon, din-indexer — [board 7](https://github.com/orgs/InfiniteZeroFoundation/projects/7); din-dao deferred to post-mainnet as of 2026-08-04, see [DESIGN_DECISIONS.md DD-3](DESIGN_DECISIONS.md#dd-3--initial-dinmultisig-signer-composition-stage-a)) is the currently active phase, but **P3, the cryptoeconomic layer, is delayed because finalized designs for its mechanisms do not exist yet**. The design *material* exists — [MECHANISM_DESIGN.md](MECHANISM_DESIGN.md), the [white paper summary](whitepaper-summary.md), and the per-mechanism write-ups in [`../issues/`](../issues/) — but the open decisions are unresolved and none of it was tracked on GitHub. This page maps every P3 mechanism to its design sources, its GitHub issue, and the decisions blocking it, so the designs can be closed out and P3 can start.
 
 **Rule:** a mechanism's contract/implementation work starts only after its design is agreed — open decisions closed, discussion threads resolved, and the outcome recorded back into [MECHANISM_DESIGN.md](MECHANISM_DESIGN.md).
 
@@ -22,7 +22,7 @@ P4 (din-dao, din-sdk, din-daemon, din-indexer — [board 7](https://github.com/o
 | **Tokenomics** | **[tokenomics-design.md](tokenomics-design.md)** (entry point) · [MECHANISM_DESIGN §7](MECHANISM_DESIGN.md) · [issues/tokenomics.md](../issues/tokenomics.md) | [#42](https://github.com/InfiniteZeroFoundation/DevNet/issues/42) | P3-5.1/5.2, P3-DOC5 |
 | **Fees & treasury** | [MECHANISM_DESIGN §8](MECHANISM_DESIGN.md) · [issues/tokenomics.md](../issues/tokenomics.md) | [#43](https://github.com/InfiniteZeroFoundation/DevNet/issues/43) | P3-5.3, RES-1 |
 
-Related backlog not opened as GitHub issues yet: [issues/validator_selection.md](../issues/validator_selection.md) (capability-aware selection), [issues/decentralized-governance.md](../issues/decentralized-governance.md) (full DAO migration — P3 ships `onlyOwner` governance hooks only; ties into din-dao).
+Related backlog not opened as GitHub issues yet: [issues/validator_selection.md](../issues/validator_selection.md) (capability-aware selection), [issues/decentralized-governance.md](../issues/decentralized-governance.md) (full DAO migration — P3 ships `onlyOwner` governance hooks only; ties into din-dao, now deferred to post-mainnet — [BL-16](../BACK_LOG.md)).
 
 ## Open decisions → where they are being discussed
 
@@ -40,7 +40,7 @@ Decisions that stay internal (simulation-driven, no discussion needed): reward s
 
 ## White paper alignment
 
-[whitepaper-summary.md](whitepaper-summary.md) §8 is the gap/alignment checklist against the canonical [white paper](https://github.com/InfiniteZeroFoundation/White-Paper). Routing of its 14 items: 1–2 → documentation/verification tasks; 3–4 → #38; 5–6, 11 → #40; 7 → #37 + discussion #46; 8 → #42; 9 → #46 + din-dao; 10 → P4 `dind` design (P3-DOC7); 12–13 → future-phase notes; 14 → already aligned.
+[whitepaper-summary.md](whitepaper-summary.md) §8 is the gap/alignment checklist against the canonical [white paper](https://github.com/InfiniteZeroFoundation/White-Paper). Routing of its 14 items: 1–2 → documentation/verification tasks; 3–4 → #38; 5–6, 11 → #40; 7 → #37 + discussion #46; 8 → #42; 9 → #46 + din-dao (deferred to post-mainnet, 2026-08-04 — DD-1/DD-2); 10 → P4 `dind` design (P3-DOC7); 12–13 → future-phase notes; 14 → already aligned.
 
 ## Definition of done
 

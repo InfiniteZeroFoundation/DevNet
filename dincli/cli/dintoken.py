@@ -3,7 +3,7 @@ import time
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import MIN_STAKE, build_and_send_tx
+from dincli.cli.utils import MIN_STAKE, build_and_send_tx, read_after_write
 
 app = typer.Typer(help="Commands for DIN Token in DIN.")
 
@@ -22,29 +22,50 @@ def buy_dintokens(
         f"[bold green] {name} ETH balance:[/bold green] ",
         Web3.from_wei(w3.eth.get_balance(account.address), "ether"),
     )
+    # Read pre-purchase balance once — reused as the read_after_write baseline
+    pre_purchase_balance = din_token_contract.functions.balanceOf(account.address).call()
     console.print(
         f"[bold green] {name} DINToken balance:[/bold green] ",
-        Web3.from_wei(din_token_contract.functions.balanceOf(account.address).call(), "ether"),
+        Web3.from_wei(pre_purchase_balance, "ether"),
     )
     console.print(f"[bold green]Buying DINTokens... for {amount} ETH[/bold green]")
 
-    try:
-        tx_receipt = build_and_send_tx(
-            ctx,
-            din_coordinator_contract.functions.depositAndMint(),
-            f"Buying DINTokens... for {amount} ETH",
-            "DINTokens bought.",
-            "Transaction failed! Could not buy DINTokens",
-            tx_params={"value": w3.to_wei(amount, "ether")},
-            exit_on_failure=False,
-        )
-        console.print(f"[bold green]✓ DINTokens bought at:[/bold green] {tx_receipt.transactionHash.hex()}")
+    tx_receipt = build_and_send_tx(
+        ctx,
+        din_coordinator_contract.functions.depositAndMint(),
+        f"Buying DINTokens... for {amount} ETH",
+        "DINTokens bought.",
+        "Transaction failed! Could not buy DINTokens",
+        tx_params={"value": w3.to_wei(amount, "ether")},
+        exit_on_failure=False,
+    )
+    if tx_receipt is None:
+        return
+
+    result = read_after_write(
+        lambda: din_token_contract.functions.balanceOf(account.address).call(),
+        baseline=pre_purchase_balance,
+    )
+    if result.settled:
         console.print(
             f"[bold green] {name} DINToken balance:[/bold green] ",
-            Web3.from_wei(din_token_contract.functions.balanceOf(account.address).call(), "ether"),
+            Web3.from_wei(result.value, "ether"),
         )
-    except Exception as e:
-        console.print(f"[bold red]✗ Error buying DINTokens: {e}[/bold red]")
+    elif result.observed:
+        console.print(
+            f"[bold green] {name} DINToken balance:[/bold green] ",
+            Web3.from_wei(result.value, "ether"),
+        )
+        console.print(
+            "[yellow]Balance may not reflect the purchase yet — "
+            "the RPC may be lagging.[/yellow]"
+        )
+    else:
+        console.print(
+            f"[yellow]Pre-purchase balance:[/yellow] "
+            f"{Web3.from_wei(pre_purchase_balance, 'ether')} "
+            "[yellow](could not read post-purchase balance)[/yellow]"
+        )
 
 
 def stake_dintokens(
@@ -116,6 +137,23 @@ def read_dintoken_stake(ctx: typer.Context, name ="Account"):
     console.print(f"[bold green] {name}'s DIN token stake:[/bold green] ", Web3.from_wei(stake, "ether"), "DinTokens")
 
 
+def read_din_per_eth_rate(ctx: typer.Context):
+    """Read the owner-mutable DIN-per-ETH exchange rate from DinCoordinator.
+
+    `buy` spends ETH at whatever rate is live at the time, so this is the only
+    way to know what a given amount will mint before committing to it.
+    """
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    din_coordinator_contract = ctx.obj.get_deployed_din_coordinator_contract()
+
+    raw = din_coordinator_contract.functions.dinPerEth().call()
+
+    console.print(f"[bold green]DIN per ETH (raw, 18 decimals):[/bold green] {raw} ({raw:.0e})")
+    console.print(f"[bold green]DIN per ETH:[/bold green] {Web3.from_wei(raw, 'ether')}")
+
+    return raw
+
+
 @app.command(help="Buy DINTokens where amount is ETH to exchange for DINTokens")
 def buy(
     ctx: typer.Context,
@@ -135,3 +173,8 @@ def stake(
 @app.command("read-stake", help="Check stake")
 def read_stake(ctx: typer.Context):
     read_dintoken_stake(ctx)
+
+
+@app.command("read-din-per-eth", help="Read the current DIN-per-ETH exchange rate")
+def read_din_per_eth(ctx: typer.Context):
+    read_din_per_eth_rate(ctx)

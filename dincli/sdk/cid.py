@@ -69,3 +69,19 @@ def get_cidv1base32_from_cid(cid_str: str) -> str:
 
     bytes32_hex = get_bytes32_from_cid(cid_str)
     return get_cid_from_bytes32(bytes32_hex)
+
+
+def validate_cid(cid_str: str) -> str:
+    """Validate a CID string using py-cid.
+
+    Returns the original string on success, so it can be used inline:
+
+        encoded = quote(validate_cid(hash_value), safe="")
+
+    Raises ValueError for any input that py-cid rejects: malformed CIDs,
+    path-traversal strings, empty input, etc.
+    """
+    if not isinstance(cid_str, str):
+        raise ValueError(f"CID must be a string, got {type(cid_str).__name__}")
+    _cid.make_cid(cid_str)
+    return cid_str
