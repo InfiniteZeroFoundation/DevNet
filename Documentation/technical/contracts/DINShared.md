@@ -1,6 +1,6 @@
 # DINShared — Technical Documentation
 
-> **File:** `hardhat/contracts/DINShared.sol`
+> **File:** `foundry/src/DINShared.sol`
 > **SPDX-License-Identifier:** UNLICENSED
 > **Solidity:** `^0.8.28`
 
@@ -40,17 +40,20 @@ Value  State Name                          Description
  10    LMSstarted                          Local Model Submission window is open.
  11    LMSclosed                           Local Model Submission window is closed.
  12    AuditorsBatchesCreated              Audit batches have been formed.
- 13    LMSevaluationStarted                Auditors can now submit scores and eligibility votes.
- 14    LMSevaluationClosed                 Evaluation finalized; approved models identified.
- 15    T1nT2Bcreated                       Tier-1 and Tier-2 aggregation batches formed.
- 16    T1AggregationStarted                Tier-1 aggregators can submit their aggregated CIDs.
- 17    T1AggregationDone                   Tier-1 finalized; winning CIDs per batch recorded.
- 18    T2AggregationStarted                Tier-2 aggregators can submit their aggregated CIDs.
- 19    T2AggregationDone                   Tier-2 finalized; global winning CID recorded.
- 20    AuditorsSlashed                     Auditor slashing phase executed.
- 21    AggregatorsSlashed                  Aggregator slashing phase executed.
- 22    GIended                             GI is complete; system is ready for next GI.
+ 13    LMSevaluationStarted                Commit phase: auditors submit hidden score/vote commitments via `commitAuditScore`.
+ 14    LMSevaluationRevealStarted          Reveal phase: auditors reveal (score, vote, salt) via `revealAuditScore`; eligibility and median scoring are computed from revealed values only.
+ 15    LMSevaluationClosed                 Evaluation finalized; approved models identified.
+ 16    T1nT2Bcreated                       Tier-1 and Tier-2 aggregation batches formed.
+ 17    T1AggregationStarted                Tier-1 aggregators can submit their aggregated CIDs.
+ 18    T1AggregationDone                   Tier-1 finalized; winning CIDs per batch recorded.
+ 19    T2AggregationStarted                Tier-2 aggregators can submit their aggregated CIDs.
+ 20    T2AggregationDone                   Tier-2 finalized; global winning CID recorded.
+ 21    AuditorsSlashed                     Auditor slashing phase executed.
+ 22    AggregatorsSlashed                  Aggregator slashing phase executed.
+ 23    GIended                             GI is complete; system is ready for next GI.
 ```
+
+> **Ordinal note:** `LMSevaluationRevealStarted` (commit-then-reveal auditor scoring, task_210726_6 §2a) sits between `LMSevaluationStarted` and `LMSevaluationClosed` at ordinal 14, shifting every state from `LMSevaluationClosed` onward by +1 relative to the pre-commit-reveal numbering. `dincli/cli/utils.py`'s `states`/`stateDescription` positional mirrors (indexed by this same raw ordinal) have been updated to match — see `dincli/cli/utils.py`'s `states`/`stateDescription` lists.
 
 ### 2.2 State Transition Diagram
 
@@ -67,34 +70,37 @@ Value  State Name                          Description
 [3] AwaitingGenesisModel
         │ setGenesisModelIpfsHash()
         ▼
-[4] GenesisModelCreated ◄──────────────────────────────── [22] GIended
+[4] GenesisModelCreated ◄──────────────────────────────── [23] GIended
         │ startGI()                                               ▲
         ▼                                                         │ endGI()
-[5] GIstarted                                             [21] AggregatorsSlashed
+[5] GIstarted                                             [22] AggregatorsSlashed
         │ startDINaggregatorsRegistration()                       ▲
         ▼                                                         │ slashAggregators()
-[6] DINaggregatorsRegistrationStarted               [20] AuditorsSlashed
+[6] DINaggregatorsRegistrationStarted               [21] AuditorsSlashed
         │ closeDINaggregatorsRegistration()                       ▲
         ▼                                                         │ slashAuditors()
-[7] DINaggregatorsRegistrationClosed                [19] T2AggregationDone
+[7] DINaggregatorsRegistrationClosed                [20] T2AggregationDone
         │ startDINauditorsRegistration()                          ▲
         ▼                                                         │ finalizeT2Aggregation()
-[8] DINauditorsRegistrationStarted                  [18] T2AggregationStarted
+[8] DINauditorsRegistrationStarted                  [19] T2AggregationStarted
         │ closeDINauditorsRegistration()                          ▲
         ▼                                                         │ startT2Aggregation()
-[9] DINauditorsRegistrationClosed                   [17] T1AggregationDone
+[9] DINauditorsRegistrationClosed                   [18] T1AggregationDone
         │ startLMsubmissions()                                    ▲
         ▼                                                         │ finalizeT1Aggregation()
-[10] LMSstarted                                     [16] T1AggregationStarted
+[10] LMSstarted                                     [17] T1AggregationStarted
         │ closeLMsubmissions()                                    ▲
         ▼                                                         │ startT1Aggregation()
-[11] LMSclosed                                      [15] T1nT2Bcreated
+[11] LMSclosed                                      [16] T1nT2Bcreated
         │ createAuditorsBatches()                                 ▲
         ▼                                                         │ autoCreateTier1AndTier2()
-[12] AuditorsBatchesCreated                         [14] LMSevaluationClosed
+[12] AuditorsBatchesCreated                         [15] LMSevaluationClosed
         │ startLMsubmissionsEvaluation()                          ▲
         ▼                                                         │ closeLMsubmissionsEvaluation()
-[13] LMSevaluationStarted ────────────────────────────────────────┘
+[13] LMSevaluationStarted                           [14] LMSevaluationRevealStarted
+        │ (auditors: commitAuditScore, commit phase)               ▲
+        └──────────── startLMsubmissionsEvaluationReveal() ────────┘
+                       (auditors: revealAuditScore, reveal phase)
 ```
 
 ---
@@ -106,7 +112,13 @@ Value  State Name                          Description
 ```solidity
 interface IDinValidatorStake {
     function getStake(address validator) external view returns (uint256);
-    function slash(address validator, uint256 amount) external;
+    function minStake() external view returns (uint256);
+    function isValidatorActive(address validator) external view returns (bool);
+    function slash(
+        address validator,
+        uint256 amount,
+        bytes32 reason
+    ) external returns (uint256);
     function isSlasherContract(address slasherContract) external view returns (bool);
 }
 ```
@@ -116,7 +128,9 @@ Used by: `DINTaskCoordinator`, `DINTaskAuditor`
 | Method | Purpose |
 |--------|---------|
 | `getStake` | Check if a registrant has sufficient stake before accepting registration |
-| `slash` | Penalise misbehaving aggregators (called by TaskCoordinator during `slashAggregators`) |
+| `minStake` | Minimum stake threshold a registrant/auditor/aggregator must be at or above |
+| `isValidatorActive` | Checked on every `commitAuditScore`/`revealAuditScore` call (`TA_AuditorNotActive`) and aggregator registration (`TC_AggregatorNotActive`) |
+| `slash` | Penalise a misbehaving auditor or aggregator, tagged with a `bytes32 reason`; returns the amount actually slashed |
 | `isSlasherContract` | Verify a contract is registered as a slasher (used during model registration) |
 
 ### 3.2 `IDINTaskCoordinator`
@@ -142,6 +156,7 @@ interface IDINTaskAuditor {
     function createAuditorsBatches(uint _GI) external returns (bool);
     function setTestDataAssignedFlag(uint _GI, bool flag) external;
     function finalizeEvaluation(uint _GI) external returns (bool);
+    function slashAuditors(uint _GI) external returns (bool);
     function approvedModelIndexes(uint _GI) external view returns (uint[] memory);
     function updatePassScore(uint256 newPassScore) external;
 }
@@ -153,15 +168,29 @@ Used by: `DINTaskCoordinator`
 |--------|---------|
 | `createAuditorsBatches` | Called by coordinator to trigger batch formation in auditor contract |
 | `setTestDataAssignedFlag` | Signals that test datasets have been distributed to batches |
-| `finalizeEvaluation` | Computes final scores and approval decisions for all submissions |
+| `finalizeEvaluation` | Computes final median scores and approval status for all submitted models; reverts unless `GIstate == LMSevaluationRevealStarted` |
+| `slashAuditors` | Called by coordinator once `GIstate == T2AggregationDone`; slashes auditors who missed their vote, then coordinator transitions to `AuditorsSlashed` |
 | `approvedModelIndexes` | Returns indexes of models that passed evaluation (used for T1/T2 batch formation) |
-| `updatePassScore` | Sets the minimum average score required for model approval (called at start of each GI) |
+| `updatePassScore` | Sets the minimum median score required for model approval (called at start of each GI) |
 
 ---
 
 ## 4. Custom Error Catalogue
 
-### 4.1 DINTaskAuditor Errors (`TA_*`)
+### 4.1 Commit-Then-Reveal Auditor Scoring (task_210726_6 §2a–2b)
+
+| Error | Description |
+|-------|-------------|
+| `TA_CommitPhaseNotOpen` | `commitAuditScore` called while `GIstate != LMSevaluationStarted` |
+| `TA_AlreadyCommitted` | Auditor has already committed a score for this `(gi, batchId, modelIndex)` |
+| `TA_EmptyCommitHash` | `commitHash` argument is `bytes32(0)` |
+| `TA_RevealPhaseNotOpen` | `revealAuditScore` called while `GIstate != LMSevaluationRevealStarted` |
+| `TA_NoCommitFound` | No prior `commitAuditScore` recorded for this auditor/model — reveal without a commit |
+| `TA_RevealHashMismatch` | `keccak256(abi.encodePacked(score, vote, salt))` does not match the stored commit hash |
+| `TC_RevealCannotBeStarted` | `startLMsubmissionsEvaluationReveal` called while `GIstate != LMSevaluationStarted` |
+| `TA_EncryptedKeyCountMismatch` | `assignAuditTestDataset`'s `encryptedKeys` array length does not match the batch's auditor count |
+
+### 4.2 DINTaskAuditor Errors (`TA_*`)
 
 | Error | Description |
 |-------|-------------|
@@ -183,14 +212,17 @@ Used by: `DINTaskCoordinator`
 | `TA_CannotSetTestDataAssignedFlag` | State is not `AuditorsBatchesCreated` |
 | `TA_FlagMustBeTrue` | `setTestDataAssignedFlag` called with `flag = false` |
 | `TA_FlagAlreadySet` | Flag was already set for this GI |
-| `TA_NotAssignedAuditor` | Score submission from auditor not in the batch |
+| `TA_NotAssignedAuditor` | Score commit/reveal from auditor not assigned to the batch |
 | `TA_InvalidModelIndex` | Model index not assigned to this batch |
-| `TA_CannotSetAuditScore` | State is not `LMSevaluationStarted` |
-| `TA_ScoreOutOfRange` | Score > 100 |
-| `TA_AlreadyVoted` | Auditor has already submitted score for this model |
-| `TA_CannotFinalizeEvaluation` | State is not `LMSevaluationStarted` |
+| `TA_CannotSetAuditScore` | Declared but currently unused — dead code left over from the pre-commit-reveal `setAuditScorenEligibility`, which this replaced with `commitAuditScore`/`revealAuditScore`. |
+| `TA_ScoreOutOfRange` | Score > 100 (checked at reveal time) |
+| `TA_AlreadyVoted` | Auditor has already revealed a score for this model |
+| `TA_CannotFinalizeEvaluation` | State is not `LMSevaluationRevealStarted` |
+| `TA_AuditorNotActive` | Auditor's `DinValidatorStake.isValidatorActive()` is false — checked on both commit and reveal |
+| `TA_InvalidDeviationThreshold` | S3 deviation threshold set outside 0–100 range |
+| `TA_EmptyScoreSet` | `_medianOf` called with zero scores to compute a median over |
 
-### 4.2 DINTaskCoordinator Errors (`TC_*`)
+### 4.3 DINTaskCoordinator Errors (`TC_*`)
 
 | Error | Description |
 |-------|-------------|
@@ -205,14 +237,14 @@ Used by: `DINTaskCoordinator`
 | `TC_AggregatorsRegistrationCannotBeStarted` | Registration start called in wrong state |
 | `TC_AggregatorsRegistrationNotOpen` | Aggregator registration in wrong state |
 | `TC_InsufficientStake` | Aggregator stake below threshold |
-| `TC_ValidatorAlreadyRegistered` | Duplicate aggregator registration |
+| `TC_AggregatorAlreadyRegistered` | Duplicate aggregator registration |
 | `TC_AggregatorsRegistrationCannotBeFinished` | Close called in wrong state |
 | `TC_AuditorsRegistrationCannotBeStarted` | Auditor registration start in wrong state |
 | `TC_AuditorsRegistrationCannotBeFinished` | Auditor registration close in wrong state |
 | `TC_LMSubmissionsCannotBeStarted` | LM submission window start in wrong state |
 | `TC_LMSubmissionsNotStarted` | LM submission close when not started |
-| `TC_LMEvalCannotBeStarted` | Evaluation start in wrong state |
-| `TC_LMEvalCannotBeFinished` | Evaluation close in wrong state |
+| `TC_LMEvalCannotBeStarted` | Reused by two functions: `createAuditorsBatches` when state is not `LMSclosed`, and `startLMsubmissionsEvaluation` (opens the commit phase) when state is not `AuditorsBatchesCreated` |
+| `TC_LMEvalCannotBeFinished` | `closeLMsubmissionsEvaluation` called when state is not `LMSevaluationRevealStarted` |
 | `TC_FailedToCreateAuditorsBatches` | `createAuditorsBatches` returned false |
 | `TC_CannotSetTestDataAssignedFlag` | Test data flag set in wrong state |
 | `TC_EvalPhaseNotClosed` | T1/T2 batch creation before evaluation close |
@@ -235,6 +267,8 @@ Used by: `DINTaskCoordinator`
 | `TC_NotReadyToSetTier2Score` | Tier-2 score set in wrong state |
 | `TC_NotReadyToEndGI` | `endGI` called before aggregators slashed |
 | `TC_FailedToFinalizeEvaluation` | `finalizeEvaluation` returned false |
+| `TC_AggregatorNotActive` | Aggregator's `DinValidatorStake.isValidatorActive()` is false |
+| `TC_FailedToSlashAuditors` | `DINTaskAuditor.slashAuditors()` returned false |
 
 ---
 
@@ -248,4 +282,8 @@ Both `DINTaskCoordinator` and `DINTaskAuditor` need to read each other's state (
 
 ### Error Namespacing
 
-The `TA_` and `TC_` prefixes make it immediately clear in stack traces and event logs which contract emitted an error, even when both contracts are interacting in the same transaction.
+The `TA_` and `TC_` prefixes make it immediately clear in stack traces and event logs which contract emitted an error, even when both contracts are interacting in the same transaction. `TC_RevealCannotBeStarted` is the one exception worth calling out: it's grouped with the commit-then-reveal errors in the source (§4.1 above) because it gates the coordinator-side phase transition those errors depend on, but it keeps the `TC_` prefix since it's the coordinator, not the auditor, that reverts with it.
+
+### Commit-Then-Reveal Auditor Scoring
+
+`LMSevaluationStarted` and `LMSevaluationRevealStarted` split what was previously a single evaluation phase into two: auditors first commit `keccak256(score, vote, salt)` (hiding their vote from other auditors until everyone has committed), then, once the model owner closes the commit window via `DINTaskCoordinator.startLMsubmissionsEvaluationReveal`, reveal the underlying `(score, vote, salt)` for it to be counted. An auditor who commits but never reveals is simply excluded from quorum/median counting, and remains slashable via the existing "missed vote" check in `slashAuditors` — no separate non-reveal handling needed.

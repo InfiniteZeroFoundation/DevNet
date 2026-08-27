@@ -7,7 +7,7 @@ Drives a full GI lifecycle for model 0:
   auditor batches → LMS evaluation → aggregation T1+T2 →
   slash → GI end
 
-Expected final state: GIended (index 22).
+Expected final state: GIended (index 23).
 
 Account map:
   0    = DIN-Representative
@@ -477,10 +477,10 @@ def test_gi_end(run):
 
 
 def test_gi_final_state_is_ended(run):
-    """Assert final GI state is GIended (index 22) — the key regression gate."""
+    """Assert final GI state is GIended (index 23) — the key regression gate."""
     run(["system", "connect-wallet", "modelowner"])
     result = run(["task", "gi", "show-state", MODEL_ID])
     assert result.returncode == 0
-    assert "GIended" in result.stdout or "22" in result.stdout, (
+    assert "GIended" in result.stdout or "23" in result.stdout, (
         f"Expected GIended state, got:\n{result.stdout}"
     )

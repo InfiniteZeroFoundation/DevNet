@@ -22,34 +22,26 @@ enum GIstates {
     LMSclosed, // 11
     AuditorsBatchesCreated, // 12
     LMSevaluationStarted, // 13
-    LMSevaluationClosed, // 14
-    T1nT2Bcreated, // 15
-    T1AggregationStarted, // 16
-    T1AggregationDone, // 17
-    T2AggregationStarted, // 18
-    T2AggregationDone, // 19
-    AuditorsSlashed, // 20
-    AggregatorsSlashed, // 21
-    GIended, // 22
     // Reveal phase for commit-then-reveal auditor scoring (task_210726_6 §2a).
-    // Chronologically this sits BETWEEN LMSevaluationStarted (13, now the
-    // commit phase) and LMSevaluationClosed (14) -- appended here instead of
-    // inserted in sequence deliberately: dincli/cli/utils.py's `states` list
-    // is a hand-maintained positional mirror of this enum's raw ordinals
-    // (`states[GIstate]`), and dincli/cli/context.py's
-    // `validate_GIstate_LTE_given_GIstate` compares raw ordinals directly.
-    // Inserting a new member between existing ones would silently shift
-    // every subsequent state's integer value and desync every state name
-    // dincli displays from that point on -- exactly the kind of breakage
-    // "no dincli changes required" (task notes) is telling us to avoid.
-    // Appending is not fully ordinal-monotonic with chronological order (an
-    // LTE check against a threshold between 13 and 22, e.g. "T1nT2Bcreated"
-    // (15), would not treat this state as "before" it) -- audited that this
-    // doesn't break anything today: no dincli LTE check uses a threshold in
-    // that range, and the ones that do (T1nT2Bcreated, checked from
-    // aggregator.py) gate purely read-only "show batches" queries whose
-    // underlying on-chain data doesn't exist yet during this window anyway.
-    LMSevaluationRevealStarted // 23
+    // Inserted here, immediately after the commit phase, rather than
+    // appended at the end as PR #63's own diff originally did (see git
+    // history) -- deliberate deviation, decided 2026-08-27: this ordinal
+    // position matches the state's actual place in the GI lifecycle.
+    // dincli/cli/utils.py's `states`/`stateDescription` positional mirrors
+    // (indexed by this enum's raw ordinals) have been updated to match,
+    // shifting every subsequent entry by +1; see that file and
+    // Documentation/technical/contracts/DINShared.md §2.1 for the full
+    // 24-member table.
+    LMSevaluationRevealStarted, // 14
+    LMSevaluationClosed, // 15
+    T1nT2Bcreated, // 16
+    T1AggregationStarted, // 17
+    T1AggregationDone, // 18
+    T2AggregationStarted, // 19
+    T2AggregationDone, // 20
+    AuditorsSlashed, // 21
+    AggregatorsSlashed, // 22
+    GIended // 23
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
