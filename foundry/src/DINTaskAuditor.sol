@@ -27,9 +27,9 @@ contract DINTaskAuditor is Ownable {
         bytes32 modelCID;
         uint40 submittedAt;
         bool eligible; // majority vote result (basic conformance)
-        bool evaluated; // scoring quorum reached & avg computed
-        bool approved; // approvedForAggregation (avg >= passScore)
-        uint256 finalAvgScore; // 0..100, signed for future expansions
+        bool evaluated; // scoring quorum reached & finalMedianScore computed
+        bool approved; // approvedForAggregation (finalMedianScore >= passScore)
+        uint256 finalMedianScore; // 0..100, Canonical per-model score for both S3 slashing and the reward basis.
     }
 
     // Per-round params (tune for demo vs spec)
@@ -43,6 +43,68 @@ contract DINTaskAuditor is Ownable {
     }
 
     Params public params;
+
+    /// @notice S3 auditor-deviation threshold (task_210726_6 §1d), on the
+    ///         same 0-100 scale as scores. `|auditorScore - median| >
+    ///         s3DeviationThreshold` is computed and emitted via
+    ///         AuditorScoreDeviation in finalizeEvaluation. Whether it also
+    ///         gates slashing in slashAuditors is controlled separately by
+    ///         s3SlashingEnabled -- MECHANISM_DESIGN.md §6: "start with a
+    ///         wide threshold + warning-only shadow mode for the first weeks
+    ///         of DevNet 2.0, then tighten" once empirically validated. This
+    ///         placeholder default (40, i.e. a 40-point swing on a 0-100
+    ///         scale) is deliberately wide and is NOT a validated production
+    ///         value -- don't treat it as tuned.
+    uint256 public s3DeviationThreshold = 40;
+
+    /// @notice Whether S3 (auditor score deviation) actually triggers
+    ///         slashing in slashAuditors, as opposed to only being observable
+    ///         via AuditorScoreDeviation events. Defaults to false (shadow
+    ///         mode): the threshold must be empirically validated before it
+    ///         is allowed to cost auditors stake, per MECHANISM_DESIGN.md §6.
+    bool public s3SlashingEnabled = false;
+
+    event S3DeviationThresholdUpdated(
+        uint256 oldThreshold,
+        uint256 newThreshold
+    );
+    event S3SlashingEnabledUpdated(bool oldValue, bool newValue);
+    event AuditorScoreDeviation(
+        uint256 indexed gi,
+        uint indexed batchId,
+        uint modelIndex,
+        address indexed auditor,
+        uint256 auditorScore,
+        uint256 medianScore,
+        uint256 deviation,
+        bool exceedsThreshold
+    );
+
+    /// @notice Updates the S3 shadow-mode deviation threshold.
+    /// @dev Changing this does not by itself turn on slashing -- see
+    ///      s3SlashingEnabled. While s3SlashingEnabled is false this only
+    ///      changes what AuditorScoreDeviation reports as `exceedsThreshold`.
+    /// @param newThreshold New deviation threshold, 0..100 scale.
+    function setS3DeviationThreshold(uint256 newThreshold) external onlyOwner {
+        if (newThreshold > 100) revert TA_InvalidDeviationThreshold();
+        uint256 old = s3DeviationThreshold;
+        s3DeviationThreshold = newThreshold;
+        emit S3DeviationThresholdUpdated(old, newThreshold);
+    }
+
+    /// @notice Turns S3 slashing on or off in slashAuditors.
+    /// @dev Gate for exiting shadow mode. Enable only once
+    ///      s3DeviationThreshold has been empirically validated against real
+    ///      audit-score variance (MECHANISM_DESIGN.md §6) -- enabling this
+    ///      with an untuned threshold risks slashing honest auditors whose
+    ///      scores legitimately vary across audit test sets.
+    /// @param enabled True to make deviation beyond s3DeviationThreshold
+    ///        slash-worthy in slashAuditors; false to return to shadow mode.
+    function setS3SlashingEnabled(bool enabled) external onlyOwner {
+        bool old = s3SlashingEnabled;
+        s3SlashingEnabled = enabled;
+        emit S3SlashingEnabledUpdated(old, enabled);
+    }
 
     mapping(uint => LMSubmission[]) public lmSubmissions;
 
@@ -237,7 +299,7 @@ contract DINTaskAuditor is Ownable {
                 evaluated: false,
                 approved: false,
                 eligible: false,
-                finalAvgScore: 0,
+                finalMedianScore: 0,
                 submittedAt: uint40(block.timestamp)
             })
         );
@@ -305,6 +367,37 @@ contract DINTaskAuditor is Ownable {
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
         }
+    }
+
+    /// @notice Computes the median of the first `count` entries of `scores`.
+    /// @dev Insertion sort — O(n^2), but n is bounded by params.auditorsPerBatch
+    ///      (demo: 3, spec target: up to ~10), so this is cheap in practice and
+    ///      avoids pulling in a sorting library for a handful of elements.
+    ///      Even-length batches median as the integer-divided average of the
+    ///      two middle elements, consistent with this contract's existing
+    ///      integer-division-for-scores convention.
+    /// @param scores Score array; only indices [0, count) are considered.
+    /// @param count Number of valid entries in `scores` (may be < scores.length).
+    function _medianOf(
+        uint256[] memory scores,
+        uint256 count
+    ) internal pure returns (uint256) {
+        if (count == 0) revert TA_EmptyScoreSet();
+
+        for (uint256 i = 1; i < count; i++) {
+            uint256 key = scores[i];
+            uint256 j = i;
+            while (j > 0 && scores[j - 1] > key) {
+                scores[j] = scores[j - 1];
+                j--;
+            }
+            scores[j] = key;
+        }
+
+        if (count % 2 == 1) {
+            return scores[count / 2];
+        }
+        return (scores[count / 2 - 1] + scores[count / 2]) / 2;
     }
 
     /// @notice Partitions active auditors and submitted models into audit batches.
@@ -543,9 +636,9 @@ contract DINTaskAuditor is Ownable {
         _tryFinalizeEligibility(gi, batchId, modelIndex);
     }
 
-    /// @notice Computes final average scores and approval status for all submitted models.
+    /// @notice Computes final median scores and approval status for all submitted models.
     /// @dev Iterates all batches and models; a model is approved if eligible and its
-    ///      average score meets or exceeds passScore. Returns true if at least one
+    ///      median score meets or exceeds passScore. Returns true if at least one
     ///      model was finalised; reverts if GI state is not LMSevaluationStarted.
     /// @param _GI Current GI index.
     /// @return True if at least one model reached score quorum and was finalised.
@@ -580,29 +673,73 @@ contract DINTaskAuditor is Ownable {
                     _tryFinalizeEligibility(_GI, b, modelIndex);
                 }
 
-                // Compute average score from auditors who actually voted
-                uint sum;
+                // Collect scores from auditors who actually voted. Bounded by
+                // batch.auditors.length (params.auditorsPerBatch, demo: 3,
+                // spec: up to 10), so an in-memory sort here is cheap.
+                uint256[] memory votedScores = new uint256[](
+                    batch.auditors.length
+                );
+                address[] memory votedAuditors = new address[](
+                    batch.auditors.length
+                );
                 uint votes;
 
                 for (uint a = 0; a < batch.auditors.length; a++) {
                     address auditor = batch.auditors[a];
                     if (hasAuditedLM[_GI][b][auditor][modelIndex]) {
-                        sum += auditScores[_GI][b][auditor][modelIndex];
+                        votedScores[votes] = auditScores[_GI][b][auditor][
+                            modelIndex
+                        ];
+                        votedAuditors[votes] = auditor;
                         votes++;
                     }
                 }
 
                 // Only finalize a model's score if score quorum is met
                 if (votes >= params.minScoreQuorum) {
-                    uint256 avg = sum / votes; // integer division
+                    // MECHANISM_DESIGN.md §6 / task_210726_6 §1c: the canonical
+                    // per-model score is the MEDIAN across the auditor batch,
+                    // not a mean — a mean lets a single dishonest auditor drag
+                    // the score arbitrarily far; a median tolerates < 50%
+                    // dishonest auditors (BlockFlow Algorithm 1).
+                    // _medianOf sorts votedScores in place, which would break
+                    // its index alignment with votedAuditors -- compute the
+                    // median first, then re-read each auditor's raw score
+                    // from the source-of-truth mapping (not the now-sorted
+                    // array) when emitting deviations below.
+                    uint256 median = _medianOf(votedScores, votes);
 
-                    sub.finalAvgScore = avg;
+                    sub.finalMedianScore = median;
                     sub.evaluated = true;
 
-                    // Approval requires (i) eligible == true and (ii) avg >= passScore
-                    sub.approved = (sub.eligible && avg >= params.passScore);
+                    // Approval requires (i) eligible == true and (ii) median >= passScore
+                    sub.approved = (sub.eligible && median >= params.passScore);
 
                     finalizedCount++;
+
+                    // §1d: S3 deviation, shadow mode -- computed and emitted
+                    // for every auditor who voted on this model, but does not
+                    // gate approval or trigger any slashing. See
+                    // s3DeviationThreshold's NatSpec.
+                    for (uint i = 0; i < votes; i++) {
+                        address votedAuditor = votedAuditors[i];
+                        uint256 auditorScore = auditScores[_GI][b][
+                            votedAuditor
+                        ][modelIndex];
+                        uint256 deviation = auditorScore > median
+                            ? auditorScore - median
+                            : median - auditorScore;
+                        emit AuditorScoreDeviation(
+                            _GI,
+                            b,
+                            modelIndex,
+                            votedAuditor,
+                            auditorScore,
+                            median,
+                            deviation,
+                            deviation > s3DeviationThreshold
+                        );
+                    }
                 }
             }
         }
@@ -611,10 +748,20 @@ contract DINTaskAuditor is Ownable {
         return finalizedCount > 0;
     }
 
-    /// @notice Slashes any auditor who failed to vote on at least one model in their batch.
-    /// @dev Slash amount equals minStake() at call time. Each slashed auditor emits an
-    ///      AuditorSlashed event. Always returns true; individual slash failures do not
-    ///      halt the loop.
+    /// @notice Slashes auditors who either (S1) failed to vote on at least one
+    ///         model in their batch, or (S3) voted on every model but had a
+    ///         score deviate beyond s3DeviationThreshold from that model's
+    ///         finalMedianScore, when s3SlashingEnabled is true.
+    /// @dev Slash amount equals minStake() at call time for both reasons --
+    ///      see MECHANISM_DESIGN.md §9 item 2 on the still-open flat-vs-partial
+    ///      slash-fraction question, which applies equally to S1 and S3 and is
+    ///      out of scope here. S1 takes priority: an auditor who missed a vote
+    ///      is slashed once for that (AUD_NO_VOTE) and not re-evaluated for
+    ///      S3 in the same batch. An auditor who voted on everything is
+    ///      slashed at most once per batch for S3 (AUD_SCORE_DEVIATION), even
+    ///      if multiple of their votes deviated. Each slashed auditor emits an
+    ///      AuditorSlashed event. Always returns true; individual slash
+    ///      failures do not halt the loop.
     /// @param _GI Current GI index.
     /// @return True on completion.
     function slashAuditors(
@@ -622,18 +769,36 @@ contract DINTaskAuditor is Ownable {
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
         uint256 slashAmount = dinvalidatorStakeContract.minStake();
         uint batchCount = auditBatches[_GI].length;
+        LMSubmission[] storage submissions = lmSubmissions[_GI];
 
         for (uint b = 0; b < batchCount; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
             for (uint a = 0; a < batch.auditors.length; a++) {
                 address auditor = batch.auditors[a];
                 bool missedVote = false;
+                bool exceededDeviation = false;
 
                 for (uint m = 0; m < batch.modelIndexes.length; m++) {
                     uint modelIndex = batch.modelIndexes[m];
                     if (!hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         missedVote = true;
                         break;
+                    }
+
+                    if (
+                        s3SlashingEnabled && submissions[modelIndex].evaluated
+                    ) {
+                        uint256 auditorScore = auditScores[_GI][b][auditor][
+                            modelIndex
+                        ];
+                        uint256 median = submissions[modelIndex]
+                            .finalMedianScore;
+                        uint256 deviation = auditorScore > median
+                            ? auditorScore - median
+                            : median - auditorScore;
+                        if (deviation > s3DeviationThreshold) {
+                            exceededDeviation = true;
+                        }
                     }
                 }
 
@@ -651,6 +816,20 @@ contract DINTaskAuditor is Ownable {
                         slashAmount,
                         actualSlashed
                     );
+                } else if (exceededDeviation) {
+                    uint256 actualSlashed = dinvalidatorStakeContract.slash(
+                        auditor,
+                        slashAmount,
+                        "AUD_SCORE_DEVIATION"
+                    );
+                    emit AuditorSlashed(
+                        _GI,
+                        b,
+                        auditor,
+                        "AUD_SCORE_DEVIATION",
+                        slashAmount,
+                        actualSlashed
+                    );
                 }
             }
         }
@@ -659,7 +838,7 @@ contract DINTaskAuditor is Ownable {
     }
 
     /// @notice Returns the indexes of all models approved for aggregation in the given GI.
-    /// @dev A model is approved when both eligible == true and finalAvgScore >= passScore.
+    /// @dev A model is approved when both eligible == true and finalMedianScore >= passScore.
     /// @param _GI GI index to query.
     /// @return Array of approved model indexes into lmSubmissions[_GI].
     function approvedModelIndexes(

@@ -87,8 +87,8 @@ Consume only contribution-plane outputs for reward weighting while using admissi
 
 From `scoring-mechanism/implementation.md`:
 
-- `dincli/services/scoring.py`
-- `dincli/services/contribution.py`
+- `cache_model_0/services/scoring.py`
+- `cache_model_0/services/contribution.py`
 - normalized auditor results;
 - `contributionReportCID`.
 

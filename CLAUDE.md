@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 InfiniteZero / DIN Protocol DevNet: a federated-learning network coordinated by Solidity contracts on Optimism Sepolia, operated through `dincli`, a Python/Typer CLI. Raw training data never leaves a client's device — only model artifacts (pinned to IPFS) and on-chain coordination state are shared.
 
-The Solidity tree at `hardhat/contracts/` (Hardhat workflow) is used for deployment/verification tooling. 
+The Solidity tree at `foundry/` (Foundry workflow) is the primary toolchain for building, testing, deploying, and verifying contracts, via `foundry/script/`. `hardhat/` remains in the tree as a complementary/secondary toolchain, not the primary path.
+
+Docs convention: `Documentation/` describes what exists in the code on `develop` (not the live Sepolia deployment) — `Documentation/public/` for network participants, `Documentation/technical/` for code readers. `Developer/` holds forward-looking material: `design/` (planned mechanism designs), `issues/` (backlog), `proposals/` (tooling proposals), `tasks/` (contributor task specs), `discussion/`, `rejected-ideas/`, plus ROADMAP.md and process docs. Placement rules: `Developer/README.md`.
 
 ## Commands
 
@@ -26,8 +28,9 @@ Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner` rath
 ### Solidity
 
 ```bash
-cd foundry && forge build && forge test
-cd hardhat && npx hardhat compile && npx hardhat test
+cd foundry && forge build && forge test          # primary: build/test
+forge script script/DeployPlatform.s.sol ...      # primary: deploy (see script/ for deploy/upgrade scripts)
+cd hardhat && npx hardhat compile && npx hardhat test   # secondary/complementary toolchain
 ```
 
 Foundry config: `solc 0.8.28`, `via_ir = true`. Hardhat config: `solc 0.8.28`, `evmVersion: cancun`, local hardhat network forced to `hardfork: cancun` (required for TSTORE/TLOAD support used by the contracts). `hardhat/hardhat.config.ts` loads `../.env` then `../.env.<NETWORK>` (defaults to `local`).
@@ -37,15 +40,15 @@ Foundry config: `solc 0.8.28`, `via_ir = true`. Hardhat config: `solc 0.8.28`, `
 ```bash
 ./foundry/anvil.sh                                   # local anvil chain
 dincli system configure-network --network local      # or sepolia_op_devnet / mainnet
-dincli system connect-wallet --account <account_id>
+dincli system register-wallet --account <account_id>
 ```
 
 ## Architecture
 
 ### Two layers: protocol contracts vs. per-model task contracts
 
-- **Platform-level contracts** (deployed once by the DIN-Representative): `DinCoordinator` (ETH<->DIN exchange, slasher registry admin), `DinToken` (ERC20, minted on ETH deposit), `DinValidatorStake` (validator staking/slashing), `DinModelRegistry` (model registration, open-source vs proprietary fee). See `Documentation/DIN-workflow.md`.
-- **Task-level contracts** (deployed per model by the model owner): `DINTaskCoordinator` and `DINTaskAuditor`. These must be authorized as "slashers" on `DinValidatorStake` (via `DinCoordinator`, only callable by the DIN-Representative) *before* the model owner can register the model in `DinModelRegistry`. See `Documentation/Model-workflow.md` for the full step-by-step (deploy → slasher auth request → genesis model → register → global iterations).
+- **Platform-level contracts** (deployed once by the DIN-Representative): `DinCoordinator` (ETH<->DIN exchange, slasher registry admin), `DinToken` (ERC20, minted on ETH deposit), `DinValidatorStake` (validator staking/slashing), `DinModelRegistry` (model registration, open-source vs proprietary fee). See `Documentation/public/workflows/din-workflow.md`.
+- **Task-level contracts** (deployed per model by the model owner): `DINTaskCoordinator` and `DINTaskAuditor`. These must be authorized as "slashers" on `DinValidatorStake` (via `DinCoordinator`, only callable by the DIN-Representative) *before* the model owner can register the model in `DinModelRegistry`. See `Documentation/public/workflows/model-workflow.md` for the full step-by-step (deploy → slasher auth request → genesis model → register → global iterations).
 
 A model's lifecycle runs in **Global Iterations (GI)**: aggregator/auditor registration → Local Model Submission (LMS) by clients → auditor evaluation/scoring → two-tier aggregation (T1 sub-batches, T2 combines T1 into the new global model) → slashing of misbehaving validators → GI end. Each phase is opened/closed explicitly by the model owner via `dincli model-owner ...` subcommands, and other roles act only within an open phase.
 
@@ -64,7 +67,7 @@ Differential privacy is opt-in per model via a nested `dp` block in the manifest
 
 ### IPFS abstraction
 
-`dincli/services/ipfs.py` supports three interchangeable upload/retrieve backends (env-var-configured IPFS node, Filebase, or a fully custom Python provider) selected via `resolve_ipfs_config()`/`ipfs_provider` config — see `Documentation/guides/ipfs.md`. All CID-bearing artifacts (services, manifests, model weights, ABIs) flow through this layer rather than direct HTTP calls scattered through the CLI.
+`dincli/services/ipfs.py` supports three interchangeable upload/retrieve backends (env-var-configured IPFS node, Filebase, or a fully custom Python provider) selected via `resolve_ipfs_config()`/`ipfs_provider` config — see `Documentation/public/guides/ipfs.md`. All CID-bearing artifacts (services, manifests, model weights, ABIs) flow through this layer rather than direct HTTP calls scattered through the CLI.
 
 ### Networks
 

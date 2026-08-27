@@ -1,5 +1,7 @@
 # Staking Infrastructure
 
+> **Reading note (July 19, 2026):** start with [design/staking-design.md](../design/staking-design.md) — the current entry point for staking design, tracked in [issue #37](https://github.com/InfiniteZeroFoundation/DevNet/issues/37). This file remains the detailed backlog for registry/selection work (WP 1.1/1.2) and the source of the jailing/reactivation/tombstoning proposals adopted there.
+
 ## Summary
 
 This issue defines the staking and validator-selection work needed to turn DIN's current validator gating into a fuller staking infrastructure.

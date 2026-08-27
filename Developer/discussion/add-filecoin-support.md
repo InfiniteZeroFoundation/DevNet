@@ -5,10 +5,13 @@ status: open
 participants:
   - Umer Majeed (Principal Engineer)
   - Abraham Nash (Protocol Founder)
+  - Similoluwa Abidoye (provider research, Discussion #18)
 
 related-issue: Developer/issues/filecoin-integration.md
 decision-target: P3 fee design (before August 2026)
 ---
+
+> **Update (2026-07):** Hands-on evaluation in [Discussion #18](https://github.com/InfiniteZeroFoundation/DevNet/discussions/18) ruled out both providers recommended below. Lighthouse retrieval turned out to be payment-gated even for the uploader's own files (violates the "readers pay nothing" requirement). Storacha's infrastructure (console, API host, both retrieval gateways) is down/deprecated. The current leading candidate is **Filecoin Onchain Cloud** via the `filecoin-pin` CLI — see [`Developer/proposals/filecoin-onchain-cloud.md`](../proposals/filecoin-onchain-cloud.md) for the full writeup (Web/CLI/auth, Session Key delegation model, and dincli integration notes). The provider comparison and recommendation below predate that research and are kept for the record; treat the proposal doc as current.
 
 ## Background
 
@@ -91,20 +94,22 @@ The sponsored upload architecture (see below) requires on-chain storage budget a
 
 ## Best Filecoin-backed providers
 
+*Superseded by hands-on testing — see the 2026-07 update at the top of this doc. Left in place for the record; do not use Lighthouse or Storacha based on this section.*
+
 Three services offer Filecoin-backed storage with IPFS-compatible APIs that would slot into DIN's existing `custom` provider path with minimal friction:
 
-### Lighthouse
+### Lighthouse — ruled out
 - Filecoin storage with fast IPFS retrieval via gateway
 - Supports end-to-end encryption for stored files
 - Simple SDK and REST API
 - Per-account billing; no raw FIL management required
-- **Strong candidate** for DIN's first Filecoin integration
+- **Ruled out:** Discussion #18 found retrieval is payment-gated — even the uploader's own files return `402 Payment Required`. Fails the "readers pay nothing" requirement outright.
 
-### Web3.Storage / Storacha
+### Web3.Storage / Storacha — ruled out
 - W3C UCAN-based delegated upload capabilities natively supported
 - UCAN delegation is precisely the scoped credential model DIN needs for sponsored uploads (see below)
 - Multi-provider Filecoin storage
-- **Strongest fit** for the sponsored upload architecture because delegated upload permissions are a first-class protocol primitive, not a custom workaround
+- **Ruled out:** Discussion #18 found the console, API host, and both retrieval gateways (storacha.link, w3s.link) down/deprecated as of 2026-07. Filecoin Onchain Cloud's Session Key model is the closest available substitute for the UCAN delegation property (see [`Developer/proposals/filecoin-onchain-cloud.md`](../proposals/filecoin-onchain-cloud.md)).
 
 ### Filebase (Filecoin bucket option)
 - Filebase offers a Filecoin-backed storage option alongside its IPFS pin option
@@ -112,7 +117,7 @@ Three services offer Filecoin-backed storage with IPFS-compatible APIs that woul
 - Less decentralised than Lighthouse or Storacha (Filebase is still the intermediary)
 - **Lowest-risk migration path** if the goal is just switching the backing layer without changing operational model
 
-**Recommendation:** Lighthouse for a clean provider swap; Storacha/Web3.Storage if delegated upload capabilities are a P3 priority.
+**Recommendation (superseded, see 2026-07 update above):** Lighthouse for a clean provider swap; Storacha/Web3.Storage if delegated upload capabilities are a P3 priority.
 
 ---
 
@@ -213,7 +218,7 @@ If third parties can upload against a model owner's storage budget, explicit con
 
 ## Open questions
 
-1. Which provider first — Lighthouse (simpler) or Storacha (native UCAN delegation)?
+1. Which provider first — settled: neither Lighthouse (retrieval is payment-gated, even for the uploader's own files) nor Storacha (infrastructure is obsolete/deprecated). Current candidate is Filecoin Onchain Cloud — open question is whether its Session Key model covers the sponsored-upload delegation needs below as well as UCAN would have.
 2. Should the storage broker be an off-chain DIN-operated service initially, with on-chain accounting added in P4?
 3. What is the minimum per-task storage budget, and how is it priced relative to expected model size and round count?
 4. Should audit datasets require Filecoin storage, or is short-lived IPFS pinning sufficient for the auditor path?
@@ -228,7 +233,7 @@ If third parties can upload against a model owner's storage budget, explicit con
 | Should DIN add Filecoin support? | Yes — it is the correct long-term storage layer |
 | When? | Adapter now; sponsored upload in P3 fee design |
 | Primary blocker? | Sponsored upload credential architecture, not technical integration |
-| Best provider? | Storacha for UCAN delegation; Lighthouse for simplicity |
+| Best provider? | Filecoin Onchain Cloud (`filecoin-pin`) — Storacha is obsolete, Lighthouse retrieval is payment-gated (both ruled out by Discussion #18) |
 | Can model owner pay per model? | Yes — per-task storage budget funded at task creation |
 | Can abuse be prevented? | Yes — through scoped credentials, quotas, acceptance gating, and economic controls |
 | Contract changes required? | Not for provider swap; yes for per-task budget accounting (P3/P4) |

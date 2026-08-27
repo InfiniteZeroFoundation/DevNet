@@ -1,15 +1,20 @@
 # dincli/core.py
 from __future__ import annotations
 
+import os
+import sys
 from typing import List
 
+import click
 from typer.core import TyperGroup
+
+from dincli.sdk.errors import DinError
 
 
 class GlobalOptionsGroup(TyperGroup):
-    """Allows global options (--network, --wallet, --version) to appear anywhere in the CLI."""
+    """Allows global options (--network, --wallet, --demokey, --version) to appear anywhere in the CLI."""
 
-    GLOBAL_OPTIONS = {"--network", "--wallet", "--version", "-v"}
+    GLOBAL_OPTIONS = {"--network", "--wallet", "--demokey", "--version", "-v"}
 
     def parse_args(self, ctx, args: List[str]):
         global_args = []
@@ -19,7 +24,7 @@ class GlobalOptionsGroup(TyperGroup):
             arg = args[i]
             if arg in self.GLOBAL_OPTIONS:
                 global_args.append(arg)
-                if arg in ("--network", "--wallet") and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                if arg in ("--network", "--wallet", "--demokey") and i + 1 < len(args) and not args[i + 1].startswith("-"):
                     global_args.append(args[i + 1])
                     i += 1
                 i += 1
@@ -29,3 +34,17 @@ class GlobalOptionsGroup(TyperGroup):
 
         super().parse_args(ctx, global_args + remaining)
         return remaining
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except (DinError, ConnectionError) as e:
+            # DIN_DEBUG=1 (exact match, not truthiness — DIN_DEBUG=0/false would
+            # otherwise enable debug) re-raises the sanitized exception so the
+            # stack is recovered. Every `from None` upstream still suppresses the
+            # provider cause, which may carry a credential — debug mode is not an
+            # exception to that disclosure policy.
+            if os.getenv("DIN_DEBUG") == "1":
+                raise
+            click.secho(str(e), err=True, fg="red")
+            sys.exit(1)
