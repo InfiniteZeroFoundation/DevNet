@@ -21,6 +21,7 @@ TX_NONCE_CONFLICT = "tx_nonce_conflict"
 TX_REPLACEMENT_UNDERPRICED = "tx_replacement_underpriced"
 RECEIPT_MISSING = "receipt_missing"
 RPC_UNREACHABLE = "rpc_unreachable"
+IPFS_CID_MISMATCH = "ipfs_cid_mismatch"
 
 
 class DinError(Exception):
@@ -125,6 +126,7 @@ _ALLOWLIST: dict[str, dict[str, str]] = {
     "network_unreachable": {"endpoint_host": "host"},
     RPC_UNREACHABLE: {"endpoint_host": "host"},
     "ipfs_error": {"provider": "str", "status_code": "int", "path": "str", "stderr": "tail"},
+    IPFS_CID_MISMATCH: {"requested_cid": "str", "computed_cid": "str"},
     "manifest_error": {"path": "str", "key": "str"},
     "contract_error": {"contract": "str", "function": "str"},
     "not_found": {"kind": "str", "id": "int"},

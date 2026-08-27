@@ -16,6 +16,7 @@ from dincli.sdk.config import (
     get_env_key,
     resolve_ipfs_config,
 )
+from dincli.sdk.errors import ConfigError, IPFS_CID_MISMATCH, IpfsError
 from dincli.sdk.log import logger
 
 DEFAULT_PUBLIC_GATEWAY = "https://ipfs.io/ipfs"
@@ -93,9 +94,10 @@ def _provider_label(provider: str) -> str:
 
 def _require_custom_service_path(config):
     if config.service_path is None:
-        raise ValueError(
+        raise ConfigError(
             "Custom IPFS provider requires 'ipfs_service_path' in dincli config. "
-            "Set it with `dincli system configure-ipfs --provider custom --service-path <path>`."
+            "Set it with `dincli system configure-ipfs --provider custom --service-path <path>`.",
+            details={"key": "ipfs_service_path"},
         )
 
     return config.service_path
@@ -139,8 +141,9 @@ def _compute_ipfs_cid_local(file_path: Path) -> str | None:
 def _verify_downloaded_cid(file_path: Path, requested_cid: str, provider: str) -> None:
     """Compare what was downloaded against what was requested.
 
-    Raises ValueError on a genuine mismatch; degrades to a one-time warning
-    when no local `ipfs` binary is available.
+    Raises IpfsError(code="ipfs_cid_mismatch") on a genuine mismatch —
+    distinct from transport failures, so callers can branch on it — and
+    degrades to a one-time warning when no local `ipfs` binary is available.
 
     Skipped for the `custom` provider: it is a user-supplied path that may
     use different chunking or CID settings, so comparing against kubo's
@@ -159,11 +162,16 @@ def _verify_downloaded_cid(file_path: Path, requested_cid: str, provider: str) -
         return
 
     if get_bytes32_from_cid(computed_cid) != get_bytes32_from_cid(requested_cid):
-        raise ValueError(
+        # Message kept verbatim (full computed CID, [:12]-truncated requested
+        # CID) — a CID is a public content address, not a credential, so it is
+        # safe in both the message and (unabridged) details.
+        raise IpfsError(
             f"CID mismatch: downloaded content hashes to {computed_cid}, not "
             f"the requested CID ({requested_cid[:12]}...). Refusing to save — "
             "the provider may be misbehaving, or the content may have been "
-            "tampered with."
+            "tampered with.",
+            code=IPFS_CID_MISMATCH,
+            details={"requested_cid": requested_cid, "computed_cid": computed_cid},
         )
 
 
@@ -236,15 +244,25 @@ def _should_use_fallback() -> tuple[bool, str | None]:
 
     parsed = urlparse(value)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"IPFS_PUBLIC_GATEWAY must be http or https, got {parsed.scheme!r}"
+        raise ConfigError(
+            f"IPFS_PUBLIC_GATEWAY must be http or https, got {parsed.scheme!r}",
+            details={"key": "IPFS_PUBLIC_GATEWAY"},
         )
     if not parsed.netloc:
-        raise ValueError("IPFS_PUBLIC_GATEWAY has no host")
+        raise ConfigError(
+            "IPFS_PUBLIC_GATEWAY has no host",
+            details={"key": "IPFS_PUBLIC_GATEWAY"},
+        )
     if "@" in parsed.netloc:
-        raise ValueError("IPFS_PUBLIC_GATEWAY must not contain credentials (user:pass@)")
+        raise ConfigError(
+            "IPFS_PUBLIC_GATEWAY must not contain credentials (user:pass@)",
+            details={"key": "IPFS_PUBLIC_GATEWAY"},
+        )
     if parsed.fragment:
-        raise ValueError("IPFS_PUBLIC_GATEWAY must not contain a fragment (#)")
+        raise ConfigError(
+            "IPFS_PUBLIC_GATEWAY must not contain a fragment (#)",
+            details={"key": "IPFS_PUBLIC_GATEWAY"},
+        )
 
     return True, value
 
@@ -252,18 +270,25 @@ def _should_use_fallback() -> tuple[bool, str | None]:
 def _raise_for_http_error(response: requests.Response, action: str, provider: str):
     try:
         response.raise_for_status()
-    except requests.HTTPError as exc:
-        details = (response.text or "").strip()
-        details = details[:300] if details else "No error details returned."
-        raise RuntimeError(
-            f"{provider} {action} failed [{response.status_code}]: {details}"
-        ) from exc
+    except requests.HTTPError:
+        # `from None`: requests.HTTPError's own string carries the full request
+        # URL, which for Filebase/env providers embeds the API key. The
+        # response body tail goes into sanitized `details` (allowlisted
+        # "stderr" kind), not the message — the message names only the
+        # provider, action and status code.
+        tail = (response.text or "").strip()
+        tail = tail[:300] if tail else "No error details returned."
+        raise IpfsError(
+            f"{provider} {action} failed [{response.status_code}]",
+            details={"provider": provider, "status_code": response.status_code, "stderr": tail},
+        ) from None
 
 
 def _upload_via_env(config, file_path: Path) -> str:
     if not config.api_url_add:
-        raise ValueError(
-            "IPFS provider 'env' requires IPFS_API_URL_ADD in the current .env or environment."
+        raise ConfigError(
+            "IPFS provider 'env' requires IPFS_API_URL_ADD in the current .env or environment.",
+            details={"key": "IPFS_API_URL_ADD"},
         )
 
     with file_path.open("rb") as handle:
@@ -279,8 +304,9 @@ def _upload_via_env(config, file_path: Path) -> str:
 
 def _upload_via_filebase(config, file_path: Path) -> str:
     if not config.api_key:
-        raise ValueError(
-            "Filebase IPFS provider requires 'ipfs_api_key' in dincli config."
+        raise ConfigError(
+            "Filebase IPFS provider requires 'ipfs_api_key' in dincli config.",
+            details={"key": "ipfs_api_key"},
         )
 
     headers = {"Authorization": f"Bearer {config.api_key}"}
@@ -335,7 +361,12 @@ def upload_to_ipfs(file_path, msg=None):
             logger.info("Uploading via Custom IPFS provider...")
             cid = _upload_via_custom(config, normalized_path, msg)
         else:
-            raise NotImplementedError(f"Unsupported IPFS provider: {provider}")
+            # A bad `provider` value is a configuration problem, not a distinct
+            # taxonomy of its own.
+            raise ConfigError(
+                f"Unsupported IPFS provider: {provider}",
+                details={"key": "ipfs_provider"},
+            )
 
         normalized_cid = get_cidv1base32_from_cid(cid)
         if msg:
@@ -343,7 +374,12 @@ def upload_to_ipfs(file_path, msg=None):
         return normalized_cid
 
     except requests.exceptions.RequestException as exc:
-        raise RuntimeError(f"{_provider_label(provider)} upload failed: {exc.__class__.__name__}") from exc
+        # `from None`: a requests exception's string carries the full request
+        # URL, which may embed an API key.
+        raise IpfsError(
+            f"{_provider_label(provider)} upload failed: {exc.__class__.__name__}",
+            details={"provider": provider},
+        ) from None
 
 
 def _retrieve_via_url(base_url: str, cid: str, label: str) -> requests.Response:
@@ -372,7 +408,10 @@ def _retrieve_via_env(config, cid: str) -> requests.Response:
         if not _warned_no_provider:
             logger.error(_NO_PROVIDER_MSG)
             _warned_no_provider = True
-        raise ValueError(f"No IPFS retrieval endpoint configured. {_NO_PROVIDER_MSG}")
+        raise ConfigError(
+            f"No IPFS retrieval endpoint configured. {_NO_PROVIDER_MSG}",
+            details={"key": "IPFS_API_URL_RETRIEVE"},
+        )
 
     if not _warned_fallback:
         logger.warning(_FALLBACK_MSG)
@@ -383,8 +422,9 @@ def _retrieve_via_env(config, cid: str) -> requests.Response:
 
 def _retrieve_via_filebase(config, cid: str) -> requests.Response:
     if not config.api_key:
-        raise ValueError(
-            "Filebase IPFS provider requires 'ipfs_api_key' in dincli config."
+        raise ConfigError(
+            "Filebase IPFS provider requires 'ipfs_api_key' in dincli config.",
+            details={"key": "ipfs_api_key"},
         )
 
     response = requests.post(
@@ -461,14 +501,23 @@ def retrieve_from_ipfs(hash_value, retrieved_file_path):
             result = fn(hash_value, safe_path)
             status_code = result if result is not None else 200
         else:
-            raise NotImplementedError(f"Unsupported IPFS provider: {provider}")
+            raise ConfigError(
+                f"Unsupported IPFS provider: {provider}",
+                details={"key": "ipfs_provider"},
+            )
 
         logger.info(f"Retrieved to: {safe_path}")
         return status_code
 
     except requests.exceptions.RequestException as exc:
-        logger.error(f"IPFS retrieval failed for {hash_value[:12]}: {exc}")
-        raise RuntimeError(f"Failed to retrieve CID {hash_value[:12]}") from exc
+        # Log only the exception type: a RequestException's string carries the
+        # full request URL, which may embed an API key — the same reasoning as
+        # the `from None` below.
+        logger.error(f"IPFS retrieval failed for {hash_value[:12]}: {type(exc).__name__}")
+        raise IpfsError(
+            f"Failed to retrieve CID {hash_value[:12]}",
+            details={"provider": provider},
+        ) from None
     finally:
         # The custom provider returns whatever its module returns, which may
         # not be a Response — guard so a missing close() can't mask the real

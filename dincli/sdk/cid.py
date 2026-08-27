@@ -8,6 +8,8 @@ that path remains as a thin re-export shim for backward compatibility.
 """
 import cid as _cid
 
+from dincli.sdk.errors import ValidationError
+
 
 def get_bytes32_from_cid(cid_str: str) -> str:
     """
@@ -78,10 +80,21 @@ def validate_cid(cid_str: str) -> str:
 
         encoded = quote(validate_cid(hash_value), safe="")
 
-    Raises ValueError for any input that py-cid rejects: malformed CIDs,
-    path-traversal strings, empty input, etc.
+    Raises ValidationError for any input that py-cid rejects: malformed CIDs,
+    path-traversal strings, empty input, wrong type, etc. A CID is a public
+    content address, not a credential, so it is safe to include verbatim in
+    the message (unlike RPC URLs or API keys elsewhere in the SDK).
     """
     if not isinstance(cid_str, str):
-        raise ValueError(f"CID must be a string, got {type(cid_str).__name__}")
-    _cid.make_cid(cid_str)
+        raise ValidationError(
+            f"CID must be a string, got {type(cid_str).__name__}",
+            details={"field": "cid", "actual": type(cid_str).__name__},
+        )
+    try:
+        _cid.make_cid(cid_str)
+    except Exception as e:
+        raise ValidationError(
+            f"Invalid CID: {cid_str!r}",
+            details={"field": "cid"},
+        ) from None
     return cid_str
