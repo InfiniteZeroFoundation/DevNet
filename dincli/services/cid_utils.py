@@ -10,10 +10,12 @@ from dincli.sdk.cid import (  # noqa: F401
     get_bytes32_from_cid,
     get_cid_from_bytes32,
     get_cidv1base32_from_cid,
+    validate_cid,
 )
 
 __all__ = [
     "get_bytes32_from_cid",
     "get_cid_from_bytes32",
     "get_cidv1base32_from_cid",
+    "validate_cid",
 ]

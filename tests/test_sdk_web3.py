@@ -18,7 +18,11 @@ def test_get_w3_raises_network_error_on_unreachable(monkeypatch):
     with pytest.raises(NetworkError) as exc:
         sdk_web3.get_w3("testnet")
     assert exc.value.code == RPC_UNREACHABLE
-    assert "http://unreachable:8545" in exc.value.message
+    # The RPC URL routinely embeds an API key, so it must never appear in the
+    # message — only the network name does. The (sanitized) URL still reaches
+    # `details`, which is structured, allowlisted context, not user-facing text.
+    assert "http://unreachable:8545" not in exc.value.message
+    assert "testnet" in exc.value.message
     assert exc.value.details["endpoint_host"] == "http://unreachable:8545"
 
 

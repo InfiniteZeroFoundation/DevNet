@@ -131,6 +131,10 @@ error TA_AlreadyVoted();
 error TA_CannotFinalizeEvaluation();
 /// @dev Auditor's validator status is not Active.
 error TA_AuditorNotActive();
+/// @dev S3 deviation threshold must be in the range [0, 100].
+error TA_InvalidDeviationThreshold();
+/// @dev _medianOf requires at least one entry to compute a median over.
+error TA_EmptyScoreSet();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator

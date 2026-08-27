@@ -7,7 +7,7 @@ from datetime import datetime
 from getpass import getpass
 from importlib.resources import files
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import typer
 from eth_account import Account
@@ -59,9 +59,39 @@ from dincli.sdk.wallet import (  # moved to SDK — re-exported for CLI compatib
     KeystoreSigner,
     PrivateKeySigner,
 )
-from dincli.sdk.errors import SignerUnavailable, WalletError
+from dincli.sdk.errors import ChainIdMismatchError, SignerUnavailable, WalletError  # noqa: F401 — re-exported for CLI/test compatibility
 
 MIN_STAKE = 10*10**18
+
+
+class ReadResult(NamedTuple):
+    value: int       # last successfully observed value; the baseline if every read raised
+    settled: bool    # True iff a read showed value > baseline
+    observed: bool   # False iff every read raised
+
+
+def read_after_write(read_fn, *, baseline, attempts=5, delay=2.0) -> ReadResult:
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
+    last_value = baseline
+    # Tracked across attempts, not inferred from the final one: a read that
+    # succeeds and is then followed by a failing final attempt has still been
+    # observed, and its value is more useful than the stale baseline.
+    observed = False
+    for i in range(attempts):
+        try:
+            value = read_fn()
+        except Exception:
+            if i < attempts - 1:
+                time.sleep(delay)
+            continue
+        observed = True
+        last_value = value
+        if value > baseline:
+            return ReadResult(value=value, settled=True, observed=True)
+        if i < attempts - 1:
+            time.sleep(delay)
+    return ReadResult(value=last_value, settled=False, observed=observed)
 
 
 def _cleanup_stale_session() -> None:
@@ -116,7 +146,10 @@ def load_account(name: str = "default") -> Account:
         return Account.from_key(private_key)
 
     keystore_data = _extract_keystore(data)
-    env_pass = get_env_key("DIN_WALLET_PASSWORD")
+
+    # Fetch DIN_WALLET_PASSWORD once and thread it through the password helpers so a
+    # single unlock parses .env once rather than twice (get_env_key has no memoization).
+    env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
 
     password = getpass("Enter wallet password: ")
     try:
@@ -146,9 +179,15 @@ def _get_password(name: str = "default", prompt: bool = True,
 
     # 1. Environment variable
     if env_pass is _UNSET:
-        env_pass = get_env_key("DIN_WALLET_PASSWORD")
+        env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
     if env_pass:
         return env_pass
+
+    # 1b. Yellow fallback line — only here, not at the call site
+    console.print(
+        "[yellow]DIN_WALLET_PASSWORD not found in environment; "
+        "checking session cache or prompting...[/yellow]"
+    )
 
     # 2. Session cache
     if not is_new_wallet:

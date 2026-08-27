@@ -3,7 +3,7 @@
 **Date:** 2026-07-06
 **Status:** Decision record + explainer
 **Decides:** How `dincli` deploys the four upgradeable platform contracts (`DinToken`, `DinCoordinator`, `DinValidatorStake`, `DINModelRegistry`), and why the Hardhat-vs-Foundry question is almost entirely irrelevant to that decision.
-**Related:** [`hardhat/README.md`](./hardhat/README.md) (contract design), `Developer/Documentation/technical/storage_layout.md`, `Developer/discussion/migrate_to_foundy.md`
+**Related:** [`hardhat/README.md`](./hardhat/README.md) (contract design), [`storage_layout.md`](../storage_layout.md), `Developer/discussion/migrate_to_foundy.md`
 
 ---
 

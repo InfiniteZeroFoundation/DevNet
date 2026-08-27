@@ -1,5 +1,9 @@
 # Model_0 — Infinite Zero Network Protocol
 
+> [!TIP]
+> Hit an error or get stuck anywhere in this guide? Post it in the
+> [DevNet 2.0 pre-launch discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/102).
+
 Welcome to the onboarding guide for **Model_0** on the Infinite Zero Network.
 
 Infinite Zero Network devnet has been launched as `sepolia-op-devnet`.

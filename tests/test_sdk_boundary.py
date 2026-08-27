@@ -66,11 +66,59 @@ def test_sanitize_drops_secrets_and_unlisted_keys():
 
 
 def test_sanitize_strips_url_credentials():
+    """Userinfo, query string AND path are all dropped — only scheme://host[:port]
+    survives. Path-style API keys (the two largest RPC providers) mean the path
+    can carry a secret just as easily as userinfo or a query string."""
     clean = sanitize_details(
         errors.RPC_UNREACHABLE,
         {"endpoint_host": "https://user:key@rpc.example.com:8545/v1?token=abc"},
     )
-    assert clean["endpoint_host"] == "https://rpc.example.com:8545/v1"
+    assert clean["endpoint_host"] == "https://rpc.example.com:8545"
+
+
+def test_sanitize_host_strips_query_string_key():
+    clean = sanitize_details(
+        errors.RPC_UNREACHABLE,
+        {"endpoint_host": "https://rpc.example.com/rpc?apikey=SECRET_KEY"},
+    )
+    assert clean["endpoint_host"] == "https://rpc.example.com"
+    assert "SECRET_KEY" not in clean["endpoint_host"]
+
+
+def test_sanitize_host_strips_path_key_infura_shape():
+    clean = sanitize_details(
+        errors.RPC_UNREACHABLE,
+        {"endpoint_host": "https://mainnet.infura.io/v3/SECRET_KEY"},
+    )
+    assert clean["endpoint_host"] == "https://mainnet.infura.io"
+    assert "SECRET_KEY" not in clean["endpoint_host"]
+
+
+def test_sanitize_host_strips_path_key_alchemy_shape():
+    clean = sanitize_details(
+        errors.RPC_UNREACHABLE,
+        {"endpoint_host": "https://eth.alchemy.com/v2/SECRET_KEY"},
+    )
+    assert clean["endpoint_host"] == "https://eth.alchemy.com"
+    assert "SECRET_KEY" not in clean["endpoint_host"]
+
+
+def test_sanitize_host_strips_fragment():
+    clean = sanitize_details(
+        errors.RPC_UNREACHABLE,
+        {"endpoint_host": "https://rpc.example.com/rpc#SECRET_FRAGMENT"},
+    )
+    assert clean["endpoint_host"] == "https://rpc.example.com"
+    assert "SECRET_FRAGMENT" not in clean["endpoint_host"]
+
+
+def test_sanitize_host_unparsable_input_returns_placeholder_not_raw_value():
+    clean = sanitize_details(
+        errors.RPC_UNREACHABLE,
+        {"endpoint_host": "not a url at all SECRET_TOKEN"},
+    )
+    assert clean["endpoint_host"] == "<unparsable-endpoint>"
+    assert "SECRET_TOKEN" not in clean["endpoint_host"]
 
 
 def test_unknown_code_yields_empty_details():

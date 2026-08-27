@@ -163,7 +163,7 @@ def get_demo_account_index(address: str) -> int:  # :146 — path changed to fil
 
 def _cache_password_in_memory(name: str, password: str, env_pass=_UNSET) -> None:  # :255
     if env_pass is _UNSET:
-        env_pass = get_env_key("DIN_WALLET_PASSWORD")
+        env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
     if env_pass:
         return
     ttl = int(os.environ.get("DIN_PASSWORD_TTL", _PASSWORD_TTL_DEFAULT))
@@ -205,7 +205,7 @@ def resolve_password(name: str, *, env_pass=_UNSET) -> str | None:
     prompt. Never blocks on stdin.
     """
     if env_pass is _UNSET:
-        env_pass = get_env_key("DIN_WALLET_PASSWORD")
+        env_pass = get_env_key("DIN_WALLET_PASSWORD", verbose=False)
     if env_pass:
         return env_pass
 
