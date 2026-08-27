@@ -154,10 +154,19 @@ def create_testdataset(
             for batch_id in range(audtor_batch_count):
                 test_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(audit_testDataCIDs[batch_id]))
 
+                # assignAuditTestDataset requires exactly one encrypted key per
+                # auditor in the batch (task_210726_6 §2b) -- per-validator
+                # key encryption itself is a dincli-side follow-up (the task
+                # scope was on-chain plumbing only), so this sends empty
+                # placeholders in auditor order to keep the array length
+                # requirement satisfied without claiming real encryption exists.
+                _, batch_auditors, _, _ = taskauditor_contract.functions.getAuditorsBatch(ref_gi, batch_id).call()
+                encrypted_keys = [b"" for _ in batch_auditors]
+
                 time.sleep(5)
                 build_and_send_tx(
                     ctx,
-                    taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32),
+                    taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32, encrypted_keys),
                     f"Assigning test dataset for auditor batch {batch_id}",
                     f"Test dataset assigned for auditor batch : {batch_id}",
                     f"Failed to assign test dataset for auditor batch : {batch_id}",

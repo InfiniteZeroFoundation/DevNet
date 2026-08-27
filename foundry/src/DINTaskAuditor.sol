@@ -136,7 +136,30 @@ contract DINTaskAuditor is Ownable {
     mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has voted
         public hasAuditedLM;
 
+    // Commit-then-reveal (task_210726_6 §2a). commitHash = keccak256(abi.encodePacked(score, vote, salt)).
+    // hasCommittedLM is distinct from hasAuditedLM: hasAuditedLM is set only
+    // on a successful reveal and remains the single source of truth for
+    // quorum/median counting, exactly as before -- an auditor who commits
+    // but never reveals has hasCommittedLM=true, hasAuditedLM=false, and is
+    // therefore excluded from quorum/median counting and slashAuditors'
+    // "missed vote" check the same way a total non-participant already was,
+    // with no extra logic needed to avoid "silently corrupting quorum
+    // counting."
+    mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bytes32)))) // GI // batchId // auditor // modelIndex // commitHash
+        public auditScoreCommits;
+
+    mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has committed
+        public hasCommittedLM;
+
     mapping(uint256 => bool) public Is_testdataCIDs_Assigned;
+
+    // §2b: per-validator encrypted test-data key mapping. GI => batchId =>
+    // auditor => that auditor's copy of the test-data decryption key,
+    // encrypted to their public key off-chain. Populated in
+    // assignAuditTestDataset. On-chain plumbing only -- no dincli/Python
+    // decryption change, per the task's explicit scope boundary.
+    mapping(uint256 => mapping(uint => mapping(address => bytes))) // GI // batchId // auditor // encrypted key
+        public encryptedTestDataKey;
 
     modifier onlyAssignedAuditor(
         uint256 gi,
@@ -171,6 +194,21 @@ contract DINTaskAuditor is Ownable {
         address indexed auditor,
         uint modelIndex,
         uint256 score
+    );
+
+    event AuditScoreCommitted(
+        uint256 indexed gi,
+        uint indexed batchId,
+        address indexed auditor,
+        uint modelIndex,
+        bytes32 commitHash
+    );
+
+    event EncryptedTestDataKeysAssigned(
+        uint256 indexed gi,
+        uint indexed batchId,
+        bytes32 testDataCID,
+        uint256 auditorCount
     );
 
     event EligibilityVoted(
@@ -506,21 +544,41 @@ contract DINTaskAuditor is Ownable {
         );
     }
 
-    /// @notice Records the test dataset CID for a specific audit batch.
-    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked.
+    /// @notice Records the test dataset CID for a specific audit batch, and
+    ///         each assigned auditor's individually-encrypted decryption key.
+    /// @dev Must be called once per batch before setTestDataAssignedFlag is
+    ///      invoked. `encryptedKeys[i]` must correspond to
+    ///      `auditBatches[gi][batchId].auditors[i]` (same order
+    ///      createAuditorsBatches populated them in) -- task_210726_6 §2b:
+    ///      whitepaper §5.2.3b per-validator key encryption, on-chain
+    ///      plumbing only. The model owner is responsible for producing
+    ///      `encryptedKeys` off-chain (symmetric test-data key encrypted to
+    ///      each auditor's public key); the contract only stores what it's
+    ///      given, it does not and cannot validate the encryption itself.
     /// @param gi Current GI index.
     /// @param batchId Batch index to assign the test dataset to.
     /// @param testDataCID IPFS CID of the test dataset, encoded as bytes32.
+    /// @param encryptedKeys Per-auditor encrypted test-data keys, ordered to
+    ///        match auditBatches[gi][batchId].auditors.
     function assignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
-        bytes32 testDataCID
+        bytes32 testDataCID,
+        bytes[] calldata encryptedKeys
     ) external onlyOwner onlyCurrentGI(gi) {
         if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
-        if (auditBatches[gi][batchId].batchId != batchId)
-            revert TA_BatchIDMismatch();
+        AuditBatch storage batch = auditBatches[gi][batchId];
+        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+        if (encryptedKeys.length != batch.auditors.length)
+            revert TA_EncryptedKeyCountMismatch();
 
-        auditBatches[gi][batchId].testDataCID = testDataCID;
+        batch.testDataCID = testDataCID;
+
+        for (uint256 i = 0; i < encryptedKeys.length; i++) {
+            encryptedTestDataKey[gi][batchId][batch.auditors[i]] = encryptedKeys[i];
+        }
+
+        emit EncryptedTestDataKeysAssigned(gi, batchId, testDataCID, encryptedKeys.length);
     }
 
     /// @notice Marks test dataset distribution as complete for the given GI.
@@ -596,37 +654,85 @@ contract DINTaskAuditor is Ownable {
         );
     }
 
-    /// @notice Submits an audit score and eligibility vote for a specific model.
-    /// @dev Caller must be the assigned auditor for this batch and model index.
-    ///      Each auditor may vote at most once per model. If the eligibility quorum
-    ///      is reached after this vote, eligibility is finalised immediately.
+    /// @notice Phase 1 of commit-then-reveal auditor scoring: lock in a
+    ///         hidden (score, vote) pair.
+    /// @dev Caller must be the assigned auditor for this batch and model
+    ///      index. `commitHash` must equal `keccak256(abi.encodePacked(score,
+    ///      vote, salt))` for the values the auditor intends to reveal later
+    ///      -- the contract cannot and does not validate this at commit time
+    ///      (that's the point; nothing about score/vote is visible yet).
+    ///      Open only while GIstate == LMSevaluationStarted (the commit
+    ///      window); revealing happens in a separate, later-gated phase
+    ///      (LMSevaluationRevealStarted) so no auditor can see another's
+    ///      revealed score before committing their own.
     /// @param gi Current GI index.
     /// @param batchId Batch index containing this model.
     /// @param modelIndex Index into lmSubmissions[gi] for the model being scored.
-    /// @param score Audit score in the range [0, 100].
-    /// @param vote True if the auditor deems the model eligible, false otherwise.
-    function setAuditScorenEligibility(
+    /// @param commitHash keccak256(abi.encodePacked(score, vote, salt)).
+    function commitAuditScore(
+        uint256 gi,
+        uint batchId,
+        uint modelIndex,
+        bytes32 commitHash
+    ) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
+        if (dintaskcoordinatorContract.GIstate() != GIstates.LMSevaluationStarted)
+            revert TA_CommitPhaseNotOpen();
+        if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
+            revert TA_AuditorNotActive();
+        }
+        if (commitHash == bytes32(0)) revert TA_EmptyCommitHash();
+        if (hasCommittedLM[gi][batchId][msg.sender][modelIndex])
+            revert TA_AlreadyCommitted();
+
+        auditScoreCommits[gi][batchId][msg.sender][modelIndex] = commitHash;
+        hasCommittedLM[gi][batchId][msg.sender][modelIndex] = true;
+
+        emit AuditScoreCommitted(gi, batchId, msg.sender, modelIndex, commitHash);
+    }
+
+    /// @notice Phase 2 of commit-then-reveal: reveal the (score, vote, salt)
+    ///         behind a prior commitment and have it counted.
+    /// @dev Reverts unless the caller committed in this same (gi, batchId,
+    ///      modelIndex) and the revealed values hash to that commitment.
+    ///      Open only while GIstate == LMSevaluationRevealStarted, strictly
+    ///      after the commit window has been closed by the model owner --
+    ///      see DINTaskCoordinator.startLMsubmissionsEvaluationReveal.
+    ///      An auditor who committed but never reveals simply never sets
+    ///      hasAuditedLM, so they are excluded from quorum/median counting
+    ///      exactly like a non-participant, and remain slashable via the
+    ///      existing slashAuditors() "missed vote" check -- no special-casing
+    ///      needed for the non-reveal case.
+    /// @param gi Current GI index.
+    /// @param batchId Batch index containing this model.
+    /// @param modelIndex Index into lmSubmissions[gi] for the model being scored.
+    /// @param score Audit score in the range [0, 100] -- must match the committed hash.
+    /// @param vote True if the auditor deems the model eligible, false otherwise -- must match the committed hash.
+    /// @param salt Arbitrary value chosen at commit time to prevent hash pre-image search.
+    function revealAuditScore(
         uint256 gi,
         uint batchId,
         uint modelIndex,
         uint256 score,
-        bool vote
-    ) public onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
-        if (
-            dintaskcoordinatorContract.GIstate() !=
-            GIstates.LMSevaluationStarted
-        ) revert TA_CannotSetAuditScore();
+        bool vote,
+        bytes32 salt
+    ) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
+        if (dintaskcoordinatorContract.GIstate() != GIstates.LMSevaluationRevealStarted)
+            revert TA_RevealPhaseNotOpen();
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TA_AuditorNotActive();
         }
         if (score > 100) revert TA_ScoreOutOfRange();
+        if (!hasCommittedLM[gi][batchId][msg.sender][modelIndex])
+            revert TA_NoCommitFound();
         if (hasAuditedLM[gi][batchId][msg.sender][modelIndex])
             revert TA_AlreadyVoted();
 
-        auditScores[gi][batchId][msg.sender][modelIndex] = score;
-        // Record the vote
-        LMeligibleVote[gi][batchId][msg.sender][modelIndex] = vote;
+        bytes32 expectedHash = keccak256(abi.encodePacked(score, vote, salt));
+        if (expectedHash != auditScoreCommits[gi][batchId][msg.sender][modelIndex])
+            revert TA_RevealHashMismatch();
 
+        auditScores[gi][batchId][msg.sender][modelIndex] = score;
+        LMeligibleVote[gi][batchId][msg.sender][modelIndex] = vote;
         hasAuditedLM[gi][batchId][msg.sender][modelIndex] = true;
 
         emit AuditScoreSubmitted(gi, batchId, msg.sender, modelIndex, score);
@@ -639,7 +745,8 @@ contract DINTaskAuditor is Ownable {
     /// @notice Computes final median scores and approval status for all submitted models.
     /// @dev Iterates all batches and models; a model is approved if eligible and its
     ///      median score meets or exceeds passScore. Returns true if at least one
-    ///      model was finalised; reverts if GI state is not LMSevaluationStarted.
+    ///      model was finalised; reverts if GI state is not LMSevaluationRevealStarted
+    ///      (i.e. the commit-then-reveal reveal window, task_210726_6 §2a).
     /// @param _GI Current GI index.
     /// @return True if at least one model reached score quorum and was finalised.
     function finalizeEvaluation(
@@ -647,7 +754,7 @@ contract DINTaskAuditor is Ownable {
     ) public onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
         if (
             dintaskcoordinatorContract.GIstate() !=
-            GIstates.LMSevaluationStarted
+            GIstates.LMSevaluationRevealStarted
         ) revert TA_CannotFinalizeEvaluation();
 
         LMSubmission[] storage submissions = lmSubmissions[_GI];

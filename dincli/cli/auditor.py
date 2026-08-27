@@ -1,9 +1,12 @@
-from pathlib import Path
+import json
+import secrets
 import time
+from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.table import Table
+from web3 import Web3
 from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
@@ -18,6 +21,31 @@ from dincli.cli.worker import (
     write_worker_job,
 )
 from dincli.services.cid_utils import get_cid_from_bytes32
+
+# Local persistence for the commit-then-reveal auditor scoring flow
+# (task_210726_6 §2a): the (score, vote, salt) triple committed at commit
+# time must be reproduced exactly at reveal time, so it's cached to disk
+# between the two commands rather than recomputed (recomputing would also
+# require re-running the scoring worker a second time).
+def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Path:
+    return model_base_dir / "audits" / "commits" / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
+
+
+def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes) -> None:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"score": score, "vote": vote, "salt": salt.hex()}, f)
+
+
+def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Optional[dict]:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+    if not path.exists():
+        return None
+    with open(path) as f:
+        data = json.load(f)
+    data["salt"] = bytes.fromhex(data["salt"])
+    return data
 
 app = typer.Typer(help="Commands for Auditors in DIN.")
 
@@ -429,18 +457,96 @@ def evaluate_lms(
             console.print(f"Eligible: {eligible}")
 
             if submit:
+                score_int = int(score)
+                vote_bool = bool(eligible)
+                salt = secrets.token_bytes(32)
+                commit_hash = Web3.solidity_keccak(
+                    ["uint256", "bool", "bytes32"], [score_int, vote_bool, salt]
+                )
+
                 try:
                     time.sleep(0.5)
                     build_and_send_tx(
                         ctx,
-                        task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)),
-                        f"Submitting audit score and eligibility for LM {model_index} from batch {batch_id}",
-                        f"Audit score and eligibility submitted successfully for LM {model_index} from batch {batch_id}!",
-                        f"Audit score and eligibility submission failed for LM {model_index} from batch {batch_id}!",
+                        task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
+                        f"Committing audit score for LM {model_index} from batch {batch_id}",
+                        f"Audit score committed for LM {model_index} from batch {batch_id}! Reveal after the model owner opens the reveal window.",
+                        f"Audit score commit failed for LM {model_index} from batch {batch_id}!",
                         exit_on_failure=False
                     )
+                    # Only cache locally once the commit tx is known to have
+                    # been attempted -- reveal is a no-op without this file.
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                 except Exception as e:
-                    console.print(f"[bold red]✗ Error submitting  Audit score and eligibility for LM {model_index} from batch {batch_id}: {e}[/bold red]")
+                    console.print(f"[bold red]✗ Error committing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
 
     if not found_any:
         console.print("[yellow]No matching assigned auditor batches found.[/yellow]")
+
+
+@lms_evaluation_app.command("reveal")
+def reveal_lms(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model index"),
+    lmi: int = typer.Option(None, "--lmi", help="LM index"),
+    batch: int = typer.Option(None, "--batch", help="Batch index"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Reveal audit scores previously committed via `evaluate --submit`."""
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract, task_auditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+
+    curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+
+    ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationRevealStarted", "Can not reveal audit scores at this time")
+
+    audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(curr_GI).call()
+    model_base_dir = ctx.obj.get_model_base_dir(model_id)
+
+    found_any = False
+
+    for batch_id in range(audtor_batch_count):
+        if batch is not None and batch != batch_id:
+            continue
+
+        audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
+        auditors_in_batch = audit_batch[1]
+        model_indexes = audit_batch[2]
+
+        if account.address not in auditors_in_batch:
+            if batch is not None and batch == batch_id:
+                console.print(f"[bold red]✗ You are not assigned to batch {batch_id}![/bold red]")
+            continue
+
+        for model_index in model_indexes:
+            if lmi is not None and lmi != model_index:
+                continue
+
+            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index)
+            if commit is None:
+                console.print(f"[yellow]No local commit found for LM {model_index} from batch {batch_id} -- skipping.[/yellow]")
+                continue
+
+            found_any = True
+            console.print(f"[bold green]Revealing audit score for LM {model_index} from batch {batch_id}[/bold green]")
+
+            try:
+                build_and_send_tx(
+                    ctx,
+                    task_auditor_contract.functions.revealAuditScore(
+                        curr_GI, batch_id, model_index, commit["score"], commit["vote"], commit["salt"]
+                    ),
+                    f"Revealing audit score for LM {model_index} from batch {batch_id}",
+                    f"Audit score revealed for LM {model_index} from batch {batch_id}!",
+                    f"Audit score reveal failed for LM {model_index} from batch {batch_id}!",
+                    exit_on_failure=False
+                )
+            except Exception as e:
+                console.print(f"[bold red]✗ Error revealing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
+
+    if not found_any:
+        console.print("[yellow]No local commits found to reveal.[/yellow]")
