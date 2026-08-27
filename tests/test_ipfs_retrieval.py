@@ -24,6 +24,7 @@ import requests
 from dincli.cli import utils
 from dincli.sdk import config as sdk_config
 from dincli.sdk import ipfs
+from dincli.sdk.errors import ConfigError, IpfsError
 
 # Real CIDs — retrieval validates the CID before it reaches a URL.
 CID = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
@@ -190,7 +191,7 @@ def test_missing_endpoint_without_fallback_raises_actionable_message(
 ):
     calls = _capture_requests(monkeypatch)
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ConfigError) as excinfo:
         ipfs.retrieve_from_ipfs(CID, env_provider / "out.bin")
 
     # Names the three real options rather than blaming the CID.
@@ -284,7 +285,7 @@ def test_fallback_custom_url_accepted(env_provider, monkeypatch):
 )
 def test_fallback_rejects_unsafe_urls(env_provider, monkeypatch, value, reason):
     monkeypatch.setenv("IPFS_PUBLIC_GATEWAY", value)
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ConfigError) as excinfo:
         ipfs._should_use_fallback()
     assert reason in str(excinfo.value)
 
@@ -301,7 +302,7 @@ def test_partial_download_leaves_no_destination_file(env_provider, monkeypatch):
     _capture_requests(monkeypatch, response=broken)
     destination = env_provider / "out.bin"
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(IpfsError):
         ipfs.retrieve_from_ipfs(CID, destination)
 
     assert not destination.exists()
@@ -318,7 +319,7 @@ def test_failed_download_does_not_clobber_existing_file(env_provider, monkeypatc
     broken = _FakeResponse(chunks=[b"half", requests.ConnectionError("dropped")])
     _capture_requests(monkeypatch, response=broken)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(IpfsError):
         ipfs.retrieve_from_ipfs(CID, destination)
 
     assert destination.read_bytes() == b"previous good content"
@@ -387,9 +388,12 @@ def test_verification_mismatch_refuses_to_save(gateway_env, monkeypatch):
     _capture_requests(monkeypatch)
     destination = gateway_env / "out.bin"
 
-    with pytest.raises(ValueError, match="CID mismatch"):
+    with pytest.raises(IpfsError, match="CID mismatch") as excinfo:
         ipfs.retrieve_from_ipfs(CID, destination)
 
+    assert excinfo.value.code == "ipfs_cid_mismatch"
+    assert excinfo.value.details["requested_cid"] == CID
+    assert excinfo.value.details["computed_cid"] == OTHER_CID
     assert not destination.exists()
     assert list(gateway_env.glob(".ipfs_*")) == []
 
@@ -466,3 +470,107 @@ def test_compute_cid_local_returns_none_on_timeout(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ipfs.subprocess, "run", slow)
     assert ipfs._compute_ipfs_cid_local(tmp_path / "f") is None
+
+
+# ── A1: IPFS error taxonomy — stable codes, sanitized details, no leaks ──
+
+
+def test_http_error_carries_stable_code_and_sanitized_details():
+    """_raise_for_http_error: IpfsError with .code, response body tail in
+    `details["stderr"]` (not the message), chained `from None`."""
+    response = _FakeResponse(status_code=500, text="x" * 400 + "SECRET_TOKEN")
+    with pytest.raises(IpfsError) as excinfo:
+        ipfs._raise_for_http_error(response, "download", "Filebase")
+
+    err = excinfo.value
+    assert err.code == "ipfs_error"
+    assert "SECRET_TOKEN" not in str(err)  # body tail never reaches the message
+    assert err.details["provider"] == "Filebase"
+    assert err.details["status_code"] == 500
+    assert len(err.details["stderr"]) <= 300
+    assert err.__cause__ is None
+    assert err.__suppress_context__ is True
+
+
+def test_upload_request_exception_message_has_no_url(env_provider, monkeypatch, tmp_path):
+    """A requests exception's own string may carry the full request URL
+    (API key included for env/Filebase) — must never resurface as a cause."""
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"data")
+    (env_provider / ".env").write_text(
+        "IPFS_API_URL_ADD=https://x.invalid/add\n", encoding="utf-8"
+    )
+
+    def boom(*args, **kwargs):
+        raise requests.ConnectionError("https://x.invalid/add?key=SECRET_TOKEN")
+
+    monkeypatch.setattr(ipfs.requests, "post", boom)
+
+    with pytest.raises(IpfsError) as excinfo:
+        ipfs.upload_to_ipfs(payload, None)
+
+    err = excinfo.value
+    assert "SECRET_TOKEN" not in str(err)
+    assert err.__cause__ is None
+    assert err.__suppress_context__ is True
+
+
+def test_retrieval_request_exception_message_has_no_url(gateway_env, monkeypatch):
+    def boom(*args, **kwargs):
+        raise requests.ConnectionError("https://x.invalid/cat?key=SECRET_TOKEN")
+
+    monkeypatch.setattr(ipfs.requests, "request", boom)
+
+    with pytest.raises(IpfsError) as excinfo:
+        ipfs.retrieve_from_ipfs(CID, gateway_env / "out.bin")
+
+    err = excinfo.value
+    assert "SECRET_TOKEN" not in str(err)
+    assert err.__cause__ is None
+    assert err.__suppress_context__ is True
+
+
+def test_retrieval_error_log_never_contains_raw_exception_text(gateway_env, monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise requests.ConnectionError("https://x.invalid/cat?key=SECRET_TOKEN")
+
+    monkeypatch.setattr(ipfs.requests, "request", boom)
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(IpfsError):
+            ipfs.retrieve_from_ipfs(CID, gateway_env / "out.bin")
+
+    logged = "\n".join(r.message for r in caplog.records)
+    assert "SECRET_TOKEN" not in logged
+
+
+@pytest.mark.parametrize(
+    "call,expected_key",
+    [
+        (lambda cfg: ipfs._require_custom_service_path(cfg), "ipfs_service_path"),
+    ],
+)
+def test_config_error_carries_stable_key_detail(call, expected_key):
+    from types import SimpleNamespace
+
+    with pytest.raises(ConfigError) as excinfo:
+        call(SimpleNamespace(service_path=None))
+    assert excinfo.value.code == "config_error"
+    assert excinfo.value.details["key"] == expected_key
+
+
+def test_validate_cid_raises_validation_error_not_valueerror():
+    from dincli.sdk.cid import validate_cid
+    from dincli.sdk.errors import ValidationError
+
+    with pytest.raises(ValidationError) as excinfo:
+        validate_cid("../../etc/passwd")
+    assert excinfo.value.code == "validation_failed"
+
+
+def test_validate_cid_wraps_non_string_input():
+    from dincli.sdk.cid import validate_cid
+    from dincli.sdk.errors import ValidationError
+
+    with pytest.raises(ValidationError):
+        validate_cid(12345)
