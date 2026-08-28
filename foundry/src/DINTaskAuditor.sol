@@ -413,7 +413,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      auditor weighting below.
     ///
     ///      Split basis, per task_210726_6 §3:
-    ///      - Clients: proportional to finalAvgScore among approved==true
+    ///      - Clients: proportional to finalMedianScore among approved==true
     ///        submissions. A rejected/ineligible submission earns nothing --
     ///        already enforced by the `approved` gate, not re-implemented
     ///        here (median-bounded score inflation and fold-in duplicate
@@ -462,15 +462,15 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 totalApprovedScore;
         for (uint256 i = 0; i < submissions.length; i++) {
             if (submissions[i].approved) {
-                totalApprovedScore += submissions[i].finalAvgScore;
+                totalApprovedScore += submissions[i].finalMedianScore;
             }
         }
         if (totalApprovedScore == 0) return;
 
         for (uint256 i = 0; i < submissions.length; i++) {
             if (submissions[i].approved) {
-                uint256 share = (clientPool * submissions[i].finalAvgScore) /
-                    totalApprovedScore;
+                uint256 share = (clientPool *
+                    submissions[i].finalMedianScore) / totalApprovedScore;
                 if (share > 0) {
                     claimable[submissions[i].client] += share;
                 }

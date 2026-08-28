@@ -106,6 +106,19 @@ contract AuditorCommitRevealTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev Mints `dinAmount` DIN to `who` via the real ETH->DIN exchange
+    ///      (not a test-only mint) and approves `ta` to pull it, so
+    ///      depositRewards exercises the real safeTransferFrom path.
+    function _fundDinBalance(address who, uint256 dinAmount) internal {
+        // dinPerEth defaults to 1_000_000 * 1e18 -- back-solve the ETH needed.
+        uint256 ethNeeded = (dinAmount * 1e18) / (1_000_000 * 1e18) + 1;
+        vm.deal(who, ethNeeded + 1 ether);
+        vm.prank(who);
+        coordinator.depositAndMint{value: ethNeeded}();
+        vm.prank(who);
+        token.approve(address(ta), type(uint256).max);
+    }
+
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake));
@@ -122,6 +135,11 @@ contract AuditorCommitRevealTest is Test {
         tc.setDINTaskCoordinatorAsSlasher();
         tc.setDINTaskAuditorAsSlasher();
         tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
+        ta.setDinToken(address(token));
+        vm.stopPrank();
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
         tc.startGI(1);
         vm.stopPrank();
     }

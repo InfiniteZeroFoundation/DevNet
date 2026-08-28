@@ -45,6 +45,12 @@ contract RewardEngineTest is Test {
     address client2 = makeAddr("client2");
     address client3 = makeAddr("client3");
 
+    // Deviation from PR #64 as submitted: #63 replaced the single-shot
+    // setAuditScorenEligibility this file was written against with
+    // commit-then-reveal (commitAuditScore/revealAuditScore), same as
+    // ScoringValidation.t.sol/SecurityFindings.t.sol already needed.
+    bytes32 constant TEST_SALT = bytes32(uint256(0xC0FFEE));
+
     function _deployPlatform() internal {
         vm.startPrank(admin);
 
@@ -138,7 +144,7 @@ contract RewardEngineTest is Test {
     ///      auditors, 3 aggregators, 3 clients, everyone honest (all
     ///      auditors score all three models 80/eligible, all aggregators
     ///      submit the same T1 CID). Leaves all three clients `approved`
-    ///      with `finalAvgScore == 80`, and all 3 aggregators rewardable for
+    ///      with `finalMedianScore == 80`, and all 3 aggregators rewardable for
     ///      one finalized T1 batch (0 aggregators left for a T2 batch, same
     ///      as SecurityFindings.t.sol's fixture, at exactly 3 registered).
     function _runFullHonestGI(uint256 poolAmount) internal {
@@ -207,8 +213,21 @@ contract RewardEngineTest is Test {
         (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
+                bytes32 commitHash = keccak256(
+                    abi.encodePacked(uint256(80), true, TEST_SALT)
+                );
                 vm.prank(batchAuditors[i]);
-                ta.setAuditScorenEligibility(1, 0, modelIdxs[m], 80, true);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 80, true, TEST_SALT);
             }
         }
 
