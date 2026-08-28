@@ -213,6 +213,16 @@ contract SecurityFindingsTest is Test {
         tc.setDINTaskCoordinatorAsSlasher();
         tc.setDINTaskAuditorAsSlasher();
         tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
+
+        // task_210726_6 §3: _startGI now requires the upcoming GI's reward
+        // pool to be funded first. Minimal funding here since these fixtures
+        // predate the reward engine and aren't testing settlement.
+        ta.setDinToken(address(token));
+        vm.deal(modelOwner, 1 ether);
+        coordinator.depositAndMint{value: 0.001 ether}();
+        token.approve(address(ta), type(uint256).max);
+        ta.depositRewards(1, 1 ether);
+
         tc.startGI(1);
         vm.stopPrank();
     }

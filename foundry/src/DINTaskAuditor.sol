@@ -2,18 +2,69 @@
 pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./DINShared.sol";
 
 /// @title DIN Task Auditor
 /// @notice Handles auditor registration, local model submission, scoring, eligibility
 ///         determination, and auditor slashing for a single federated-learning model.
 ///         Deployed once per model alongside its paired DINTaskCoordinator.
-contract DINTaskAuditor is Ownable {
+contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
+    using SafeERC20 for IERC20;
+
     IDinValidatorStake public dinvalidatorStakeContract;
 
     IDINTaskCoordinator public dintaskcoordinatorContract;
 
-    uint public totalDepositedRewards = 0;
+    // Per-GI reward pool (task_210726_6 §3) -- replaces the old
+    // totalDepositedRewards running total, which couldn't support the
+    // "funded per-GI, settled per-GI" model MECHANISM_DESIGN §5 describes.
+    mapping(uint256 => uint256) public giRewardPool;
+
+    /// @notice DIN token used for reward deposits and payouts.
+    /// @dev Deploy-time wiring, mirrors DINModelRegistry.setDinToken (task_210726_5).
+    IERC20 public dinToken;
+
+    /// @notice DAO-settable role split for reward distribution, basis points.
+    /// @dev Default is the 60/20/15/5 proposal from MECHANISM_DESIGN §5 --
+    ///      explicitly not final, pending Umer's P3-5.2 simulation.
+    struct RewardSplit {
+        uint16 clientBps;
+        uint16 auditorBps;
+        uint16 aggregatorBps;
+        uint16 treasuryBps;
+    }
+
+    uint256 private constant BPS_DENOMINATOR = 10000;
+
+    RewardSplit public rewardSplit =
+        RewardSplit({
+            clientBps: 6000,
+            auditorBps: 2000,
+            aggregatorBps: 1500,
+            treasuryBps: 500
+        });
+
+    /// @notice Treasury's accrued share of settled reward pools.
+    /// @dev No live consumer yet -- DinTreasury doesn't exist on develop.
+    // TODO(task_210726_5): forward to DinTreasury once merged, instead of
+    // just accruing here.
+    uint256 public treasuryAccrued;
+
+    /// @notice Destination for treasuryAccrued once DinTreasury exists.
+    /// @dev Settable now so the wiring is a one-line change later, not a
+    ///      redeploy -- see treasuryAccrued's TODO.
+    address public treasuryAddress;
+
+    /// @notice Per-address claimable reward balance across all GIs.
+    /// @dev Pull-payment only -- settleRewards credits this, claimRewards
+    ///      is the only function that ever transfers out of it. No push
+    ///      transfers in settlement, matching the gas-DoS class flagged in
+    ///      the foundry/src security review (PR #22/#30) for unbounded
+    ///      loops elsewhere in these contracts.
+    mapping(address => uint256) public claimable;
 
     uint MAX_LM_SUBMISSIONS = 10000;
 
@@ -184,7 +235,22 @@ contract DINTaskAuditor is Ownable {
         _;
     }
 
-    event RewardDeposited(address indexed modelOwner, uint256 amount);
+    event RewardDeposited(
+        uint256 indexed gi,
+        address indexed depositor,
+        uint256 amount
+    );
+    event DinTokenSet(address indexed dinToken);
+    event RewardSplitUpdated(RewardSplit split);
+    event TreasuryAddressUpdated(address indexed treasuryAddress);
+    event RewardsSettled(
+        uint256 indexed gi,
+        uint256 clientPool,
+        uint256 auditorPool,
+        uint256 aggregatorPool,
+        uint256 treasuryShare
+    );
+    event RewardsClaimed(address indexed claimant, uint256 amount);
 
     event DINAuditorRegistered(uint indexed GI, address indexed auditor);
 
@@ -264,6 +330,213 @@ contract DINTaskAuditor is Ownable {
             passScore: 50,
             MIN_MODELS_PER_BATCH: 2
         });
+    }
+
+    /// @notice Wires the DIN token used for reward deposits and payouts.
+    /// @dev onlyOwner, freely re-settable (mirrors DINModelRegistry.setDinToken
+    ///      / the existing setFees-style setters elsewhere in this codebase --
+    ///      no one-shot restriction). Must be called before depositRewards or
+    ///      claimRewards will work; deploy-time wiring, same operational
+    ///      responsibility as DinCoordinator.updateValidatorStakeContract.
+    /// @param dinToken_ Address of the DIN token (DinToken proxy).
+    function setDinToken(address dinToken_) external onlyOwner {
+        if (dinToken_ == address(0)) revert TA_InvalidAddress();
+        dinToken = IERC20(dinToken_);
+        emit DinTokenSet(dinToken_);
+    }
+
+    /// @notice Updates the DAO-settable reward role split.
+    /// @dev Sum of all four fields must equal exactly 10000 bps. These
+    ///      percentages are explicitly not final (task_210726_6 §3) --
+    ///      pending Umer's P3-5.2 simulation at 10-50 validators / 100-500
+    ///      clients per model.
+    /// @param newSplit New RewardSplit; fields must sum to 10000.
+    function setRewardSplit(RewardSplit calldata newSplit) external onlyOwner {
+        uint256 sum = uint256(newSplit.clientBps) +
+            newSplit.auditorBps +
+            newSplit.aggregatorBps +
+            newSplit.treasuryBps;
+        if (sum != BPS_DENOMINATOR) revert TA_InvalidRewardSplit();
+        rewardSplit = newSplit;
+        emit RewardSplitUpdated(newSplit);
+    }
+
+    /// @notice Sets the address treasuryAccrued will eventually forward to.
+    /// @dev No forwarding happens yet -- DinTreasury doesn't exist on develop
+    ///      (task_210726_5). This only records the destination so wiring it
+    ///      up later is a one-line change, not a redeploy.
+    /// @param treasuryAddress_ Destination address for the treasury's reward share.
+    function setTreasuryAddress(address treasuryAddress_) external onlyOwner {
+        if (treasuryAddress_ == address(0)) revert TA_InvalidAddress();
+        treasuryAddress = treasuryAddress_;
+        emit TreasuryAddressUpdated(treasuryAddress_);
+    }
+
+    /// @notice Funds the reward pool for a specific Global Iteration.
+    /// @dev Pulls `amount` DIN from the caller via safeTransferFrom -- caller
+    ///      must have approved this contract first. Anyone may fund any GI's
+    ///      pool (typically the model owner, but not restricted to them --
+    ///      matches the "market-set pool" framing in MECHANISM_DESIGN §5,
+    ///      nothing stops a third party topping up a pool they care about).
+    ///      DINTaskCoordinator._startGI checks giRewardPool(_GI) > 0 as a
+    ///      precondition before that GI can start.
+    ///
+    ///      `gi` must be the current GI or a future one: GI only ever moves
+    ///      forward (DINTaskCoordinator._startGI requires _GI == GI + 1 and
+    ///      never allows re-starting an earlier index), so a deposit tagged
+    ///      with a `gi` that has already passed could never be started,
+    ///      settled, or claimed -- it would just sit in this contract's
+    ///      balance forever with no sweep path. Rejecting that case here is
+    ///      cheap and catches both a mistyped GI number and a genuinely
+    ///      unreachable one.
+    /// @param gi GI index to fund. Must be >= the coordinator's current GI.
+    /// @param amount DIN amount to deposit, in wei (18 decimals).
+    function depositRewards(uint256 gi, uint256 amount) external {
+        if (amount == 0) revert TA_AmountMustBePositive();
+        if (gi == 0 || gi < dintaskcoordinatorContract.GI())
+            revert TA_InvalidRewardGI();
+        dinToken.safeTransferFrom(msg.sender, address(this), amount);
+        giRewardPool[gi] += amount;
+        emit RewardDeposited(gi, msg.sender, amount);
+    }
+
+    /// @notice Computes and credits per-GI reward shares across clients,
+    ///         auditors, and aggregators, plus the treasury's cut.
+    /// @dev Restricted to the paired DINTaskCoordinator, called once from
+    ///      endGI() after GIstate reaches AggregatorsSlashed. Only ever
+    ///      credits the `claimable` mapping -- no transfers happen here, by
+    ///      design (see claimable's NatSpec). `rewardableAggregators` is
+    ///      supplied by the coordinator (which owns the T1/T2 batch data)
+    ///      rather than re-derived here, one entry per (aggregator,
+    ///      finalized batch) pair so an aggregator who completed both a T1
+    ///      and the T2 batch gets proportionally more weight, mirroring the
+    ///      auditor weighting below.
+    ///
+    ///      Split basis, per task_210726_6 §3:
+    ///      - Clients: proportional to finalAvgScore among approved==true
+    ///        submissions. A rejected/ineligible submission earns nothing --
+    ///        already enforced by the `approved` gate, not re-implemented
+    ///        here (median-bounded score inflation and fold-in duplicate
+    ///        discounting, where §1a's mc_marginal_gain_score is used,
+    ///        bound this basis upstream in Parts 1-2, not in this function).
+    ///      - Auditors: one weight unit per (batchId, modelIndex) they
+    ///        actually voted on (hasAuditedLM), NOT a flat per-auditor
+    ///        share -- an auditor who completed more assigned votes gets
+    ///        proportionally more. Correctness is enforced by slashAuditors
+    ///        having already run in this GI, not by re-checking anything
+    ///        here (an auditor who missed a vote already lost stake for it;
+    ///        they still earn for the votes they DID complete).
+    ///      - Aggregators: one weight unit per rewardableAggregators entry.
+    ///      - Treasury: the remainder after the other three integer-divided
+    ///        shares are subtracted, not a fourth independently-rounded
+    ///        share -- absorbs rounding dust so the four shares always sum
+    ///        to exactly giRewardPool[gi], mirroring DinFeeRouter's
+    ///        publicGoods-absorbs-dust pattern (task_210726_5).
+    /// @param gi GI index to settle.
+    /// @param rewardableAggregators Aggregators credited for a finalized T1/T2
+    ///        batch this GI, one entry per (aggregator, batch) pair.
+    function settleRewards(
+        uint256 gi,
+        address[] calldata rewardableAggregators
+    ) external onlyTaskCoordinator onlyCurrentGI(gi) {
+        uint256 pool = giRewardPool[gi];
+
+        RewardSplit memory split = rewardSplit;
+        uint256 clientPool = (pool * split.clientBps) / BPS_DENOMINATOR;
+        uint256 auditorPool = (pool * split.auditorBps) / BPS_DENOMINATOR;
+        uint256 aggregatorPool = (pool * split.aggregatorBps) / BPS_DENOMINATOR;
+        uint256 treasuryShare = pool - clientPool - auditorPool - aggregatorPool;
+
+        treasuryAccrued += treasuryShare;
+
+        _settleClientRewards(gi, clientPool);
+        _settleAuditorRewards(gi, auditorPool);
+        _settleAggregatorRewards(rewardableAggregators, aggregatorPool);
+
+        emit RewardsSettled(gi, clientPool, auditorPool, aggregatorPool, treasuryShare);
+    }
+
+    function _settleClientRewards(uint256 gi, uint256 clientPool) internal {
+        LMSubmission[] storage submissions = lmSubmissions[gi];
+
+        uint256 totalApprovedScore;
+        for (uint256 i = 0; i < submissions.length; i++) {
+            if (submissions[i].approved) {
+                totalApprovedScore += submissions[i].finalAvgScore;
+            }
+        }
+        if (totalApprovedScore == 0) return;
+
+        for (uint256 i = 0; i < submissions.length; i++) {
+            if (submissions[i].approved) {
+                uint256 share = (clientPool * submissions[i].finalAvgScore) /
+                    totalApprovedScore;
+                if (share > 0) {
+                    claimable[submissions[i].client] += share;
+                }
+            }
+        }
+    }
+
+    function _settleAuditorRewards(uint256 gi, uint256 auditorPool) internal {
+        AuditBatch[] storage batches = auditBatches[gi];
+
+        uint256 totalWeight;
+        for (uint256 b = 0; b < batches.length; b++) {
+            AuditBatch storage batch = batches[b];
+            for (uint256 a = 0; a < batch.auditors.length; a++) {
+                address auditor = batch.auditors[a];
+                for (uint256 m = 0; m < batch.modelIndexes.length; m++) {
+                    if (hasAuditedLM[gi][b][auditor][batch.modelIndexes[m]]) {
+                        totalWeight++;
+                    }
+                }
+            }
+        }
+        if (totalWeight == 0) return;
+
+        for (uint256 b = 0; b < batches.length; b++) {
+            AuditBatch storage batch = batches[b];
+            for (uint256 a = 0; a < batch.auditors.length; a++) {
+                address auditor = batch.auditors[a];
+                uint256 weight;
+                for (uint256 m = 0; m < batch.modelIndexes.length; m++) {
+                    if (hasAuditedLM[gi][b][auditor][batch.modelIndexes[m]]) {
+                        weight++;
+                    }
+                }
+                if (weight > 0) {
+                    claimable[auditor] += (auditorPool * weight) / totalWeight;
+                }
+            }
+        }
+    }
+
+    function _settleAggregatorRewards(
+        address[] calldata rewardableAggregators,
+        uint256 aggregatorPool
+    ) internal {
+        uint256 count = rewardableAggregators.length;
+        if (count == 0) return;
+
+        for (uint256 i = 0; i < count; i++) {
+            claimable[rewardableAggregators[i]] += aggregatorPool / count;
+        }
+    }
+
+    /// @notice Claims the caller's full accumulated reward balance.
+    /// @dev Pull-payment pattern: zeroes the balance before transferring
+    ///      (checks-effects-interactions), reverts on a zero balance rather
+    ///      than silently no-op-ing. nonReentrant is defense-in-depth --
+    ///      dinToken is a trusted, protocol-deployed ERC20 with no hooks --
+    ///      but costs nothing here since ReentrancyGuardTransient uses
+    ///      transient storage.
+    function claimRewards() external nonReentrant {
+        uint256 amount = claimable[msg.sender];
+        if (amount == 0) revert TA_NoRewardsToClaim();
+        claimable[msg.sender] = 0;
+        dinToken.safeTransfer(msg.sender, amount);
+        emit RewardsClaimed(msg.sender, amount);
     }
 
     /// @notice Updates the minimum average score a model must achieve to be approved.
