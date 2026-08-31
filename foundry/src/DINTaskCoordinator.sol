@@ -2,6 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./DINShared.sol";
 
 /// @title DIN Task Coordinator
@@ -9,7 +12,9 @@ import "./DINShared.sol";
 ///         federated-learning model: slasher setup, validator registration,
 ///         local model submissions, auditing, Tier-1/Tier-2 aggregation, and
 ///         validator slashing. Deployed once per model by the model owner.
-contract DINTaskCoordinator is Ownable {
+contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
+    using SafeERC20 for IERC20;
+
     IDinValidatorStake public dinvalidatorStakeContract;
     IDINTaskAuditor public dinTaskAuditorContract;
 
@@ -62,6 +67,70 @@ contract DINTaskCoordinator is Ownable {
     mapping(uint => mapping(uint => mapping(address => bool)))
         public t2Submitted;
     mapping(uint => mapping(uint => mapping(bytes32 => uint))) public t2Votes;
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Dispute resolution scaffold (task_210726_6 §4c, issue #38, S4)
+    //
+    // Bond custody, window enforcement, and fresh-subgroup reassignment are
+    // real on-chain mechanics. Adjudication (was the disputed CID actually
+    // wrong?) is NOT on-chain here -- verifying a T1/T2 aggregation CID
+    // requires re-running aggregation over model weights, which isn't
+    // something a contract can or should do. resolveDispute is onlyOwner
+    // for now; see Developer/design/slashing-taxonomy.md's S4 section for
+    // why, and what a future on-chain adjudication mechanism would need.
+    //
+    // Bounty/bond-forfeiture payouts are stubbed the same way Part 3's
+    // reward engine stubs its treasury share: accrued locally, not
+    // forwarded anywhere, because DinTreasury doesn't exist on develop yet.
+    // ─────────────────────────────────────────────────────────────────────
+
+    enum TierKind {
+        Tier1,
+        Tier2
+    }
+
+    struct Dispute {
+        address challenger;
+        uint256 bond;
+        uint64 openedAt;
+        bool resolved;
+        bool upheld;
+    }
+
+    IERC20 public dinToken;
+    uint256 public disputeBond = 100 * 1e18; // placeholder default, DAO-settable
+    uint64 public disputeWindow = 1 days; // placeholder default, DAO-settable
+    address public treasuryAddress;
+    uint256 public treasuryAccrued; // TODO(task_210726_5): forward to DinTreasury once merged
+
+    mapping(uint => mapping(uint => uint64)) public tier1FinalizedAt;
+    mapping(uint => mapping(uint => uint64)) public tier2FinalizedAt;
+    mapping(uint => mapping(TierKind => mapping(uint => Dispute)))
+        public disputes;
+    mapping(uint => mapping(TierKind => mapping(uint => address[])))
+        public reEvaluationAssignees;
+    mapping(address => uint256) public disputeBondClaimable;
+
+    event DisputeOpened(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        address indexed challenger,
+        uint256 bond
+    );
+    event DisputeResolved(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        bool upheld
+    );
+    event ReEvaluationAssigned(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        address[] freshAggregators
+    );
+    event DisputeBondClaimed(address indexed challenger, uint256 amount);
 
     modifier onlyCurrentGI(uint _GI) {
         if (_GI != GI) revert TC_WrongGI();
@@ -595,6 +664,7 @@ contract DINTaskCoordinator is Ownable {
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
+            tier1FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
         }
 
         GIstate = GIstates.T1AggregationDone;
@@ -673,6 +743,7 @@ contract DINTaskCoordinator is Ownable {
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
+            tier2FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
         }
 
         GIstate = GIstates.T2AggregationDone;
@@ -821,7 +892,10 @@ contract DINTaskCoordinator is Ownable {
     function endGI(uint _GI) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.AggregatorsSlashed) revert TC_NotReadyToEndGI();
 
-        address[] memory rewardableAggregators = _collectFinalizedBatchAggregators(_GI);
+        address[]
+            memory rewardableAggregators = _collectFinalizedBatchAggregators(
+                _GI
+            );
         dinTaskAuditorContract.settleRewards(_GI, rewardableAggregators);
 
         GIstate = GIstates.GIended;
@@ -849,10 +923,12 @@ contract DINTaskCoordinator is Ownable {
 
         uint256 count;
         for (uint i = 0; i < t1batches.length; i++) {
-            if (t1batches[i].finalized) count += t1batches[i].aggregators.length;
+            if (t1batches[i].finalized)
+                count += t1batches[i].aggregators.length;
         }
         for (uint i = 0; i < t2batches.length; i++) {
-            if (t2batches[i].finalized) count += t2batches[i].aggregators.length;
+            if (t2batches[i].finalized)
+                count += t2batches[i].aggregators.length;
         }
 
         address[] memory result = new address[](count);
@@ -874,5 +950,199 @@ contract DINTaskCoordinator is Ownable {
             }
         }
         return result;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Dispute resolution scaffold (task_210726_6 §4c, issue #38, S4)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @notice Sets the ERC20 token used for dispute bonds.
+    /// @param _dinToken Address of the DinToken proxy.
+    function setDinToken(address _dinToken) external onlyOwner {
+        if (_dinToken == address(0)) revert TC_InvalidAddress();
+        dinToken = IERC20(_dinToken);
+    }
+
+    /// @notice Sets the dispute bond amount and dispute window duration.
+    /// @dev Both values are DAO-settable placeholders; the numbers shipped
+    ///      here are not final, per this task's brief.
+    /// @param _disputeBond Token amount a challenger must post to open a dispute.
+    /// @param _disputeWindow Seconds after batch finalization during which a dispute can be opened.
+    function setDisputeParams(
+        uint256 _disputeBond,
+        uint64 _disputeWindow
+    ) external onlyOwner {
+        if (_disputeBond == 0 || _disputeWindow == 0)
+            revert TC_InvalidDisputeParams();
+        disputeBond = _disputeBond;
+        disputeWindow = _disputeWindow;
+    }
+
+    /// @notice Sets the address forfeited dispute bonds will eventually be forwarded to.
+    /// @dev Storage only -- no forwarding happens yet since DinTreasury doesn't
+    ///      exist on develop. See treasuryAccrued.
+    /// @param _treasuryAddress Address of the future DinTreasury deployment.
+    function setTreasuryAddress(address _treasuryAddress) external onlyOwner {
+        if (_treasuryAddress == address(0)) revert TC_InvalidAddress();
+        treasuryAddress = _treasuryAddress;
+    }
+
+    /// @notice Opens a dispute against a finalized Tier-1 or Tier-2 batch.
+    /// @dev Caller must be an active validator and post `disputeBond` DIN,
+    ///      within `disputeWindow` seconds of the batch's finalization.
+    ///      Adjudication happens off-chain today (resolveDispute is
+    ///      onlyOwner) -- see the scaffold-wide comment above the state
+    ///      declarations for why.
+    /// @param _GI GI index the batch belongs to.
+    /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
+    /// @param batchId Index of the batch within its tier for that GI.
+    function openDispute(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId
+    ) external nonReentrant {
+        if (_GI == 0 || _GI > GI) revert TC_WrongGI();
+        if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
+            revert TC_AggregatorNotActive();
+        }
+
+        bool finalized;
+        uint64 finalizedAt;
+        if (tierKind == TierKind.Tier1) {
+            if (batchId >= tier1Batches[_GI].length) revert TC_InvalidBatch();
+            finalized = tier1Batches[_GI][batchId].finalized;
+            finalizedAt = tier1FinalizedAt[_GI][batchId];
+        } else {
+            if (batchId >= tier2Batches[_GI].length) revert TC_InvalidBatch();
+            finalized = tier2Batches[_GI][batchId].finalized;
+            finalizedAt = tier2FinalizedAt[_GI][batchId];
+        }
+        if (!finalized) revert TC_BatchNotFinalized();
+        if (block.timestamp > finalizedAt + disputeWindow) {
+            revert TC_DisputeWindowClosed();
+        }
+        if (disputes[_GI][tierKind][batchId].challenger != address(0)) {
+            revert TC_DisputeAlreadyOpen();
+        }
+
+        disputes[_GI][tierKind][batchId] = Dispute({
+            challenger: msg.sender,
+            bond: disputeBond,
+            openedAt: uint64(block.timestamp),
+            resolved: false,
+            upheld: false
+        });
+
+        dinToken.safeTransferFrom(msg.sender, address(this), disputeBond);
+
+        emit DisputeOpened(_GI, tierKind, batchId, msg.sender, disputeBond);
+    }
+
+    /// @notice Resolves a dispute, either upholding or rejecting it.
+    /// @dev Upheld: bond becomes claimable by the challenger (pull payment)
+    ///      and a fresh aggregator subgroup is assigned, excluding the
+    ///      accused batch's original aggregators. The bounty top-up from
+    ///      treasury is stubbed (TODO below) since DinTreasury doesn't exist
+    ///      yet. Rejected (frivolous): bond is forfeited to treasuryAccrued,
+    ///      same stub pattern as Part 3's reward engine.
+    /// @param _GI GI index the disputed batch belongs to.
+    /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
+    /// @param batchId Index of the disputed batch within its tier.
+    /// @param upheld True if the dispute is found valid.
+    function resolveDispute(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId,
+        bool upheld
+    ) external onlyOwner {
+        Dispute storage d = disputes[_GI][tierKind][batchId];
+        if (d.challenger == address(0)) revert TC_DisputeNotOpen();
+        if (d.resolved) revert TC_DisputeAlreadyResolved();
+
+        d.resolved = true;
+        d.upheld = upheld;
+
+        if (upheld) {
+            // TODO(task_210726_5): top up with a bounty from DinTreasury
+            // once it exists; for now the challenger only reclaims their bond.
+            disputeBondClaimable[d.challenger] += d.bond;
+
+            address[] memory freshSubgroup = _assignFreshSubgroup(
+                _GI,
+                tierKind,
+                batchId
+            );
+            reEvaluationAssignees[_GI][tierKind][batchId] = freshSubgroup;
+            emit ReEvaluationAssigned(_GI, tierKind, batchId, freshSubgroup);
+        } else {
+            // TODO(task_210726_5): forward to DinTreasury (50% burn / 50%
+            // treasury per MECHANISM_DESIGN.md §4) once it exists.
+            treasuryAccrued += d.bond;
+        }
+
+        emit DisputeResolved(_GI, tierKind, batchId, upheld);
+    }
+
+    /// @notice Claims a reclaimed dispute bond after an upheld dispute.
+    /// @dev Pull payment: zeroes the balance before transferring (CEI).
+    function claimDisputeBond() external nonReentrant {
+        uint256 amount = disputeBondClaimable[msg.sender];
+        if (amount == 0) revert TC_NoBondClaimable();
+
+        disputeBondClaimable[msg.sender] = 0;
+        dinToken.safeTransfer(msg.sender, amount);
+
+        emit DisputeBondClaimed(msg.sender, amount);
+    }
+
+    /// @notice Selects a fresh aggregator subgroup for re-evaluation, excluding
+    ///         the accused batch's original aggregators.
+    /// @dev Draws from the same active-aggregator pool autoCreateTier1AndTier2
+    ///      uses, shuffled with the same blockhash-based entropy. Bookkeeping
+    ///      only -- does not re-open the GI state machine to actually re-run
+    ///      aggregation against this subgroup; see the scaffold-wide comment
+    ///      above the state declarations.
+    function _assignFreshSubgroup(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId
+    ) internal view returns (address[] memory subgroup) {
+        address[] memory excluded = tierKind == TierKind.Tier1
+            ? tier1Batches[_GI][batchId].aggregators
+            : tier2Batches[_GI][batchId].aggregators;
+        address[] memory pool = _activeAggregatorPool(_GI);
+
+        uint eligibleCount;
+        for (uint i = 0; i < pool.length; i++) {
+            if (!_isInArray(pool[i], excluded)) eligibleCount++;
+        }
+
+        address[] memory eligible = new address[](eligibleCount);
+        uint ptr;
+        for (uint i = 0; i < pool.length; i++) {
+            if (!_isInArray(pool[i], excluded)) {
+                eligible[ptr++] = pool[i];
+            }
+        }
+        if (eligible.length < T1_AGGREGATORS_PER_BATCH) {
+            revert TC_NotEnoughValidators();
+        }
+
+        _shuffleAddressArray(eligible);
+
+        subgroup = new address[](T1_AGGREGATORS_PER_BATCH);
+        for (uint i = 0; i < T1_AGGREGATORS_PER_BATCH; i++) {
+            subgroup[i] = eligible[i];
+        }
+    }
+
+    function _isInArray(
+        address needle,
+        address[] memory haystack
+    ) internal pure returns (bool) {
+        for (uint i = 0; i < haystack.length; i++) {
+            if (haystack[i] == needle) return true;
+        }
+        return false;
     }
 }
