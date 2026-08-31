@@ -74,7 +74,7 @@
          "clipping_norm": 1.0,
          "noise_multiplier": 0.5,
          "laplace_scale": 0.35,
-         "clip_scope": "per_layer"
+         "clip_scope": "global"
       }
    },
    "getGenesisModelIpfs": {

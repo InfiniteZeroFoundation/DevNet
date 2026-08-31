@@ -137,7 +137,7 @@ The DevNet manifest now supports a preferred nested `dp` block:
     "clipping_norm": 1.0,
     "noise_multiplier": 0.5,
     "laplace_scale": 0.35,
-    "clip_scope": "per_layer"
+    "clip_scope": "global"
   }
 }
 ```
@@ -147,7 +147,9 @@ Resolution rules in the current service:
 - `dp.enabled: false` disables privacy;
 - if the `dp` block is omitted, privacy is treated as disabled;
 - if DP is enabled and no mechanism is specified, the client defaults to `post_training_gaussian`;
-- the current client service supports `post_training_gaussian`, `post_training_laplace`, and `update_gaussian`.
+- the current client service supports `post_training_gaussian`, `post_training_laplace`, and `update_gaussian`;
+- `clip_scope` defaults to `global`, the only scope that bounds the combined update at `clipping_norm`;
+- the noise applied is `noise_multiplier * clipping_norm`, so changing `clipping_norm` changes the noise with it.
 
 ## Why The Nested `dp` Block Matters
 

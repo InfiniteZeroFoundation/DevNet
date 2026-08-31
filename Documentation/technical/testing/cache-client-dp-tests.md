@@ -57,7 +57,19 @@ tensor comes near the bound), so the output must equal the input exactly.
 | `test_post_training_mechanisms_preserve_weights_when_noise_is_zero[post_training_laplace]` | Same for the clip-then-Laplace pipeline (`laplace_scale: 0.0`) |
 | `test_update_gaussian_preserves_weights_when_noise_is_zero` | The delta path — compute trained−reference delta, clip (`clip_scope: global`), noise the delta, reconstruct reference+delta — round-trips back to the trained weights exactly |
 
-All three tests also include a non-floating tensor (`counter`, dtype
+### Sensitivity calibration
+
+These drive real, nonzero noise and real clipping.
+
+| Test | Behavior pinned down |
+|------|----------------------|
+| `test_noise_scales_with_clipping_norm[...]` | For all three mechanisms, quadrupling `clipping_norm` at a fixed multiplier quadruples the noise standard deviation. Weights sit well inside the bound so clipping is a no-op and the measured difference is noise alone |
+| `test_noise_scales_with_noise_multiplier[...]` | For all three mechanisms, quadrupling `noise_multiplier` at a fixed clipping norm quadruples the noise. Without this, an implementation that used `clipping_norm` alone would still pass the test above |
+| `test_noise_is_zero_when_clipping_norm_is_zero[...]` | A non-positive `clipping_norm` disables clipping, leaving no sensitivity to calibrate against, so the scaled noise is zero and the mechanism is an explicit no-op |
+| `test_global_clip_scope_bounds_the_combined_norm` | Sixteen tensors each driven past the bound: `per_layer` leaves a combined L2 norm of `clipping_norm * 4` (that is, `sqrt(16)`), `global` leaves exactly `clipping_norm` |
+| `test_resolve_dp_config_defaults_clip_scope_to_global` | A manifest with no `clip_scope` resolves to `global` |
+
+All three zero-noise tests also include a non-floating tensor (`counter`, dtype
 `long`) in the state_dict and assert it survives untouched, pinning down
 that clipping/noising apply **only to floating-point tensors**; integer
 buffers are cloned through unchanged (see `clip_state_dict` /
@@ -95,20 +107,16 @@ Conventions to reuse when adding tests to this suite:
 
 Behavior of the DP layer this suite does not yet exercise:
 
-- **Nonzero noise** — no test asserts that noise is *actually added* when
-  scales are positive (e.g. seeded RNG, or asserting output ≠ input /
-  distribution moments). A regression that silently dropped the noise step
-  would pass this suite.
-- **Clipping in effect** — `clipping_norm` is always loose; no test drives a
-  tensor past the bound and asserts the L2 norm is scaled down, for either
-  `per_layer` or `global` scope (the two scopes are used, but only in the
-  regime where they are indistinguishable no-ops).
+- **Noise distribution shape** — the sensitivity tests measure standard
+  deviation only. Nothing asserts that Gaussian noise is Gaussian or that
+  Laplace noise has Laplace tails, so a mechanism swapped for the wrong
+  distribution at the same scale would pass.
 - **`resolve_dp_config` beyond the happy path** — untested: absent/empty
   `dp` block → compact disabled config; `enabled: false` / disabled mode
   spellings (`DISABLED_DP_MODES`: `none`, `off`, `false`, …); `enabled: true`
   with no mode coercing to `afterTraining`; parameter defaults injected by
   `setdefault` (`clipping_norm` 1.0, `noise_multiplier` 0.5, `laplace_scale`
-  defaulting to `noise_multiplier`, `clip_scope` `per_layer`); the
+  defaulting to `noise_multiplier`; `clip_scope` now covered above); the
   `ValueError` for unsupported mechanisms.
 - **Alias normalization** — `normalize_dp_mechanism` (`gaussian` →
   `post_training_gaussian`, `update` → `update_gaussian`, …) and

@@ -329,7 +329,11 @@ def resolve_dp_config(runtime=None):
     parameters.setdefault("clipping_norm", 1.0)
     parameters.setdefault("noise_multiplier", 0.5)
     parameters.setdefault("laplace_scale", parameters["noise_multiplier"])
-    parameters.setdefault("clip_scope", "per_layer")
+    # `global` is the only scope whose clip bounds the whole update at
+    # `clipping_norm`. `per_layer` clips each of n tensors independently, so
+    # the combined L2 norm is bounded at clipping_norm * sqrt(n), and the
+    # noise added here does not account for n.
+    parameters.setdefault("clip_scope", "global")
 
     return {
         "enabled": True,
@@ -352,17 +356,25 @@ def apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=None)
     mechanism = dp_config["mechanism"]
     params = dp_config["parameters"]
     clipping_norm = float(params.get("clipping_norm", 1.0))
-    clip_scope = str(params.get("clip_scope", "per_layer")).strip().lower()
+    clip_scope = str(params.get("clip_scope", "global")).strip().lower()
 
     if clip_scope not in {"per_layer", "global"}:
         raise ValueError("clip_scope must be either 'per_layer' or 'global'")
+
+    # `noise_multiplier` scales the sensitivity, which for these mechanisms is
+    # the clipping norm. Scaling here keeps the noise tied to the clip, so
+    # changing `clipping_norm` moves the privacy level with it.
+    gaussian_scale = float(params.get("noise_multiplier", 0.5)) * clipping_norm
+    laplace_scale = float(
+        params.get("laplace_scale", params.get("noise_multiplier", 0.5))
+    ) * clipping_norm
 
     if mechanism == "post_training_gaussian":
         clipped_state_dict = clip_state_dict(trained_state_dict, clipping_norm, clip_scope)
         return add_noise_to_state_dict(
             clipped_state_dict,
             noise_kind="gaussian",
-            noise_scale=float(params.get("noise_multiplier", 0.5)),
+            noise_scale=gaussian_scale,
         )
 
     if mechanism == "post_training_laplace":
@@ -370,7 +382,7 @@ def apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=None)
         return add_noise_to_state_dict(
             clipped_state_dict,
             noise_kind="laplace",
-            noise_scale=float(params.get("laplace_scale", params.get("noise_multiplier", 0.5))),
+            noise_scale=laplace_scale,
         )
 
     if mechanism == "update_gaussian":
@@ -384,7 +396,7 @@ def apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=None)
         noisy_delta = add_noise_to_state_dict(
             clipped_delta,
             noise_kind="gaussian",
-            noise_scale=float(params.get("noise_multiplier", 0.5)),
+            noise_scale=gaussian_scale,
         )
         return reconstruct_state_dict_from_delta(reference_state_dict, noisy_delta, trained_state_dict)
 
