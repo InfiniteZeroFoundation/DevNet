@@ -47,6 +47,12 @@ contract DisputeResolutionTest is Test {
 
     bytes32 constant WINNING_CID = bytes32(uint256(0xC1D));
 
+    // Commit-then-reveal (task_210726_6 §2a, PR #63) replaced the old
+    // single-shot setAuditScorenEligibility this file was written against.
+    // Fixed salt is fine here -- these tests don't exercise salt secrecy,
+    // only driving the GI far enough to reach T1 finalization.
+    bytes32 constant TEST_SALT = bytes32(uint256(0xC0FFEE));
+
     function _deployPlatform() internal {
         vm.startPrank(admin);
 
@@ -107,8 +113,10 @@ contract DisputeResolutionTest is Test {
         vm.deal(who, ethNeeded + 1 ether);
         vm.prank(who);
         coordinator.depositAndMint{value: ethNeeded}();
-        vm.prank(who);
+        vm.startPrank(who);
         token.approve(address(tc), type(uint256).max);
+        token.approve(address(ta), type(uint256).max);
+        vm.stopPrank();
     }
 
     function _deployTaskPair() internal {
@@ -127,8 +135,18 @@ contract DisputeResolutionTest is Test {
         tc.setDINTaskCoordinatorAsSlasher();
         tc.setDINTaskAuditorAsSlasher();
         tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
-        tc.startGI(1);
         tc.setDinToken(address(token));
+        ta.setDinToken(address(token));
+        vm.stopPrank();
+
+        // task_210726_6 §3: startGI reverts with TC_GIRewardPoolNotFunded
+        // unless DINTaskAuditor.depositRewards(_GI, ...) has already been
+        // called for that GI -- same sequence AuditorCommitReveal.t.sol and
+        // ScoringValidation.t.sol use.
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
+        tc.startGI(1);
         vm.stopPrank();
     }
 
@@ -193,8 +211,21 @@ contract DisputeResolutionTest is Test {
             .getAuditorsBatch(1, 0);
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
+                bytes32 commitHash = keccak256(
+                    abi.encodePacked(uint256(100), true, TEST_SALT)
+                );
                 vm.prank(batchAuditors[i]);
-                ta.setAuditScorenEligibility(1, 0, modelIdxs[m], 100, true);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 100, true, TEST_SALT);
             }
         }
 
