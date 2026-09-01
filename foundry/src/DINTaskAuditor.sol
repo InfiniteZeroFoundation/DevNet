@@ -171,7 +171,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint batchId;
         address[] auditors;
         uint[] modelIndexes;
-        bytes32 testDataCID; // shared test data for this batch
+        bytes testDataCID; // encryptedCID = AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID))
     }
 
     mapping(uint256 => AuditBatch[]) public auditBatches;
@@ -295,7 +295,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     event EncryptedTestDataKeysAssigned(
         uint256 indexed gi,
         uint indexed batchId,
-        bytes32 testDataCID,
+        bytes testDataCID,
         uint256 auditorCount
     );
     event TestDataCommitmentStored(uint256 indexed gi, uint256 indexed batchId, bytes32 commitment);
@@ -820,7 +820,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @return batchId Canonical batch identifier.
     /// @return auditors Auditors assigned to this batch.
     /// @return modelIndexes Indexes into lmSubmissions[_GI] assigned to this batch.
-    /// @return testDataCID IPFS CID of the test dataset for this batch.
+    /// @return testDataCID AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID)) — decrypt with K to obtain rawCID.
     function getAuditorsBatch(
         uint _GI,
         uint _batchId
@@ -831,7 +831,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             uint batchId,
             address[] memory auditors,
             uint[] memory modelIndexes,
-            bytes32 testDataCID
+            bytes memory testDataCID
         )
     {
         if (_GI > dintaskcoordinatorContract.GI()) revert TA_WrongGI();
@@ -857,13 +857,13 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      file bytes (task_240826_10 §B).
     /// @param gi Current GI index.
     /// @param batchId Batch index to assign the test dataset to.
-    /// @param testDataCID encryptedCID = SymmetricEncrypt(K, Sign(ownerSK, rawCID)).
+    /// @param testDataCID AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID)) — ~125 bytes.
     /// @param encryptedKeys Per-auditor encrypted copies of K, ordered to match auditors[].
     /// @param commitment Round-and-key-bound content commitment for dispute resolution.
     function assignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
-        bytes32 testDataCID,
+        bytes calldata testDataCID,
         bytes[] calldata encryptedKeys,
         bytes32 commitment
     ) external onlyOwner onlyCurrentGI(gi) {
@@ -1419,13 +1419,13 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///         Same validation as assignAuditTestDataset; a fresh K and commitment are required.
     /// @param gi GI index.
     /// @param batchId Batch to reassign.
-    /// @param newTestDataCID New encryptedCID = SymmetricEncrypt(K_new, Sign(ownerSK, rawCID_new)).
+    /// @param newTestDataCID New AES-256-GCM(K_new, rawCID_new || Sign(ownerSK, rawCID_new)).
     /// @param newEncryptedKeys New per-auditor encrypted copies of K_new.
     /// @param newCommitment New keccak256(gi, batchId, keccak256(K_new), keccak256(plaintext_new)).
     function reassignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
-        bytes32 newTestDataCID,
+        bytes calldata newTestDataCID,
         bytes[] calldata newEncryptedKeys,
         bytes32 newCommitment
     ) external onlyOwner onlyCurrentGI(gi) {
