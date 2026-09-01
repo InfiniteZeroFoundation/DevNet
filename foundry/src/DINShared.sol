@@ -64,6 +64,8 @@ interface IDinValidatorStake {
     function isSlasherContract(
         address slasherContract
     ) external view returns (bool);
+
+    function getEncryptionKey(address validator) external view returns (bytes memory);
 }
 
 interface IDINTaskCoordinator {
