@@ -7,6 +7,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./DINShared.sol";
 
+interface IBurnableDinToken {
+    function burn(uint256 amount) external;
+}
+
 /// @title DIN Task Auditor
 /// @notice Handles auditor registration, local model submission, scoring, eligibility
 ///         determination, and auditor slashing for a single federated-learning model.
@@ -212,6 +216,24 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     mapping(uint256 => mapping(uint => mapping(address => bytes))) // GI // batchId // auditor // encrypted key
         public encryptedTestDataKey;
 
+    // task_240826_10 §B — test-data dispute resolution.
+    // commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), keccak256(plaintext)))
+    // stored at assignAuditTestDataset time; checked at resolveTestDataDispute.
+    mapping(uint256 => mapping(uint256 => bytes32)) public testDataCommitments;
+
+    struct DisputeRecord {
+        address disputer;
+        uint256 bond;
+        uint256 expiresAtBlock;
+        bool active;
+        bool pendingReassignment;
+    }
+    mapping(uint256 => mapping(uint256 => DisputeRecord)) public testDataDisputes;
+
+    uint256 public disputeBondAmount;           // DIN; 0 at deploy, DAO-settable
+    uint256 public disputeWindowBlocks = 7200;  // ~1 day on Optimism (~2s blocks)
+    uint256 public disputePenaltyBps = 2500;    // 25% of giRewardPool[gi] forfeited on owner loss
+
     modifier onlyAssignedAuditor(
         uint256 gi,
         uint batchId,
@@ -276,6 +298,12 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bytes32 testDataCID,
         uint256 auditorCount
     );
+    event TestDataCommitmentStored(uint256 indexed gi, uint256 indexed batchId, bytes32 commitment);
+    event TestDataDisputeOpened(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bond, uint256 expiresAtBlock);
+    event TestDataDisputeResolvedFalse(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondForfeited);
+    event TestDataDisputeUpheld(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondReturned, uint256 ownerPenalty);
+    event BatchPendingReassignment(uint256 indexed gi, uint256 indexed batchId);
+    event DisputeExpired(uint256 indexed gi, uint256 indexed batchId, uint256 bondForfeited);
 
     event EligibilityVoted(
         uint256 indexed gi,
@@ -817,41 +845,48 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         );
     }
 
-    /// @notice Records the test dataset CID for a specific audit batch, and
-    ///         each assigned auditor's individually-encrypted decryption key.
-    /// @dev Must be called once per batch before setTestDataAssignedFlag is
-    ///      invoked. `encryptedKeys[i]` must correspond to
-    ///      `auditBatches[gi][batchId].auditors[i]` (same order
-    ///      createAuditorsBatches populated them in) -- task_210726_6 §2b:
-    ///      whitepaper §5.2.3b per-validator key encryption, on-chain
-    ///      plumbing only. The model owner is responsible for producing
-    ///      `encryptedKeys` off-chain (symmetric test-data key encrypted to
-    ///      each auditor's public key); the contract only stores what it's
-    ///      given, it does not and cannot validate the encryption itself.
+    /// @notice Records the encrypted test dataset CID, per-auditor encrypted keys, and
+    ///         content commitment for a specific audit batch.
+    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked.
+    ///      `encryptedKeys[i]` must correspond to `auditBatches[gi][batchId].auditors[i]`
+    ///      (same order createAuditorsBatches populated them in). Each auditor must have
+    ///      a registered X25519 encryption key on DinValidatorStake before this call.
+    ///      `commitment` = keccak256(abi.encodePacked(gi, batchId, keccak256(K),
+    ///      keccak256(plaintext_test_data))) — computed off-chain by the model owner;
+    ///      round-bound so stale-data reuse produces a different hash even with identical
+    ///      file bytes (task_240826_10 §B).
     /// @param gi Current GI index.
     /// @param batchId Batch index to assign the test dataset to.
-    /// @param testDataCID IPFS CID of the test dataset, encoded as bytes32.
-    /// @param encryptedKeys Per-auditor encrypted test-data keys, ordered to
-    ///        match auditBatches[gi][batchId].auditors.
+    /// @param testDataCID encryptedCID = SymmetricEncrypt(K, Sign(ownerSK, rawCID)).
+    /// @param encryptedKeys Per-auditor encrypted copies of K, ordered to match auditors[].
+    /// @param commitment Round-and-key-bound content commitment for dispute resolution.
     function assignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
         bytes32 testDataCID,
-        bytes[] calldata encryptedKeys
+        bytes[] calldata encryptedKeys,
+        bytes32 commitment
     ) external onlyOwner onlyCurrentGI(gi) {
         if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
         AuditBatch storage batch = auditBatches[gi][batchId];
         if (batch.batchId != batchId) revert TA_BatchIDMismatch();
         if (encryptedKeys.length != batch.auditors.length)
             revert TA_EncryptedKeyCountMismatch();
+        if (testDataDisputes[gi][batchId].pendingReassignment)
+            revert TA_BatchPendingReassignment();
 
         batch.testDataCID = testDataCID;
 
         for (uint256 i = 0; i < encryptedKeys.length; i++) {
+            if (dinvalidatorStakeContract.getEncryptionKey(batch.auditors[i]).length == 0)
+                revert TA_AuditorEncryptionKeyNotRegistered();
             encryptedTestDataKey[gi][batchId][batch.auditors[i]] = encryptedKeys[i];
         }
 
+        testDataCommitments[gi][batchId] = commitment;
+
         emit EncryptedTestDataKeysAssigned(gi, batchId, testDataCID, encryptedKeys.length);
+        emit TestDataCommitmentStored(gi, batchId, commitment);
     }
 
     /// @notice Marks test dataset distribution as complete for the given GI.
@@ -1235,5 +1270,183 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             if (list[i].approved) out[j++] = i;
         }
         return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test-data dispute resolution (task_240826_10 §B)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// @notice Updates the DIN bond required to open a test-data dispute.
+    function setDisputeBondAmount(uint256 amount) external onlyOwner {
+        disputeBondAmount = amount;
+    }
+
+    /// @notice Updates the dispute challenge window in blocks.
+    function setDisputeWindowBlocks(uint256 blocks) external onlyOwner {
+        disputeWindowBlocks = blocks;
+    }
+
+    /// @notice Updates the penalty fraction (basis points of giRewardPool) charged
+    ///         to the model owner when a dispute is upheld against them.
+    function setDisputePenaltyBps(uint256 bps) external onlyOwner {
+        if (bps > 10000) revert TA_InvalidDisputeBond();
+        disputePenaltyBps = bps;
+    }
+
+    /// @notice Stage 0 — free view check. Returns true if the auditor received no
+    ///         encryption key for this batch (empty bytes). An auditor with an empty key
+    ///         has grounds for a dispute without posting any bond.
+    function isEncryptionKeyEmpty(
+        uint256 gi,
+        uint256 batchId,
+        address auditor
+    ) external view returns (bool) {
+        return encryptedTestDataKey[gi][batchId][auditor].length == 0;
+    }
+
+    /// @notice Opens a test-data dispute for a batch. Requires a DIN bond.
+    ///         The disputer must call resolveTestDataDispute within the challenge
+    ///         window; failure to do so forfeits the bond (closeExpiredDispute).
+    /// @param gi GI index.
+    /// @param batchId Batch to dispute.
+    function openTestDataDispute(
+        uint256 gi,
+        uint256 batchId
+    ) external nonReentrant {
+        if (testDataCommitments[gi][batchId] == bytes32(0)) revert TA_NoCommitmentStored();
+        DisputeRecord storage d = testDataDisputes[gi][batchId];
+        if (d.active) revert TA_DisputeAlreadyActive();
+        if (d.pendingReassignment) revert TA_BatchPendingReassignment();
+
+        if (disputeBondAmount > 0) {
+            dinToken.safeTransferFrom(msg.sender, address(this), disputeBondAmount);
+        }
+
+        uint256 expires = block.number + disputeWindowBlocks;
+        testDataDisputes[gi][batchId] = DisputeRecord({
+            disputer: msg.sender,
+            bond: disputeBondAmount,
+            expiresAtBlock: expires,
+            active: true,
+            pendingReassignment: false
+        });
+
+        emit TestDataDisputeOpened(gi, batchId, msg.sender, disputeBondAmount, expires);
+    }
+
+    /// @notice Resolves an active dispute by revealing K and the actual plaintext hash.
+    ///         Anyone may call this — the disputer is the beneficiary if upheld.
+    ///         Commitment check: keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintextHash))
+    ///         Match  → dispute false → disputer's bond forfeited (50% burn / 50% treasury).
+    ///         Mismatch → dispute upheld → bond returned, owner's giRewardPool[gi] penalised.
+    /// @param gi GI index.
+    /// @param batchId Batch under dispute.
+    /// @param K The raw symmetric key the model owner used to encrypt the test data.
+    /// @param plaintextHash keccak256 of the actual decrypted test-data bytes.
+    function resolveTestDataDispute(
+        uint256 gi,
+        uint256 batchId,
+        bytes calldata K,
+        bytes32 plaintextHash
+    ) external nonReentrant {
+        DisputeRecord storage d = testDataDisputes[gi][batchId];
+        if (!d.active) revert TA_NoActiveDispute();
+        if (block.number > d.expiresAtBlock) revert TA_DisputeWindowClosed();
+
+        bytes32 reconstructed = keccak256(
+            abi.encodePacked(gi, batchId, keccak256(K), plaintextHash)
+        );
+        bool commitmentMatches = (reconstructed == testDataCommitments[gi][batchId]);
+
+        if (commitmentMatches) {
+            // Dispute is false — forfeited bond: 50% burn, 50% treasury
+            uint256 bond = d.bond;
+            d.active = false;
+            if (bond > 0) {
+                uint256 burnAmt = bond / 2;
+                uint256 treasuryAmt = bond - burnAmt;
+                IBurnableDinToken(address(dinToken)).burn(burnAmt);
+                treasuryAccrued += treasuryAmt;
+            }
+            emit TestDataDisputeResolvedFalse(gi, batchId, d.disputer, bond);
+        } else {
+            // Dispute upheld — return bond, penalise owner's reward pool
+            uint256 bond = d.bond;
+            address disputer = d.disputer;
+            d.active = false;
+            d.pendingReassignment = true;
+
+            if (bond > 0) {
+                dinToken.safeTransfer(disputer, bond);
+            }
+
+            uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
+            if (penalty > 0 && giRewardPool[gi] >= penalty) {
+                giRewardPool[gi] -= penalty;
+                uint256 burnAmt = penalty / 2;
+                uint256 treasuryAmt = penalty - burnAmt;
+                IBurnableDinToken(address(dinToken)).burn(burnAmt);
+                treasuryAccrued += treasuryAmt;
+            }
+
+            emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
+            emit BatchPendingReassignment(gi, batchId);
+        }
+    }
+
+    /// @notice Closes an expired dispute and forfeits the disputer's bond.
+    ///         Callable by anyone once the challenge window has elapsed without resolution.
+    function closeExpiredDispute(uint256 gi, uint256 batchId) external nonReentrant {
+        DisputeRecord storage d = testDataDisputes[gi][batchId];
+        if (!d.active) revert TA_NoActiveDispute();
+        if (block.number <= d.expiresAtBlock) revert TA_DisputeWindowClosed();
+
+        uint256 bond = d.bond;
+        d.active = false;
+
+        if (bond > 0) {
+            uint256 burnAmt = bond / 2;
+            uint256 treasuryAmt = bond - burnAmt;
+            IBurnableDinToken(address(dinToken)).burn(burnAmt);
+            treasuryAccrued += treasuryAmt;
+        }
+
+        emit DisputeExpired(gi, batchId, bond);
+    }
+
+    /// @notice Re-assigns test data for a batch after the model owner lost a dispute.
+    ///         Clears the pendingReassignment flag so the batch can proceed.
+    ///         Same validation as assignAuditTestDataset; a fresh K and commitment are required.
+    /// @param gi GI index.
+    /// @param batchId Batch to reassign.
+    /// @param newTestDataCID New encryptedCID = SymmetricEncrypt(K_new, Sign(ownerSK, rawCID_new)).
+    /// @param newEncryptedKeys New per-auditor encrypted copies of K_new.
+    /// @param newCommitment New keccak256(gi, batchId, keccak256(K_new), keccak256(plaintext_new)).
+    function reassignAuditTestDataset(
+        uint256 gi,
+        uint256 batchId,
+        bytes32 newTestDataCID,
+        bytes[] calldata newEncryptedKeys,
+        bytes32 newCommitment
+    ) external onlyOwner onlyCurrentGI(gi) {
+        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
+        AuditBatch storage batch = auditBatches[gi][batchId];
+        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+        if (!testDataDisputes[gi][batchId].pendingReassignment) revert TA_NoActiveDispute();
+        if (newEncryptedKeys.length != batch.auditors.length)
+            revert TA_EncryptedKeyCountMismatch();
+
+        testDataDisputes[gi][batchId].pendingReassignment = false;
+
+        batch.testDataCID = newTestDataCID;
+        for (uint256 i = 0; i < newEncryptedKeys.length; i++) {
+            if (dinvalidatorStakeContract.getEncryptionKey(batch.auditors[i]).length == 0)
+                revert TA_AuditorEncryptionKeyNotRegistered();
+            encryptedTestDataKey[gi][batchId][batch.auditors[i]] = newEncryptedKeys[i];
+        }
+        testDataCommitments[gi][batchId] = newCommitment;
+
+        emit EncryptedTestDataKeysAssigned(gi, batchId, newTestDataCID, newEncryptedKeys.length);
+        emit TestDataCommitmentStored(gi, batchId, newCommitment);
     }
 }
