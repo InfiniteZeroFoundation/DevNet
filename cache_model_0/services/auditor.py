@@ -69,9 +69,10 @@ def Score_model_by_auditor(gi, genesis_model_cid, batch_id, model_index, auditor
     math again.
 
     `genesis_model_cid`/`testDataCID`/`lm_cid` are kept as parameters purely for
-    provenance (recorded into the metric bundle); dincli fetches the actual
-    artifacts via IPFS before invoking this function and places them at the
-    deterministic local paths derived below, so no network access happens here.
+    provenance (recorded into the metric bundle); dincli fetches and decrypts the
+    actual artifacts before invoking this function — the test data at
+    `auditorDataset_{gi}_{batch_id}.pt` arrives already decrypted by the CLI layer
+    (task_240826_10 §A) — so no network or crypto access happens here.
     """
 
     try:
