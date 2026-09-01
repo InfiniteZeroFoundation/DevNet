@@ -434,6 +434,13 @@ contract DinValidatorStake is
         return slasherContracts[slasherContract];
     }
 
+    /// @notice Returns the registered X25519 public key for a validator, or empty bytes if none.
+    /// @param validator Address to query.
+    /// @return The registered 32-byte X25519 public key, or empty bytes.
+    function getEncryptionKey(address validator) public view returns (bytes memory) {
+        return encryptionKeys[validator];
+    }
+
     function _syncValidatorStatus(ValidatorInfo storage validator) internal {
         if (validator.status == ValidatorStatus.Blacklisted) {
             return;
