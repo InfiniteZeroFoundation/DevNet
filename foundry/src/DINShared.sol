@@ -174,6 +174,22 @@ error TA_AuditorNotActive();
 error TA_InvalidDeviationThreshold();
 /// @dev _medianOf requires at least one entry to compute a median over.
 error TA_EmptyScoreSet();
+/// @dev No X25519 encryption key registered for this auditor on DinValidatorStake.
+error TA_AuditorEncryptionKeyNotRegistered();
+/// @dev Test-data commitment has not been stored for this batch.
+error TA_NoCommitmentStored();
+/// @dev A dispute is already active for this batch.
+error TA_DisputeAlreadyActive();
+/// @dev No active dispute exists for this batch.
+error TA_NoActiveDispute();
+/// @dev The dispute challenge window has closed.
+error TA_DisputeWindowClosed();
+/// @dev The attached bond does not meet the required minimum.
+error TA_InsufficientDisputeBond();
+/// @dev Dispute bond amount must be greater than zero.
+error TA_InvalidDisputeBond();
+/// @dev Batch is blocked pending model owner reassignment after a lost dispute.
+error TA_BatchPendingReassignment();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator
