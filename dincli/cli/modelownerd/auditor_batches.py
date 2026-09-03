@@ -200,13 +200,17 @@ def create_testdataset(
 
                 _, batch_auditors, _, _ = taskauditor_contract.functions.getAuditorsBatch(ref_gi, batch_id).call()
 
-                # K encrypted to each auditor's registered X25519 pubkey via authenticated Box
-                encrypted_keys = []
+                # K encrypted to each auditor's registered X25519 pubkey via authenticated Box.
+                # Build address-keyed first, then reorder to the authoritative on-chain ordering
+                # so a future RPC or contract change that returns auditors in a different order
+                # cannot silently mismatch keys to recipients (BL-13, closes #115).
+                encrypted_key_by_addr = {}
                 for auditor_addr in batch_auditors:
                     pubkey_bytes = stake_contract.functions.getEncryptionKey(auditor_addr).call()
-                    encrypted_keys.append(
+                    encrypted_key_by_addr[auditor_addr.lower()] = (
                         Box(owner_privkey, PublicKey(bytes(pubkey_bytes))).encrypt(K)
                     )
+                encrypted_keys = [encrypted_key_by_addr[addr.lower()] for addr in batch_auditors]
 
                 # commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintext_keccak))
                 keccak_K = bytes(Web3.keccak(K))
