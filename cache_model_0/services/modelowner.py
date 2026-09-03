@@ -1,9 +1,12 @@
 import torch
-from typing import Union 
+from typing import Union
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import os
+import secrets
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from web3 import Web3
 from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
 from pathlib import Path
 from platformdirs import user_config_dir
@@ -142,13 +145,19 @@ def _resample_round_pool(
     return reserved_pool_indices[round_local_indices]
 
 
+def _encrypt_aes_gcm(plaintext: bytes, K: bytes) -> bytes:
+    """AES-256-GCM encrypt. Returns nonce (12 bytes) || ciphertext."""
+    nonce = secrets.token_bytes(12)
+    return nonce + AESGCM(K).encrypt(nonce, plaintext, None)
+
+
 def create_audit_testDataCIDs(
     batch_counts: int,
     gi: int,
     base_path: Union[str, Path],
     test_data_path: Union[str, Path, None] = None,
     is_final_round: bool = False,
-) -> list[str]:
+) -> list[dict]:
     """
     Create audit datasets by sampling from test data and uploading to IPFS.
 
@@ -174,7 +183,12 @@ def create_audit_testDataCIDs(
             follow-up work, not a blocker for this policy landing.
 
     Returns:
-        List of IPFS CIDs for uploaded auditor datasets
+        List of dicts, one per batch:
+          - "raw_cid" (str): IPFS CID of the AES-256-GCM encrypted ciphertext.
+          - "K" (bytes): 32-byte AES key — caller encrypts this to each auditor's
+            registered X25519 public key before passing to assignAuditTestDataset.
+          - "plaintext_keccak" (bytes): keccak256 of the raw plaintext file bytes,
+            used by the caller to build the on-chain commitment.
     """
     # Normalize paths to Path objects
     base_path = Path(base_path)
@@ -224,13 +238,29 @@ def create_audit_testDataCIDs(
         random_indices = round_pool_indices[round_local_indices]
         assigned_testData = torch.utils.data.Subset(test_data, random_indices)
 
-        # Path-based file handling (no string formatting)
+        # Save plaintext dataset to disk
         audit_path = audit_dir / f"auditorDataset_{gi}_{batch_id}.pt"
         torch.save(assigned_testData, audit_path)
 
-        ipfs_hash = upload_to_ipfs(
-            str(audit_path),  # Convert to str ONLY for external API
-            f"Auditor Dataset for gi_{gi} index {batch_id} uploaded"
+        # Read raw bytes for keccak and encryption
+        raw_bytes = audit_path.read_bytes()
+        plaintext_keccak = Web3.keccak(raw_bytes)
+
+        # Encrypt with a fresh per-batch AES-256-GCM key
+        K = secrets.token_bytes(32)
+        ciphertext = _encrypt_aes_gcm(raw_bytes, K)
+
+        # Write ciphertext to a sibling .enc file and upload that to IPFS
+        enc_path = audit_dir / f"auditorDataset_{gi}_{batch_id}.pt.enc"
+        enc_path.write_bytes(ciphertext)
+
+        raw_cid = upload_to_ipfs(
+            str(enc_path),
+            f"Encrypted auditor dataset gi_{gi} batch {batch_id}"
         )
-        audit_testDataCIDs.append(ipfs_hash)
+        audit_testDataCIDs.append({
+            "raw_cid": raw_cid,
+            "K": K,
+            "plaintext_keccak": plaintext_keccak,
+        })
     return audit_testDataCIDs

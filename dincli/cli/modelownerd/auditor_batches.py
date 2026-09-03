@@ -1,10 +1,16 @@
+import secrets
 from pathlib import Path
 import time
 import typer
 from rich.table import Table
 from web3 import Web3
+from nacl.public import Box, PublicKey, PrivateKey
+import nacl.encoding
+from eth_abi.packed import encode_packed
+from eth_account.messages import encode_defunct
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from dincli.cli.utils import CACHE_DIR, build_and_send_tx, get_manifest_key, require_custom_manifest_service
+from dincli.cli.utils import CACHE_DIR, CONFIG_DIR, build_and_send_tx, get_manifest_key, require_custom_manifest_service
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 auditor_batches_app = typer.Typer(help="Auditor Batches commands")
@@ -74,8 +80,10 @@ def show(
 
         for batch in raw_audit_batches:
             batch_id, auditors, model_indexes, test_cid_raw = batch
-            test_cid = get_cid_from_bytes32(test_cid_raw.hex()) if test_cid_raw and test_cid_raw != bytes(32) else None
-            processed_audit_batches.append({"batch_id": batch_id, "auditors": auditors, "model_indexes": model_indexes, "test_cid": test_cid or "None"})
+            # testDataCID is now bytes (encryptedCID blob), not a raw bytes32 CID pointer.
+            # Show length only — the plaintext rawCID is not directly readable from the encrypted blob.
+            test_cid = f"<encrypted, {len(test_cid_raw)} bytes>" if test_cid_raw else "None"
+            processed_audit_batches.append({"batch_id": batch_id, "auditors": auditors, "model_indexes": model_indexes, "test_cid": test_cid})
             
         if not processed_audit_batches:
             console.print("[yellow]No auditor batches found.[/yellow]")
@@ -150,27 +158,79 @@ def create_testdataset(
 
         console.print(f"[bold green]Assigning test dataset![/bold green]")
 
+        # Load (or generate) the owner's dedicated X25519 private key.
+        owner_key_path = Path(CONFIG_DIR) / "owner_x25519.key"
+        if not owner_key_path.exists():
+            new_key = PrivateKey.generate()
+            owner_key_path.write_text(
+                new_key.encode(encoder=nacl.encoding.HexEncoder).decode()
+            )
+            console.print(f"[yellow]Generated owner X25519 key → {owner_key_path}[/yellow]")
+        owner_privkey = PrivateKey(bytes.fromhex(owner_key_path.read_text().strip()))
+
+        # Write owner's X25519 pubkey into the local manifest cache so auditors
+        # can read it via get_manifest_key("owner_encryption_pubkey"). The owner
+        # must re-upload the manifest and update the on-chain CID for auditors on
+        # other machines to receive it (standard manifest update workflow).
+        import json as _json
+        from dincli.cli.utils import get_manifest_path
+        owner_pubkey_hex = bytes(owner_privkey.public_key).hex()
+        _manifest_path = get_manifest_path(effective_network, model_id=model_id)
+        if _manifest_path.exists():
+            _manifest = _json.loads(_manifest_path.read_text())
+            if _manifest.get("owner_encryption_pubkey") != owner_pubkey_hex:
+                _manifest["owner_encryption_pubkey"] = owner_pubkey_hex
+                _manifest_path.write_text(_json.dumps(_manifest, indent=2))
+                console.print(f"[dim]owner_encryption_pubkey written to manifest — re-upload manifest to distribute to auditors[/dim]")
+
+        stake_contract = ctx.obj.get_deployed_din_stake_contract(verbose=False)
+
         try:
             for batch_id in range(audtor_batch_count):
-                test_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(audit_testDataCIDs[batch_id]))
+                batch_info = audit_testDataCIDs[batch_id]
+                raw_cid = batch_info["raw_cid"]
+                K = batch_info["K"]
+                plaintext_keccak = batch_info["plaintext_keccak"]
 
-                # assignAuditTestDataset requires exactly one encrypted key per
-                # auditor in the batch (task_210726_6 §2b) -- per-validator
-                # key encryption itself is a dincli-side follow-up (the task
-                # scope was on-chain plumbing only), so this sends empty
-                # placeholders in auditor order to keep the array length
-                # requirement satisfied without claiming real encryption exists.
+                # encryptedCID = AES-256-GCM(K, rawCID_bytes || eth_sign(ownerSK, rawCID_bytes))
+                raw_cid_bytes = Web3.to_bytes(hexstr=get_bytes32_from_cid(raw_cid))
+                sig = account.sign_message(encode_defunct(raw_cid_bytes)).signature
+                nonce = secrets.token_bytes(12)
+                encrypted_cid = nonce + AESGCM(K).encrypt(nonce, raw_cid_bytes + sig, None)
+
                 _, batch_auditors, _, _ = taskauditor_contract.functions.getAuditorsBatch(ref_gi, batch_id).call()
-                encrypted_keys = [b"" for _ in batch_auditors]
+
+                # K encrypted to each auditor's registered X25519 pubkey via authenticated Box.
+                # Build address-keyed first, then reorder to the authoritative on-chain ordering
+                # so a future RPC or contract change that returns auditors in a different order
+                # cannot silently mismatch keys to recipients (BL-13, closes #115).
+                encrypted_key_by_addr = {}
+                for auditor_addr in batch_auditors:
+                    pubkey_bytes = stake_contract.functions.getEncryptionKey(auditor_addr).call()
+                    encrypted_key_by_addr[auditor_addr.lower()] = (
+                        Box(owner_privkey, PublicKey(bytes(pubkey_bytes))).encrypt(K)
+                    )
+                encrypted_keys = [encrypted_key_by_addr[addr.lower()] for addr in batch_auditors]
+
+                # commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintext_keccak))
+                keccak_K = bytes(Web3.keccak(K))
+                commitment = bytes(Web3.keccak(
+                    encode_packed(
+                        ["uint256", "uint256", "bytes32", "bytes32"],
+                        [ref_gi, batch_id, keccak_K, bytes(plaintext_keccak)],
+                    )
+                ))
 
                 time.sleep(5)
                 build_and_send_tx(
                     ctx,
-                    taskauditor_contract.functions.assignAuditTestDataset(curr_GI, batch_id, test_cid_bytes32, encrypted_keys),
+                    taskauditor_contract.functions.assignAuditTestDataset(
+                        curr_GI, batch_id, encrypted_cid, encrypted_keys, commitment
+                    ),
                     f"Assigning test dataset for auditor batch {batch_id}",
                     f"Test dataset assigned for auditor batch : {batch_id}",
                     f"Failed to assign test dataset for auditor batch : {batch_id}",
-                    exit_on_failure=False
+                    exit_on_failure=False,
                 )
 
             time.sleep(5)
@@ -180,7 +240,7 @@ def create_testdataset(
                 "Setting test dataset assigned flag",
                 "Test dataset assigned for auditor batches",
                 "Failed to set test dataset assigned flag",
-                exit_on_failure=False
+                exit_on_failure=False,
             )
         except Exception as e:
             console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")

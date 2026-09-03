@@ -344,13 +344,21 @@ contract AuditorCommitRevealTest is Test {
         _runToLMSevaluationStarted();
         (, address[] memory batchAuditors, , ) = ta.getAuditorsBatch(1, 0);
 
+        // Each auditor registers a 32-byte X25519 public key before assignment.
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            vm.prank(batchAuditors[i]);
+            stake.registerEncryptionKey(abi.encodePacked(bytes32(uint256(i + 1))));
+        }
+
         bytes[] memory keys = new bytes[](batchAuditors.length);
         for (uint i = 0; i < batchAuditors.length; i++) {
             keys[i] = abi.encodePacked("encrypted-key-for-", batchAuditors[i]);
         }
+        bytes32 commitment = keccak256(abi.encodePacked(uint256(1), uint256(0), bytes32("K"), bytes32("plaintext")));
 
+        bytes memory encCID = abi.encodePacked(bytes32(uint256(0xDA7A)));
         vm.prank(modelOwner);
-        ta.assignAuditTestDataset(1, 0, bytes32(uint256(0xDA7A)), keys);
+        ta.assignAuditTestDataset(1, 0, encCID, keys, commitment);
 
         for (uint i = 0; i < batchAuditors.length; i++) {
             assertEq(
@@ -360,8 +368,8 @@ contract AuditorCommitRevealTest is Test {
             );
         }
 
-        (, , , bytes32 testDataCID) = ta.getAuditorsBatch(1, 0);
-        assertEq(testDataCID, bytes32(uint256(0xDA7A)));
+        (, , , bytes memory testDataCID) = ta.getAuditorsBatch(1, 0);
+        assertEq(testDataCID, encCID);
     }
 
     function test_assignAuditTestDataset_keyCountMismatchReverts() public {
@@ -375,7 +383,7 @@ contract AuditorCommitRevealTest is Test {
 
         vm.prank(modelOwner);
         vm.expectRevert(); // TA_EncryptedKeyCountMismatch
-        ta.assignAuditTestDataset(1, 0, bytes32(uint256(0xDA7A)), tooFewKeys);
+        ta.assignAuditTestDataset(1, 0, abi.encodePacked(bytes32(uint256(0xDA7A))), tooFewKeys, bytes32(0));
     }
 
     function test_assignAuditTestDataset_onlyOwner() public {
@@ -385,7 +393,7 @@ contract AuditorCommitRevealTest is Test {
 
         vm.prank(auditor1); // not the model owner
         vm.expectRevert();
-        ta.assignAuditTestDataset(1, 0, bytes32(uint256(0xDA7A)), keys);
+        ta.assignAuditTestDataset(1, 0, abi.encodePacked(bytes32(uint256(0xDA7A))), keys, bytes32(0));
     }
 
     function test_assignAuditTestDataset_unassignedAuditorHasEmptyKey() public {

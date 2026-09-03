@@ -40,6 +40,7 @@ contract DinValidatorStake is
     error InvalidMinStake();
     error InvalidUnbondingPeriod();
     error InvalidStakeBounds();
+    error InvalidEncryptionKey();
 
     IERC20 public DIN_TOKEN;
     address public DIN_COORDINATOR;
@@ -96,6 +97,7 @@ contract DinValidatorStake is
     event ModelStakeBoundsUpdated(uint256 indexed modelId, uint256 min, uint256 max);
     event MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256 value);
     event SlashTreasuryUpdated(address indexed treasury);
+    event EncryptionKeyRegistered(address indexed validator, bytes pubkey);
 
     mapping(address => ValidatorInfo) public validators;
 
@@ -103,6 +105,7 @@ contract DinValidatorStake is
     mapping(uint256 => ModelStakeBounds) public modelMinStakeBounds;
     uint256 public maxConcurrentRegistrationsPerStakeUnit;
     address public slashTreasury;
+    mapping(address => bytes) public encryptionKeys;
 
     // Reserved for future state variables at this inheritance level.
     uint256[50] private __gap;
@@ -354,6 +357,14 @@ contract DinValidatorStake is
         emit SlashTreasuryUpdated(treasury_);
     }
 
+    /// @notice Registers a 32-byte X25519 public key for encrypted test-data key delivery.
+    /// @param pubkey Raw 32-byte X25519 public key.
+    function registerEncryptionKey(bytes calldata pubkey) external {
+        if (pubkey.length != 32) revert InvalidEncryptionKey();
+        encryptionKeys[msg.sender] = pubkey;
+        emit EncryptionKeyRegistered(msg.sender, pubkey);
+    }
+
     /// @notice Jails a validator for the given duration preventing GI registration. Callable only by a registered
     ///         slasher contract. Extends an existing jail if the new deadline is later.
     function jailValidator(
@@ -421,6 +432,13 @@ contract DinValidatorStake is
         address slasherContract
     ) public view returns (bool) {
         return slasherContracts[slasherContract];
+    }
+
+    /// @notice Returns the registered X25519 public key for a validator, or empty bytes if none.
+    /// @param validator Address to query.
+    /// @return The registered 32-byte X25519 public key, or empty bytes.
+    function getEncryptionKey(address validator) public view returns (bytes memory) {
+        return encryptionKeys[validator];
     }
 
     function _syncValidatorStatus(ValidatorInfo storage validator) internal {

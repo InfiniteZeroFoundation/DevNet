@@ -7,9 +7,14 @@ from typing import Optional
 import typer
 from rich.table import Table
 from web3 import Web3
+from nacl.public import Box, PrivateKey, PublicKey
+import nacl.encoding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from eth_account.messages import encode_defunct
+from eth_account import Account
 from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
+from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, require_custom_manifest_service)
 from dincli.cli.worker import (
     ensure_worker_image,
@@ -21,6 +26,22 @@ from dincli.cli.worker import (
     write_worker_job,
 )
 from dincli.services.cid_utils import get_cid_from_bytes32
+from dincli.services.ipfs import retrieve_from_ipfs
+
+def _load_auditor_x25519_key() -> PrivateKey:
+    key_path = Path(CONFIG_DIR) / "auditor_x25519.key"
+    if not key_path.exists():
+        raise FileNotFoundError(
+            f"Auditor X25519 private key not found at {key_path}. "
+            "Generate one and register its public key on-chain first: "
+            "dincli auditor register-encryption-key"
+        )
+    return PrivateKey(bytes.fromhex(key_path.read_text().strip()))
+
+
+def _decrypt_aes_gcm(ciphertext: bytes, K: bytes) -> bytes:
+    return AESGCM(K).decrypt(ciphertext[:12], ciphertext[12:], None)
+
 
 # Local persistence for the commit-then-reveal auditor scoring flow
 # (task_210726_6 §2a): the (score, vote, salt) triple committed at commit
@@ -359,8 +380,7 @@ def evaluate_lms(
         audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
         auditors_in_batch = audit_batch[1]
         model_indexes = audit_batch[2]
-        testDataCID_raw = audit_batch[3]
-        testDataCID = get_cid_from_bytes32(testDataCID_raw.hex()) if testDataCID_raw and testDataCID_raw != bytes(32) else None
+        encrypted_cid_blob = bytes(audit_batch[3])  # AES-GCM(K, rawCID||sig) — decrypted below
 
         if account.address not in auditors_in_batch:
             # If user specifically requested this batch, warn them
@@ -396,14 +416,42 @@ def evaluate_lms(
             # before the worker container can import it.
             ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
 
-            # dincli fetches every IPFS-addressed input on the host; the
-            # container only ever sees already-materialized local files at the
-            # exact paths Score_model_by_auditor derives internally.
-            ctx.obj.ensure_file_exists(
-                model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt",
-                testDataCID,
-                "auditor test data",
-            )
+            # Recover K and rawCID via decrypt chain:
+            #   Box(auditor_privkey, owner_pubkey).decrypt(encryptedKey) → K
+            #   AES-GCM-decrypt(encryptedCID, K) → rawCID_bytes (32) || sig (65)
+            #   verify eth_sign(ownerSK, rawCID_bytes) → confirms owner
+            #   fetch ciphertext IPFS(rawCID) → AES-GCM-decrypt(K) → plaintext .pt
+            raw_cid = None
+            try:
+                auditor_privkey = _load_auditor_x25519_key()
+                owner_pubkey = PublicKey(bytes.fromhex(
+                    get_manifest_key(effective_network, "owner_encryption_pubkey", model_id)
+                ))
+                encrypted_key_blob = bytes(task_auditor_contract.functions.encryptedTestDataKey(
+                    curr_GI, batch_id, account.address).call())
+                K = Box(auditor_privkey, owner_pubkey).decrypt(encrypted_key_blob)
+
+                payload = _decrypt_aes_gcm(encrypted_cid_blob, K)
+                raw_cid_bytes, sig = payload[:32], payload[32:]
+
+                owner_addr = task_coordinator_contract.functions.owner().call()
+                if Account.recover_message(encode_defunct(raw_cid_bytes), signature=sig).lower() != owner_addr.lower():
+                    console.print(f"[bold red]✗ Batch {batch_id}: owner signature on rawCID invalid — skipping.[/bold red]")
+                    continue
+
+                raw_cid = get_cid_from_bytes32("0x" + raw_cid_bytes.hex())
+
+                pt_path = model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt"
+                if not pt_path.exists():
+                    enc_path = pt_path.with_suffix(".pt.enc")
+                    pt_path.parent.mkdir(parents=True, exist_ok=True)
+                    retrieve_from_ipfs(raw_cid, enc_path)
+                    pt_path.write_bytes(_decrypt_aes_gcm(enc_path.read_bytes(), K))
+                    console.print(f"[dim]Decrypted test data for batch {batch_id}[/dim]")
+            except Exception as e:
+                console.print(f"[bold red]✗ Batch {batch_id}: failed to decrypt test data: {e}[/bold red]")
+                continue
+
             ctx.obj.ensure_file_exists(
                 model_base_dir / "models" / "auditor" / f"lm_{curr_GI}_{model_index}.pth",
                 lm_cid,
@@ -422,7 +470,7 @@ def evaluate_lms(
                     "role": "auditor",
                     "service_path": manifest["path"],
                     "function_name": "Score_model_by_auditor",
-                    "args": [curr_GI, genesis_model_cid, batch_id, model_index, account.address, testDataCID, lm_cid, "/din/model"],
+                    "args": [curr_GI, genesis_model_cid, batch_id, model_index, account.address, raw_cid, lm_cid, "/din/model"],
                 },
             )
 
