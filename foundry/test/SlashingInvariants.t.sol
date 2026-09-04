@@ -3,12 +3,16 @@ pragma solidity ^0.8.28;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Invariant and fuzz coverage for DinValidatorStake.slash() as it exists
-// today (task_210726_6 Part 4b, issue #38). Confirms three claims from
-// Developer/design/slashing-taxonomy.md against real execution rather than
-// reading the source once: staked supply never increases from a slash,
-// slashed tokens strand in the contract's own balance rather than being
-// burned or transferred anywhere, and no validator can be pushed into a
-// negative-stake state.
+// today (task_210726_6 Part 4b, issue #38). Confirms the three properties
+// specified in Developer/design/MECHANISM_DESIGN.md §4 against real execution
+// rather than reading the source once: staked supply never increases from a
+// slash, slashed tokens split between burn and slashTreasury per the #60/#65
+// resolution rather than reaching a third party, and no validator can be
+// pushed into a negative-stake state.
+//
+// Those three specified properties are carried by four invariant_ functions
+// plus nine fuzz/unit tests -- the first property needs two of them, since the
+// per-actor bound alone is too loose (see invariant_totalAccountedStakeMatchesLedger).
 // Run: forge test --match-contract SlashingInvariantsTest -vv
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -34,6 +38,9 @@ contract SlashingHandler is Test {
     uint256 public ghost_totalWithdrawn;
     uint256 public ghost_totalSlashed;
     uint256 public ghost_slashCallCount;
+    uint256 public ghost_totalMinted;
+    uint256 public ghost_totalBurned;
+    uint256 public ghost_totalToTreasury;
 
     constructor(DinToken _token, DinCoordinator _coordinator, DinValidatorStake _stake) {
         token = _token;
@@ -54,8 +61,10 @@ contract SlashingHandler is Test {
         // dinPerEth defaults to 1_000_000 * 1e18 on DinCoordinator.
         uint256 ethNeeded = (dinAmount * 1e18) / (1_000_000 * 1e18) + 1;
         vm.deal(who, ethNeeded);
+        uint256 supplyBefore = token.totalSupply();
         vm.prank(who);
         coordinator.depositAndMint{value: ethNeeded}();
+        ghost_totalMinted += token.totalSupply() - supplyBefore;
     }
 
     function stakeAction(uint256 actorSeed, uint256 amount) external {
@@ -82,6 +91,10 @@ contract SlashingHandler is Test {
         uint256 actual = stake.slash(who, amount, "FUZZ_SLASH");
 
         ghost_totalSlashed += actual;
+        // Recomputed here rather than read back from the contract, so the
+        // invariants check the split instead of restating it.
+        ghost_totalBurned += actual / 2;
+        ghost_totalToTreasury += actual - actual / 2;
         ghost_slashCallCount++;
     }
 
@@ -130,6 +143,8 @@ contract SlashingInvariantsTest is StdInvariant, Test {
     address admin = makeAddr("admin");
     address slasher = makeAddr("slasher");
     address validator1 = makeAddr("validator1");
+    address slashTreasury = makeAddr("slashTreasury");
+    uint256 initialSupply;
 
     SlashingHandler handler;
 
@@ -189,28 +204,63 @@ contract SlashingInvariantsTest is StdInvariant, Test {
         vm.prank(admin);
         coordinator.addSlasherContract(address(handler));
 
+        vm.prank(admin);
+        stake.setSlashTreasury(slashTreasury);
+
+        // Captured rather than assumed zero: DinToken.initialize() mints
+        // nothing today, but the supply identity below should not silently
+        // depend on that staying true.
+        initialSupply = token.totalSupply();
+
         targetContract(address(handler));
     }
 
     /// @dev The stake contract's real DIN balance must always equal
-    ///      (total staked - total withdrawn): slash() never moves tokens,
-    ///      so a slashed amount can never leave the contract's balance,
-    ///      and nothing can leave beyond what claimUnstaked() paid out.
+    ///      (total staked - total withdrawn - total slashed): slash() moves
+    ///      the slashed amount out via burn and/or transfer to slashTreasury,
+    ///      so what remains in the contract's balance is only what is still
+    ///      accounted for, plus nothing beyond what claimUnstaked() has paid
+    ///      out.
     function invariant_contractBalanceMatchesStakedMinusWithdrawn() public view {
-        uint256 expected = handler.ghost_totalStaked() - handler.ghost_totalWithdrawn();
+        uint256 expected = handler.ghost_totalStaked()
+            - handler.ghost_totalWithdrawn()
+            - handler.ghost_totalSlashed();
         assertEq(token.balanceOf(address(stake)), expected);
     }
 
-    /// @dev Slashed tokens are never destroyed (total supply constant) and
-    ///      never transferred to a third party -- they simply become
-    ///      unaccounted surplus sitting in the stake contract's own balance.
-    function invariant_slashedAmountStrandsInContract() public view {
+    /// @dev The contract's internal accounting must equal the same ledger its
+    ///      token balance does. Paired with the balance invariant above this is
+    ///      solvency: every unit of stake the contract believes it owes is a
+    ///      unit it actually holds. This is what carries MECHANISM_DESIGN.md
+    ///      §4's "total staked supply never increases after a slash" -- an
+    ///      exact equality, not the loose per-actor bound below, which a slash
+    ///      that wrongly *raised* an actor's stake could still satisfy.
+    function invariant_totalAccountedStakeMatchesLedger() public view {
+        uint256 total;
+        for (uint256 i = 0; i < handler.actorsLength(); i++) {
+            (uint256 activeStake, uint256 pendingWithdrawals, , , ) = stake.validators(handler.actors(i));
+            total += activeStake + pendingWithdrawals;
+        }
+        assertEq(
+            total,
+            handler.ghost_totalStaked() - handler.ghost_totalWithdrawn() - handler.ghost_totalSlashed()
+        );
+    }
+
+    /// @dev Slashed tokens leave the stake contract in the 50/50 split resolved
+    ///      in MECHANISM_DESIGN.md §4: half burned, half to slashTreasury (an
+    ///      odd wei goes to the treasury). Nothing reaches a third party -- that
+    ///      follows jointly from these two assertions and the balance invariant
+    ///      above, which together account for every unit that left.
+    ///      The unset-treasury fallback (both halves burned) is covered by
+    ///      DinValidatorStake.t.sol:test_slash_burns100PercentWhenNoTreasurySet.
+    function invariant_slashedAmountSplitsBetweenBurnAndTreasury() public view {
         if (handler.ghost_slashCallCount() == 0) return;
-        uint256 surplus = token.balanceOf(address(stake)) -
-            (handler.ghost_totalStaked() - handler.ghost_totalWithdrawn() - handler.ghost_totalSlashed());
-        // surplus should be exactly ghost_totalSlashed: slashed accounting
-        // disappeared from validators' balances but the tokens stayed put.
-        assertEq(surplus, handler.ghost_totalSlashed());
+        assertEq(token.balanceOf(slashTreasury), handler.ghost_totalToTreasury());
+        assertEq(
+            token.totalSupply(),
+            initialSupply + handler.ghost_totalMinted() - handler.ghost_totalBurned()
+        );
     }
 
     /// @dev No sequence of stake/slash/unstake/claim calls can leave any
@@ -218,6 +268,8 @@ contract SlashingInvariantsTest is StdInvariant, Test {
     ///      exceeds what they ever staked (uint256 underflow would revert
     ///      the whole run before this assertion could even be reached, but
     ///      this additionally proves the accounting never "creates" stake).
+    ///      This is a loose per-actor bound, not the exact property --
+    ///      invariant_totalAccountedStakeMatchesLedger above carries that.
     function invariant_noActorStakeExceedsWhatWasEverStaked() public view {
         for (uint256 i = 0; i < handler.actorsLength(); i++) {
             address actor = handler.actors(i);
@@ -292,24 +344,28 @@ contract SlashingInvariantsTest is StdInvariant, Test {
         assertEq(stake.getStake(validator1), stakeAmount - slashAmount);
     }
 
-    function test_slash_doesNotTransferOrBurnTokens() public {
-        uint256 stakeAmount = _setUpSingleValidator(10_000 ether);
+    function testFuzz_slash_splitsBetweenBurnAndTreasury(
+        uint256 stakeAmount,
+        uint256 slashAmount
+    ) public {
+        stakeAmount = _setUpSingleValidator(stakeAmount);
+        vm.prank(admin);
+        stake.setSlashTreasury(slashTreasury);
+        slashAmount = bound(slashAmount, 1, stakeAmount);
+
         uint256 supplyBefore = token.totalSupply();
         uint256 contractBalanceBefore = token.balanceOf(address(stake));
+        uint256 treasuryBefore = token.balanceOf(slashTreasury);
 
         vm.prank(slasher);
-        uint256 actual = stake.slash(validator1, stakeAmount / 2, "TEST");
+        uint256 actual = stake.slash(validator1, slashAmount, "TEST");
 
-        assertEq(token.totalSupply(), supplyBefore, "slash must not burn: total supply unchanged");
-        assertEq(
-            token.balanceOf(address(stake)),
-            contractBalanceBefore,
-            "slash must not transfer: contract balance unchanged despite accounting decrease"
-        );
         assertGt(actual, 0);
-        // The slashed amount is now unaccounted surplus: nobody's
-        // activeStake/pendingWithdrawals sums to the full contract balance.
-        assertLt(stake.getStake(validator1), contractBalanceBefore);
+        // These three together are the no-leak property: exactly `actual` left
+        // the contract, and burn + treasury account for all of it.
+        assertEq(contractBalanceBefore - token.balanceOf(address(stake)), actual);
+        assertEq(supplyBefore - token.totalSupply(), actual / 2);
+        assertEq(token.balanceOf(slashTreasury) - treasuryBefore, actual - actual / 2);
     }
 
     function test_slash_unauthorizedCallerReverts() public {
