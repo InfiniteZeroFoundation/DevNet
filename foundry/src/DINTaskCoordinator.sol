@@ -32,6 +32,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     uint256 public constant T1_AGGREGATORS_PER_BATCH = 3;
     uint256 public constant T1_MODELS_PER_BATCH = 3;
     uint256 public constant MIN_T1_MODELS_PER_BATCH = 2;
+    uint256 public constant MAX_REGISTERED_AGGREGATORS = 300;
 
     struct Tier1Batch {
         uint batchId; // Unique inside round
@@ -265,6 +266,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         }
         if (isDINAggregator[_GI][msg.sender])
             revert TC_AggregatorAlreadyRegistered();
+        if (dinAggregators[_GI].length >= MAX_REGISTERED_AGGREGATORS)
+            revert TC_RegistrationCapReached();
 
         // Add to list and mark as registered
         dinAggregators[_GI].push(msg.sender);
@@ -622,6 +625,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         }
         if (t1Submitted[_GI][_batchId][msg.sender])
             revert TC_AlreadySubmitted();
+        if (_aggregationCID == bytes32(0)) revert TC_ZeroCID();
 
         t1Submitted[_GI][_batchId][msg.sender] = true;
         t1SubmissionCID[_GI][_batchId][msg.sender] = _aggregationCID;
@@ -648,10 +652,12 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             // Determine the CID with the most votes
             bytes32 winningCID = "";
             uint maxVotes = 0;
+            uint submissionCount = 0;
 
             for (uint j = 0; j < b.aggregators.length; j++) {
                 address aggregator = b.aggregators[j];
                 if (t1Submitted[_GI][b.batchId][aggregator]) {
+                    submissionCount++;
                     bytes32 cid = t1SubmissionCID[_GI][b.batchId][aggregator];
                     uint votes = t1Votes[_GI][b.batchId][cid];
                     if (votes > maxVotes) {
@@ -662,6 +668,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             }
 
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
+            if (submissionCount < T1_AGGREGATORS_PER_BATCH / 2 + 1)
+                revert TC_InsufficientSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
             tier1FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
@@ -702,6 +710,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         }
         if (t2Submitted[_GI][_batchId][msg.sender])
             revert TC_AlreadySubmitted();
+        if (_aggregationCID == bytes32(0)) revert TC_ZeroCID();
 
         t2Submitted[_GI][_batchId][msg.sender] = true;
         t2SubmissionCID[_GI][_batchId][msg.sender] = _aggregationCID;
@@ -727,10 +736,12 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             // Determine the CID with the most votes
             bytes32 winningCID = "";
             uint maxVotes = 0;
+            uint submissionCount = 0;
 
             for (uint j = 0; j < b.aggregators.length; j++) {
                 address aggregator = b.aggregators[j];
                 if (t2Submitted[_GI][b.batchId][aggregator]) {
+                    submissionCount++;
                     bytes32 cid = t2SubmissionCID[_GI][b.batchId][aggregator];
                     uint votes = t2Votes[_GI][b.batchId][cid];
                     if (votes > maxVotes) {
@@ -741,6 +752,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             }
 
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
+            if (submissionCount < T1_AGGREGATORS_PER_BATCH / 2 + 1)
+                revert TC_InsufficientSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
             tier2FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);

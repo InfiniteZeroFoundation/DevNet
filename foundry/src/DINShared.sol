@@ -170,6 +170,10 @@ error TA_AlreadyVoted();
 error TA_CannotFinalizeEvaluation();
 /// @dev Auditor's validator status is not Active.
 error TA_AuditorNotActive();
+/// @dev Maximum auditor registrations for this GI has been reached.
+error TA_RegistrationCapReached();
+/// @dev GI state does not permit slashing auditors at this time.
+error TA_CannotSlashAuditors();
 /// @dev S3 deviation threshold must be in the range [0, 100].
 error TA_InvalidDeviationThreshold();
 /// @dev _medianOf requires at least one entry to compute a median over.
@@ -303,3 +307,9 @@ error TC_DisputeNotOpen();
 error TC_DisputeAlreadyResolved();
 /// @dev Caller has no claimable dispute-bond balance.
 error TC_NoBondClaimable();
+/// @dev Aggregation CID cannot be bytes32(0); zero is reserved as the "no submission" sentinel.
+error TC_ZeroCID();
+/// @dev Maximum aggregator registrations for this GI has been reached.
+error TC_RegistrationCapReached();
+/// @dev Fewer aggregators submitted than the required quorum for this batch.
+error TC_InsufficientSubmissions();

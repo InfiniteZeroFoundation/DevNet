@@ -67,6 +67,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     mapping(address => uint256) public claimable;
 
     uint MAX_LM_SUBMISSIONS = 10000;
+    uint256 public constant MAX_REGISTERED_AUDITORS = 300;
 
     mapping(uint => address[]) public dinAuditors;
 
@@ -565,6 +566,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         ) revert TA_AuditorRegistrationNotOpen();
         if (isRegisteredAuditor[_GI][msg.sender])
             revert TA_AuditorAlreadyRegistered();
+        if (dinAuditors[_GI].length >= MAX_REGISTERED_AUDITORS)
+            revert TA_RegistrationCapReached();
 
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TA_AuditorNotActive();
@@ -1147,6 +1150,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     function slashAuditors(
         uint _GI
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
+        if (dintaskcoordinatorContract.GIstate() != GIstates.T2AggregationDone)
+            revert TA_CannotSlashAuditors();
         uint256 slashAmount = dinvalidatorStakeContract.minStake();
         uint batchCount = auditBatches[_GI].length;
         LMSubmission[] storage submissions = lmSubmissions[_GI];
