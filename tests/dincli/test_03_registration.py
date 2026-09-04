@@ -27,8 +27,6 @@ Confirmation-prompt map (input_text reference):
 import pytest
 from tests.dincli.constants import TORCHENV_PYTHON
 
-pytestmark = pytest.mark.integration
-
 # Expected GI state after genesis model is registered
 GI_STATE_GENESIS_MODEL_CREATED = "GenesisModelCreated"
 

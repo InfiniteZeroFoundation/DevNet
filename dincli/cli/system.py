@@ -303,7 +303,7 @@ def connect_wallet(ctx: typer.Context,
 
     Active-wallet resolution priority (first hit wins):
 
-    
+    \b
       1. dincli --wallet <name>   global flag, this invocation only
       2. DIN_WALLET_NAME          environment variable
       3. config "wallet_name"     <- what this command sets
@@ -311,7 +311,7 @@ def connect_wallet(ctx: typer.Context,
 
     The wallet must already be registered:
 
-    
+    \b
       dincli system register-wallet --name validator --keystore ks.json
       dincli system connect-wallet validator     # switch to it
       dincli system connect-wallet               # switch back to 'default'
@@ -405,7 +405,7 @@ def register_wallet(ctx: typer.Context,
     The key comes from exactly ONE of the following sources — passing more
     than one is an error, passing none falls through to the hidden prompt:
 
-    
+    \b
       --keystore FILE   import a standard Ethereum JSON keystore
       --account N       dev-account index: in demo mode reads the bundled
                         Hardhat dev keys, otherwise reads ETH_PRIVATE_KEY_<N>
@@ -414,7 +414,7 @@ def register_wallet(ctx: typer.Context,
       PRIVATEKEY        positional argument (insecure: shell history/logs)
       (none)            interactive hidden prompt  <- recommended
 
-    
+    \b
     Storage (at <CONFIG_DIR>/wallets/wallet_<name>.json):
       demo mode ON   -> plaintext JSON — local Hardhat testing ONLY
       demo mode OFF  -> encrypted keystore; the encryption password comes
@@ -430,7 +430,7 @@ def register_wallet(ctx: typer.Context,
     An existing wallet with the same name is only overwritten after
     confirmation (skip with --yes).
 
-    
+    \b
     Examples:
       dincli system register-wallet                          # prompt, save as 'default'
       dincli system register-wallet --keystore ks.json --name validator

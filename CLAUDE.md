@@ -15,23 +15,25 @@ Docs convention: `Documentation/` describes what exists in the code on `develop`
 ### Python / dincli
 
 ```bash
-pip install -e .              # editable install (repo root, requires Python >=3.9)
+pip install -e .              # editable install (repo root, requires Python >=3.12)
 dincli --help                 # CLI entrypoint (dincli.main:app)
 pytest                        # run all tests
 pytest tests/test_dintoken.py -k test_name   # run a single test
 ```
 
-There is no `[tool.pytest]`/`[tool.ruff]` config committed in `pyproject.toml` — `.pytest_cache`/`.ruff_cache` are local artifacts, not enforced CI config. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
+There is no `[tool.ruff]` config committed in `pyproject.toml` — `.ruff_cache` is a local artifact, not enforced CI config. `[tool.pytest.ini_options]` registers the `integration` marker. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
 
 Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner` rather than hitting a live network (see `tests/test_dintoken.py`, `tests/test_ipfs_config.py`).
 
 ### Solidity
 
 ```bash
-cd foundry && forge build && forge test          # primary: build/test
+cd foundry && npm ci && forge build && forge test # primary: build/test
 forge script script/DeployPlatform.s.sol ...      # primary: deploy (see script/ for deploy/upgrade scripts)
 cd hardhat && npx hardhat compile && npx hardhat test   # secondary/complementary toolchain
 ```
+
+`npm ci` in `foundry/` must run before `forge test`: `Upgrades.validateImplementation` (used by the upgrade-validation tests and `DeployPlatform.s.sol`/`UpgradePlatform.s.sol`) shells out over FFI to `npx @openzeppelin/upgrades-core`, and without `foundry/node_modules` already populated, `forge test`'s parallel test functions race each other fetching the package into the shared npx cache — a source of both flakiness and unnecessary supply-chain exposure from fetching a package at test time. `foundry/package.json` already pins the dependency, so `npm ci` installs from the committed lockfile rather than resolving anything new.
 
 Foundry config: `solc 0.8.28`, `via_ir = true`. Hardhat config: `solc 0.8.28`, `evmVersion: cancun`, local hardhat network forced to `hardfork: cancun` (required for TSTORE/TLOAD support used by the contracts). `hardhat/hardhat.config.ts` loads `../.env` then `../.env.<NETWORK>` (defaults to `local`).
 
