@@ -168,8 +168,31 @@ Why this matters:
 
 The service supports two clipping scopes:
 
+- `global` (default): one combined L2 norm is computed across all floating tensors and one shared scale factor is applied.
 - `per_layer`: each floating tensor is clipped independently.
-- `global`: one combined L2 norm is computed across all floating tensors and one shared scale factor is applied.
+
+`global` is the default because it is the only scope whose clip bounds the
+whole update at `clipping_norm`. Clipping `n` tensors independently to
+`clipping_norm` bounds the combined L2 norm at `clipping_norm * sqrt(n)`, so
+under `per_layer` the quantity the noise is calibrated against grows with model
+depth. `per_layer` remains available for utility, but it carries no formal
+sensitivity bound and should be treated as experimental.
+
+## Noise Calibration
+
+The noise scale is `noise_multiplier * clipping_norm`, not `noise_multiplier`
+on its own. The clipping norm is the sensitivity these mechanisms bound, and
+the multiplier scales that sensitivity, which is the form privacy accounting
+libraries expect.
+
+The practical consequence is that `clipping_norm` and the noise level move
+together. Loosening the clip widens the sensitivity and widens the noise to
+match, instead of leaving the noise fixed while the privacy level silently
+changes.
+
+`laplace_scale` is scaled the same way. Note that Laplace noise calibrated
+against an L2 clip is an open question tracked separately, since the Laplace
+mechanism is normally calibrated against an L1 sensitivity.
 
 Only floating tensors are clipped/noised. Integer buffers or counters are copied through unchanged.
 
