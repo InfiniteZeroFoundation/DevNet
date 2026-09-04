@@ -16,7 +16,8 @@ import {DINTaskAuditor}     from "../src/DINTaskAuditor.sol";
 ///
 /// Measures on-chain gas across three GI lifecycle scenarios:
 ///   S1. Aggregation submissions (T1 and T2 CID submissions, finalization)
-///   S2. Evaluation submissions (setAuditScorenEligibility — cold and quorum-trigger)
+///   S2. Evaluation submissions (revealAuditScore — cold and quorum-trigger; commit-then-reveal
+///       per task_210726_6 §2a split the old single-shot setAuditScorenEligibility)
 ///   S3. Worst-case slashing (slashAggregators with 2/3 slashed, slashAuditors full loop)
 ///
 /// Run: forge clean && forge test --match-contract GasSimulationTest -vv
@@ -47,6 +48,7 @@ contract GasSimulationTest is Test {
     uint constant AUD_PER_BATCH    = 3; // DINTaskAuditor default params.auditorsPerBatch
     uint constant MOD_PER_BATCH    = 3; // DINTaskAuditor default params.modelsPerBatch
     uint constant QUORUM           = 2; // DINTaskAuditor default params.minEligibilityQuorum
+    bytes32 constant TEST_SALT     = bytes32(uint256(0xC0FFEE));
 
     // ── setUp: deploy and wire everything ─────────────────────────────────────
 
@@ -120,6 +122,17 @@ contract GasSimulationTest is Test {
         }
 
         uint gi = 1;
+
+        // task_210726_6 §3: _startGI now requires the upcoming GI's reward
+        // pool to be funded first (mirrors SecurityFindings.t.sol's
+        // _deployTaskPair). Minimal funding here since these fixtures
+        // predate the reward engine and aren't testing settlement.
+        ta.setDinToken(address(token));
+        vm.deal(address(this), 1 ether);
+        coordinator.depositAndMint{value: 0.001 ether}();
+        token.approve(address(ta), type(uint256).max);
+        ta.depositRewards(gi, 1 ether);
+
         tc.startGI(gi);
 
         tc.startDINaggregatorsRegistration(gi);
@@ -147,12 +160,23 @@ contract GasSimulationTest is Test {
     ///      T1AggregationStarted.
     function _completeEvalAndOpenT1(uint gi) internal {
         uint bCnt = ta.AuditorsBatchCount(gi);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
         for (uint b = 0; b < bCnt; b++) {
             (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(gi, b);
             for (uint a = 0; a < bAuds.length; a++) {
                 for (uint m = 0; m < bMods.length; m++) {
                     vm.prank(bAuds[a]);
-                    ta.setAuditScorenEligibility(gi, b, bMods[m], 75, true);
+                    ta.commitAuditScore(gi, b, bMods[m], commitHash);
+                }
+            }
+        }
+        tc.startLMsubmissionsEvaluationReveal(gi);
+        for (uint b = 0; b < bCnt; b++) {
+            (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(gi, b);
+            for (uint a = 0; a < bAuds.length; a++) {
+                for (uint m = 0; m < bMods.length; m++) {
+                    vm.prank(bAuds[a]);
+                    ta.revealAuditScore(gi, b, bMods[m], 75, true, TEST_SALT);
                 }
             }
         }
@@ -275,26 +299,41 @@ contract GasSimulationTest is Test {
     // SCENARIO 2 — Evaluation submissions
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// @dev First auditor vote for a model: all storage writes are cold.
+    /// @dev First auditor reveal for a model: all storage writes are cold.
+    ///      Commit-then-reveal (task_210726_6 §2a) split the old single-shot
+    ///      setAuditScorenEligibility into commitAuditScore + revealAuditScore;
+    ///      the commit itself is untimed here since revealAuditScore is what
+    ///      now does the eligibility bookkeeping (_tryFinalizeEligibility).
     function test_gas_s2_auditScore_cold_noQuorum() public {
         _setupToEvalStart(3);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
 
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
         uint before = gasleft();
-        vm.prank(bAuds[0]); ta.setAuditScorenEligibility(1, 0, bMods[0], 75, true);
-        console.log("[GAS][S2] setAuditScorenEligibility (cold, quorum not met):", before - gasleft());
+        vm.prank(bAuds[0]); ta.revealAuditScore(1, 0, bMods[0], 75, true, TEST_SALT);
+        console.log("[GAS][S2] revealAuditScore (cold, quorum not met):", before - gasleft());
     }
 
-    /// @dev Vote that tips the batch to eligibility quorum — triggers _tryFinalizeEligibility write.
+    /// @dev Reveal that tips the batch to eligibility quorum — triggers _tryFinalizeEligibility write.
     function test_gas_s2_auditScore_quorumTrigger() public {
         _setupToEvalStart(3);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
-        // First vote (cold, below quorum)
-        vm.prank(bAuds[0]); ta.setAuditScorenEligibility(1, 0, bMods[0], 70, true);
-        // Second vote — hits quorum (QUORUM=2), _tryFinalizeEligibility fires and writes eligible=true
+
+        bytes32 commitHash0 = keccak256(abi.encodePacked(uint256(70), true, TEST_SALT));
+        bytes32 commitHash1 = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash0);
+        vm.prank(bAuds[1]); ta.commitAuditScore(1, 0, bMods[0], commitHash1);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        // First reveal (cold, below quorum)
+        vm.prank(bAuds[0]); ta.revealAuditScore(1, 0, bMods[0], 70, true, TEST_SALT);
+        // Second reveal — hits quorum (QUORUM=2), _tryFinalizeEligibility fires and writes eligible=true
         uint before = gasleft();
-        vm.prank(bAuds[1]); ta.setAuditScorenEligibility(1, 0, bMods[0], 80, true);
-        console.log("[GAS][S2] setAuditScorenEligibility (quorum trigger, eligibility write):", before - gasleft());
+        vm.prank(bAuds[1]); ta.revealAuditScore(1, 0, bMods[0], 80, true, TEST_SALT);
+        console.log("[GAS][S2] revealAuditScore (quorum trigger, eligibility write):", before - gasleft());
     }
 
     // ─────────────────────────────────────────────────────────────────────────

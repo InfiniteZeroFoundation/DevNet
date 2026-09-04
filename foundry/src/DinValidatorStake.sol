@@ -93,13 +93,20 @@ contract DinValidatorStake is
     event ValidatorReactivated(address indexed validator);
     event MinStakeUpdated(uint256 newMinStake);
     event UnbondingPeriodUpdated(uint64 newPeriod);
-    event ModelStakeBoundsUpdated(uint256 indexed modelId, uint256 min, uint256 max);
+    event ModelStakeBoundsUpdated(
+        uint256 indexed modelId,
+        uint256 min,
+        uint256 max
+    );
     event MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256 value);
     event SlashTreasuryUpdated(address indexed treasury);
 
     mapping(address => ValidatorInfo) public validators;
 
-    struct ModelStakeBounds { uint256 min; uint256 max; }
+    struct ModelStakeBounds {
+        uint256 min;
+        uint256 max;
+    }
     mapping(uint256 => ModelStakeBounds) public modelMinStakeBounds;
     uint256 public maxConcurrentRegistrationsPerStakeUnit;
     address public slashTreasury;
@@ -225,7 +232,7 @@ contract DinValidatorStake is
         }
         _syncValidatorStatus(v);
 
-         uint256 burnAmount = actualAmount / 2;
+        uint256 burnAmount = actualAmount / 2;
         uint256 treasuryAmount = actualAmount - burnAmount;
         IBurnableToken(address(DIN_TOKEN)).burn(burnAmount);
         if (slashTreasury != address(0)) {
@@ -317,13 +324,13 @@ contract DinValidatorStake is
         emit ValidatorUnblacklisted(validator);
     }
 
-/// @notice Updates the network-wide minimum stake floor required to become an active validator.
+    /// @notice Updates the network-wide minimum stake floor required to become an active validator.
     function setMinStake(uint256 newMinStake) external onlyOwner {
         if (newMinStake == 0) revert InvalidMinStake();
         MIN_STAKE = newMinStake;
         emit MinStakeUpdated(newMinStake);
     }
-    
+
     /// @notice Updates the unbonding period applied to new unstake requests.
     /// @dev Does not retroactively affect in-flight withdrawals whose withdrawAvailableAt
     ///      was already computed at the time unstake() was called.
@@ -333,16 +340,21 @@ contract DinValidatorStake is
         emit UnbondingPeriodUpdated(newPeriod);
     }
 
-    
     /// @notice Stores per-model stake bounds (not yet enforced — follow-up task).
-    function setModelStakeBounds(uint256 modelId, uint256 min, uint256 max) external onlyOwner {
+    function setModelStakeBounds(
+        uint256 modelId,
+        uint256 min,
+        uint256 max
+    ) external onlyOwner {
         if (min > max) revert InvalidStakeBounds();
         modelMinStakeBounds[modelId] = ModelStakeBounds(min, max);
         emit ModelStakeBoundsUpdated(modelId, min, max);
     }
 
     /// @notice Stores the concurrent-registration cap per stake unit (not yet enforced).
-    function setMaxConcurrentRegistrationsPerStakeUnit(uint256 value) external onlyOwner {
+    function setMaxConcurrentRegistrationsPerStakeUnit(
+        uint256 value
+    ) external onlyOwner {
         maxConcurrentRegistrationsPerStakeUnit = value;
         emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
     }
@@ -364,7 +376,8 @@ contract DinValidatorStake is
         if (validator == address(0)) revert InvalidAddress();
         if (duration == 0) revert InvalidJailDuration();
         ValidatorInfo storage v = validators[validator];
-        if (v.status == ValidatorStatus.Blacklisted) revert ValidatorIsBlacklisted();
+        if (v.status == ValidatorStatus.Blacklisted)
+            revert ValidatorIsBlacklisted();
         uint64 newJailedUntil = uint64(block.timestamp) + duration;
         if (newJailedUntil > v.jailedUntil) v.jailedUntil = newJailedUntil;
         v.status = ValidatorStatus.Jailed;
@@ -379,7 +392,7 @@ contract DinValidatorStake is
         if (block.timestamp < v.jailedUntil) revert JailPeriodNotExpired();
         if (v.activeStake < MIN_STAKE) revert StakeBelowFloor();
         v.jailedUntil = 0;
-        
+
         _syncValidatorStatus(v);
         emit ValidatorReactivated(msg.sender);
     }

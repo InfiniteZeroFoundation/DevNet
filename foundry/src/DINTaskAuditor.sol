@@ -446,7 +446,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 clientPool = (pool * split.clientBps) / BPS_DENOMINATOR;
         uint256 auditorPool = (pool * split.auditorBps) / BPS_DENOMINATOR;
         uint256 aggregatorPool = (pool * split.aggregatorBps) / BPS_DENOMINATOR;
-        uint256 treasuryShare = pool - clientPool - auditorPool - aggregatorPool;
+        uint256 treasuryShare = pool -
+            clientPool -
+            auditorPool -
+            aggregatorPool;
 
         treasuryAccrued += treasuryShare;
 
@@ -454,7 +457,13 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         _settleAuditorRewards(gi, auditorPool);
         _settleAggregatorRewards(rewardableAggregators, aggregatorPool);
 
-        emit RewardsSettled(gi, clientPool, auditorPool, aggregatorPool, treasuryShare);
+        emit RewardsSettled(
+            gi,
+            clientPool,
+            auditorPool,
+            aggregatorPool,
+            treasuryShare
+        );
     }
 
     function _settleClientRewards(uint256 gi, uint256 clientPool) internal {
@@ -470,8 +479,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint256 i = 0; i < submissions.length; i++) {
             if (submissions[i].approved) {
-                uint256 share = (clientPool *
-                    submissions[i].finalMedianScore) / totalApprovedScore;
+                uint256 share = (clientPool * submissions[i].finalMedianScore) /
+                    totalApprovedScore;
                 if (share > 0) {
                     claimable[submissions[i].client] += share;
                 }
@@ -851,10 +860,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         batch.testDataCID = testDataCID;
 
         for (uint256 i = 0; i < encryptedKeys.length; i++) {
-            encryptedTestDataKey[gi][batchId][batch.auditors[i]] = encryptedKeys[i];
+            encryptedTestDataKey[gi][batchId][
+                batch.auditors[i]
+            ] = encryptedKeys[i];
         }
 
-        emit EncryptedTestDataKeysAssigned(gi, batchId, testDataCID, encryptedKeys.length);
+        emit EncryptedTestDataKeysAssigned(
+            gi,
+            batchId,
+            testDataCID,
+            encryptedKeys.length
+        );
     }
 
     /// @notice Marks test dataset distribution as complete for the given GI.
@@ -951,8 +967,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint modelIndex,
         bytes32 commitHash
     ) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
-        if (dintaskcoordinatorContract.GIstate() != GIstates.LMSevaluationStarted)
-            revert TA_CommitPhaseNotOpen();
+        if (
+            dintaskcoordinatorContract.GIstate() !=
+            GIstates.LMSevaluationStarted
+        ) revert TA_CommitPhaseNotOpen();
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TA_AuditorNotActive();
         }
@@ -963,7 +981,13 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         auditScoreCommits[gi][batchId][msg.sender][modelIndex] = commitHash;
         hasCommittedLM[gi][batchId][msg.sender][modelIndex] = true;
 
-        emit AuditScoreCommitted(gi, batchId, msg.sender, modelIndex, commitHash);
+        emit AuditScoreCommitted(
+            gi,
+            batchId,
+            msg.sender,
+            modelIndex,
+            commitHash
+        );
     }
 
     /// @notice Phase 2 of commit-then-reveal: reveal the (score, vote, salt)
@@ -992,8 +1016,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bool vote,
         bytes32 salt
     ) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
-        if (dintaskcoordinatorContract.GIstate() != GIstates.LMSevaluationRevealStarted)
-            revert TA_RevealPhaseNotOpen();
+        if (
+            dintaskcoordinatorContract.GIstate() !=
+            GIstates.LMSevaluationRevealStarted
+        ) revert TA_RevealPhaseNotOpen();
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TA_AuditorNotActive();
         }
@@ -1004,8 +1030,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             revert TA_AlreadyVoted();
 
         bytes32 expectedHash = keccak256(abi.encodePacked(score, vote, salt));
-        if (expectedHash != auditScoreCommits[gi][batchId][msg.sender][modelIndex])
-            revert TA_RevealHashMismatch();
+        if (
+            expectedHash !=
+            auditScoreCommits[gi][batchId][msg.sender][modelIndex]
+        ) revert TA_RevealHashMismatch();
 
         auditScores[gi][batchId][msg.sender][modelIndex] = score;
         LMeligibleVote[gi][batchId][msg.sender][modelIndex] = vote;
