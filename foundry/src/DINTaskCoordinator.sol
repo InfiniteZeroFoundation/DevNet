@@ -14,6 +14,13 @@ contract DINTaskCoordinator is Ownable {
 
     bytes32 public genesisModelIpfsHash; // genesis model ipfs hash
 
+    /// @dev Minimum stake required to register as an aggregator.
+/// @dev Deliberately denominated in DIN (the protocol's reward/inflation token), not ETH.
+///      Rationale: requires validators to hold skin-in-the-game via the protocol's native
+///      token rather than the network-fee unit (ETH). This design is distinct from the
+///      validator-network-fee bonds documented in the mechanism design docs, which are
+///      ETH-denominated — the two bond types serve different purposes.
+/// @dev See also DinValidatorStake.sol (DIN_TOKEN) for the staking contract implementation.
     uint256 public minStake = 1_000_000;
 
     mapping(uint => address[]) public dinAggregators;
