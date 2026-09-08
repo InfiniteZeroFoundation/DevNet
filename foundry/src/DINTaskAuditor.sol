@@ -66,6 +66,25 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      loops elsewhere in these contracts.
     mapping(address => uint256) public claimable;
 
+    /// @notice Sum of finalMedianScore across all approved LM submissions
+    ///         for a GI -- the settlement denominator for client reward
+    ///         shares. Accumulated incrementally in finalizeEvaluation as
+    ///         each submission is finalized, so settleRewards never needs
+    ///         to re-scan lmSubmissions itself (DD-4 Option A, issue #124).
+    mapping(uint256 => uint256) public totalApprovedScore;
+
+    /// @notice Per-auditor count of (batch, model) pairs actually voted on
+    ///         (revealed) in a GI, regardless of whether that model's
+    ///         batch later reached score quorum -- matches the weighting
+    ///         settleRewards used to compute by re-scanning auditBatches.
+    ///         Accumulated incrementally in finalizeEvaluation's existing
+    ///         batch x auditor x model scan (DD-4 Option A, issue #124).
+    mapping(uint256 => mapping(address => uint256)) public auditorWeight;
+
+    /// @notice Sum of auditorWeight across all auditors for a GI -- the
+    ///         settlement denominator for auditor reward shares (#124).
+    mapping(uint256 => uint256) public totalAuditorWeight;
+
     uint MAX_LM_SUBMISSIONS = 10000;
     uint256 public constant MAX_REGISTERED_AUDITORS = 300;
 
@@ -469,18 +488,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     function _settleClientRewards(uint256 gi, uint256 clientPool) internal {
         LMSubmission[] storage submissions = lmSubmissions[gi];
 
-        uint256 totalApprovedScore;
+        uint256 approvedScoreSum;
         for (uint256 i = 0; i < submissions.length; i++) {
             if (submissions[i].approved) {
-                totalApprovedScore += submissions[i].finalMedianScore;
+                approvedScoreSum += submissions[i].finalMedianScore;
             }
         }
-        if (totalApprovedScore == 0) return;
+        if (approvedScoreSum == 0) return;
 
         for (uint256 i = 0; i < submissions.length; i++) {
             if (submissions[i].approved) {
                 uint256 share = (clientPool * submissions[i].finalMedianScore) /
-                    totalApprovedScore;
+                    approvedScoreSum;
                 if (share > 0) {
                     claimable[submissions[i].client] += share;
                 }
@@ -1103,6 +1122,16 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                         ];
                         votedAuditors[votes] = auditor;
                         votes++;
+
+                        // DD-4 Option A (#124): count this vote toward the
+                        // auditor's settlement weight here, unconditional
+                        // on the quorum check below -- matches the
+                        // pre-#124 settleRewards semantics, which counted
+                        // every hasAuditedLM==true pair regardless of
+                        // whether the model's batch ever reached
+                        // minScoreQuorum.
+                        auditorWeight[_GI][auditor]++;
+                        totalAuditorWeight[_GI]++;
                     }
                 }
 
@@ -1125,6 +1154,16 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
                     // Approval requires (i) eligible == true and (ii) median >= passScore
                     sub.approved = (sub.eligible && median >= params.passScore);
+
+                    // DD-4 Option A (#124): accumulate the settlement
+                    // denominator for client reward shares here, exactly
+                    // when sub.approved is set -- the only place it's ever
+                    // set true, so this is equivalent to the pre-#124
+                    // settleRewards scan that summed finalMedianScore over
+                    // submissions where approved == true.
+                    if (sub.approved) {
+                        totalApprovedScore[_GI] += median;
+                    }
 
                     finalizedCount++;
 

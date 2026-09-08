@@ -69,6 +69,23 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         public t2Submitted;
     mapping(uint => mapping(uint => mapping(bytes32 => uint))) public t2Votes;
 
+    /// @notice Per-aggregator count of finalized T1/T2 batches they were
+    ///         assigned to in a GI, one increment per (aggregator,
+    ///         finalized batch) pair -- matches
+    ///         _collectFinalizedBatchAggregators's pre-#124 semantics: an
+    ///         aggregator assigned to a finalized batch counts regardless
+    ///         of whether they personally matched consensus, since a
+    ///         mismatch already cost them stake via slashAggregators.
+    ///         Accumulated incrementally in finalizeT1Aggregation /
+    ///         finalizeT2Aggregation's existing per-batch loop (DD-4
+    ///         Option A, issue #124).
+    mapping(uint256 => mapping(address => uint256)) public aggregatorWeight;
+
+    /// @notice Sum of aggregatorWeight across all aggregators for a GI --
+    ///         the settlement denominator for aggregator reward shares
+    ///         (#124).
+    mapping(uint256 => uint256) public totalAggregatorWeight;
+
     // ─────────────────────────────────────────────────────────────────────
     // Dispute resolution scaffold (task_210726_6 §4c, issue #38, S4)
     //
@@ -665,6 +682,16 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                         winningCID = cid;
                     }
                 }
+
+                // DD-4 Option A (#124): accumulate settlement weight for
+                // every assigned aggregator here, unconditional on
+                // consensus match -- safe because this whole function
+                // reverts atomically (via TC_NoSubmissions /
+                // TC_InsufficientSubmissions below) if this batch fails to
+                // finalize, so these writes never persist for a batch that
+                // doesn't actually finalize.
+                aggregatorWeight[_GI][aggregator]++;
+                totalAggregatorWeight[_GI]++;
             }
 
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
@@ -749,6 +776,11 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                         winningCID = cid;
                     }
                 }
+
+                // DD-4 Option A (#124): see the matching comment in
+                // finalizeT1Aggregation -- same reasoning applies here.
+                aggregatorWeight[_GI][aggregator]++;
+                totalAggregatorWeight[_GI]++;
             }
 
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
