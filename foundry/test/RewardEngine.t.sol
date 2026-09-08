@@ -555,4 +555,69 @@ contract RewardEngineTest is Test {
 
         assertEq(ta.claimable(client2), client2Owed, "claiming client1's balance must not touch client2's");
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // DD-4 Option A (#124): incremental settlement-total accumulation.
+    // settleRewards itself is untouched by #124 (that's #125) -- these
+    // tests only verify the new accumulators populated during
+    // finalizeEvaluation/finalizeT1Aggregation/finalizeT2Aggregation match
+    // what a from-scratch scan over the same data would produce, i.e. they
+    // agree with the totals settleRewards's own internal loops still
+    // (redundantly, for now) compute.
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_totalApprovedScore_matchesSumOfApprovedFinalMedianScores() public {
+        _runFullHonestGI(10_000 ether);
+
+        // Fixture: 3 clients, all approved, all scored 80 (see
+        // _runFullHonestGI's doc comment).
+        assertEq(ta.totalApprovedScore(1), 80 * 3);
+    }
+
+    function test_auditorWeight_matchesVotesActuallyCast() public {
+        _runFullHonestGI(10_000 ether);
+
+        // Fixture: 3 auditors, one batch, each voted on all 3 models in it.
+        assertEq(ta.auditorWeight(1, auditor1), 3);
+        assertEq(ta.auditorWeight(1, auditor2), 3);
+        assertEq(ta.auditorWeight(1, auditor3), 3);
+        assertEq(ta.totalAuditorWeight(1), 9);
+    }
+
+    function test_aggregatorWeight_matchesFinalizedBatchAssignments() public {
+        _runFullHonestGI(10_000 ether);
+
+        // Fixture: 3 aggregators, one finalized T1 batch, no T2 batch (see
+        // _runFullHonestGI's doc comment) -> weight 1 each.
+        assertEq(tc.aggregatorWeight(1, agg1), 1);
+        assertEq(tc.aggregatorWeight(1, agg2), 1);
+        assertEq(tc.aggregatorWeight(1, agg3), 1);
+        assertEq(tc.totalAggregatorWeight(1), 3);
+    }
+
+    function test_accumulatedTotals_matchSettleRewardsClaimableSplit() public {
+        // End-to-end cross-check: the accumulated totals, run through the
+        // same bps split settleRewards uses, must reproduce exactly what
+        // settleRewards's own (still-independent, pre-#125) internal scan
+        // credits to claimable[] -- i.e. the two computations agree, which
+        // is the precondition for #125 to be able to delete one of them.
+        uint256 pool = 10_000 ether;
+        _runFullHonestGI(pool);
+
+        uint256 clientPool = (pool * 6000) / 10000;
+        uint256 auditorPool = (pool * 2000) / 10000;
+        uint256 aggregatorPool = (pool * 1500) / 10000;
+
+        uint256 expectedClientShare = (clientPool * 80) / ta.totalApprovedScore(1);
+        uint256 expectedAuditorShare = (auditorPool * ta.auditorWeight(1, auditor1)) /
+            ta.totalAuditorWeight(1);
+        uint256 expectedAggregatorShare = aggregatorPool / tc.totalAggregatorWeight(1);
+
+        vm.prank(modelOwner);
+        tc.endGI(1);
+
+        assertEq(ta.claimable(client1), expectedClientShare);
+        assertEq(ta.claimable(auditor1), expectedAuditorShare);
+        assertEq(ta.claimable(agg1), expectedAggregatorShare);
+    }
 }
