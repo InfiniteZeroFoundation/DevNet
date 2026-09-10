@@ -856,4 +856,183 @@ contract RewardEngineTest is Test {
             "endGI gas must not scale with settlement-total magnitude"
         );
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Spec-scale endGI gas benchmark (#127 / #121), same measured-marginal-
+    // cost-plus-explicit-extrapolation methodology as SecurityFindings.t.sol's
+    // test_gas_finalizeEvaluation_and_slashAuditors_atScale.
+    //
+    // Two real GIs at different participant counts (n and 3n auditors + the
+    // same number of submitted models, forming n/3 vs. n audit batches),
+    // both driven all the way to AggregatorsSlashed. endGI gas is measured
+    // at each; the slope between them is the real per-participant marginal
+    // cost of endGI, which is then extrapolated to spec scale (10-50
+    // validators / 100-500 clients per model).
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Registers 3 aggregators (T1_AGGREGATORS_PER_BATCH) plus `n`
+    ///      auditors and `n` clients, drives the GI to GIstates.AggregatorsSlashed
+    ///      (one call before endGI). Only the first audit batch votes (score
+    ///      80, eligible) -- enough for one finalized T1 batch and for
+    ///      finalizeEvaluation to succeed; every other registered auditor is
+    ///      slashed for not voting, exactly as SecurityFindings.t.sol's
+    ///      _setupForGasMeasurement does. `lmSubmissions[1]` still holds `n`
+    ///      entries and `auditBatches[1]` holds `n/3` -- the arrays the
+    ///      pre-#134 settleRewards looped over.
+    function _runScaledGIToAggregatorsSlashed(
+        uint n,
+        uint256 pool
+    ) internal {
+        _deployPlatform();
+        _deployTaskPair();
+
+        address[3] memory aggs = [
+            makeAddr("scAgg0"),
+            makeAddr("scAgg1"),
+            makeAddr("scAgg2")
+        ];
+        for (uint i = 0; i < 3; i++) {
+            _fundAndStake(aggs[i]);
+        }
+
+        _fundDinBalance(modelOwner, pool);
+        vm.prank(modelOwner);
+        ta.depositRewards(1, pool);
+        vm.prank(modelOwner);
+        tc.startGI(1);
+
+        vm.prank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        for (uint i = 0; i < 3; i++) {
+            vm.prank(aggs[i]);
+            tc.registerDINaggregator(1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        for (uint i = 0; i < n; i++) {
+            address a = makeAddr(string.concat("scAud", vm.toString(i)));
+            _fundAndStake(a);
+            vm.prank(a);
+            ta.registerDINAuditor(1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        for (uint i = 0; i < n; i++) {
+            address c = makeAddr(string.concat("scCli", vm.toString(i)));
+            vm.prank(c);
+            ta.submitLocalModel(bytes32(uint256(9000 + i)), 1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        tc.createAuditorsBatches(1);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory b0Auditors, uint[] memory b0Models, ) = ta
+            .getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(
+            abi.encodePacked(uint256(80), true, TEST_SALT)
+        );
+        for (uint i = 0; i < b0Auditors.length; i++) {
+            for (uint m = 0; m < b0Models.length; m++) {
+                vm.prank(b0Auditors[i]);
+                ta.commitAuditScore(1, 0, b0Models[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+        for (uint i = 0; i < b0Auditors.length; i++) {
+            for (uint m = 0; m < b0Models.length; m++) {
+                vm.prank(b0Auditors[i]);
+                ta.revealAuditScore(1, 0, b0Models[m], 80, true, TEST_SALT);
+            }
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        tc.autoCreateTier1AndTier2(1);
+        tc.startT1Aggregation(1);
+        vm.stopPrank();
+
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+        for (uint i = 0; i < t1aggs.length; i++) {
+            vm.prank(t1aggs[i]);
+            tc.submitT1Aggregation(1, 0, bytes32(uint256(0xC1D)));
+        }
+
+        vm.startPrank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+        tc.startT2Aggregation(1);
+        tc.finalizeT2Aggregation(1);
+        tc.slashAuditors(1);
+        tc.slashAggregators(1);
+        vm.stopPrank();
+    }
+
+    function test_gas_endGI_atScale_marginalCostPerParticipantIsZero() public {
+        uint256 pool = 10_000 ether;
+
+        // ── Small: 30 auditors + 30 clients -> 10 audit batches ──
+        _runScaledGIToAggregatorsSlashed(30, pool);
+        (address cliSmall, , , , , , ) = ta.lmSubmissions(1, 29);
+        assertEq(cliSmall, makeAddr("scCli29"), "sanity: 30 LM submissions recorded");
+        uint256 gasBefore = gasleft();
+        vm.prank(modelOwner);
+        tc.endGI(1);
+        uint256 gasSmall = gasBefore - gasleft();
+
+        // ── Large: 90 auditors + 90 clients -> 30 audit batches ──
+        _runScaledGIToAggregatorsSlashed(90, pool);
+        (address cliLarge, , , , , , ) = ta.lmSubmissions(1, 89);
+        assertEq(cliLarge, makeAddr("scCli89"), "sanity: 90 LM submissions recorded");
+        gasBefore = gasleft();
+        vm.prank(modelOwner);
+        tc.endGI(1);
+        uint256 gasLarge = gasBefore - gasleft();
+
+        // Real measured marginal cost. Participants: n auditors + n clients
+        // + 3 aggregators. delta = (90+90+3) - (30+30+3) = 120.
+        uint256 deltaParticipants = (90 + 90 + 3) - (30 + 30 + 3);
+        uint256 marginalGasPerParticipant = gasLarge > gasSmall
+            ? (gasLarge - gasSmall) / deltaParticipants
+            : 0;
+
+        emit log_named_uint("endGI gas @ 63 participants (30 aud / 30 cli / 3 agg)", gasSmall);
+        emit log_named_uint("endGI gas @ 183 participants (90 aud / 90 cli / 3 agg)", gasLarge);
+        emit log_named_uint("measured marginal endGI gas per participant", marginalGasPerParticipant);
+
+        // Extrapolate to spec scale: 500 clients + 50 validators, ~550
+        // participants. With the settlement loops removed (this PR + #134),
+        // the measured slope is ~0, so the projection stays flat.
+        uint256 specScaleParticipants = 550;
+        uint256 projectedSpecScaleGas = gasSmall +
+            marginalGasPerParticipant *
+            (specScaleParticipants - 63);
+        emit log_named_uint("PROJECTED endGI gas @ spec scale (~550 participants)", projectedSpecScaleGas);
+
+        // A real O(n) settlement loop would add >=1 cold SLOAD (~2100 gas)
+        // per extra participant -- >=250k gas across this 120-participant
+        // delta. 2000 is a generous noise band for storage-warmth jitter.
+        assertApproxEqAbs(
+            gasLarge,
+            gasSmall,
+            2000,
+            "endGI gas must not grow with participant count (BL-10: no settlement loop)"
+        );
+        // And the spec-scale projection stays far under any realistic L2
+        // block gas limit -- contrast SecurityFindings.t.sol, where the
+        // pre-fix endGI-adjacent path projected to multiples of it.
+        assertLt(projectedSpecScaleGas, 1_000_000, "endGI stays O(1) at spec scale");
+    }
 }
