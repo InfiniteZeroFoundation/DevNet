@@ -7,6 +7,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./DINShared.sol";
 
+interface IBurnableDinToken {
+    function burn(uint256 amount) external;
+}
+
 /// @title DIN Task Coordinator
 /// @notice Orchestrates the full Global Iteration (GI) lifecycle for a single
 ///         federated-learning model: slasher setup, validator registration,
@@ -28,6 +32,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
     // Track if an address is registered for a given _GI as an aggregator
     mapping(uint => mapping(address => bool)) public isDINAggregator;
+
+    /// @notice Guard: prevents releaseGIRegistrationSlots from being called
+    ///         twice for the same GI (which would double-decrement counters).
+    mapping(uint256 => bool) public registrationSlotsReleased;
 
     uint256 public constant T1_AGGREGATORS_PER_BATCH = 3;
     uint256 public constant T1_MODELS_PER_BATCH = 3;
@@ -176,14 +184,20 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint256 actual
     );
 
+    /// @notice Model registry ID this coordinator manages.
+    /// @dev Used to look up modelMinStakeBounds and enforce per-model stake floors.
+    uint256 public immutable modelId;
+
     /// @notice Deploys the coordinator and sets the validator stake contract.
     /// @dev GI state is initialised to AwaitingDINTaskAuditorToBeSet; the model
     ///      owner must call setDINTaskAuditorContract before any other setup step.
     /// @param dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
-    constructor(address dinvalidatorStakeContract_address) Ownable(msg.sender) {
+    /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
+    constructor(address dinvalidatorStakeContract_address, uint256 modelId_) Ownable(msg.sender) {
         dinvalidatorStakeContract = IDinValidatorStake(
             dinvalidatorStakeContract_address
         );
+        modelId = modelId_;
         GIstate = GIstates.AwaitingDINTaskAuditorToBeSet;
     }
 
@@ -295,9 +309,25 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (dinAggregators[_GI].length >= MAX_REGISTERED_AGGREGATORS)
             revert TC_RegistrationCapReached();
 
+        // Per-model stake floor: enforced when the model owner has set a non-zero bound.
+        uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
+        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
+            revert TC_StakeBelowModelFloor();
+
+        // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
+        // Formula: each MIN_STAKE unit of stake allows capPerUnit concurrent registrations.
+        uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
+        if (capPerUnit > 0) {
+            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
+                dinvalidatorStakeContract.minStake()) * capPerUnit;
+            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                revert TC_ConcurrentRegistrationCapReached();
+        }
+
         // Add to list and mark as registered
         dinAggregators[_GI].push(msg.sender);
         isDINAggregator[_GI][msg.sender] = true;
+        dinvalidatorStakeContract.incrementActiveRegistration(msg.sender);
 
         emit DINValidatorRegistered(_GI, msg.sender);
     }
@@ -953,6 +983,29 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         GIstate = GIstates.GIended;
     }
 
+    /// @notice Decrements the concurrent-registration counter on DinValidatorStake
+    ///         for every aggregator and auditor that participated in the given GI.
+    /// @dev Separated from endGI (task_100926_12 §#37) to keep endGI O(1) (BL-10).
+    ///      Call after endGI for each ended GI. O(n_aggregators + n_auditors), bounded
+    ///      by MAX_REGISTERED_AGGREGATORS and MAX_REGISTERED_AUDITORS. Idempotent
+    ///      guard: reverts on a second call for the same GI (registrationSlotsReleased).
+    /// @param _GI GI whose participants' registration slots should be released.
+    ///            Must be a GI that has already ended (< current GI, or == current GI
+    ///            with state GIended).
+    function releaseGIRegistrationSlots(uint _GI) external onlyOwner {
+        bool giEnded = (_GI < GI) ||
+            (_GI == GI && GIstate == GIstates.GIended);
+        require(giEnded, "GI has not ended");
+        require(!registrationSlotsReleased[_GI], "slots already released");
+        registrationSlotsReleased[_GI] = true;
+
+        address[] storage aggs = dinAggregators[_GI];
+        for (uint256 i = 0; i < aggs.length; i++) {
+            dinvalidatorStakeContract.decrementActiveRegistration(aggs[i]);
+        }
+        dinTaskAuditorContract.decrementAuditorRegistrations(_GI);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Dispute resolution scaffold (task_210726_6 §4c, issue #38, S4)
     // ─────────────────────────────────────────────────────────────────────
@@ -1042,10 +1095,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     /// @notice Resolves a dispute, either upholding or rejecting it.
     /// @dev Upheld: bond becomes claimable by the challenger (pull payment)
     ///      and a fresh aggregator subgroup is assigned, excluding the
-    ///      accused batch's original aggregators. The bounty top-up from
-    ///      treasury is stubbed (TODO below) since DinTreasury doesn't exist
-    ///      yet. Rejected (frivolous): bond is forfeited to treasuryAccrued,
-    ///      same stub pattern as Part 3's reward engine.
+    ///      accused batch's original aggregators.
+    ///      Bounty top-up (task_100926_12 #43): out of scope — DinTreasury's
+    ///      withdrawERC20 is onlyOwner, so task contracts cannot pull a bounty
+    ///      from it. The challenger currently only reclaims their bond. Flagged
+    ///      for Umer: the fix requires either an authorized-withdrawer role on
+    ///      DinTreasury or an alternate bounty source (forfeited-stake pool).
+    ///      Rejected (frivolous): bond is split 50% burn / 50% treasury per
+    ///      MECHANISM_DESIGN.md §4. treasuryAccrued accumulates the full bond
+    ///      for observability regardless of whether the transfer succeeds.
     /// @param _GI GI index the disputed batch belongs to.
     /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
     /// @param batchId Index of the disputed batch within its tier.
@@ -1064,8 +1122,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         d.upheld = upheld;
 
         if (upheld) {
-            // TODO(task_210726_5): top up with a bounty from DinTreasury
-            // once it exists; for now the challenger only reclaims their bond.
+            // Bounty top-up from treasury: out of scope (see NatSpec above).
             disputeBondClaimable[d.challenger] += d.bond;
 
             address[] memory freshSubgroup = _assignFreshSubgroup(
@@ -1076,9 +1133,16 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             reEvaluationAssignees[_GI][tierKind][batchId] = freshSubgroup;
             emit ReEvaluationAssigned(_GI, tierKind, batchId, freshSubgroup);
         } else {
-            // TODO(task_210726_5): forward to DinTreasury (50% burn / 50%
-            // treasury per MECHANISM_DESIGN.md §4) once it exists.
-            treasuryAccrued += d.bond;
+            // Frivolous forfeiture: 50% burn / 50% treasury (MECHANISM_DESIGN §4).
+            uint256 burnAmt = d.bond / 2;
+            uint256 treasuryAmt = d.bond - burnAmt;
+            IBurnableDinToken(address(dinToken)).burn(burnAmt);
+            if (treasuryAddress != address(0)) {
+                dinToken.safeTransfer(treasuryAddress, treasuryAmt);
+            } else {
+                IBurnableDinToken(address(dinToken)).burn(treasuryAmt);
+            }
+            treasuryAccrued += d.bond; // cumulative counter for observability
         }
 
         emit DisputeResolved(_GI, tierKind, batchId, upheld);

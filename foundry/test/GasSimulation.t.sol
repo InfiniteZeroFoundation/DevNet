@@ -77,8 +77,8 @@ contract GasSimulationTest is Test {
         stake.setSlashTreasury(address(treasury));
 
         // Task contracts
-        tc = new DINTaskCoordinator(address(stake));
-        ta = new DINTaskAuditor(address(stake), address(tc));
+        tc = new DINTaskCoordinator(address(stake), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1);
 
         // Wire state machine: auditor → coordinator slasher → auditor slasher → genesis
         tc.setDINTaskAuditorContract(address(ta));
