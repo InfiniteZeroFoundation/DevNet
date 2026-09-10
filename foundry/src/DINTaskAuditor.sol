@@ -364,15 +364,21 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 actual
     );
 
+    /// @notice Model registry ID this auditor manages.
+    /// @dev Mirrors DINTaskCoordinator.modelId — used to look up per-model stake floors.
+    uint256 public immutable modelId;
+
     /// @notice Deploys the auditor, wiring it to the validator stake and coordinator contracts.
     /// @dev Batch parameters are set to demo defaults (3 auditors/batch, 3 models/batch,
     ///      quorum of 2, pass score of 50). The model owner can adjust pass score via
     ///      updatePassScore.
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
+    /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
     constructor(
         address _dinvalidatorStakeContract_address,
-        address _dintaskcoordinator_contract_address
+        address _dintaskcoordinator_contract_address,
+        uint256 modelId_
     ) Ownable(msg.sender) {
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
@@ -380,6 +386,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         dintaskcoordinatorContract = IDINTaskCoordinator(
             _dintaskcoordinator_contract_address
         );
+        modelId = modelId_;
 
         params = Params({
             auditorsPerBatch: 3,
@@ -618,10 +625,36 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             revert TA_AuditorNotActive();
         }
 
+        // Per-model stake floor: enforced when the model owner has set a non-zero bound.
+        uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
+        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
+            revert TA_StakeBelowModelFloor();
+
+        // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
+        uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
+        if (capPerUnit > 0) {
+            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
+                dinvalidatorStakeContract.minStake()) * capPerUnit;
+            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                revert TA_ConcurrentRegistrationCapReached();
+        }
+
         dinAuditors[_GI].push(msg.sender);
         isRegisteredAuditor[_GI][msg.sender] = true;
+        dinvalidatorStakeContract.incrementActiveRegistration(msg.sender);
 
         emit DINAuditorRegistered(_GI, msg.sender);
+    }
+
+    /// @notice Decrements the active-registration counter for every auditor in _GI.
+    /// @dev Called by the paired DINTaskCoordinator in endGI after settleRewards,
+    ///      so each auditor's slot is released for future GIs. onlyTaskCoordinator
+    ///      enforces the trust boundary.
+    function decrementAuditorRegistrations(uint256 _GI) external onlyTaskCoordinator {
+        address[] storage auditors = dinAuditors[_GI];
+        for (uint256 i = 0; i < auditors.length; i++) {
+            dinvalidatorStakeContract.decrementActiveRegistration(auditors[i]);
+        }
     }
 
     /// @notice Returns the list of auditors registered for the given GI.
