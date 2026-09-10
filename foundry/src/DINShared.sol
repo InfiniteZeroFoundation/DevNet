@@ -66,6 +66,21 @@ interface IDinValidatorStake {
     ) external view returns (bool);
 
     function getEncryptionKey(address validator) external view returns (bytes memory);
+
+    /// @dev Returns modelMinStakeBounds[modelId].min, the per-model stake floor.
+    function getModelStakeMin(uint256 modelId) external view returns (uint256);
+
+    /// @dev Per-validator active-registration counter, read to enforce the concurrent cap.
+    function activeRegistrationCount(address validator) external view returns (uint256);
+
+    /// @dev Increments activeRegistrationCount[validator]; callable only by registered slashers.
+    function incrementActiveRegistration(address validator) external;
+
+    /// @dev Decrements activeRegistrationCount[validator]; callable only by registered slashers.
+    function decrementActiveRegistration(address validator) external;
+
+    /// @dev Network-wide cap: max concurrent registrations per MIN_STAKE unit of stake.
+    function maxConcurrentRegistrationsPerStakeUnit() external view returns (uint256);
 }
 
 interface IDINTaskCoordinator {
@@ -99,6 +114,10 @@ interface IDINTaskAuditor {
     function giRewardPool(uint256 gi) external view returns (uint256);
 
     function settleRewards(uint256 gi, uint256 aggregatorTotalWeight) external;
+
+    /// @dev Decrements activeRegistrationCount for every auditor registered in _GI.
+    ///      Called by the coordinator in endGI after settleRewards.
+    function decrementAuditorRegistrations(uint256 _GI) external;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,3 +360,11 @@ error TC_ZeroCID();
 error TC_RegistrationCapReached();
 /// @dev Fewer aggregators submitted than the required quorum for this batch.
 error TC_InsufficientSubmissions();
+/// @dev Aggregator's stake is below the per-model minimum floor set by the model owner.
+error TC_StakeBelowModelFloor();
+/// @dev Aggregator already holds the maximum concurrent registrations permitted by their stake.
+error TC_ConcurrentRegistrationCapReached();
+/// @dev Auditor's stake is below the per-model minimum floor set by the model owner.
+error TA_StakeBelowModelFloor();
+/// @dev Auditor already holds the maximum concurrent registrations permitted by their stake.
+error TA_ConcurrentRegistrationCapReached();
