@@ -114,6 +114,15 @@ contract DinValidatorStake is
     address public slashTreasury;
     mapping(address => bytes) public encryptionKeys;
 
+    /// @notice Number of active GI registrations held by each validator across
+    ///         all task contracts. Incremented by task contracts (as slashers)
+    ///         at registration time, decremented at endGI time. Used to enforce
+    ///         maxConcurrentRegistrationsPerStakeUnit when non-zero.
+    mapping(address => uint256) public activeRegistrationCount;
+
+    event ActiveRegistrationIncremented(address indexed validator);
+    event ActiveRegistrationDecremented(address indexed validator);
+
     // Reserved for future state variables at this inheritance level.
     uint256[50] private __gap;
 
@@ -360,6 +369,28 @@ contract DinValidatorStake is
     ) external onlyOwner {
         maxConcurrentRegistrationsPerStakeUnit = value;
         emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
+    }
+
+    /// @notice Returns the per-model minimum stake floor set by the model owner.
+    /// @param modelId Model registry ID to query.
+    function getModelStakeMin(uint256 modelId) external view returns (uint256) {
+        return modelMinStakeBounds[modelId].min;
+    }
+
+    /// @notice Increments the active-registration counter for a validator.
+    /// @dev Called by registered task contracts at aggregator/auditor registration time.
+    function incrementActiveRegistration(address validator) external onlySlasherContract {
+        activeRegistrationCount[validator]++;
+        emit ActiveRegistrationIncremented(validator);
+    }
+
+    /// @notice Decrements the active-registration counter for a validator.
+    /// @dev Called by registered task contracts at endGI time. Saturates at zero.
+    function decrementActiveRegistration(address validator) external onlySlasherContract {
+        if (activeRegistrationCount[validator] > 0) {
+            activeRegistrationCount[validator]--;
+        }
+        emit ActiveRegistrationDecremented(validator);
     }
 
     /// @notice Sets the treasury address that receives 50% of every slashed amount.
