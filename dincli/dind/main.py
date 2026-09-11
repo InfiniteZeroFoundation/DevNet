@@ -99,6 +99,7 @@ def start(
         from dincli.dind.logging import configure_logging
         from dincli.dind.signals import install_shutdown_handlers
         from dincli.dind.state import StateStore
+        from dincli.sdk.session import DinSession
 
         configure_logging("json", state_dir=paths.state_dir)
 
@@ -126,6 +127,9 @@ def start(
         install_shutdown_handlers(stop_event)
 
         state = StateStore(paths.db_path)
+        # Schema migration first, once, before the health thread opens its
+        # own per-thread connection — see StateStore.initialize().
+        state.initialize()
         state.set_meta("started_at", datetime.now(timezone.utc).isoformat())
         state.reset_running_jobs()
 
@@ -133,7 +137,9 @@ def start(
         health_thread = threading.Thread(target=health.run, daemon=True)
         health_thread.start()
 
-        loop = DaemonLoop(state, stop_event, max_ticks=max_ticks)
+        # A bare DinSession(): every property is lazy, so construction
+        # touches neither the chain nor the keystore (§3.7). No new flags.
+        loop = DaemonLoop(state, stop_event, max_ticks=max_ticks, session=DinSession())
         try:
             logger.info("dind daemon started (state=%s)", resolved)
             loop.run()

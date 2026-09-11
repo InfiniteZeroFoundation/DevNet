@@ -4,7 +4,7 @@ WAL mode for safe concurrency. Per-thread connections. Retention cap on
 done/failed history from day one.
 
 Tables:
-  jobs (id, type, status, payload, attempts, created_at, updated_at, last_error)
+  jobs (id, type, status, payload, attempts, created_at, updated_at, last_error, result)
   daemon_meta (key, value)
 """
 
@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     attempts    INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL,
     updated_at  TEXT    NOT NULL,
-    last_error  TEXT
+    last_error  TEXT,
+    result      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS daemon_meta (
@@ -54,6 +55,24 @@ class StateStore:
         if hasattr(self._local, "conn") and self._local.conn:
             self._local.conn.close()
             self._local.conn = None
+
+    def initialize(self) -> None:
+        """Bring an on-disk DB up to the current schema. Call exactly once,
+        before any other thread opens its own per-thread connection.
+
+        ``_get_conn()``'s ``CREATE TABLE IF NOT EXISTS`` already gives a brand
+        new DB the ``result`` column at creation. This handles the other
+        case: a legacy DB whose ``jobs`` table predates that column, which
+        ``IF NOT EXISTS`` leaves untouched. Not folded into ``_get_conn()``
+        itself — ``StateStore`` opens one connection per thread, so a lazy
+        migration there could have the loop thread and the health thread
+        both run the ``ALTER`` concurrently.
+        """
+        conn = self._get_conn()
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+        if "result" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN result TEXT")
+            conn.commit()
 
     # ── daemon_meta ──────────────────────────────────────────────────────
 
@@ -107,23 +126,23 @@ class StateStore:
         ).fetchone()
         return dict(row)
 
-    def complete_job(self, job_id: int) -> None:
+    def complete_job(self, job_id: int, result: str | None = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute(
-            "UPDATE jobs SET status = 'done', updated_at = ? WHERE id = ?",
-            (now, job_id),
+            "UPDATE jobs SET status = 'done', updated_at = ?, result = ? WHERE id = ?",
+            (now, result, job_id),
         )
         conn.commit()
         self._retain()
 
-    def fail_job(self, job_id: int, error: str) -> None:
+    def fail_job(self, job_id: int, error: str, result: str | None = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         conn.execute(
-            "UPDATE jobs SET status = 'failed', updated_at = ?, last_error = ? "
-            "WHERE id = ?",
-            (now, error, job_id),
+            "UPDATE jobs SET status = 'failed', updated_at = ?, last_error = ?, "
+            "result = ? WHERE id = ?",
+            (now, error, result, job_id),
         )
         conn.commit()
         self._retain()
