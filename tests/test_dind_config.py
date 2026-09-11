@@ -96,3 +96,81 @@ def test_max_ticks_env(monkeypatch):
 def test_max_ticks_flag_wins_over_env(monkeypatch):
     monkeypatch.setenv("DIN_DIND_MAX_TICKS", "3")
     assert dconf.resolve_max_ticks(7) == 7
+
+
+def test_log_max_bytes_default():
+    assert dconf.resolve_log_max_bytes(None) == dconf.LOG_MAX_BYTES_DEFAULT
+
+
+def test_log_max_bytes_flag():
+    assert dconf.resolve_log_max_bytes(123) == 123
+
+
+def test_log_max_bytes_env(monkeypatch):
+    monkeypatch.setenv("DIN_DIND_LOG_MAX_BYTES", "999")
+    assert dconf.resolve_log_max_bytes(None) == 999
+
+
+def test_log_max_bytes_rejects_zero():
+    import pytest
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_MAX_BYTES"):
+        dconf.resolve_log_max_bytes(0)
+
+
+def test_log_max_bytes_rejects_negative():
+    import pytest
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_MAX_BYTES"):
+        dconf.resolve_log_max_bytes(-1)
+
+
+def test_log_max_bytes_env_empty_raises(monkeypatch):
+    import pytest
+    monkeypatch.setenv("DIN_DIND_LOG_MAX_BYTES", "")
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_MAX_BYTES"):
+        dconf.resolve_log_max_bytes(None)
+
+
+def test_log_max_bytes_env_malformed_raises(monkeypatch):
+    import pytest
+    monkeypatch.setenv("DIN_DIND_LOG_MAX_BYTES", "not-a-number")
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_MAX_BYTES"):
+        dconf.resolve_log_max_bytes(None)
+
+
+def test_log_backup_count_default():
+    assert dconf.resolve_log_backup_count(None) == dconf.LOG_BACKUP_COUNT_DEFAULT
+
+
+def test_log_backup_count_flag():
+    assert dconf.resolve_log_backup_count(3) == 3
+
+
+def test_log_backup_count_env(monkeypatch):
+    monkeypatch.setenv("DIN_DIND_LOG_BACKUP_COUNT", "9")
+    assert dconf.resolve_log_backup_count(None) == 9
+
+
+def test_log_backup_count_rejects_zero():
+    import pytest
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_BACKUP_COUNT"):
+        dconf.resolve_log_backup_count(0)
+
+
+def test_log_backup_count_rejects_negative():
+    import pytest
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_BACKUP_COUNT"):
+        dconf.resolve_log_backup_count(-2)
+
+
+def test_log_backup_count_env_empty_raises(monkeypatch):
+    import pytest
+    monkeypatch.setenv("DIN_DIND_LOG_BACKUP_COUNT", "")
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_BACKUP_COUNT"):
+        dconf.resolve_log_backup_count(None)
+
+
+def test_log_backup_count_env_malformed_raises(monkeypatch):
+    import pytest
+    monkeypatch.setenv("DIN_DIND_LOG_BACKUP_COUNT", "not-a-number")
+    with pytest.raises(ValueError, match="DIN_DIND_LOG_BACKUP_COUNT"):
+        dconf.resolve_log_backup_count(None)

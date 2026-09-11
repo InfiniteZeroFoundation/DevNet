@@ -100,7 +100,7 @@ def start(
         from dincli.dind.signals import install_shutdown_handlers
         from dincli.dind.state import StateStore
 
-        configure_logging("json")
+        configure_logging("json", state_dir=paths.state_dir)
 
         import logging
         logger = logging.getLogger("dincli")
