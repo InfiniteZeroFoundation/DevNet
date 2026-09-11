@@ -61,6 +61,27 @@ class StakeInfo:
     stake_contract: str = field(metadata={"json": "address"})
 
 
+def _resolve_session_network(session: DinSession) -> str:
+    """Resolve ``session.network``, converting the shared resolver's raw
+    ``ValueError`` for an invalid explicit network name into ``ConfigError``
+    at this operation boundary.
+
+    Deliberately operation-side rather than a change to
+    ``dincli.sdk.config.resolve_network`` itself (§5 of the remediation
+    plan): that resolver also backs CLI call sites
+    (``cli/context.py``/``cli/utils.py``) which already catch its raw
+    ``ValueError`` themselves. Changing its raised type would ripple into
+    those callers for no benefit to this module. Any ``DinError`` the
+    property already raises is propagated unchanged, never re-wrapped.
+    """
+    try:
+        return session.network
+    except DinError:
+        raise
+    except ValueError as e:
+        raise ConfigError(str(e), details={"key": "network"}) from e
+
+
 def _load_din_info_entry(network: str) -> dict:
     """Load the ``network`` entry from ``din_info.json``.
 
@@ -90,6 +111,19 @@ def _load_din_info_entry(network: str) -> dict:
             details={"key": "din_info.json"},
         ) from e
 
+    if not isinstance(din_info, dict):
+        # Valid JSON, wrong shape at the root: null/int/bool/a bare string/a
+        # list are all parseable but not a mapping. Without this check,
+        # ``network not in din_info`` raises TypeError for null/int/bool (not
+        # iterable) or silently does a substring/membership test for a
+        # string/list, and ``din_info[network]`` below then raises TypeError
+        # for any of them once `network not in ...` doesn't already fail.
+        raise ConfigError(
+            f"din_info.json is malformed: expected a JSON object at the root, "
+            f"got {type(din_info).__name__}.",
+            details={"key": "din_info.json"},
+        )
+
     if network not in din_info:
         raise ConfigError(
             f"Network '{network}' is not configured in din_info.json.",
@@ -112,7 +146,7 @@ def get_platform_addresses(session: DinSession) -> PlatformAddresses:
     shape a hand-edited ``din_info.json`` entry can take (key absent, ``null``,
     empty string, malformed/placeholder, valid) — see the class docstring.
     """
-    network = session.network
+    network = _resolve_session_network(session)
     entry = _load_din_info_entry(network)
     present = frozenset(key for key in _ADDRESS_KEYS if key in entry)
     return PlatformAddresses(
@@ -159,7 +193,7 @@ def get_stake(session: DinSession, address: str | None = None) -> StakeInfo:
     never re-wrapped, so the job layer sees the same stable code the signing
     path already produces.
     """
-    network = session.network
+    network = _resolve_session_network(session)
     stake_address = Web3.to_checksum_address(get_stake_contract_address(network))
 
     if address is not None:

@@ -896,60 +896,84 @@ class TestPasswordVerboseFalse:
 
     # ── Site 1: load_account (:415) ─────────────────────────────────────
 
-    def test_load_account_no_red_x(self, monkeypatch, tmp_path):
-        """load_account: env lacking DIN_WALLET_PASSWORD prints no red X."""
+    def test_load_account_no_red_x(self, monkeypatch, temp_config, tmp_path):
+        """load_account: env lacking DIN_WALLET_PASSWORD prints no red X.
+
+        Reuses the canonical `temp_config` fixture rather than patching only
+        `cli.utils.CONFIG_DIR`/`WALLETS_DIR` (review finding 7): the actual
+        resolution path — `load_account()` -> `load_account_noninteractive()`
+        -> `load_keystore()` -> `resolve_wallet_path()` — is defined in
+        `dincli.sdk.wallet` and reads THAT module's own `WALLETS_DIR`/
+        `LEGACY_WALLET_FILE`/`CONFIG_DIR` globals, not the names re-exported
+        into `cli.utils`'s namespace for CLI compatibility. Patching only the
+        re-exported aliases leaves the SDK's own copies pointed at the real
+        user config directory, so the test would silently read (and pass
+        against) whatever wallet happens to already exist there instead of
+        its own fixture file. `temp_config` patches both.
+        """
         from dincli.cli import utils as utils_mod
+        from dincli.sdk import wallet as sdk_wallet
+        # cli.utils._PASSWORD_CACHE and sdk.wallet._PASSWORD_CACHE are the
+        # SAME dict object (re-exported, not copied) — mutate it in place and
+        # restore its exact prior contents afterward, rather than rebinding
+        # the name (which would only affect one module's reference).
+        _saved_cache = dict(utils_mod._PASSWORD_CACHE)
         utils_mod._PASSWORD_CACHE.clear()
+
+        # Absent-credential case: strip any password inherited from the real
+        # shell environment, and isolate .env lookup (get_env_key reads
+        # os.getcwd()/.env) to a directory that deliberately lacks the var —
+        # otherwise a developer's real DIN_WALLET_PASSWORD/.env would make
+        # this non-interactive load succeed for the wrong reason.
+        monkeypatch.delenv("DIN_WALLET_PASSWORD", raising=False)
         env_dir = _make_env_without_password(tmp_path)
         monkeypatch.chdir(env_dir)
 
-        # Isolate config/cache into a temp area
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        wallets_dir = config_dir / "wallets"
-        wallets_dir.mkdir()
-        orig_config = utils_mod.CONFIG_DIR
-        orig_wallets = utils_mod.WALLETS_DIR
-        utils_mod.CONFIG_DIR = config_dir
-        utils_mod.WALLETS_DIR = wallets_dir
+        wallets_dir = temp_config["wallets_dir"]
+        ks = Account.encrypt(DUMMY_KEY_0, DUMMY_PW)
+        acct = Account.from_key(DUMMY_KEY_0)
+        wrapper = {"version": 1, "address": acct.address, "keystore": ks,
+                   "source": "created", "name": "default"}
+        wallet_path = wallets_dir / "wallet_default.json"
+        wallet_path.write_text(json.dumps(wrapper))
+
+        # Prompt stub returns only the synthetic fixture password — never a
+        # real credential.
+        monkeypatch.setattr(utils_mod, "getpass", lambda prompt: DUMMY_PW)
+
+        # Capture console output
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        monkeypatch.setattr(utils_mod, "console", RichConsole(file=out, force_terminal=False))
 
         try:
-            ks = Account.encrypt(DUMMY_KEY_0, DUMMY_PW)
-            acct = Account.from_key(DUMMY_KEY_0)
-            wrapper = {"version": 1, "address": acct.address, "keystore": ks,
-                       "source": "created", "name": "default"}
-            (wallets_dir / "wallet_default.json").write_text(json.dumps(wrapper))
+            loaded = utils_mod.load_account(name="default")
+            assert loaded.address == acct.address
 
-            monkeypatch.setattr(utils_mod, "getpass", lambda prompt: DUMMY_PW)
-            monkeypatch.setattr(utils_mod, "_cleanup_stale_session", lambda: None)
+            # Confirm the wallet actually loaded is THIS test's own file, not
+            # merely a wallet elsewhere whose address happens to match: the SDK
+            # resolver (isolated via temp_config, not a local alias) must resolve
+            # "default" to exactly this path.
+            resolved_path, exists = sdk_wallet.resolve_wallet_path("default")
+            assert exists
+            assert resolved_path == wallet_path
 
-            # Capture console output
-            import io
-            from rich.console import Console as RichConsole
-            out = io.StringIO()
-            orig_console = utils_mod.console
-            utils_mod.console = RichConsole(file=out, force_terminal=False)
-
-            try:
-                loaded = utils_mod.load_account(name="default")
-                assert loaded.address == acct.address
-                output = out.getvalue()
-                # No red X
-                assert "❌" not in output
-                # Unlike develop's load_account (which delegates password
-                # resolution to _get_password and so emits its yellow fallback
-                # line), the SDK-extracted load_account resolves the env var
-                # itself via get_env_key(..., verbose=False) and never calls
-                # _get_password — so no yellow line is emitted here either.
-                # The verbose=False fix (no "❌ not found" red text) is what
-                # this test actually guards; site 2 below covers the yellow
-                # line's own call site (_get_password) directly.
-                assert "DIN_WALLET_PASSWORD not found in environment" not in output
-            finally:
-                utils_mod.console = orig_console
+            output = out.getvalue()
+            # No red X
+            assert "❌" not in output
+            # Unlike develop's load_account (which delegates password
+            # resolution to _get_password and so emits its yellow fallback
+            # line), the SDK-extracted load_account resolves the env var
+            # itself via get_env_key(..., verbose=False) and never calls
+            # _get_password — so no yellow line is emitted here either.
+            # The verbose=False fix (no "❌ not found" red text) is what
+            # this test actually guards; site 2 below covers the yellow
+            # line's own call site (_get_password) directly.
+            assert "DIN_WALLET_PASSWORD not found in environment" not in output
         finally:
-            utils_mod.CONFIG_DIR = orig_config
-            utils_mod.WALLETS_DIR = orig_wallets
+            utils_mod._PASSWORD_CACHE.clear()
+            utils_mod._PASSWORD_CACHE.update(_saved_cache)
 
     # ── Site 2: _get_password self-fetch (:455) ──────────────────────────
 

@@ -26,11 +26,19 @@ class FakeSession:
     this fake matches that surface without needing a live RPC or keystore.
     """
 
-    def __init__(self, network="local", w3=None, address=None, address_error=None):
-        self.network = network
+    def __init__(self, network="local", w3=None, address=None, address_error=None,
+                 network_error=None):
+        self._network = network
+        self._network_error = network_error
         self.w3 = w3
         self._address = address
         self._address_error = address_error
+
+    @property
+    def network(self):
+        if self._network_error is not None:
+            raise self._network_error
+        return self._network
 
     @property
     def address(self):
@@ -290,3 +298,140 @@ def test_malformed_network_entry_raises_config_error_for_stake(monkeypatch, malf
     with pytest.raises(ConfigError) as exc_info:
         ops.get_stake(session, address=VALID_ADDRESS)
     assert exc_info.value.code == "config_error"
+
+
+# ---------------------------------------------------------------------------
+# Malformed din_info.json ROOT (not just a malformed network entry) — review
+# finding 2. d546a2e validates that the selected network ENTRY is a dict but
+# never validates the JSON document's ROOT before ``network not in din_info``
+# / ``din_info[network]``. A root of null/int/bool/a plain string/a list
+# (even one containing the network name) is valid JSON and passes right up
+# to that point, then raises a raw TypeError instead of a ConfigError.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("malformed_root", [None, 42, True, "local", ["local"]])
+def test_malformed_din_info_root_raises_config_error_for_addresses(monkeypatch, malformed_root):
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: malformed_root)
+
+    session = FakeSession(network="local")
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_platform_addresses(session)
+    assert exc_info.value.code == "config_error"
+    envelope = to_envelope(error=exc_info.value)
+    assert envelope["status"] == "error"
+    json.dumps(envelope)  # serializes cleanly
+
+
+@pytest.mark.parametrize("malformed_root", [None, 42, True, "local", ["local"]])
+def test_malformed_din_info_root_raises_config_error_for_stake(monkeypatch, malformed_root):
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: malformed_root)
+
+    session = FakeSession(network="local", w3=object())
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_stake(session, address=VALID_ADDRESS)
+    assert exc_info.value.code == "config_error"
+    envelope = to_envelope(error=exc_info.value)
+    assert envelope["status"] == "error"
+    json.dumps(envelope)
+
+
+def test_unreadable_din_info_raises_config_error_for_addresses(monkeypatch):
+    def raise_os_error():
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(platform_ops, "load_din_info", raise_os_error)
+
+    session = FakeSession(network="local")
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_platform_addresses(session)
+    assert exc_info.value.code == "config_error"
+    json.dumps(to_envelope(error=exc_info.value))
+
+
+def test_unreadable_din_info_raises_config_error_for_stake(monkeypatch):
+    def raise_os_error():
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(platform_ops, "load_din_info", raise_os_error)
+
+    session = FakeSession(network="local", w3=object())
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_stake(session, address=VALID_ADDRESS)
+    assert exc_info.value.code == "config_error"
+    json.dumps(to_envelope(error=exc_info.value))
+
+
+# ---------------------------------------------------------------------------
+# Invalid explicit session network — review finding 2, second half.
+# get_platform_addresses(DinSession(network="bad-network")) raised a raw
+# ValueError straight out of session network resolution, before either
+# operation's own error handling ever ran.
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_explicit_network_raises_config_error_for_addresses():
+    session = FakeSession(network_error=ValueError("Invalid network: bad-network."))
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_platform_addresses(session)
+    assert exc_info.value.code == "config_error"
+    json.dumps(to_envelope(error=exc_info.value))
+
+
+def test_invalid_explicit_network_raises_config_error_for_stake():
+    session = FakeSession(network_error=ValueError("Invalid network: bad-network."), w3=object())
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_stake(session, address=VALID_ADDRESS)
+    assert exc_info.value.code == "config_error"
+    json.dumps(to_envelope(error=exc_info.value))
+
+
+def test_real_din_session_invalid_network_raises_config_error_for_addresses():
+    """End-to-end against the actual shared resolver, not just FakeSession —
+    this is the review's literal reproduction."""
+    from dincli.sdk.session import DinSession
+
+    session = DinSession(network="bad-network")
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_platform_addresses(session)
+    assert exc_info.value.code == "config_error"
+    assert not isinstance(exc_info.value, ValueError)
+    json.dumps(to_envelope(error=exc_info.value))
+
+
+def test_real_din_session_invalid_network_raises_config_error_for_stake():
+    from dincli.sdk.session import DinSession
+
+    session = DinSession(network="bad-network")
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_stake(session, address=VALID_ADDRESS)
+    assert exc_info.value.code == "config_error"
+    assert not isinstance(exc_info.value, ValueError)
+    json.dumps(to_envelope(error=exc_info.value))
+
+
+# ---------------------------------------------------------------------------
+# Placeholder-address serialization must survive the root/network fixes —
+# get_platform_addresses keeps rendering mainnet's shipped "0x..." literals
+# as-configured (no address-metadata checksumming) rather than raising.
+# ---------------------------------------------------------------------------
+
+
+def test_shipped_placeholder_addresses_still_serialize_after_root_validation(monkeypatch):
+    fixture = {
+        "mainnet": {
+            "coordinator": "0x...",
+            "token": "0x...",
+            "stake": "0x...",
+            "representative": "0x...",
+            "registry": "0x...",
+        }
+    }
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: fixture)
+
+    session = FakeSession(network="mainnet")
+    result = ops.get_platform_addresses(session)
+    envelope = to_envelope(result, network="mainnet")
+    assert envelope["status"] == "ok"
+    assert envelope["data"]["coordinator"] == "0x..."
+    json.dumps(envelope)
