@@ -101,10 +101,12 @@ router_abi = [
 def get_contract_instance(
     artifact_path: str,
     network: str,
-    address: str | None = None
+    address: str | None = None,
+    w3=None,
 ):
-    from dincli.sdk.web3 import get_w3
-    w3 = get_w3(network)
+    if w3 is None:
+        from dincli.sdk.web3 import get_w3
+        w3 = get_w3(network)
 
     if not os.path.isfile(artifact_path):
         raise FileNotFoundError(
