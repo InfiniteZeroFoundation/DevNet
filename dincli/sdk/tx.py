@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -134,14 +135,31 @@ class NonceManager:
     resync(w3, addr):      reserved.clear(); inflight.clear()
 
     The process-wide ``_instances`` cache is bounded at ``_MAX_INSTANCES``. On
-    insert over the cap it evicts the least-recently-used *idle* manager. A
-    busy manager (reservation held, or mutex held mid-``reserve()``) is never
-    evicted: two managers for one account would reserve the same pending nonce
-    and build two different transactions against it. If every cached manager is
-    busy, ``for_session()`` raises ``nonce_manager_capacity`` instead.
+    insert over the cap it evicts the least-recently-used *idle* manager from
+    that strong cache. A busy manager (reservation held, or mutex held
+    mid-``reserve()``) is never evicted: two managers for one account would
+    reserve the same pending nonce and build two different transactions
+    against it. If every cached manager is busy, ``for_session()`` raises
+    ``nonce_manager_capacity`` instead.
+
+    Identity, independent of the bound above: for a given ``(chain_id,
+    address)`` there must never be two live ``NonceManager`` objects, even
+    when the strong cache evicts one. ``_instances`` is only the memory-bound
+    LRU cache; ``_live`` is a ``WeakValueDictionary`` holding *every* manager
+    any caller still references, regardless of whether it is also in
+    ``_instances``. ``for_session()`` always checks ``_live`` first. An idle
+    manager that a caller is holding (e.g. between ``for_session()`` and
+    ``reserve()`` in ``build_tx_params()``) is therefore never duplicated by
+    eviction: dropping it from ``_instances`` only drops a strong reference,
+    and ``_live`` keeps returning the same object as long as anyone holds it.
+    Only once nobody references it does it fall out of ``_live`` too — at
+    which point it holds no reservations, so recreating it is correct.
     """
 
     _instances: "OrderedDict[tuple[int, str], NonceManager]" = OrderedDict()
+    _live: "weakref.WeakValueDictionary[tuple[int, str], NonceManager]" = (
+        weakref.WeakValueDictionary()
+    )
     _MAX_INSTANCES = 64
     _lock = threading.Lock()
 
@@ -158,19 +176,41 @@ class NonceManager:
         address: str = session.address
         key = (chain_id, address)
         with cls._lock:
-            mgr = cls._instances.get(key)
+            # Check the weak registry FIRST — it is the source of truth for
+            # identity. A manager can be idle, evicted from ``_instances``,
+            # and still alive here because a caller (e.g. build_tx_params()
+            # between for_session() and reserve()) holds it.
+            mgr = cls._live.get(key)
             if mgr is not None:
-                cls._instances.move_to_end(key)
+                if key in cls._instances:
+                    cls._instances.move_to_end(key)
+                else:
+                    # Referenced elsewhere but fell out of the strong cache —
+                    # restore it rather than creating a duplicate for `key`.
+                    if len(cls._instances) >= cls._MAX_INSTANCES:
+                        cls._evict_lru_idle()
+                    cls._instances[key] = mgr
                 return mgr
             if len(cls._instances) >= cls._MAX_INSTANCES:
                 cls._evict_lru_idle()
             mgr = cls(chain_id, address)
             cls._instances[key] = mgr
+            cls._live[key] = mgr
             return mgr
 
     @classmethod
     def _evict_lru_idle(cls) -> None:
-        """Evict the oldest idle manager; caller holds ``cls._lock``.
+        """Evict the oldest idle manager from the strong cache; caller holds
+        ``cls._lock``.
+
+        This only removes ``key`` from ``_instances`` — the memory-bound LRU
+        cache. It never removes anything from ``_live``: if some caller still
+        holds the manager, ``_live`` keeps it alive and the next
+        ``for_session()`` for that key returns the SAME object (see
+        ``for_session()``). If nobody holds it, Python's refcounting drops it
+        from ``_live`` on its own once this method's local reference to it
+        goes away. Either outcome is correct — this method is purely a
+        memory-bound eviction, never an identity decision.
 
         Iterating oldest→newest and stopping at the first idle entry implements
         LRU ordering while preferring idle over busy: a busy manager at the LRU
@@ -205,6 +245,14 @@ class NonceManager:
         ``reset_all(force=True)`` to confine its own mess. Clearing a busy
         manager during live use would recreate the duplicate-manager,
         duplicate-nonce hazard the bound exists to prevent.
+
+        Also clears ``_live``, not just ``_instances``. Without that, a
+        manager kept alive past its owning test only by a traceback/frame
+        reference cycle (e.g. a retained ``pytest.raises`` ExceptionInfo)
+        could still answer a later test's ``for_session()`` for the same
+        key, leaking state across the "clean slate" this method promises.
+        Test-only, so unconditionally discarding the identity registry here
+        is safe — it never runs in production.
         """
         with cls._lock:
             if not force:
@@ -215,6 +263,7 @@ class NonceManager:
                             "is busy; pass force=True to discard known-busy state."
                         )
             cls._instances.clear()
+            cls._live.clear()
 
     def _is_idle_nonblocking(self) -> bool:
         """True when nothing is reserved/inflight and the mutex is free *now*.

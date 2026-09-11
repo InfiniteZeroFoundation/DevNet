@@ -622,6 +622,52 @@ class TestNonceManagerBound:
         assert exc.value.details["limit"] == cap
         assert exc.value.details["busy"] == cap
 
+    def test_idle_but_held_manager_survives_eviction_pressure(self):
+        """Regression for the independent review's finding 1: a manager
+        returned to a caller who has not yet reserved anything is idle, and
+        idle managers are exactly what ``_evict_lru_idle`` reclaims. Without
+        the ``_live`` weak registry, evicting it from ``_instances`` while
+        the caller still holds it let a second ``for_session()`` call build
+        an independent manager for the same account — both would then
+        allocate nonce 0.
+        """
+        cap = NonceManager._MAX_INSTANCES
+        session = _session_with_key(1337, "0x" + "aa" * 20)
+        held = NonceManager.for_session(session)  # idle: no reserve() yet
+
+        # Enough other accounts to push `held`'s key past the LRU cap.
+        self._fill(cap, chain_id=9999)
+
+        recovered = NonceManager.for_session(session)
+        assert held is recovered, (
+            "for_session() returned a different NonceManager for the same "
+            "(chain_id, address) after eviction pressure — duplicate "
+            "allocator hazard is back."
+        )
+
+        # And the shared identity actually prevents the duplicate-nonce bug:
+        # two "handles" to the same account now hand out distinct nonces
+        # rather than both returning 0.
+        session.w3.eth.get_transaction_count.return_value = 0
+        n1 = held.reserve(session.w3)
+        n2 = recovered.reserve(session.w3)
+        assert n1 != n2
+        assert {n1, n2} == {0, 1}
+
+    def test_strong_cache_still_respects_cap_with_live_lookups(self):
+        """The weak registry restores identity but must not defeat the
+        memory bound: the strong ``_instances`` cache stays at or under
+        ``_MAX_INSTANCES`` even when idle-but-held managers keep getting
+        looked up and re-admitted via ``_live``.
+        """
+        cap = NonceManager._MAX_INSTANCES
+        session = _session_with_key(1337, "0x" + "aa" * 20)
+        NonceManager.for_session(session)
+        self._fill(cap, chain_id=9999)
+        assert len(NonceManager._instances) <= cap
+        NonceManager.for_session(session)  # re-admit via _live
+        assert len(NonceManager._instances) <= cap
+
     def test_successful_send_leaves_manager_idle(self):
         w3 = _w3_mock(pending_nonce=0)
         receipt = _make_mock_receipt()
