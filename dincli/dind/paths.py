@@ -19,5 +19,13 @@ class StateDirs:
         return self.state_dir / "dind.lock"
 
     @property
+    def control_path(self) -> Path:
+        """Descriptor naming the AF_UNIX control endpoint of whichever
+        instance currently holds ``lock_path`` (dincli/dind/control.py,
+        review finding 4). An ordinary file in the state dir — unlike the
+        socket itself, it has no path-length constraint."""
+        return self.state_dir / "dind.control.json"
+
+    @property
     def preferences_path(self) -> Path:
         return self.state_dir / "preferences.json"

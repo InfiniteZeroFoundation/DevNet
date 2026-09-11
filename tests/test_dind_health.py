@@ -174,6 +174,7 @@ def test_status_command_reads_degraded_through_503(tmp_path):
 
     from typer.testing import CliRunner
 
+    from dincli.dind import control
     from dincli.dind.lock import acquire_state_lock, release_state_lock
     from dincli.dind.main import app
     from dincli.dind.paths import StateDirs
@@ -195,6 +196,22 @@ def test_status_command_reads_degraded_through_503(tmp_path):
     paths.pid_path.write_text(str(os_module.getpid()))
     lock_fd = acquire_state_lock(paths.lock_path)
 
+    # `status` only proceeds to the /health block once it has verified this
+    # is the instance the descriptor names (review finding 4) — a bare held
+    # lock is no longer treated as "running" on its own, so this test needs
+    # a real control endpoint standing in for the daemon under test.
+    control_socket_path = control.socket_path_for(tmp_path)
+    control_server = control.ControlServer(control_socket_path, "the-instance", threading.Event())
+    control_server.start()
+    control_thread = threading.Thread(target=control_server.run, daemon=True)
+    control_thread.start()
+    control.write_descriptor(
+        paths.control_path,
+        control.ControlDescriptor(
+            instance_id="the-instance", socket_path=str(control_socket_path), pid=os_module.getpid()
+        ),
+    )
+
     try:
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
@@ -203,6 +220,8 @@ def test_status_command_reads_degraded_through_503(tmp_path):
         assert "Health:    degraded" in result.output
         assert "(health endpoint unavailable)" not in result.output
     finally:
+        control_server.shutdown()
+        control_thread.join(timeout=5)
         release_state_lock(lock_fd)
         server.shutdown()
         thread.join(timeout=5)
