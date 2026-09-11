@@ -16,6 +16,7 @@ from dincli.sdk.operations.platform import (
     StakeInfo,
     get_platform_addresses,
     get_stake,
+    get_stake_contract_address,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "StakeInfo",
     "get_platform_addresses",
     "get_stake",
+    "get_stake_contract_address",
 ]

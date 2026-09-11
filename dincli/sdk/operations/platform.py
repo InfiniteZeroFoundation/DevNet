@@ -126,6 +126,30 @@ def get_platform_addresses(session: DinSession) -> PlatformAddresses:
     )
 
 
+def get_stake_contract_address(network: str) -> str:
+    """Resolve and validate the staking contract address configured for
+    ``network``, returned exactly as it appears in ``din_info.json`` — no
+    checksumming.
+
+    Split out of ``get_stake()`` so a caller (the CLI's
+    ``read_dintoken_stake()``) can render the address before attempting the
+    contract call, the same way ``get_deployed_din_stake_contract()`` used to
+    print it as an unconditional side effect strictly before ``getStake()``
+    could fail. Returning the address as-configured, rather than
+    checksummed, matters too: a hand-edited lowercase address must print
+    lowercase, matching what the CLI showed before this operations layer
+    existed.
+    """
+    entry = _load_din_info_entry(network)
+    stake_address = entry.get("stake")
+    if not stake_address or not Web3.is_address(stake_address):
+        raise ConfigError(
+            f"Network '{network}' has no valid staking contract address configured.",
+            details={"key": "stake"},
+        )
+    return stake_address
+
+
 def get_stake(session: DinSession, address: str | None = None) -> StakeInfo:
     """Read ``address``'s (or the session's signer's) staked DIN balance.
 
@@ -136,15 +160,7 @@ def get_stake(session: DinSession, address: str | None = None) -> StakeInfo:
     path already produces.
     """
     network = session.network
-    entry = _load_din_info_entry(network)
-
-    stake_address = entry.get("stake")
-    if not stake_address or not Web3.is_address(stake_address):
-        raise ConfigError(
-            f"Network '{network}' has no valid staking contract address configured.",
-            details={"key": "stake"},
-        )
-    stake_address = Web3.to_checksum_address(stake_address)
+    stake_address = Web3.to_checksum_address(get_stake_contract_address(network))
 
     if address is not None:
         if not Web3.is_address(address):

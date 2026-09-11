@@ -188,20 +188,34 @@ def test_stake_exits_when_amount_is_below_minimum(monkeypatch):
 def test_read_stake_reads_active_account_stake(monkeypatch):
     """read_dintoken_stake resolves the active account and reads its stake
     through sdk.operations.platform.get_stake() — no longer via
-    get_deployed_din_stake_contract() (task_110926_15 §3.5 refactor)."""
+    get_deployed_din_stake_contract() (task_110926_15 §3.5 refactor).
+
+    Also monkeypatches get_stake_contract_address(): review finding 3 split
+    address resolution out of get_stake() so the CLI can print the address
+    before the getStake() call can fail — read_dintoken_stake() now calls
+    both, and this opaque ctx.obj.session = object() can't survive a real
+    get_stake_contract_address() call (it needs a real network config
+    lookup, not exercised by this test)."""
     from dincli.sdk.operations.platform import StakeInfo
 
     ctx = make_ctx(current_stake=15 * 10**18)
     calls = []
+    address_calls = []
+
+    def fake_get_stake_contract_address(network):
+        address_calls.append(network)
+        return "0xStake"
 
     def fake_get_stake(session, address=None):
         calls.append((session, address))
         return StakeInfo(network="local", address=address, stake_wei=15 * 10**18, stake_contract="0xStake")
 
+    monkeypatch.setattr(dintoken, "get_stake_contract_address", fake_get_stake_contract_address)
     monkeypatch.setattr(dintoken, "get_stake", fake_get_stake)
 
     dintoken.read_dintoken_stake(ctx)
 
+    assert address_calls == ["local"]
     assert calls == [(ctx.obj.session, "0xAccount")]
 
 
