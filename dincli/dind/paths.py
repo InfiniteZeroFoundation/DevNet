@@ -15,5 +15,9 @@ class StateDirs:
         return self.state_dir / "dind.pid"
 
     @property
+    def lock_path(self) -> Path:
+        return self.state_dir / "dind.lock"
+
+    @property
     def preferences_path(self) -> Path:
         return self.state_dir / "preferences.json"

@@ -64,6 +64,26 @@ def resolve_health_port(flag: int | None = None) -> int:
     return HEALTH_PORT_DEFAULT
 
 
+def resolve_max_ticks(flag: int | None = None) -> int | None:
+    if flag is not None:
+        return flag
+
+    env_val = os.environ.get("DIN_DIND_MAX_TICKS")
+    if env_val and env_val.strip():
+        return int(env_val)
+
+    config = load_config()
+    config_val = config.get("dind_max_ticks")
+    if config_val is not None:
+        return int(config_val)
+
+    return None
+
+
 def validate_health_port(port: int) -> None:
-    if not (1 <= port <= 65535):
-        raise ValueError(f"Health port must be 1-65535, got {port}")
+    # 0 (ephemeral) is valid: two daemons racing a fixed port would fail on
+    # bind rather than on the lock, measuring the wrong thing. health.py
+    # already records the actually-bound port into daemon_meta so ephemeral
+    # ports resolve correctly for `status`.
+    if not (0 <= port <= 65535):
+        raise ValueError(f"Health port must be 0-65535, got {port}")

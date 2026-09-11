@@ -62,13 +62,37 @@ def test_validate_health_port_ok():
     dconf.validate_health_port(8080)
 
 
-def test_validate_health_port_rejects_zero():
+def test_validate_health_port_accepts_zero():
+    # 0 means "ephemeral" — accepted so two racing daemons fail on the lock,
+    # not on a fixed-port bind (BL-19).
+    dconf.validate_health_port(0)
+
+
+def test_validate_health_port_rejects_negative():
     import pytest
-    with pytest.raises(ValueError, match="1-65535"):
-        dconf.validate_health_port(0)
+    with pytest.raises(ValueError, match="0-65535"):
+        dconf.validate_health_port(-1)
 
 
 def test_validate_health_port_rejects_too_high():
     import pytest
-    with pytest.raises(ValueError, match="1-65535"):
+    with pytest.raises(ValueError, match="0-65535"):
         dconf.validate_health_port(99999)
+
+
+def test_max_ticks_default_none():
+    assert dconf.resolve_max_ticks(None) is None
+
+
+def test_max_ticks_flag():
+    assert dconf.resolve_max_ticks(5) == 5
+
+
+def test_max_ticks_env(monkeypatch):
+    monkeypatch.setenv("DIN_DIND_MAX_TICKS", "3")
+    assert dconf.resolve_max_ticks(None) == 3
+
+
+def test_max_ticks_flag_wins_over_env(monkeypatch):
+    monkeypatch.setenv("DIN_DIND_MAX_TICKS", "3")
+    assert dconf.resolve_max_ticks(7) == 7

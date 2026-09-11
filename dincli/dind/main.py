@@ -18,9 +18,11 @@ from dincli import __version__
 from dincli.dind.config import (
     resolve_health_host,
     resolve_health_port,
+    resolve_max_ticks,
     resolve_state_dir,
     validate_health_port,
 )
+from dincli.dind.lock import acquire_state_lock, is_locked, release_state_lock
 from dincli.dind.paths import StateDirs
 from dincli.dind.preferences import (
     Preferences,
@@ -66,63 +68,94 @@ def start(
     resolved = resolve_state_dir(state_dir)
     paths = StateDirs(resolved)
 
-    existing_pid = read_pid(paths.pid_path)
-    if existing_pid is not None and is_process_running(existing_pid):
-        typer.echo(
-            f"dind already running (PID {existing_pid}) in {resolved}",
-            err=True,
-        )
+    # Atomic start (BL-19): the lock, not the PID file, is the source of
+    # truth for "is a dind already running here". An flock is released by
+    # the kernel on any process death, including SIGKILL, so — unlike an
+    # O_EXCL marker — it can never itself go stale.
+    lock_fd = acquire_state_lock(paths.lock_path)
+    if lock_fd is None:
+        existing_pid = read_pid(paths.pid_path)
+        if existing_pid is not None:
+            # Byte-identical to the pre-lock wording.
+            typer.echo(
+                f"dind already running (PID {existing_pid}) in {resolved}",
+                err=True,
+            )
+        else:
+            # The winner holds the lock but hasn't written its PID yet.
+            typer.echo(f"dind already starting in {resolved}", err=True)
         raise typer.Exit(1)
 
-    if existing_pid is not None:
-        remove_pid(paths.pid_path)
-
-    host = resolve_health_host(health_host)
-    port = resolve_health_port(health_port)
-    validate_health_port(port)
-
-    from dincli.dind.daemon import DaemonLoop
-    from dincli.dind.health import HealthServer
-    from dincli.dind.logging import configure_logging
-    from dincli.dind.signals import install_shutdown_handlers
-    from dincli.dind.state import StateStore
-
-    configure_logging("json")
-
-    import logging
-    logger = logging.getLogger("dincli")
-
-    write_pid(paths.pid_path)
-
-    stop_event = threading.Event()
-    install_shutdown_handlers(stop_event)
-
-    state = StateStore(paths.db_path)
-    state.set_meta("started_at", datetime.now(timezone.utc).isoformat())
-    state.reset_running_jobs()
-
-    health = HealthServer(host, port, state)
-    health_thread = threading.Thread(target=health.run, daemon=True)
-    health_thread.start()
-
-    loop = DaemonLoop(state, stop_event)
+    wrote_pid = False
     try:
-        logger.info("dind daemon started (state=%s)", resolved)
-        loop.run()
-    finally:
-        logger.info("Shutting down dind daemon...")
+        host = resolve_health_host(health_host)
+        port = resolve_health_port(health_port)
+        validate_health_port(port)
+        max_ticks = resolve_max_ticks()
 
+        from dincli.dind.daemon import DaemonLoop
+        from dincli.dind.health import HealthServer
+        from dincli.dind.logging import configure_logging
+        from dincli.dind.signals import install_shutdown_handlers
+        from dincli.dind.state import StateStore
+
+        configure_logging("json")
+
+        import logging
+        logger = logging.getLogger("dincli")
+
+        # Unchanged stale-PID cleanup, now running behind the lock: holding
+        # the lock exclusively means any leftover PID file can only be a
+        # crash remnant, never a live daemon on this state dir.
+        existing_pid = read_pid(paths.pid_path)
+        if existing_pid is not None and is_process_running(existing_pid):
+            typer.echo(
+                f"dind already running (PID {existing_pid}) in {resolved}",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        if existing_pid is not None:
+            remove_pid(paths.pid_path)
+
+        write_pid(paths.pid_path)
+        wrote_pid = True
+
+        stop_event = threading.Event()
+        install_shutdown_handlers(stop_event)
+
+        state = StateStore(paths.db_path)
+        state.set_meta("started_at", datetime.now(timezone.utc).isoformat())
         state.reset_running_jobs()
-        shutdown_count_str = state.get_meta("shutdown_count") or "0"
-        state.set_meta("shutdown_count", str(int(shutdown_count_str) + 1))
 
-        health.shutdown()
-        health_thread.join(timeout=5)
+        health = HealthServer(host, port, state)
+        health_thread = threading.Thread(target=health.run, daemon=True)
+        health_thread.start()
 
-        remove_pid(paths.pid_path)
-        state.close()
+        loop = DaemonLoop(state, stop_event, max_ticks=max_ticks)
+        try:
+            logger.info("dind daemon started (state=%s)", resolved)
+            loop.run()
+        finally:
+            logger.info("Shutting down dind daemon...")
 
-        logger.info("dind daemon shut down")
+            state.reset_running_jobs()
+            shutdown_count_str = state.get_meta("shutdown_count") or "0"
+            state.set_meta("shutdown_count", str(int(shutdown_count_str) + 1))
+
+            health.shutdown()
+            health_thread.join(timeout=5)
+
+            state.close()
+
+            logger.info("dind daemon shut down")
+    finally:
+        # wrote_pid guards against deleting a PID file this invocation never
+        # wrote (e.g. the "already running" branch above, raised while still
+        # holding the lock).
+        if wrote_pid:
+            remove_pid(paths.pid_path)
+        release_state_lock(lock_fd)
 
 
 @app.command()
@@ -145,7 +178,10 @@ def stop(
         )
         raise typer.Exit(1)
 
-    if not is_process_running(pid):
+    if not is_locked(paths.lock_path):
+        # A free lock is positive evidence no daemon owns this state dir,
+        # regardless of what the PID file says — it may name a live but
+        # unrelated process that happens to have reused the PID.
         typer.echo(f"PID {pid} is stale — cleaning up.")
         remove_pid(paths.pid_path)
         return
@@ -176,8 +212,8 @@ def status(
         typer.echo("dind is not running (no PID file).")
         return
 
-    running = is_process_running(pid)
-    if not running:
+    if not is_locked(paths.lock_path):
+        # See stop(): the lock, not the PID file, is authoritative.
         typer.echo(
             f"dind is stopped (stale PID {pid} in {paths.pid_path})."
         )
