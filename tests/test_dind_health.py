@@ -33,6 +33,44 @@ def _make_handler(store, path="/health"):
     return handler, wfile
 
 
+def _status_line(response: bytes) -> bytes:
+    return response.split(b"\r\n", 1)[0]
+
+
+def test_health_degraded_returns_503(tmp_path):
+    """BL-20: a stale last_tick must be served as 503, not 200."""
+    store = StateStore(tmp_path / "test.db")
+    store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
+
+    handler, wfile = _make_handler(store)
+    handler.do_GET()
+    response = wfile.getvalue()
+
+    assert b"503" in _status_line(response)
+
+    body = json.loads(response.split(b"\r\n\r\n", 1)[1])
+    assert body["status"] == "degraded"
+    store.close()
+
+
+def test_health_healthy_returns_200(tmp_path):
+    """Guards against an inverted status<->code condition."""
+    from datetime import datetime, timezone
+
+    store = StateStore(tmp_path / "test.db")
+    store.set_meta("last_tick", datetime.now(timezone.utc).isoformat())
+
+    handler, wfile = _make_handler(store)
+    handler.do_GET()
+    response = wfile.getvalue()
+
+    assert b"200" in _status_line(response)
+
+    body = json.loads(response.split(b"\r\n\r\n", 1)[1])
+    assert body["status"] == "healthy"
+    store.close()
+
+
 def test_health_payload_shape(monkeypatch, tmp_path):
     captured = {}
 
@@ -49,7 +87,9 @@ def test_health_payload_shape(monkeypatch, tmp_path):
 
     handler.do_GET()
     response = wfile.getvalue()
-    assert b"HTTP/1.0 200" in response or b"200" in response
+    # This handler is driven with a stale last_tick, i.e. degraded — BL-20
+    # makes that 503, not 200.
+    assert b"503" in _status_line(response)
 
     parts = response.split(b"\r\n\r\n", 1)
     body = json.loads(parts[1])
@@ -124,6 +164,49 @@ def test_health_no_network_gpu_probe(monkeypatch, tmp_path):
     assert body["status"] == "healthy"
 
     store.close()
+
+
+def test_status_command_reads_degraded_through_503(tmp_path):
+    """BL-20: `dind status` must render "Health: degraded" for a 503
+    response, not fall into the "(health endpoint unavailable)" branch that
+    urlopen's HTTPError-on-non-2xx would otherwise cause."""
+    import os as os_module
+
+    from typer.testing import CliRunner
+
+    from dincli.dind.lock import acquire_state_lock, release_state_lock
+    from dincli.dind.main import app
+    from dincli.dind.paths import StateDirs
+
+    paths = StateDirs(tmp_path)
+    store = StateStore(paths.db_path)
+    store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
+
+    server = HealthServer("127.0.0.1", 0, store)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if hasattr(server, "server"):
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("HealthServer never bound")
+
+    paths.pid_path.write_text(str(os_module.getpid()))
+    lock_fd = acquire_state_lock(paths.lock_path)
+
+    try:
+        runner = CliRunner()
+        result = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.output
+        assert "Health:    degraded" in result.output
+        assert "(health endpoint unavailable)" not in result.output
+    finally:
+        release_state_lock(lock_fd)
+        server.shutdown()
+        thread.join(timeout=5)
+        store.close()
 
 
 def test_health_server_releases_port(tmp_path):

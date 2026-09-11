@@ -211,9 +211,10 @@ the moment their job finishes, so in steady state you'll usually see only
 > use `docker ps -a --filter "ancestor=din-worker:dev"` while an install is
 > running.
 
-> `din-node` currently idles (`sleep infinity`) and you `exec` into it, because
-> `dincli` is a CLI, not yet a daemon. When the `dind` daemon lands it becomes the
-> container's main process and logs will carry real activity.
+> `din-node`'s main process is the `dind` daemon (`command: ["dind", "start"]`
+> in the compose file), so `docker compose logs -f din-node` carries real
+> daemon activity. Use `docker compose exec din-node dincli <args>` (or
+> `bash`, above) to run one-off commands against the same state.
 
 ### Upgrades and your data
 
@@ -336,9 +337,10 @@ job status first).
 
 ## Scope and limitations (devnet)
 
-- Not included (later roadmap phases): `/health` endpoint, structured JSON logs,
-  graceful `SIGTERM` handling, `systemd`/`launchd` units, vault / remote-signer
-  integration.
+- Not included (later roadmap phases): graceful `SIGTERM` handling,
+  `systemd`/`launchd` units, vault / remote-signer integration. (The
+  `/health` endpoint and structured JSON logs shipped with the `dind`
+  daemon in PR #32.)
 - The `docker.sock` exposure above is accepted for devnet, not solved.
 - Image pins Python (`3.12-slim`) and `dincli` (built from source, deps pinned via
   `dincli/requirements.txt`). For stricter reproducibility, pin the base image by

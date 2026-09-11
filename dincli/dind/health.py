@@ -2,6 +2,20 @@
 
 Records the actually-bound host/port in ``daemon_meta`` so ``status`` can
 find the endpoint even with ephemeral ports.
+
+BL-20: a "degraded" body (``last_tick`` older than ``stale_seconds``) is
+served with HTTP 503, not 200, so a plain liveness probe (``curl -f``, a
+container orchestrator's healthcheck) can tell the two states apart without
+parsing JSON. This REPORTS degradation; it does not trigger a restart.
+Docker Compose's ``restart:`` policy only reacts to container termination,
+not health status — that only drives restarts in Swarm — so this was never
+going to auto-restart the daemon regardless of status code. And restarting
+on "degraded" would be wrong even if it could: a stale ``last_tick`` means
+the loop is behind schedule, not stopped, and auto-restarting on
+behind-schedule risks a restart loop under sustained load while destroying
+the state needed to diagnose a hung loop. A genuinely stopped process is
+what ``restart: unless-stopped`` already covers. Operators who want
+restart-on-unhealthy need an external watchdog acting on the 503.
 """
 
 import json
@@ -15,6 +29,10 @@ from dincli.dind.capabilities import resource_snapshot
 from dincli.dind.state import StateStore
 
 logger = logging.getLogger("dincli")
+
+# See the module docstring: 503 marks degraded so a plain liveness probe can
+# tell without parsing JSON. It is a reporting signal only.
+_DEGRADED_STATUS_CODE = 503
 
 
 class _ThreadingHTTPServer(HTTPServer):
@@ -37,7 +55,12 @@ class HealthHandler(BaseHTTPRequestHandler):
         try:
             payload = self._build_payload()
             body = json.dumps(payload).encode("utf-8")
-            self.send_response(200)
+            code = (
+                200
+                if payload["status"] == "healthy"
+                else _DEGRADED_STATUS_CODE
+            )
+            self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

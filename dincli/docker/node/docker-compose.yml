@@ -76,6 +76,12 @@ services:
     # in the Dockerfile). The container is the long-lived daemon process.
     command: ["dind", "start"]
 
+    # A failing check marks the container "unhealthy" (visible in `docker ps`
+    # and `docker inspect`). It does NOT trigger `restart: unless-stopped`
+    # above — plain `docker compose` restart policies react to container
+    # termination only, not health status (that only drives restarts in
+    # Swarm). Operators who want restart-on-unhealthy need an external
+    # watchdog acting on this status.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8787/health"]
       interval: 15s

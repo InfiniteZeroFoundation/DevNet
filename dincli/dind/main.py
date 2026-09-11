@@ -7,6 +7,7 @@ import json
 import signal
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -234,8 +235,17 @@ def status(
         )
 
         url = f"http://{health_host}:{health_port}/health"
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            health = json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                health = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            # BL-20: a degraded daemon answers 503, which urlopen raises as
+            # HTTPError before the body is read. The exception object is
+            # itself a response — read the body off it instead of treating
+            # this as "unreachable", which would make a degraded daemon look
+            # worse than the bug this fixes. A non-HTTP failure or an
+            # unparseable body still falls through to the except below.
+            health = json.loads(e.read())
 
         typer.echo(f"  Health:    {health['status']}")
         typer.echo(f"  Uptime:    {health['uptime_s']}s")
