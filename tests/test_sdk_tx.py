@@ -21,12 +21,14 @@ from dincli.sdk.tx import (
 from dincli.sdk.session import DinSession
 from dincli.sdk.errors import (
     TransactionError,
+    SignerUnavailable,
     TX_ESTIMATION_FAILED,
     TX_NONCE_CONFLICT,
     TX_REPLACEMENT_UNDERPRICED,
     TX_REVERTED,
     TX_TIMEOUT,
     RECEIPT_MISSING,
+    NONCE_MANAGER_CAPACITY,
 )
 
 DUMMY_KEY = "0x0000000000000000000000000000000000000000000000000000000000000001"
@@ -145,7 +147,12 @@ class TestTxReceiptInfo:
 
 class TestNonceManager:
     def setup_method(self):
-        NonceManager._instances.clear()
+        # Clean-slate: a leaked reservation/inflight nonce from an earlier
+        # class fails this loudly instead of silently corrupting this test.
+        # No teardown here — every test either constructs its own
+        # NonceManager directly (bypassing the shared cache) or, in
+        # test_for_session_singleton, leaves only an idle cached instance.
+        NonceManager.reset_all()
 
     def test_reserve_returns_pending_nonce(self):
         w3 = _w3_mock(pending_nonce=7)
@@ -262,7 +269,13 @@ class TestNonceManager:
 
 class TestBuildTxParams:
     def setup_method(self):
-        NonceManager._instances.clear()
+        # Clean-slate: see NonceManager.reset_all() docstring for the convention.
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        # test_basic_params / test_override_gas reserve a nonce via
+        # build_tx_params and never settle it; confine that to this class.
+        NonceManager.reset_all(force=True)
 
     def test_basic_params(self):
         w3 = _w3_mock(pending_nonce=3)
@@ -293,7 +306,11 @@ class TestBuildTxParams:
 
 class TestSendHappyPath:
     def setup_method(self):
-        NonceManager._instances.clear()
+        # Clean-slate: see NonceManager.reset_all() docstring for the
+        # convention. No teardown here — every test in this class settles
+        # its own nonce (mark_confirmed), so the plain setup_method above
+        # doubles as a live check that this class cleans up after itself.
+        NonceManager.reset_all()
 
     def test_successful_send(self):
         w3 = _w3_mock(pending_nonce=0)
@@ -364,7 +381,13 @@ class TestSendHappyPath:
 
 class TestSendFailurePaths:
     def setup_method(self):
-        NonceManager._instances.clear()
+        # Clean-slate: see NonceManager.reset_all() docstring for the convention.
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        # test_already_known_broadcast_true / test_timeout deliberately end
+        # inflight; confine that known-busy state to this class.
+        NonceManager.reset_all(force=True)
 
     def test_estimation_failed(self):
         w3 = _w3_mock(pending_nonce=0)
@@ -479,11 +502,16 @@ class TestSendFailurePaths:
 
 class TestSendEthNoncePath:
     def setup_method(self):
-        NonceManager._instances.clear()
+        # Clean-slate: see NonceManager.reset_all() docstring for the convention.
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        # test_build_tx_params_uses_nonce_manager reserves without settling.
+        NonceManager.reset_all(force=True)
 
     def test_build_tx_params_uses_nonce_manager(self):
         """BL-1: get_tx_params allocates through NonceManager (not bare get_transaction_count)."""
-        NonceManager._instances.clear()
+        NonceManager.reset_all()
         w3 = _w3_mock(pending_nonce=11)
         session = _make_mock_session(w3=w3)
         params = build_tx_params(session)
@@ -491,7 +519,7 @@ class TestSendEthNoncePath:
         w3.eth.get_transaction_count.assert_called()  # used pending
 
     def test_release_reclaims_nonce(self):
-        NonceManager._instances.clear()
+        NonceManager.reset_all()
         w3 = _w3_mock(pending_nonce=5)
         session = _make_mock_session(w3=w3)
         mgr = NonceManager.for_session(session)
@@ -516,3 +544,264 @@ class TestDecodeEvents:
         result = decode_events(info, contract_event)
         assert result == [{"event": "Test"}]
         contract_event.process_receipt.assert_called_once_with(info._raw)
+
+
+# ---------------------------------------------------------------------------
+# NonceManager bound: cap, LRU, idle-only eviction (BL-22)
+# ---------------------------------------------------------------------------
+
+
+def _session_with_key(chain_id, address):
+    """A minimal object with the only two attrs for_session() reads."""
+    session = MagicMock(spec=DinSession)
+    session.w3 = MagicMock()
+    session.w3.eth.chain_id = chain_id
+    session.address = address
+    return session
+
+
+class TestNonceManagerBound:
+    def setup_method(self):
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        NonceManager.reset_all(force=True)
+
+    def _fill(self, n, chain_id=1337):
+        keys = []
+        for i in range(n):
+            address = f"0x{i:040x}"
+            NonceManager.for_session(_session_with_key(chain_id, address))
+            keys.append((chain_id, address))
+        return keys
+
+    def test_cache_bounded_and_keeps_most_recent(self):
+        cap = NonceManager._MAX_INSTANCES
+        keys = self._fill(cap + 6)
+        assert len(NonceManager._instances) == cap
+        for key in keys[-cap:]:
+            assert key in NonceManager._instances
+        for key in keys[:6]:
+            assert key not in NonceManager._instances
+
+    def test_touching_old_key_keeps_it_alive(self):
+        cap = NonceManager._MAX_INSTANCES
+        keys = self._fill(cap)
+        # Touch the oldest key so it is no longer the LRU entry.
+        NonceManager.for_session(_session_with_key(1337, keys[0][1]))
+        new_key = (1337, "0x" + "ff" * 20)
+        NonceManager.for_session(_session_with_key(*new_key))
+        assert keys[0] in NonceManager._instances
+        assert keys[1] not in NonceManager._instances
+        assert new_key in NonceManager._instances
+
+    def test_busy_lru_survives_newer_idle_dropped(self):
+        cap = NonceManager._MAX_INSTANCES
+        keys = self._fill(cap)
+        busy = NonceManager._instances[keys[0]]
+        busy.mark_broadcast(123)  # busy manager at the LRU end
+        new_key = (1337, "0x" + "ab" * 20)
+        NonceManager.for_session(_session_with_key(*new_key))
+        assert keys[0] in NonceManager._instances
+        assert busy is NonceManager._instances[keys[0]]
+        assert 123 in busy._inflight
+        assert keys[1] not in NonceManager._instances
+        assert new_key in NonceManager._instances
+
+    def test_all_busy_raises_capacity_and_leaves_cache_unchanged(self):
+        cap = NonceManager._MAX_INSTANCES
+        keys = self._fill(cap)
+        for key in keys:
+            NonceManager._instances[key].mark_broadcast(1)
+        before = list(NonceManager._instances.keys())
+        with pytest.raises(TransactionError) as exc:
+            NonceManager.for_session(_session_with_key(1337, "0x" + "cd" * 20))
+        assert exc.value.code == NONCE_MANAGER_CAPACITY
+        assert list(NonceManager._instances.keys()) == before
+        assert all(1 in NonceManager._instances[k]._inflight for k in keys)
+        assert exc.value.details["limit"] == cap
+        assert exc.value.details["busy"] == cap
+
+    def test_successful_send_leaves_manager_idle(self):
+        w3 = _w3_mock(pending_nonce=0)
+        receipt = _make_mock_receipt()
+        w3.eth.send_raw_transaction.return_value = b"\xde\xad"
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        send(session, contract_fn)
+
+        mgr = NonceManager.for_session(session)
+        assert mgr._inflight == set()
+        assert mgr._reserved == {}
+        assert mgr._is_idle_nonblocking()
+
+    def test_reverted_send_leaves_manager_idle(self):
+        w3 = _w3_mock(pending_nonce=0)
+        receipt = _make_mock_receipt(status=0)
+        w3.eth.send_raw_transaction.return_value = b"\xde\xad"
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn)
+        assert exc.value.code == TX_REVERTED
+
+        mgr = NonceManager.for_session(session)
+        assert mgr._inflight == set()
+        assert mgr._is_idle_nonblocking()
+
+    def test_timeout_leaves_nonce_inflight(self):
+        w3 = _w3_mock(pending_nonce=0)
+        w3.eth.send_raw_transaction.return_value = b"\xde\xad"
+        w3.eth.get_transaction.return_value = {"hash": b"\xab\xcd"}
+        w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted("timed out")
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn, timeout_s=0.001)
+        assert exc.value.code == TX_TIMEOUT
+        assert 0 in NonceManager.for_session(session)._inflight
+
+    def test_missing_receipt_leaves_nonce_inflight(self):
+        w3 = _w3_mock(pending_nonce=0)
+        w3.eth.send_raw_transaction.return_value = b"\xde\xad"
+        w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted("timed out")
+        w3.eth.get_transaction.side_effect = TransactionNotFound("gone")
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn, timeout_s=0.001)
+        assert exc.value.code == RECEIPT_MISSING
+        assert 0 in NonceManager.for_session(session)._inflight
+
+    def test_already_known_leaves_nonce_inflight(self):
+        w3 = _w3_mock(pending_nonce=0)
+        w3.eth.send_raw_transaction.side_effect = ValueError("already known")
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn)
+        assert exc.value.code == TX_NONCE_CONFLICT
+        assert 0 in NonceManager.for_session(session)._inflight
+
+    def test_unclassified_broadcast_leaves_nonce_inflight(self):
+        w3 = _w3_mock(pending_nonce=0)
+        w3.eth.send_raw_transaction.side_effect = ConnectionError("socket hung up")
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn)
+        assert exc.value.code == "tx_failed"
+        assert 0 in NonceManager.for_session(session)._inflight
+
+    def test_build_transaction_failure_releases_reservation(self):
+        w3 = _w3_mock(pending_nonce=0)
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        # First call (gas estimation) succeeds; second (post-gas build) fails.
+        contract_fn.build_transaction.side_effect = [{}, ValueError("abi encode failed")]
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn)
+        assert exc.value.code == "tx_failed"
+        assert exc.value.details["broadcast"] is False
+        assert exc.value.details["nonce"] == 0
+        assert NonceManager.for_session(session)._reserved == {}
+
+    def test_sign_transaction_failure_releases_reservation(self):
+        w3 = _w3_mock(pending_nonce=0)
+        session = _make_mock_session(w3=w3)
+        session.signer.sign_transaction.side_effect = ValueError("signer boom")
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError) as exc:
+            send(session, contract_fn)
+        assert exc.value.code == "tx_failed"
+        assert exc.value.details["broadcast"] is False
+        assert NonceManager.for_session(session)._reserved == {}
+
+    def test_signer_unavailable_propagates_unrecoded(self):
+        """A DinError raised by the signer (e.g. a daemon signing without a
+        cached password) must surface with its own stable code, not be
+        re-coded as tx_failed — the daemon retry policy keys off it."""
+        w3 = _w3_mock(pending_nonce=0)
+        session = _make_mock_session(w3=w3)
+        session.signer.sign_transaction.side_effect = SignerUnavailable(
+            "no password available"
+        )
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(SignerUnavailable) as exc:
+            send(session, contract_fn)
+        assert exc.value.code == "signer_unavailable"
+        assert NonceManager.for_session(session)._reserved == {}
+
+    def test_busy_probe_does_not_block_on_held_mutex(self):
+        cap = NonceManager._MAX_INSTANCES
+        keys = self._fill(cap)
+        busy = NonceManager._instances[keys[0]]
+        entered = threading.Event()
+        release_evt = threading.Event()
+
+        def hold_mutex():
+            with busy._mutex:
+                entered.set()
+                release_evt.wait(5)
+
+        holder = threading.Thread(target=hold_mutex)
+        holder.start()
+        try:
+            assert entered.wait(5)
+            result = {}
+
+            def insert():
+                result["mgr"] = NonceManager.for_session(
+                    _session_with_key(1337, "0x" + "ef" * 20)
+                )
+
+            inserter = threading.Thread(target=insert)
+            inserter.start()
+            inserter.join(timeout=5)
+            assert not inserter.is_alive(), (
+                "for_session() blocked on a manager mutex held inside reserve()"
+            )
+            assert "mgr" in result
+            # The busy LRU manager is skipped, not evicted or waited on.
+            assert keys[0] in NonceManager._instances
+            assert busy is NonceManager._instances[keys[0]]
+        finally:
+            release_evt.set()
+            holder.join(timeout=5)
+
+    def test_reset_all_clears_idle_cache(self):
+        NonceManager.for_session(_session_with_key(1337, "0x" + "01" * 20))
+        NonceManager.reset_all()
+        assert NonceManager._instances == {}
+
+    def test_reset_all_refuses_when_busy(self):
+        mgr = NonceManager.for_session(_session_with_key(1337, "0x" + "02" * 20))
+        mgr.mark_broadcast(7)
+        with pytest.raises(RuntimeError):
+            NonceManager.reset_all()
+        assert len(NonceManager._instances) == 1
+
+    def test_reset_all_force_discards_busy(self):
+        mgr = NonceManager.for_session(_session_with_key(1337, "0x" + "03" * 20))
+        mgr.mark_broadcast(7)
+        NonceManager.reset_all(force=True)
+        assert NonceManager._instances == {}
