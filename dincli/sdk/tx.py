@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -16,7 +17,7 @@ from web3.contract.contract import ContractEvent, ContractFunction
 from web3.exceptions import TimeExhausted, TransactionNotFound
 from web3.types import TxReceipt
 
-from dincli.sdk.errors import TransactionError
+from dincli.sdk.errors import DinError, TransactionError
 from dincli.sdk.errors import (
     TX_ESTIMATION_FAILED,
     TX_NONCE_CONFLICT,
@@ -24,6 +25,7 @@ from dincli.sdk.errors import (
     TX_REVERTED,
     TX_TIMEOUT,
     RECEIPT_MISSING,
+    NONCE_MANAGER_CAPACITY,
 )
 from dincli.sdk.session import DinSession
 
@@ -127,11 +129,20 @@ class NonceManager:
         drop every reserved entry older than RESERVATION_TTL_S
 
     mark_broadcast(nonce): reserved.pop(nonce); inflight.add(nonce)
+    mark_confirmed(nonce): inflight.discard(nonce)  # terminal, success or revert
     release(nonce):        reserved.pop(nonce, None)
     resync(w3, addr):      reserved.clear(); inflight.clear()
+
+    The process-wide ``_instances`` cache is bounded at ``_MAX_INSTANCES``. On
+    insert over the cap it evicts the least-recently-used *idle* manager. A
+    busy manager (reservation held, or mutex held mid-``reserve()``) is never
+    evicted: two managers for one account would reserve the same pending nonce
+    and build two different transactions against it. If every cached manager is
+    busy, ``for_session()`` raises ``nonce_manager_capacity`` instead.
     """
 
-    _instances: dict[tuple[int, str], "NonceManager"] = {}
+    _instances: "OrderedDict[tuple[int, str], NonceManager]" = OrderedDict()
+    _MAX_INSTANCES = 64
     _lock = threading.Lock()
 
     def __init__(self, chain_id: int, address: str):
@@ -147,9 +158,77 @@ class NonceManager:
         address: str = session.address
         key = (chain_id, address)
         with cls._lock:
-            if key not in cls._instances:
-                cls._instances[key] = cls(chain_id, address)
-            return cls._instances[key]
+            mgr = cls._instances.get(key)
+            if mgr is not None:
+                cls._instances.move_to_end(key)
+                return mgr
+            if len(cls._instances) >= cls._MAX_INSTANCES:
+                cls._evict_lru_idle()
+            mgr = cls(chain_id, address)
+            cls._instances[key] = mgr
+            return mgr
+
+    @classmethod
+    def _evict_lru_idle(cls) -> None:
+        """Evict the oldest idle manager; caller holds ``cls._lock``.
+
+        Iterating oldest→newest and stopping at the first idle entry implements
+        LRU ordering while preferring idle over busy: a busy manager at the LRU
+        end is skipped. ``_is_idle_nonblocking`` must not block — a blocking
+        probe here would wait on a per-account mutex that ``reserve()`` holds
+        across an RPC, freezing every ``for_session()`` in the process.
+        """
+        for key in list(cls._instances.keys()):
+            if cls._instances[key]._is_idle_nonblocking():
+                del cls._instances[key]
+                return
+        raise TransactionError(
+            f"NonceManager cache is at capacity ({cls._MAX_INSTANCES}) and every "
+            "cached manager is busy; refusing to evict an in-use manager.",
+            code=NONCE_MANAGER_CAPACITY,
+            details={"limit": cls._MAX_INSTANCES, "busy": len(cls._instances)},
+        )
+
+    @classmethod
+    def reset_all(cls, *, force: bool = False) -> None:
+        """Test-only: clear the process-wide instance cache.
+
+        Refuses while any cached manager is busy so a test that leaks a
+        reservation fails loudly rather than silently corrupting the next
+        test — but only if the call site actually invokes it unforced.
+        ``force=True`` discards known-busy state and must be passed
+        explicitly at the call site where that discard is intended. This
+        test suite's convention: ``setup_method`` calls ``reset_all()``
+        unforced, so it doubles as a live assertion that the previous test
+        cleaned up after itself; a class whose tests are meant to end busy
+        instead declares a ``teardown_method`` that calls
+        ``reset_all(force=True)`` to confine its own mess. Clearing a busy
+        manager during live use would recreate the duplicate-manager,
+        duplicate-nonce hazard the bound exists to prevent.
+        """
+        with cls._lock:
+            if not force:
+                for mgr in list(cls._instances.values()):
+                    if not mgr._is_idle_nonblocking():
+                        raise RuntimeError(
+                            "NonceManager.reset_all() refused: a cached manager "
+                            "is busy; pass force=True to discard known-busy state."
+                        )
+            cls._instances.clear()
+
+    def _is_idle_nonblocking(self) -> bool:
+        """True when nothing is reserved/inflight and the mutex is free *now*.
+
+        A held mutex means a ``reserve()``/``prune()`` is mid-flight, so the
+        manager is treated as busy. Acquisition is non-blocking by design (see
+        ``_evict_lru_idle``).
+        """
+        if not self._mutex.acquire(blocking=False):
+            return False
+        try:
+            return not self._reserved and not self._inflight
+        finally:
+            self._mutex.release()
 
     def _get_pending_nonce(self, w3) -> int:
         return w3.eth.get_transaction_count(self._address, "pending")
@@ -183,6 +262,16 @@ class NonceManager:
         with self._mutex:
             self._reserved.pop(nonce, None)
             self._inflight.add(nonce)
+
+    def mark_confirmed(self, nonce: int) -> None:
+        """A receipt is terminal state — the nonce is consumed.
+
+        Called for both a successful receipt and a reverted one: a revert still
+        consumed the nonce. Without this, ``_inflight`` grows without bound and
+        completed work reads as busy forever.
+        """
+        with self._mutex:
+            self._inflight.discard(nonce)
 
     def release(self, nonce: int) -> None:
         # Mutex-guarded like every other mutator (M2) — an unguarded pop could
@@ -304,8 +393,26 @@ def send(
     base_params["gas"] = estimated
 
     # --- build + sign ---
-    tx = contract_function.build_transaction(base_params)
-    signed = signer.sign_transaction(tx)
+    # An ABI-encoding error or a signer failure here is pre-broadcast: the
+    # reservation must be released or it leaks permanently. Base tx_failed code
+    # carries nonce/broadcast/reason.
+    try:
+        tx = contract_function.build_transaction(base_params)
+        signed = signer.sign_transaction(tx)
+    except DinError:
+        # A signer/session failure here (e.g. SignerUnavailable) already
+        # carries its own stable code and sanitized details — release the
+        # reservation but re-raise unchanged rather than re-coding it as
+        # tx_failed, which would erase the subcode a daemon retry policy
+        # keys off.
+        nonce_mgr.release(nonce)
+        raise
+    except Exception as e:
+        nonce_mgr.release(nonce)
+        raise TransactionError(
+            str(e),
+            details={"nonce": nonce, "broadcast": False, "reason": str(e)[:256]},
+        ) from e
     # HexBytes.hex() is UNPREFIXED (hexbytes>=1.0), so prefix explicitly —
     # keeps events/details consistent with TxReceiptInfo.tx_hash (R/M5).
     raw_hash = signed.hash.hex()
@@ -407,6 +514,8 @@ def send(
     info = TxReceiptInfo.from_receipt(receipt, w3, nonce=nonce)
 
     if receipt.status == 0:
+        # A revert still consumed the nonce — terminal, same as success.
+        nonce_mgr.mark_confirmed(nonce)
         _emit(on_event, "reverted", {"tx_hash": tx_hash,
                                      "nonce": nonce,
                                      "block_number": receipt.blockNumber})
@@ -420,6 +529,8 @@ def send(
                 "broadcast": True,
             },
         )
+
+    nonce_mgr.mark_confirmed(nonce)
 
     _emit(on_event, "confirmed", {
         "tx_hash": tx_hash,

@@ -63,6 +63,13 @@ class TestR1ReceiptPolling:
     encoding a contract web3 does not have, so this whole path went unverified.
     """
 
+    def teardown_method(self):
+        # test_timeout_raises_transaction_error_not_web3_error deliberately
+        # ends with the nonce still inflight (the tx may yet land); confine
+        # that known-busy state to this class rather than leaking it forward.
+        from dincli.sdk.tx import NonceManager
+        NonceManager.reset_all(force=True)
+
     def test_send_waits_through_transaction_not_found(self):
         from dincli.sdk import tx as txmod
 
@@ -301,9 +308,18 @@ class TestR6BroadcastFailureClassification:
 
     def setup_method(self):
         # NonceManager caches one instance per (chain_id, address) for the life
-        # of the process, so reservations leak between tests sharing an address.
+        # of the process, so reservations leak between tests sharing an
+        # address. Clean-slate: see NonceManager.reset_all() docstring for
+        # the convention.
         from dincli.sdk.tx import NonceManager
-        NonceManager._instances.clear()
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        # Both tests here end with the nonce left inflight (an unclassified
+        # broadcast failure reports broadcast=True, so the nonce isn't
+        # released); confine that to this class.
+        from dincli.sdk.tx import NonceManager
+        NonceManager.reset_all(force=True)
 
     def test_unclassified_broadcast_failure_is_not_estimation_failed(self):
         from dincli.sdk import tx as txmod
@@ -340,8 +356,16 @@ class TestR6BroadcastFailureClassification:
 
 class TestR8NoSubmittedEventOnRejection:
     def setup_method(self):
+        # Clean-slate: see NonceManager.reset_all() docstring for the
+        # convention.
         from dincli.sdk.tx import NonceManager
-        NonceManager._instances.clear()
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        # test_already_known_does_emit_submitted ends with the nonce left
+        # inflight (broadcast=True, in flight); confine that to this class.
+        from dincli.sdk.tx import NonceManager
+        NonceManager.reset_all(force=True)
 
     def test_nonce_too_low_does_not_emit_submitted(self):
         """The CLI maps `submitted` to print_tx_info — emitting it for a

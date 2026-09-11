@@ -20,6 +20,7 @@ TX_TIMEOUT = "tx_timeout"
 TX_NONCE_CONFLICT = "tx_nonce_conflict"
 TX_REPLACEMENT_UNDERPRICED = "tx_replacement_underpriced"
 RECEIPT_MISSING = "receipt_missing"
+NONCE_MANAGER_CAPACITY = "nonce_manager_capacity"
 RPC_UNREACHABLE = "rpc_unreachable"
 IPFS_CID_MISMATCH = "ipfs_cid_mismatch"
 
@@ -123,6 +124,7 @@ _ALLOWLIST: dict[str, dict[str, str]] = {
     TX_NONCE_CONFLICT: {"tx_hash": "hex", "nonce": "int", "broadcast": "bool"},
     TX_REPLACEMENT_UNDERPRICED: {"nonce": "int", "broadcast": "bool"},
     RECEIPT_MISSING: {"tx_hash": "hex", "nonce": "int", "broadcast": "bool"},
+    NONCE_MANAGER_CAPACITY: {"limit": "int", "busy": "int"},
     "network_unreachable": {"endpoint_host": "host"},
     RPC_UNREACHABLE: {"endpoint_host": "host"},
     "ipfs_error": {"provider": "str", "status_code": "int", "path": "str", "stderr": "tail"},
