@@ -193,6 +193,86 @@ def test_auditor_dintoken_read_stake_labels_auditor():
 
 
 # ---------------------------------------------------------------------------
+# Independent review, task_110926_14/15, finding 3: CLI output on the error
+# path (and with a lowercase-configured address) differed from pre-refactor.
+# Both probes below were also run, unmodified in substance, against the
+# pre-refactor commit 66d9860 in a throwaway worktree to confirm the
+# properties they assert (address-as-configured; address-before-failure)
+# already held there.
+# ---------------------------------------------------------------------------
+
+
+def test_dintoken_read_stake_prints_address_as_configured_lowercase(monkeypatch):
+    """A lowercase-configured stake address must render lowercase, not
+    checksummed — get_stake() checksums it for its own on-chain use, but the
+    CLI's address line must match config byte for byte, exactly as
+    get_deployed_din_stake_contract() printed it pre-refactor."""
+    import dincli.sdk.manifest as manifest_module
+
+    real = manifest_module.load_din_info()
+    lowered_local = dict(real["local"])
+    lowered_local["stake"] = real["local"]["stake"].lower()
+    lowered = dict(real)
+    lowered["local"] = lowered_local
+    # Both patched — matching this file's own convention for
+    # get_contract_instance above — so this probe exercises the same
+    # property whether the CLI resolves the address via
+    # dincli.cli.context (pre-refactor) or dincli.sdk.operations.platform
+    # (post-refactor); `from X import Y` binds a local name in each module,
+    # so patching only one leaves the other module reading the real file.
+    monkeypatch.setattr(context_module, "load_din_info", lambda: lowered)
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: lowered)
+
+    result = _invoke(["dintoken", "read-stake"])
+    assert result.exit_code == 0
+    lower_addr = real["local"]["stake"].lower()
+    assert result.output == (
+        _DIN_INFO_HEADER
+        + f"✓ DIN Stake contract address:  {lower_addr}\n"
+        + " Account's DIN token stake:  15 DinTokens\n"
+    )
+
+
+def test_dintoken_read_stake_prints_address_before_getstake_fails(monkeypatch):
+    """When getStake() fails, the address line must already be on stdout —
+    pre-refactor, get_deployed_din_stake_contract() printed it as a side
+    effect strictly before the contract call could fail; the refactor must
+    preserve that ordering even though it now fails through DinError/a clean
+    message instead of an unhandled exception."""
+
+    class _FailingGetStakeCall:
+        def call(self):
+            raise RuntimeError("boom")
+
+    class _FailingStakeFunctions:
+        def getStake(self, address):
+            return _FailingGetStakeCall()
+
+    class _FailingStakeContract:
+        functions = _FailingStakeFunctions()
+
+    monkeypatch.setattr(
+        context_module, "get_contract_instance",
+        lambda *a, **kw: _FailingStakeContract(),
+    )
+    monkeypatch.setattr(
+        platform_ops, "get_contract_instance",
+        lambda *a, **kw: _FailingStakeContract(),
+    )
+
+    result = _invoke(["dintoken", "read-stake"])
+    # exit_code and the address-line-first property below hold identically
+    # pre- and post-refactor (verified against 66d9860). The error text
+    # itself is not: pre-refactor this was an unhandled RuntimeError with a
+    # traceback, post-refactor it's a caught DinError printed as "✗ ...".
+    # That upgrade is intentional (task 15's DinError taxonomy requirement)
+    # and orthogonal to finding 3, which is only about ordering.
+    assert result.exit_code == 1
+    assert result.output.startswith(_READ_STAKE_HEADER)
+    assert "DinTokens" not in result.output
+
+
+# ---------------------------------------------------------------------------
 # The one declared behavior change (§3.5): a network missing from
 # din_info.json used to raise a bare KeyError and dump a traceback. It now
 # raises ConfigError, and the wrapper prints a clean message and exits 1.
