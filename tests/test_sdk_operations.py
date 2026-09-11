@@ -260,3 +260,33 @@ def test_stake_address_absent_raises_config_error(monkeypatch):
     with pytest.raises(ConfigError) as exc_info:
         ops.get_stake(session, address=VALID_ADDRESS)
     assert exc_info.value.code == "config_error"
+
+
+# ---------------------------------------------------------------------------
+# Malformed network ENTRY (not just a malformed/missing field within it) —
+# independent review, task_110926_14/15, finding 5. A parseable din_info.json
+# whose network entry isn't a JSON object at all (null, a string, a list) used
+# to pass _load_din_info_entry()'s checks (valid JSON, key present) and then
+# leak a raw TypeError/AttributeError out of get_platform_addresses()/
+# get_stake() instead of a DinError.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("malformed_entry", [None, "0xdeadbeef", []])
+def test_malformed_network_entry_raises_config_error_for_addresses(monkeypatch, malformed_entry):
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: {"local": malformed_entry})
+
+    session = FakeSession(network="local")
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_platform_addresses(session)
+    assert exc_info.value.code == "config_error"
+
+
+@pytest.mark.parametrize("malformed_entry", [None, "0xdeadbeef", []])
+def test_malformed_network_entry_raises_config_error_for_stake(monkeypatch, malformed_entry):
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: {"local": malformed_entry})
+
+    session = FakeSession(network="local", w3=object())
+    with pytest.raises(ConfigError) as exc_info:
+        ops.get_stake(session, address=VALID_ADDRESS)
+    assert exc_info.value.code == "config_error"
