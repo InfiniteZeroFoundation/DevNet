@@ -11,6 +11,7 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
+import {DinEmission} from "../src/DinEmission.sol";
 
 /// @notice Deploys the six DIN platform contracts behind Transparent Proxies
 ///         on a local anvil chain, wires them together, and writes
@@ -117,23 +118,48 @@ contract DeployPlatform is Script {
         DINModelRegistry(dinModelRegistryProxy).setFeeRouter(dinFeeRouterProxy);
         console.log("DINModelRegistry feeRouter wired");
 
-        // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all six
+        // 13. DinEmission — default schedule: 100 DIN/GI, 80% decay/epoch,
+        //     100 GIs/epoch, 10 epochs. All params are DAO-settable post-deploy.
+        address dinEmissionProxy = Upgrades.deployTransparentProxy(
+            "DinEmission.sol:DinEmission",
+            msg.sender,
+            abi.encodeCall(
+                DinEmission.initialize,
+                (
+                    dinCoordinatorProxy,
+                    dinTokenProxy,
+                    100e18,   // initialEmissionPerGI: 100 DIN
+                    8000,     // decayBps: 80% retained per epoch
+                    100,      // epochLength: 100 GIs per epoch
+                    10        // maxEpochs: 10 epochs then emission stops
+                )
+            )
+        );
+        console.log("DinEmission proxy:      ", dinEmissionProxy);
+
+        // 14. Wire DinCoordinator → DinEmission
+        DinCoordinator(payable(dinCoordinatorProxy)).setEmissionContract(dinEmissionProxy);
+        console.log("DinCoordinator emission contract wired");
+
+        // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all seven
         address proxyAdminTreasury    = Upgrades.getAdminAddress(dinTreasuryProxy);
         address proxyAdminToken       = Upgrades.getAdminAddress(dinTokenProxy);
         address proxyAdminCoordinator = Upgrades.getAdminAddress(dinCoordinatorProxy);
         address proxyAdminFeeRouter   = Upgrades.getAdminAddress(dinFeeRouterProxy);
         address proxyAdminStake       = Upgrades.getAdminAddress(dinValidatorStakeProxy);
         address proxyAdminRegistry    = Upgrades.getAdminAddress(dinModelRegistryProxy);
+        address proxyAdminEmission    = Upgrades.getAdminAddress(dinEmissionProxy);
         console.log("ProxyAdmin (treasury):  ", proxyAdminTreasury);
         console.log("ProxyAdmin (token):     ", proxyAdminToken);
         console.log("ProxyAdmin (coord):     ", proxyAdminCoordinator);
         console.log("ProxyAdmin (feeRouter): ", proxyAdminFeeRouter);
         console.log("ProxyAdmin (stake):     ", proxyAdminStake);
         console.log("ProxyAdmin (registry):  ", proxyAdminRegistry);
+        console.log("ProxyAdmin (emission):  ", proxyAdminEmission);
 
         vm.stopBroadcast();
 
-        // 13. Write deployments JSON — same schema as hardhat/deployments/localhost.json
+        // 15. Write deployments JSON — same schema as hardhat/deployments/localhost.json
         _writeDeployments(
             dinTreasuryProxy,
             dinTokenProxy,
@@ -141,12 +167,14 @@ contract DeployPlatform is Script {
             dinFeeRouterProxy,
             dinValidatorStakeProxy,
             dinModelRegistryProxy,
+            dinEmissionProxy,
             proxyAdminTreasury,
             proxyAdminToken,
             proxyAdminCoordinator,
             proxyAdminFeeRouter,
             proxyAdminStake,
-            proxyAdminRegistry
+            proxyAdminRegistry,
+            proxyAdminEmission
         );
     }
 
@@ -157,12 +185,14 @@ contract DeployPlatform is Script {
         address dinFeeRouter,
         address dinValidatorStake,
         address dinModelRegistry,
+        address dinEmission,
         address proxyAdminTreasury,
         address proxyAdminToken,
         address proxyAdminCoordinator,
         address proxyAdminFeeRouter,
         address proxyAdminStake,
-        address proxyAdminRegistry
+        address proxyAdminRegistry,
+        address proxyAdminEmission
     ) internal {
         string memory json = "deployments";
         vm.serializeAddress(json, "dinTreasury", dinTreasury);
@@ -171,15 +201,17 @@ contract DeployPlatform is Script {
         vm.serializeAddress(json, "dinFeeRouter", dinFeeRouter);
         vm.serializeAddress(json, "dinValidatorStake", dinValidatorStake);
         vm.serializeAddress(json, "dinModelRegistry", dinModelRegistry);
+        vm.serializeAddress(json, "dinEmission", dinEmission);
         vm.serializeAddress(json, "proxyAdminTreasury", proxyAdminTreasury);
         vm.serializeAddress(json, "proxyAdminToken", proxyAdminToken);
         vm.serializeAddress(json, "proxyAdminCoordinator", proxyAdminCoordinator);
         vm.serializeAddress(json, "proxyAdminFeeRouter", proxyAdminFeeRouter);
         vm.serializeAddress(json, "proxyAdminStake", proxyAdminStake);
+        vm.serializeAddress(json, "proxyAdminRegistry", proxyAdminRegistry);
         string memory finalJson = vm.serializeAddress(
             json,
-            "proxyAdminRegistry",
-            proxyAdminRegistry
+            "proxyAdminEmission",
+            proxyAdminEmission
         );
 
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
