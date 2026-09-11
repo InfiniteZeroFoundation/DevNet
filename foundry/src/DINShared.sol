@@ -66,6 +66,18 @@ interface IDinValidatorStake {
     ) external view returns (bool);
 
     function getEncryptionKey(address validator) external view returns (bytes memory);
+
+    function slashPartial(
+        address validator,
+        uint256 amount,
+        bytes32 reason,
+        uint256 giIndex
+    ) external returns (uint256);
+
+    function recordNoParticipation(
+        address validator,
+        bytes32 reason
+    ) external returns (uint256);
 }
 
 interface IDINTaskCoordinator {
@@ -182,6 +194,7 @@ error TA_RegistrationCapReached();
 error TA_CannotSlashAuditors();
 /// @dev S3 deviation threshold must be in the range [0, 100].
 error TA_InvalidDeviationThreshold();
+error TA_InvalidSlashFraction();
 /// @dev _medianOf requires at least one entry to compute a median over.
 error TA_EmptyScoreSet();
 /// @dev No X25519 encryption key registered for this auditor on DinValidatorStake.
@@ -341,3 +354,4 @@ error TC_ZeroCID();
 error TC_RegistrationCapReached();
 /// @dev Fewer aggregators submitted than the required quorum for this batch.
 error TC_InsufficientSubmissions();
+error TC_InvalidSlashFraction();

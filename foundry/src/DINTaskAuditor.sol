@@ -150,11 +150,21 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///         is allowed to cost auditors stake, per MECHANISM_DESIGN.md §6.
     bool public s3SlashingEnabled = false;
 
+    /// @notice S1 liveness-fault slash fraction in basis points (0–10000).
+    ///         Applied to AUD_NO_VOTE (missed audit vote) slashes only.
+    ///         S3 deviation slashes keep a full minStake() amount regardless.
+    ///         30% default: three consecutive misses ~= full floor stake,
+    ///         severe without expelling a validator for a single liveness fault.
+    ///         Matches the s3DeviationThreshold / setS3DeviationThreshold
+    ///         governance pattern. DAO-settable.
+    uint256 public s1SlashFractionBps = 3000;
+
     event S3DeviationThresholdUpdated(
         uint256 oldThreshold,
         uint256 newThreshold
     );
     event S3SlashingEnabledUpdated(bool oldValue, bool newValue);
+    event S1SlashFractionBpsUpdated(uint256 oldBps, uint256 newBps);
     event AuditorScoreDeviation(
         uint256 indexed gi,
         uint indexed batchId,
@@ -190,6 +200,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bool old = s3SlashingEnabled;
         s3SlashingEnabled = enabled;
         emit S3SlashingEnabledUpdated(old, enabled);
+    }
+
+    /// @notice Updates the S1 liveness-fault slash fraction.
+    /// @dev Only affects AUD_NO_VOTE slashes. S3 deviation slashes keep
+    ///      the full minStake() amount. Setting to 10000 restores the previous
+    ///      flat-minStake behavior.
+    /// @param bps New fraction in basis points (0–10000).
+    function setS1SlashFractionBps(uint256 bps) external onlyOwner {
+        if (bps > 10_000) revert TA_InvalidSlashFraction();
+        uint256 old = s1SlashFractionBps;
+        s1SlashFractionBps = bps;
+        emit S1SlashFractionBpsUpdated(old, bps);
     }
 
     mapping(uint => LMSubmission[]) public lmSubmissions;
@@ -1226,7 +1248,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
         if (dintaskcoordinatorContract.GIstate() != GIstates.T2AggregationDone)
             revert TA_CannotSlashAuditors();
-        uint256 slashAmount = dinvalidatorStakeContract.minStake();
+        uint256 minStakeAmt = dinvalidatorStakeContract.minStake();
+        // S1: partial fraction for liveness fault (missed vote); S3: full minStake.
+        uint256 s1Amount = (minStakeAmt * s1SlashFractionBps) / 10_000;
         uint batchCount = auditBatches[_GI].length;
         LMSubmission[] storage submissions = lmSubmissions[_GI];
 
@@ -1262,23 +1286,28 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                 }
 
                 if (missedVote) {
-                    uint256 actualSlashed = dinvalidatorStakeContract.slash(
+                    // S1: partial slash via slashPartial (tracks S5 recidivism).
+                    uint256 actualSlashed = dinvalidatorStakeContract.slashPartial(
                         auditor,
-                        slashAmount,
-                        "AUD_NO_VOTE"
+                        s1Amount,
+                        "AUD_NO_VOTE",
+                        _GI
                     );
                     emit AuditorSlashed(
                         _GI,
                         b,
                         auditor,
                         "AUD_NO_VOTE",
-                        slashAmount,
+                        s1Amount,
                         actualSlashed
                     );
+                    // S6: accumulate no-participation counter across GIs.
+                    dinvalidatorStakeContract.recordNoParticipation(auditor, "S6_NO_PARTICIPATION");
                 } else if (exceededDeviation) {
+                    // S3: full-severity slash (dishonesty fault, not liveness).
                     uint256 actualSlashed = dinvalidatorStakeContract.slash(
                         auditor,
-                        slashAmount,
+                        minStakeAmt,
                         "AUD_SCORE_DEVIATION"
                     );
                     emit AuditorSlashed(
@@ -1286,7 +1315,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                         b,
                         auditor,
                         "AUD_SCORE_DEVIATION",
-                        slashAmount,
+                        minStakeAmt,
                         actualSlashed
                     );
                 }

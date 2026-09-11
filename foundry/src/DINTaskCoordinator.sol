@@ -130,6 +130,14 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     address public treasuryAddress;
     uint256 public treasuryAccrued; // TODO(task_210726_5): forward to DinTreasury once merged
 
+    /// @notice S2 liveness-fault slash fraction in basis points (0–10000).
+    ///         Applied to missed-submission slashes (AGG_T*_NO_SUBMISSION) only.
+    ///         Bad-consensus faults (AGG_T*_BAD_CONSENSUS) keep a full minStake()
+    ///         amount — they imply an active incorrect submission, not a liveness
+    ///         failure, so they are treated as full-severity faults.
+    ///         30% default matches S1. DAO-settable via setS2SlashFractionBps.
+    uint256 public s2SlashFractionBps = 3000;
+
     mapping(uint => mapping(uint => uint64)) public tier1FinalizedAt;
     mapping(uint => mapping(uint => uint64)) public tier2FinalizedAt;
     mapping(uint => mapping(TierKind => mapping(uint => Dispute)))
@@ -175,6 +183,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint256 requested,
         uint256 actual
     );
+    event S2SlashFractionBpsUpdated(uint256 oldBps, uint256 newBps);
 
     /// @notice Deploys the coordinator and sets the validator stake contract.
     /// @dev GI state is initialised to AwaitingDINTaskAuditorToBeSet; the model
@@ -826,7 +835,9 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (GIstate != GIstates.AuditorsSlashed)
             revert TC_NotReadyToSlashAggregators();
 
-        uint256 slashAmount = dinvalidatorStakeContract.minStake();
+        uint256 minStakeAmt = dinvalidatorStakeContract.minStake();
+        // S2: partial fraction for liveness fault (no submission); BAD_CONSENSUS keeps full.
+        uint256 s2Amount = (minStakeAmt * s2SlashFractionBps) / 10_000;
 
         // 1. Tier 1 batches
         Tier1Batch[] storage t1batches = tier1Batches[_GI];
@@ -836,29 +847,27 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 address aggregator = b.aggregators[j];
 
                 bool submitted = t1Submitted[_GI][b.batchId][aggregator];
-                bool submittedMatching = false;
-                bytes32 reason = "AGG_T1_NO_SUBMISSION";
-                if (submitted) {
+                if (!submitted) {
+                    // S2 liveness fault: partial slash + S5/S6 tracking.
+                    uint256 actualSlashed = dinvalidatorStakeContract.slashPartial(
+                        aggregator,
+                        s2Amount,
+                        "AGG_T1_NO_SUBMISSION",
+                        _GI
+                    );
+                    emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T1_NO_SUBMISSION", s2Amount, actualSlashed);
+                    dinvalidatorStakeContract.recordNoParticipation(aggregator, "S6_NO_PARTICIPATION");
+                } else {
                     bytes32 cid = t1SubmissionCID[_GI][b.batchId][aggregator];
-                    submittedMatching = (cid == b.finalCID);
-                    if (!submittedMatching) {
-                        reason = "AGG_T1_BAD_CONSENSUS";
+                    if (cid != b.finalCID) {
+                        // BAD_CONSENSUS: full-severity slash (active incorrect submission).
+                        uint256 actualSlashed = dinvalidatorStakeContract.slash(
+                            aggregator,
+                            minStakeAmt,
+                            "AGG_T1_BAD_CONSENSUS"
+                        );
+                        emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T1_BAD_CONSENSUS", minStakeAmt, actualSlashed);
                     }
-                }
-                if (!submitted || !submittedMatching) {
-                    uint256 actualSlashed = dinvalidatorStakeContract.slash(
-                        aggregator,
-                        slashAmount,
-                        reason
-                    );
-                    emit AggregatorSlashed(
-                        _GI,
-                        b.batchId,
-                        aggregator,
-                        reason,
-                        slashAmount,
-                        actualSlashed
-                    );
                 }
             }
         }
@@ -871,29 +880,27 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 address aggregator = b.aggregators[j];
 
                 bool submitted = t2Submitted[_GI][b.batchId][aggregator];
-                bool submittedMatching = false;
-                bytes32 reason = "AGG_T2_NO_SUBMISSION";
-                if (submitted) {
+                if (!submitted) {
+                    // S2 liveness fault: partial slash + S5/S6 tracking.
+                    uint256 actualSlashed = dinvalidatorStakeContract.slashPartial(
+                        aggregator,
+                        s2Amount,
+                        "AGG_T2_NO_SUBMISSION",
+                        _GI
+                    );
+                    emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T2_NO_SUBMISSION", s2Amount, actualSlashed);
+                    dinvalidatorStakeContract.recordNoParticipation(aggregator, "S6_NO_PARTICIPATION");
+                } else {
                     bytes32 cid = t2SubmissionCID[_GI][b.batchId][aggregator];
-                    submittedMatching = (cid == b.finalCID);
-                    if (!submittedMatching) {
-                        reason = "AGG_T2_BAD_CONSENSUS";
+                    if (cid != b.finalCID) {
+                        // BAD_CONSENSUS: full-severity slash (active incorrect submission).
+                        uint256 actualSlashed = dinvalidatorStakeContract.slash(
+                            aggregator,
+                            minStakeAmt,
+                            "AGG_T2_BAD_CONSENSUS"
+                        );
+                        emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T2_BAD_CONSENSUS", minStakeAmt, actualSlashed);
                     }
-                }
-                if (!submitted || !submittedMatching) {
-                    uint256 actualSlashed = dinvalidatorStakeContract.slash(
-                        aggregator,
-                        slashAmount,
-                        reason
-                    );
-                    emit AggregatorSlashed(
-                        _GI,
-                        b.batchId,
-                        aggregator,
-                        reason,
-                        slashAmount,
-                        actualSlashed
-                    );
                 }
             }
         }
@@ -977,6 +984,18 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_InvalidDisputeParams();
         disputeBond = _disputeBond;
         disputeWindow = _disputeWindow;
+    }
+
+    /// @notice Updates the S2 liveness-fault slash fraction.
+    /// @dev Only affects AGG_T*_NO_SUBMISSION slashes. BAD_CONSENSUS slashes
+    ///      keep the full minStake() amount regardless of this setting.
+    ///      Setting to 10000 restores the previous flat-minStake behavior.
+    /// @param bps New fraction in basis points (0–10000).
+    function setS2SlashFractionBps(uint256 bps) external onlyOwner {
+        if (bps > 10_000) revert TC_InvalidSlashFraction();
+        uint256 old = s2SlashFractionBps;
+        s2SlashFractionBps = bps;
+        emit S2SlashFractionBpsUpdated(old, bps);
     }
 
     /// @notice Sets the address forfeited dispute bonds will eventually be forwarded to.

@@ -432,4 +432,184 @@ contract SlashingInvariantsTest is StdInvariant, Test {
         assertEq(pendingWithdrawals, 0);
         assertEq(withdrawAvailableAt, 0);
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // S1/S2 partial-slash fraction tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_s1_slashFraction_appliedBySlashPartial() public {
+        uint256 stakeAmt = _setUpSingleValidator(stake.MIN_STAKE() * 10);
+        uint256 fractionBps = 3000; // 30%
+        uint256 expectedPartial = (stake.MIN_STAKE() * fractionBps) / 10_000;
+
+        vm.prank(slasher);
+        uint256 actual = stake.slashPartial(validator1, expectedPartial, "AUD_NO_VOTE", 1);
+
+        assertEq(actual, expectedPartial, "partial amount should match 30% of minStake");
+        (uint256 activeStake, , , , ) = stake.validators(validator1);
+        assertEq(activeStake, stakeAmt - expectedPartial, "stake decremented by partial amount");
+    }
+
+    function testFuzz_s1_slashPartial_neverExceedsRequestedAmount(
+        uint256 fractionBps,
+        uint256 stakeMultiplier
+    ) public {
+        fractionBps = bound(fractionBps, 1, 10_000);
+        stakeMultiplier = bound(stakeMultiplier, 1, 100);
+        _setUpSingleValidator(stake.MIN_STAKE() * stakeMultiplier);
+
+        uint256 partialAmt = (stake.MIN_STAKE() * fractionBps) / 10_000;
+        if (partialAmt == 0) return;
+
+        vm.prank(slasher);
+        uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 1);
+
+        assertLe(actual, partialAmt, "partial slash never exceeds requested amount");
+        assertLe(actual, stake.MIN_STAKE(), "partial slash never exceeds minStake");
+    }
+
+    function test_s2_badConsensus_usesFullSlash() public {
+        // BAD_CONSENSUS is handled by slash(), not slashPartial() — verify full minStake.
+        uint256 stakeAmt = _setUpSingleValidator(stake.MIN_STAKE() * 10);
+        uint256 fullAmount = stake.MIN_STAKE();
+
+        vm.prank(slasher);
+        uint256 actual = stake.slash(validator1, fullAmount, "AGG_T1_BAD_CONSENSUS");
+
+        assertEq(actual, fullAmount, "bad-consensus slash uses full minStake");
+        (uint256 activeStake, , , , ) = stake.validators(validator1);
+        assertEq(activeStake, stakeAmt - fullAmount);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // S5 recidivism escalation tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_s5_recidivism_escalatesToFullSlashOnThreshold() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 20);
+
+        // Default: window=5, threshold=3, jailDuration=7days.
+        uint256 threshold = stake.s5RecidivismThreshold();
+        uint256 partialAmt = (stake.MIN_STAKE() * 3000) / 10_000; // 30%
+
+        // First (threshold-1) calls: partial slashes, no escalation.
+        for (uint256 i = 1; i < threshold; i++) {
+            vm.prank(slasher);
+            uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", i);
+            assertEq(actual, partialAmt, "below threshold: partial amount applied");
+        }
+
+        // threshold-th call: escalation fires — full MIN_STAKE slash.
+        vm.prank(slasher);
+        uint256 escalated = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", threshold);
+        assertEq(escalated, stake.MIN_STAKE(), "at threshold: full MIN_STAKE slashed");
+
+        // Validator should now be jailed.
+        (, , , uint64 jailedUntil, ) = stake.validators(validator1);
+        assertGt(jailedUntil, block.timestamp, "validator jailed after S5 escalation");
+
+        // Ring should be cleared after escalation.
+        uint256[] memory ring = stake.getPartialSlashGIs(validator1);
+        assertEq(ring.length, 0, "ring cleared after escalation");
+    }
+
+    function test_s5_recidivism_windowExpiry_resetsCount() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 20);
+
+        // Default window = 5 GIs. Partial slashes at GI 1, 2, 3 (threshold would be hit at 3).
+        // But if next slash is at GI 6 (>= GI 1 + window 5), GI 1 expires, count drops to 2.
+        vm.prank(admin);
+        stake.setS5RecidivismParams(5, 3, 7 days); // explicit: window=5, threshold=3
+
+        uint256 partialAmt = (stake.MIN_STAKE() * 3000) / 10_000;
+
+        vm.prank(slasher); stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 1); // ring: [1]
+        vm.prank(slasher); stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 2); // ring: [1,2]
+        // GI 6: GI 1 falls outside window (6 - 1 = 5 >= window 5), trimmed. ring becomes [2, 6] → count=2 < threshold=3.
+        vm.prank(slasher);
+        uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 6);
+        assertEq(actual, partialAmt, "window expiry: count resets, partial amount applied");
+
+        uint256[] memory ring = stake.getPartialSlashGIs(validator1);
+        assertEq(ring.length, 2, "ring has 2 entries after trim: [2, 6]");
+    }
+
+    function test_s5_params_setterValidates() public {
+        vm.startPrank(admin);
+        // window=0 should revert
+        vm.expectRevert(DinValidatorStake.InvalidS5Params.selector);
+        stake.setS5RecidivismParams(0, 3, 7 days);
+        // threshold > window should revert
+        vm.expectRevert(DinValidatorStake.InvalidS5Params.selector);
+        stake.setS5RecidivismParams(3, 5, 7 days);
+        // valid should succeed
+        stake.setS5RecidivismParams(10, 5, 14 days);
+        assertEq(stake.s5RecidivismWindow(), 10);
+        assertEq(stake.s5RecidivismThreshold(), 5);
+        assertEq(stake.s5JailDuration(), 14 days);
+        vm.stopPrank();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // S6 no-participation counter tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_s6_belowThreshold_noSlash() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 10);
+        uint256 threshold = stake.s6NoParticipationThreshold(); // default 3
+
+        uint256 stakeBefore = stake.getStake(validator1);
+        for (uint256 i = 1; i < threshold; i++) {
+            vm.prank(slasher);
+            uint256 slashed = stake.recordNoParticipation(validator1, "S6_NO_PARTICIPATION");
+            assertEq(slashed, 0, "below threshold: no slash fires");
+        }
+        assertEq(stake.getStake(validator1), stakeBefore, "stake unchanged below threshold");
+    }
+
+    function test_s6_atThreshold_escalatingSlashFires() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 10);
+        uint256 threshold = stake.s6NoParticipationThreshold(); // 3
+        uint256 minStakeAmt = stake.MIN_STAKE();
+
+        // Bring count up to threshold - 1 with no-ops.
+        for (uint256 i = 1; i < threshold; i++) {
+            vm.prank(slasher);
+            stake.recordNoParticipation(validator1, "S6_NO_PARTICIPATION");
+        }
+
+        // threshold-th call: 10% * 1 breach = 10% of MIN_STAKE.
+        uint256 expected1 = minStakeAmt / 10;
+        vm.prank(slasher);
+        uint256 slashed1 = stake.recordNoParticipation(validator1, "S6_NO_PARTICIPATION");
+        assertEq(slashed1, expected1, "first breach: 10% of MIN_STAKE");
+
+        // (threshold+1)-th call: 10% * 2 breaches = 20% of MIN_STAKE.
+        uint256 expected2 = (minStakeAmt * 2) / 10;
+        vm.prank(slasher);
+        uint256 slashed2 = stake.recordNoParticipation(validator1, "S6_NO_PARTICIPATION");
+        assertEq(slashed2, expected2, "second breach: 20% of MIN_STAKE");
+    }
+
+    function test_s6_escalation_capsAtMinStake() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 100);
+        uint256 threshold = stake.s6NoParticipationThreshold();
+        uint256 minStakeAmt = stake.MIN_STAKE();
+
+        // Drive count to threshold + 9 (10th breach = 100% of MIN_STAKE).
+        for (uint256 i = 1; i <= threshold + 9; i++) {
+            vm.prank(slasher);
+            uint256 slashed = stake.recordNoParticipation(validator1, "S6_NO_PARTICIPATION");
+            if (i >= threshold) {
+                uint256 breach = i - threshold + 1;
+                uint256 expected = breach <= 10 ? (minStakeAmt * breach) / 10 : minStakeAmt;
+                assertEq(slashed, expected, "escalation amount correct");
+            }
+        }
+
+        // 11th breach: capped at MIN_STAKE.
+        vm.prank(slasher);
+        uint256 capped = stake.recordNoParticipation(validator1, "S6_NO_PARTICIPATION");
+        assertEq(capped, minStakeAmt, "escalation capped at MIN_STAKE");
+    }
 }
