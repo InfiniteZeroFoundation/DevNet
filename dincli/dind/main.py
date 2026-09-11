@@ -4,6 +4,7 @@ All commands accept --state-dir so lifecycle ops can't target the wrong daemon.
 """
 
 import json
+import os
 import signal
 import threading
 import time
@@ -119,6 +120,17 @@ def start(
 
         if existing_pid is not None:
             remove_pid(paths.pid_path)
+
+        # Test-only: widens the check→write window so a race test can
+        # deterministically force two `dind start` invocations to overlap
+        # inside it, rather than relying on interpreter-startup jitter to
+        # happen to line them up. Inert in normal operation — the env var is
+        # never set outside tests. Placed behind the lock deliberately: the
+        # lock (or its absence, in a test that neuters it) is exactly what
+        # this sleep is meant to help distinguish.
+        _test_delay_s = os.environ.get("DIN_DIND_TEST_PID_DELAY_S")
+        if _test_delay_s:
+            time.sleep(float(_test_delay_s))
 
         write_pid(paths.pid_path)
         wrote_pid = True

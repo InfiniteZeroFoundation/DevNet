@@ -148,6 +148,20 @@ def test_two_racing_starts_exactly_one_wins(tmp_path, attempt):
     env = dict(os.environ)
     env["DIN_DIND_MAX_TICKS"] = "3"
 
+    # The barrier only synchronizes process LAUNCH, not arrival at the
+    # stale-PID-check/write-PID window inside `start()` — interpreter
+    # startup jitter (hundreds of ms) usually spaces the two processes out
+    # enough that even an unprotected check-then-write never actually
+    # overlaps. DIN_DIND_TEST_PID_DELAY_S (main.py::start(), test-only)
+    # sleeps inside that window, long enough to dwarf that jitter, so both
+    # processes are provably inside it at the same time. With the flock in
+    # place this changes nothing for the loser: it is turned away at lock
+    # acquisition, before it ever reaches the delay. Without the lock (see
+    # the neutered-lock self-check in this module's docstring/history) both
+    # processes fall through to the delay and then both write a PID file —
+    # this is what actually gives the assertions below teeth.
+    env["DIN_DIND_TEST_PID_DELAY_S"] = "1.0"
+
     # Three ticks at the default 1.0s tick_interval keeps the winner alive
     # ~3s — comfortably longer than the loser needs to fail. Assert that
     # assumption explicitly rather than relying on it.
