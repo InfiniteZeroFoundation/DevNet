@@ -10,6 +10,7 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -152,14 +153,47 @@ class NonceManager:
     ``reserve()`` in ``build_tx_params()``) is therefore never duplicated by
     eviction: dropping it from ``_instances`` only drops a strong reference,
     and ``_live`` keeps returning the same object as long as anyone holds it.
-    Only once nobody references it does it fall out of ``_live`` too — at
-    which point it holds no reservations, so recreating it is correct.
+
+    ``_live`` alone is not enough, though: it only helps while some caller
+    keeps a Python reference. ``build_tx_params()`` does not — it holds its
+    manager in a local variable, calls ``reserve()``, copies the resulting
+    nonce into a plain ``dict``, and returns. Once that local variable goes
+    out of scope, ``_live`` cannot help either, and a manager evicted from
+    ``_instances`` while merely idle (before its own reservation existed)
+    is garbage-collected together with the reservation it took a moment
+    later — the caller's reference and the manager's *own state* are two
+    different lifetimes, and only one of them was ever protected.
+
+    Ownership therefore does not live with the caller at all: every state
+    mutation (``reserve()``, ``mark_broadcast()``, ``mark_confirmed()``,
+    ``release()``, ``resync()``) takes an activity *lease* first —
+    ``_begin_activity()`` re-admits ``self`` into ``_instances`` if it fell
+    out, and bumps an active-use counter, atomically under ``_lock``, before
+    touching ``_reserved``/``_inflight`` at all. Admission and "about to
+    become busy" happen as one atomic step, so eviction can never land in
+    the gap between them (an idle-but-referenced manager can still be
+    dropped from ``_instances`` at any time — see above — but by the time it
+    is asked to mutate state, it is unconditionally back in the strong
+    cache first). The lease is released after the mutation, under ``_lock``
+    again, but the manager stays in ``_instances`` afterward if it still
+    holds reserved/inflight state — only a manager with zero active uses
+    *and* no unsettled nonce state is eligible for the next eviction scan.
+    ``_lock`` is never held across an RPC call or while blocked on
+    ``self._mutex``: ``_begin_activity``/``_end_activity`` each acquire and
+    release it for bookkeeping only, and the actual reservation work happens
+    under ``self._mutex`` with ``_lock`` already released.
     """
 
     _instances: "OrderedDict[tuple[int, str], NonceManager]" = OrderedDict()
     _live: "weakref.WeakValueDictionary[tuple[int, str], NonceManager]" = (
         weakref.WeakValueDictionary()
     )
+    # Active-use (leased) count per key, maintained only while a mutation is
+    # in flight — see _begin_activity/_end_activity. A manager with a nonzero
+    # count here is never evictable regardless of its idle/busy state, which
+    # closes the admission/eviction race that _reserved/_inflight alone
+    # cannot: those only reflect state *after* a mutation has started.
+    _active: "Dict[tuple[int, str], int]" = {}
     _MAX_INSTANCES = 64
     _lock = threading.Lock()
 
@@ -169,6 +203,13 @@ class NonceManager:
         self._mutex = threading.Lock()
         self._reserved: dict[int, float] = {}
         self._inflight: set[int] = set()
+        # Only a manager obtained through for_session() is registry-managed
+        # (see _activity_lease): a directly-constructed NonceManager — the
+        # unit-test convention throughout this module — deliberately stays
+        # outside `_instances`/`_live`/`_active` so low-level mutation tests
+        # can exercise reserve()/mark_broadcast()/etc. in isolation without
+        # side effects on the shared, process-wide cache.
+        self._managed = False
 
     @classmethod
     def for_session(cls, session: DinSession) -> "NonceManager":
@@ -194,14 +235,15 @@ class NonceManager:
             if len(cls._instances) >= cls._MAX_INSTANCES:
                 cls._evict_lru_idle()
             mgr = cls(chain_id, address)
+            mgr._managed = True
             cls._instances[key] = mgr
             cls._live[key] = mgr
             return mgr
 
     @classmethod
     def _evict_lru_idle(cls) -> None:
-        """Evict the oldest idle manager from the strong cache; caller holds
-        ``cls._lock``.
+        """Evict the oldest evictable manager from the strong cache; caller
+        holds ``cls._lock``.
 
         This only removes ``key`` from ``_instances`` — the memory-bound LRU
         cache. It never removes anything from ``_live``: if some caller still
@@ -212,14 +254,20 @@ class NonceManager:
         goes away. Either outcome is correct — this method is purely a
         memory-bound eviction, never an identity decision.
 
-        Iterating oldest→newest and stopping at the first idle entry implements
-        LRU ordering while preferring idle over busy: a busy manager at the LRU
-        end is skipped. ``_is_idle_nonblocking`` must not block — a blocking
+        A key with a nonzero ``_active`` lease count is skipped outright: a
+        mutation is in flight for it right now (see ``_begin_activity``), so
+        it must not be evicted no matter what its ``_reserved``/``_inflight``
+        state looks like at this instant. Otherwise, iterating oldest→newest
+        and stopping at the first evictable entry implements LRU ordering
+        while preferring idle over busy: a busy manager at the LRU end is
+        skipped. ``_is_evictable_nonblocking`` must not block — a blocking
         probe here would wait on a per-account mutex that ``reserve()`` holds
         across an RPC, freezing every ``for_session()`` in the process.
         """
         for key in list(cls._instances.keys()):
-            if cls._instances[key]._is_idle_nonblocking():
+            if cls._active.get(key, 0) > 0:
+                continue
+            if cls._instances[key]._is_evictable_nonblocking():
                 del cls._instances[key]
                 return
         raise TransactionError(
@@ -228,6 +276,56 @@ class NonceManager:
             code=NONCE_MANAGER_CAPACITY,
             details={"limit": cls._MAX_INSTANCES, "busy": len(cls._instances)},
         )
+
+    @classmethod
+    def _begin_activity(cls, key: "tuple[int, str]", mgr: "NonceManager") -> None:
+        """Admit ``mgr`` into the bounded strong cache (re-admitting it if it
+        fell out) and mark it actively in use, atomically under ``cls._lock``.
+
+        Called at the top of every state-mutating method, before touching
+        ``self._mutex``/RPC/``_reserved``/``_inflight``. This is what closes
+        the actual eviction hole: identity (``_live``) already guarantees
+        ``for_session()`` returns the same object; this additionally
+        guarantees that the moment a manager is about to become busy, it is
+        unconditionally back in ``_instances`` — so losing every external
+        reference to it afterward can no longer lose its state, because
+        ``_instances`` itself now holds one.
+
+        Raises ``NONCE_MANAGER_CAPACITY`` (via ``_evict_lru_idle``) before any
+        caller mutates ``_reserved``/``_inflight`` if the cache is full of
+        other active/busy managers — admission failure must always happen
+        before state changes, never after.
+
+        Releases ``cls._lock`` before returning. The caller then acquires
+        ``self._mutex`` and may perform RPC without ever holding the
+        registry lock at the same time.
+        """
+        with cls._lock:
+            cls._live[key] = mgr
+            if key in cls._instances:
+                cls._instances.move_to_end(key)
+            else:
+                if len(cls._instances) >= cls._MAX_INSTANCES:
+                    cls._evict_lru_idle()
+                cls._instances[key] = mgr
+            cls._active[key] = cls._active.get(key, 0) + 1
+
+    @classmethod
+    def _end_activity(cls, key: "tuple[int, str]") -> None:
+        """Release one lease taken by ``_begin_activity`` for ``key``.
+
+        Does not itself evict anything: a manager that still holds
+        reserved/inflight state remains in ``_instances`` regardless of its
+        active-use count (see ``_evict_lru_idle``'s own state check). This
+        only makes the manager eligible again for the *next* eviction scan
+        once both conditions hold — no active lease and no unsettled state.
+        """
+        with cls._lock:
+            remaining = cls._active.get(key, 1) - 1
+            if remaining <= 0:
+                cls._active.pop(key, None)
+            else:
+                cls._active[key] = remaining
 
     @classmethod
     def reset_all(cls, *, force: bool = False) -> None:
@@ -264,6 +362,7 @@ class NonceManager:
                         )
             cls._instances.clear()
             cls._live.clear()
+            cls._active.clear()
 
     def _is_idle_nonblocking(self) -> bool:
         """True when nothing is reserved/inflight and the mutex is free *now*.
@@ -276,6 +375,40 @@ class NonceManager:
             return False
         try:
             return not self._reserved and not self._inflight
+        finally:
+            self._mutex.release()
+
+    def _is_evictable_nonblocking(self) -> bool:
+        """True when this manager can be safely dropped from ``_instances``
+        right now: no inflight (uncertain broadcast) nonce, and no *live*
+        reservation, with the mutex free.
+
+        Unlike ``_is_idle_nonblocking``, this also reclaims reservations
+        older than ``_RESERVATION_TTL_S``: a caller that reserved a nonce and
+        then leaked its reference without ever confirming, broadcasting, or
+        releasing it would otherwise pin this manager in the bounded cache
+        forever. The reclaim is wall-clock only — no RPC — so it is safe to
+        do here, under a non-blocking mutex acquisition, without violating
+        the "never block/RPC while scanning for eviction" rule.
+
+        Inflight nonces are NEVER expired this way: a broadcast whose outcome
+        is unknown must never be discarded just to make room (see ``send()``
+        §10 on why ``broadcast=True`` is treated conservatively).
+        """
+        if not self._mutex.acquire(blocking=False):
+            return False
+        try:
+            if self._inflight:
+                return False
+            if self._reserved:
+                now = self._now()
+                stale = [
+                    n for n, reserved_at in self._reserved.items()
+                    if (now - reserved_at) > _RESERVATION_TTL_S
+                ]
+                for n in stale:
+                    del self._reserved[n]
+            return not self._reserved
         finally:
             self._mutex.release()
 
@@ -298,19 +431,56 @@ class NonceManager:
         for n in drop_inflight:
             self._inflight.discard(n)
 
+    @property
+    def _key(self) -> "tuple[int, str]":
+        return (self._chain_id, self._address)
+
+    @contextmanager
+    def _activity_lease(self):
+        """Hold an admission/activity lease for the duration of one state
+        mutation (see ``_begin_activity``/``_end_activity``).
+
+        A no-op for a manager that isn't registry-managed (``_managed`` is
+        only set by ``for_session()``): a directly-constructed manager used
+        in isolation by lower-level tests must not be pulled into the
+        shared, process-wide cache as a side effect of calling ``reserve()``
+        on it.
+        """
+        if not self._managed:
+            yield
+            return
+        key = self._key
+        NonceManager._begin_activity(key, self)
+        try:
+            yield
+        finally:
+            NonceManager._end_activity(key)
+
     def reserve(self, w3) -> int:
-        with self._mutex:
-            self.prune(w3)
-            n = self._get_pending_nonce(w3)
-            while n in self._reserved or n in self._inflight:
-                n += 1
-            self._reserved[n] = self._now()
-            return n
+        """Allocate the next free nonce.
+
+        Wrapped in an activity lease: this is the transition from idle to
+        busy, and the one place an already-evicted, no-longer-cache-owned
+        manager must be forced back into ``_instances`` before anyone can see
+        or act on the nonce it is about to hand out. The lease ends before
+        returning, but by then ``self`` is back in ``_instances`` with a live
+        reservation, so it stays there on its own merits — via the ordinary
+        idle/busy eviction check — regardless of what the lease does next.
+        """
+        with self._activity_lease():
+            with self._mutex:
+                self.prune(w3)
+                n = self._get_pending_nonce(w3)
+                while n in self._reserved or n in self._inflight:
+                    n += 1
+                self._reserved[n] = self._now()
+                return n
 
     def mark_broadcast(self, nonce: int) -> None:
-        with self._mutex:
-            self._reserved.pop(nonce, None)
-            self._inflight.add(nonce)
+        with self._activity_lease():
+            with self._mutex:
+                self._reserved.pop(nonce, None)
+                self._inflight.add(nonce)
 
     def mark_confirmed(self, nonce: int) -> None:
         """A receipt is terminal state — the nonce is consumed.
@@ -319,19 +489,22 @@ class NonceManager:
         consumed the nonce. Without this, ``_inflight`` grows without bound and
         completed work reads as busy forever.
         """
-        with self._mutex:
-            self._inflight.discard(nonce)
+        with self._activity_lease():
+            with self._mutex:
+                self._inflight.discard(nonce)
 
     def release(self, nonce: int) -> None:
         # Mutex-guarded like every other mutator (M2) — an unguarded pop could
         # race a concurrent reserve()'s free-slot scan.
-        with self._mutex:
-            self._reserved.pop(nonce, None)
+        with self._activity_lease():
+            with self._mutex:
+                self._reserved.pop(nonce, None)
 
     def resync(self, w3) -> None:
-        with self._mutex:
-            self._reserved.clear()
-            self._inflight.clear()
+        with self._activity_lease():
+            with self._mutex:
+                self._reserved.clear()
+                self._inflight.clear()
 
 
 # ---------------------------------------------------------------------------

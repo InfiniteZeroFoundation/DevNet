@@ -1,4 +1,5 @@
 """Tests for dincli.sdk.tx — send()/decode_events() + NonceManager."""
+import gc
 import json
 import threading
 import time
@@ -851,3 +852,206 @@ class TestNonceManagerBound:
         mgr.mark_broadcast(7)
         NonceManager.reset_all(force=True)
         assert NonceManager._instances == {}
+
+
+# ---------------------------------------------------------------------------
+# NonceManager lifetime ownership — BL-22 follow-up (review finding 1)
+#
+# The weak-``_live`` registry above fixes identity for a manager the CALLER
+# keeps referencing. It does nothing for a manager whose only external
+# reference disappears while it is still carrying a reservation — exactly
+# what ``build_tx_params()`` does: it holds the manager in a local variable,
+# calls ``reserve()``, copies the resulting int into a plain dict, and
+# returns. Every test below fails at e45322d because that manager, once
+# evicted from ``_instances`` while idle and then fully dereferenced, is
+# garbage-collected together with its reservation.
+# ---------------------------------------------------------------------------
+
+
+class TestNonceManagerLifetimeOwnership:
+    def setup_method(self):
+        NonceManager.reset_all()
+
+    def teardown_method(self):
+        NonceManager.reset_all(force=True)
+
+    def _fill(self, n, chain_id=9999):
+        keys = []
+        for i in range(n):
+            address = f"0x{i:040x}"
+            NonceManager.for_session(_session_with_key(chain_id, address))
+            keys.append((chain_id, address))
+        return keys
+
+    def test_evict_before_reserve_then_drop_reference_yields_distinct_nonce(self):
+        """Exact reported repro: evict A while idle, reserve through the held
+        reference, drop that reference, force collection, then allocate
+        again — the two allocations must be distinct."""
+        cap = NonceManager._MAX_INSTANCES
+        session = _session_with_key(1337, "0x" + "aa" * 20)
+        session.w3.eth.get_transaction_count.return_value = 0
+
+        mgr = NonceManager.for_session(session)  # idle
+        self._fill(cap)  # evict `mgr` from _instances while idle
+        assert (1337, session.address) not in NonceManager._instances
+
+        n1 = mgr.reserve(session.w3)
+        del mgr
+        gc.collect()
+
+        n2 = NonceManager.for_session(session).reserve(session.w3)
+        assert n1 != n2, "duplicate nonce: reservation did not outlive the caller's reference"
+        assert {n1, n2} == {0, 1}
+
+    def test_build_tx_params_gas_rpc_interleaving_yields_distinct_nonces(self):
+        """Same hazard through the actual public API, with the eviction
+        happening exactly where the review reproduced it: inside
+        ``build_tx_params()``, between its ``w3.eth.gas_price`` read and its
+        ``reserve()`` call. ``build_tx_params()`` never returns its
+        NonceManager — only a plain nonce int — so once the function returns,
+        nothing keeps that manager alive except ``_instances`` membership.
+        """
+        cap = NonceManager._MAX_INSTANCES
+
+        class _EthStub:
+            """Minimal eth namespace that fires a hook between the two RPC
+            reads build_tx_params() makes before reserve() — a plain
+            MagicMock attribute can't inject work into a property read."""
+
+            def __init__(self, on_priority_fee):
+                self.chain_id = 1337
+                self.gas_price = 10_000_000_000
+                self._on_priority_fee = on_priority_fee
+                self.estimate_gas = MagicMock(return_value=100_000)
+
+            @property
+            def max_priority_fee(self):
+                self._on_priority_fee()
+                return 1_000_000_000
+
+            def get_transaction_count(self, address, block_identifier):
+                return 0
+
+        w3 = MagicMock()
+        w3.eth = _EthStub(on_priority_fee=lambda: self._fill(cap))
+        w3.to_checksum_address = lambda a: a
+        session = _make_mock_session(w3=w3)
+
+        params1 = build_tx_params(session)
+        assert params1["nonce"] == 0
+        gc.collect()
+
+        params2 = build_tx_params(session)
+        assert params2["nonce"] == 1, (
+            f"expected distinct nonce 1, got {params2['nonce']} — reservation "
+            "from the first build_tx_params() call was lost"
+        )
+
+    def test_dropped_reference_after_timeout_keeps_inflight_state(self):
+        """An uncertain broadcast (timeout) must remain tracked even once the
+        caller that ran send() drops every reference to the manager."""
+        cap = NonceManager._MAX_INSTANCES
+        w3 = _w3_mock(pending_nonce=0)
+        w3.eth.send_raw_transaction.return_value = b"\xde\xad"
+        w3.eth.get_transaction.return_value = {"hash": b"\xab\xcd"}
+        w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted("timed out")
+        session = _make_mock_session(w3=w3)
+        contract_fn = MagicMock()
+        contract_fn.build_transaction.return_value = {}
+
+        with pytest.raises(TransactionError):
+            send(session, contract_fn, timeout_s=0.001)
+
+        # send() held its own local NonceManager reference; it is gone now
+        # that send() has returned. Force collection under eviction pressure.
+        self._fill(cap)
+        gc.collect()
+
+        mgr = NonceManager.for_session(session)
+        assert 0 in mgr._inflight, "inflight nonce lost once the caller's reference dropped"
+
+        # And the manager must not hand out 0 again for a fresh reservation.
+        w3.eth.get_transaction_count.return_value = 0
+        assert mgr.reserve(w3) != 0
+
+    def test_all_busy_reamission_fails_before_mutating_idle_handle(self):
+        """An idle, already-evicted handle cannot mutate itself into active
+        state if every cache slot is busy — the capacity error must fire
+        before any state changes on the handle itself (invariant 6)."""
+        cap = NonceManager._MAX_INSTANCES
+        session = _session_with_key(1337, "0x" + "aa" * 20)
+        held = NonceManager.for_session(session)  # idle
+        keys = self._fill(cap)  # evicts `held` from _instances (idle pressure)
+        assert (1337, session.address) not in NonceManager._instances
+
+        for key in keys:
+            NonceManager._instances[key].mark_broadcast(999)  # now all busy
+
+        assert held._reserved == {}
+        w3 = _w3_mock(pending_nonce=0)
+        with pytest.raises(TransactionError) as exc:
+            held.reserve(w3)
+        assert exc.value.code == NONCE_MANAGER_CAPACITY
+
+        # No partial mutation on the failed handle, and it was never admitted.
+        assert held._reserved == {}
+        assert (1337, session.address) not in NonceManager._instances
+
+    def test_exception_during_reserve_releases_lease_without_losing_state(self):
+        """An exception mid-``reserve()`` must not leak the activity lease,
+        and must not disturb a reservation the manager already held."""
+        session = _session_with_key(1337, "0x" + "bb" * 20)
+        mgr = NonceManager.for_session(session)
+        w3 = _w3_mock(pending_nonce=5)
+
+        n0 = mgr.reserve(w3)
+        key = (1337, session.address)
+        assert NonceManager._active.get(key, 0) == 0
+
+        with patch.object(mgr, "_get_pending_nonce", side_effect=RuntimeError("rpc boom")):
+            with pytest.raises(RuntimeError):
+                mgr.reserve(w3)
+
+        assert NonceManager._active.get(key, 0) == 0, "activity lease leaked across an exception"
+        assert mgr._reserved == {n0: mgr._reserved[n0]}, "pre-existing reservation was disturbed"
+
+    def test_blocked_rpc_for_one_account_does_not_stall_another(self):
+        """The registry lock must never be held across an RPC call: a slow
+        lookup for account A must not block account B's reserve()."""
+        entered = threading.Event()
+        release_evt = threading.Event()
+
+        session_a = _session_with_key(1337, "0x" + "11" * 20)
+
+        def blocking_get_transaction_count(*args, **kwargs):
+            entered.set()
+            assert release_evt.wait(5), "test deadlocked waiting to be released"
+            return 0
+
+        session_a.w3.eth.get_transaction_count.side_effect = blocking_get_transaction_count
+        mgr_a = NonceManager.for_session(session_a)
+
+        holder = threading.Thread(target=lambda: mgr_a.reserve(session_a.w3))
+        holder.start()
+        try:
+            assert entered.wait(5), "account A's RPC never started"
+
+            session_b = _session_with_key(1337, "0x" + "22" * 20)
+            session_b.w3.eth.get_transaction_count.return_value = 0
+            mgr_b = NonceManager.for_session(session_b)
+
+            result = {}
+            done = threading.Event()
+
+            def run_b():
+                result["n"] = mgr_b.reserve(session_b.w3)
+                done.set()
+
+            worker = threading.Thread(target=run_b)
+            worker.start()
+            worker.join(timeout=5)
+            assert done.is_set(), "account B's reserve() blocked behind account A's RPC"
+            assert result["n"] == 0
+        finally:
+            release_evt.set()
+            holder.join(timeout=5)
