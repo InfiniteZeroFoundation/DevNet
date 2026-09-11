@@ -83,18 +83,57 @@ class DaemonLoop:
         try:
             result = handler(job, self._ctx)
         except DinError as e:
-            envelope = to_envelope(error=e, network=self._ctx.session.network)
-            self.state.fail_job(job.id, e.code, result=json.dumps(envelope))
+            self._fail(job.id, e.code, e)
             return
         except Exception as e:
-            message = str(e)
-            if len(message) > _MAX_INTERNAL_ERROR_MESSAGE:
-                message = message[:_MAX_INTERNAL_ERROR_MESSAGE] + "…"
-            internal_error = DinError(message, code=_INTERNAL_ERROR_CODE)
-            envelope = to_envelope(error=internal_error, network=self._ctx.session.network)
-            self.state.fail_job(job.id, _INTERNAL_ERROR_CODE, result=json.dumps(envelope))
+            self._fail(job.id, _INTERNAL_ERROR_CODE, _bound_internal_error(e))
             return
 
-        result_json = json.dumps(result) if result is not None else None
+        try:
+            result_json = json.dumps(result) if result is not None else None
+        except (TypeError, ValueError) as e:
+            # A handler's return value is the last thing standing between a
+            # "successful" job and one that never persisted a usable result.
+            # This boundary sat outside the try/except above until review
+            # finding 3 — an unserializable result raised here, unguarded,
+            # would kill the loop exactly like the two branches above.
+            self._fail(job.id, _INTERNAL_ERROR_CODE, _bound_internal_error(e))
+            return
+
         self.state.complete_job(job.id, result=result_json)
         self.state.set_meta("last_success", now)
+
+    def _fail(self, job_id: int, code: str, error: DinError) -> None:
+        """Persist a job failure. Never depends on resolving any session
+        property: if that fails too — e.g. the original failure *was*
+        network resolution, or a config file became unreadable after the
+        session was built but before it first resolved a network — the
+        envelope simply omits `meta.network` (an already-optional field)
+        rather than letting a second, unhandled exception escape from an
+        exception handler and kill the loop (review finding 3)."""
+        network = _safe_network(self._ctx.session)
+        envelope = to_envelope(error=error, network=network)
+        self.state.fail_job(job_id, code, result=json.dumps(envelope))
+
+
+def _bound_internal_error(e: Exception) -> DinError:
+    message = str(e)
+    if len(message) > _MAX_INTERNAL_ERROR_MESSAGE:
+        message = message[:_MAX_INTERNAL_ERROR_MESSAGE] + "…"
+    return DinError(message, code=_INTERNAL_ERROR_CODE)
+
+
+def _safe_network(session: DinSession) -> str | None:
+    """Best-effort ``session.network`` for error-envelope metadata.
+
+    Deliberately never raises. ``network`` is a lazy property that itself
+    performs config/network resolution, so reading it can fail for exactly
+    the same reasons a job handler just failed — including, but not limited
+    to, the original failure. Swallowing that here (rather than propagating
+    it) is what lets ``_fail()`` be called unconditionally from every
+    failure branch in ``_tick()``.
+    """
+    try:
+        return session.network
+    except Exception:
+        return None
