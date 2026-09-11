@@ -46,6 +46,8 @@ _MODULE_TO_DIST = {
     "cid": "py-cid",
     "multibase": "py-multibase",
     "eth_account": "eth-account",
+    "eth_abi": "eth-abi",
+    "nacl": "pynacl",
     "yaml": "pyyaml",
 }
 
