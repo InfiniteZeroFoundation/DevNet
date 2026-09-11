@@ -4,6 +4,8 @@ import typer
 from web3 import Web3
 
 from dincli.cli.utils import MIN_STAKE, build_and_send_tx, read_after_write
+from dincli.sdk.errors import DinError
+from dincli.sdk.operations.platform import get_stake
 
 app = typer.Typer(help="Commands for DIN Token in DIN.")
 
@@ -131,10 +133,21 @@ def stake_dintokens(
 
 def read_dintoken_stake(ctx: typer.Context, name ="Account"):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    din_stake_contract = ctx.obj.get_deployed_din_stake_contract()
 
-    stake = din_stake_contract.functions.getStake(account.address).call()
-    console.print(f"[bold green] {name}'s DIN token stake:[/bold green] ", Web3.from_wei(stake, "ether"), "DinTokens")
+    try:
+        result = get_stake(ctx.obj.session, address=account.address)
+    except DinError as e:
+        console.print(f"[bold red]✗ {e.message}[/bold red]")
+        raise typer.Exit(1)
+
+    # get_stake() no longer calls get_deployed_din_stake_contract(), so this
+    # line is reproduced here from StakeInfo.stake_contract — it used to be a
+    # side effect of that getter printing before it returned.
+    console.print("[bold green]✓ DIN Stake contract address:[/bold green] ", result.stake_contract)
+    console.print(
+        f"[bold green] {name}'s DIN token stake:[/bold green] ",
+        Web3.from_wei(result.stake_wei, "ether"), "DinTokens",
+    )
 
 
 def read_din_per_eth_rate(ctx: typer.Context):

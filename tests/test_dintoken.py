@@ -104,6 +104,9 @@ class DummyContextObj:
         self.token = DummyToken(token_balance)
         self.stake = DummyStake(current_stake)
         self.coordinator = DummyCoordinator()
+        # Opaque: read_dintoken_stake passes this straight through to
+        # sdk.operations.platform.get_stake() without touching it.
+        self.session = object()
 
     def get_en_w3_account_console(self):
         self.console.print(f"[bold green]✓ Active Wallet:[/bold green] {self.account.address}")
@@ -182,12 +185,24 @@ def test_stake_exits_when_amount_is_below_minimum(monkeypatch):
     assert ctx.obj.stake.stakes == []
 
 
-def test_read_stake_reads_active_account_stake():
+def test_read_stake_reads_active_account_stake(monkeypatch):
+    """read_dintoken_stake resolves the active account and reads its stake
+    through sdk.operations.platform.get_stake() — no longer via
+    get_deployed_din_stake_contract() (task_110926_15 §3.5 refactor)."""
+    from dincli.sdk.operations.platform import StakeInfo
+
     ctx = make_ctx(current_stake=15 * 10**18)
+    calls = []
+
+    def fake_get_stake(session, address=None):
+        calls.append((session, address))
+        return StakeInfo(network="local", address=address, stake_wei=15 * 10**18, stake_contract="0xStake")
+
+    monkeypatch.setattr(dintoken, "get_stake", fake_get_stake)
 
     dintoken.read_dintoken_stake(ctx)
 
-    assert ctx.obj.stake.get_stake_calls == ["0xAccount"]
+    assert calls == [(ctx.obj.session, "0xAccount")]
 
 
 def test_top_level_dintoken_help_exposes_commands():

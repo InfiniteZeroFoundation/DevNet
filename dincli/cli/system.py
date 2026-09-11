@@ -33,6 +33,8 @@ from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
                               _extract_keystore, ensure_wallets_dir)
 
 from dincli.services import bridge as bridge_service
+from dincli.sdk.errors import DinError
+from dincli.sdk.operations.platform import get_platform_addresses
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
 
@@ -817,26 +819,41 @@ def din_info(ctx: typer.Context,
     # Resolve effective network
     effective_network, _, _, console = ctx.obj.get_en_w3_account_console()
 
-    data = load_din_info()[effective_network]
+    try:
+        addresses = get_platform_addresses(ctx.obj.session)
+    except DinError as e:
+        console.print(f"[red]{e.message}[/red]")
+        raise typer.Exit(1)
+
+    def render(key: str, value: Optional[str]) -> str:
+        # Reproduces today's `data.get(key, 'N/A')` for every shape a
+        # hand-edited din_info.json entry can take: a key missing from the
+        # file renders "N/A"; a key explicitly present but null renders
+        # "None" (`present` is what makes those two distinguishable — see
+        # PlatformAddresses' docstring). Present and non-null (including the
+        # empty string, or a malformed placeholder) renders as-is.
+        if key not in addresses.present:
+            return "N/A"
+        return "None" if value is None else value
 
     # Print requested info
     if coordinator:
-        console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
+        console.print(f"[cyan]Coordinator:[/cyan] {render('coordinator', addresses.coordinator)}")
     if token:
-        console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
+        console.print(f"[green]DIN Token:[/green] {render('token', addresses.token)}")
     if stake:
-        console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
+        console.print(f"[yellow]Staking Contract:[/yellow] {render('stake', addresses.stake)}")
     if representative:
-        console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
+        console.print(f"[magenta]Representative:[/magenta] {render('representative', addresses.representative)}")
     if registry:
-        console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
+        console.print(f"[magenta]Registry:[/magenta] {render('registry', addresses.registry)}")
 
     if not any([coordinator, token, stake, representative, registry]):
-        console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
-        console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
-        console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
-        console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
-        console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
+        console.print(f"[cyan]Coordinator:[/cyan] {render('coordinator', addresses.coordinator)}")
+        console.print(f"[green]DIN Token:[/green] {render('token', addresses.token)}")
+        console.print(f"[yellow]Staking Contract:[/yellow] {render('stake', addresses.stake)}")
+        console.print(f"[magenta]Representative:[/magenta] {render('representative', addresses.representative)}")
+        console.print(f"[magenta]Registry:[/magenta] {render('registry', addresses.registry)}")
 
 
 # ---------------------------------------------------------------------------
