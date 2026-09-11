@@ -337,10 +337,10 @@ job status first).
 
 ## Scope and limitations (devnet)
 
-- Not included (later roadmap phases): graceful `SIGTERM` handling,
-  `systemd`/`launchd` units, vault / remote-signer integration. (The
-  `/health` endpoint and structured JSON logs shipped with the `dind`
-  daemon in PR #32.)
+- Not included (later roadmap phases): `systemd`/`launchd` units, vault /
+  remote-signer integration. (The `/health` endpoint, structured JSON logs,
+  and graceful `SIGTERM` handling — `dincli/dind/signals.py` — shipped with
+  the `dind` daemon in PR #32.)
 - The `docker.sock` exposure above is accepted for devnet, not solved.
 - Image pins Python (`3.12-slim`) and `dincli` (built from source, deps pinned via
   `dincli/requirements.txt`). For stricter reproducibility, pin the base image by
