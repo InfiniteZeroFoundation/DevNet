@@ -67,7 +67,15 @@ def _load_din_info_entry(network: str) -> dict:
     Maps every infrastructure failure onto ``ConfigError`` instead of letting
     the underlying stdlib exception escape: a missing/unreadable file
     (``FileNotFoundError``/``OSError``), invalid JSON (``JSONDecodeError``),
-    or a network absent from the file (``KeyError`` today).
+    a network absent from the file (``KeyError`` today), or a network entry
+    that parses but isn't a JSON object (``null``, a string, a list, ...).
+    That last case matters even though it validates only shape, not content:
+    without it, ``{"local": null}`` (or a string/list) passes this loader —
+    JSON is valid, the key exists — and then ``get_platform_addresses()``
+    hits ``None.get(...)`` (``TypeError``) or ``get_stake()`` hits
+    ``None.get("stake")`` (``AttributeError``), both raw stdlib exceptions
+    escaping the ``DinError`` taxonomy every other malformed-config shape in
+    this function already raises through.
     """
     try:
         din_info = load_din_info()
@@ -87,7 +95,14 @@ def _load_din_info_entry(network: str) -> dict:
             f"Network '{network}' is not configured in din_info.json.",
             details={"key": network},
         )
-    return din_info[network]
+    entry = din_info[network]
+    if not isinstance(entry, dict):
+        raise ConfigError(
+            f"Network '{network}' entry in din_info.json is malformed: "
+            f"expected an object, got {type(entry).__name__}.",
+            details={"key": network},
+        )
+    return entry
 
 
 def get_platform_addresses(session: DinSession) -> PlatformAddresses:
