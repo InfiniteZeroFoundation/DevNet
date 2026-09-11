@@ -133,12 +133,12 @@ contract DinValidatorStake is
 
     // ── S5 — Recidivism counter ────────────────────────────────────────────
     /// @notice Rolling GI window for recidivism detection. DAO-settable.
-    uint256 public s5RecidivismWindow = 5;
+    uint256 public s5RecidivismWindow;
     /// @notice Number of partial slashes within the window that triggers
     ///         escalation to a full MIN_STAKE slash + jail.
-    uint256 public s5RecidivismThreshold = 3;
+    uint256 public s5RecidivismThreshold;
     /// @notice Jail duration (seconds) applied on S5 escalation.
-    uint256 public s5JailDuration = 7 days;
+    uint256 public s5JailDuration;
     /// @dev Per-validator ordered list of GI indices at which a partial slash
     ///      was recorded. Entries older than s5RecidivismWindow GIs are trimmed.
     mapping(address => uint256[]) private _partialSlashGIs;
@@ -146,7 +146,7 @@ contract DinValidatorStake is
     // ── S6 — Registration-without-capacity counter ─────────────────────────
     /// @notice Number of no-participation GIs that triggers an escalating
     ///         partial slash. DAO-settable.
-    uint256 public s6NoParticipationThreshold = 3;
+    uint256 public s6NoParticipationThreshold;
     /// @notice Per-validator count of GIs where the validator registered but
     ///         never submitted anything (reported by slasher contracts).
     mapping(address => uint256) public s6NoParticipationCount;
