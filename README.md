@@ -43,19 +43,19 @@ The DevNet is live. Validator nodes are running 24/7 from Japan to Canada. This 
 
 New here? Start with the validator setup guide:
 
-[Getting Started →](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md)
+[Getting Started →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)
 
 ---
 
 ## Install dincli
 
-Full installation guide: [dincli Documentation](Documentation/setup.md)
+Full installation guide: [dincli Documentation](Documentation/public/setup.md)
 
 ---
 
 ## Configure IPFS
 
-Full configuration guide: [dincli Documentation](Documentation/setup.md)
+Full configuration guide: [dincli Documentation](Documentation/public/setup.md)
 
 ---
 
@@ -82,9 +82,10 @@ If you care about privacy-preserving ML, decentralised systems, or just building
 ## Learn More
 
 - [White Paper](https://github.com/InfiniteZeroFoundation/White-Paper)
-- [Documentation](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md)
+- [Documentation](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)
 - [Support the network on Giveth](https://giveth.io/project/infinitezero-network)
-- [Say hello](mailto:abrahamnash@protonmail.com)
+- [Say hello](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92)
+- [Email us](mailto:abrahamnash@protonmail.com)
 
 ---
 

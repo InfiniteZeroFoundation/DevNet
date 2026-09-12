@@ -211,9 +211,10 @@ the moment their job finishes, so in steady state you'll usually see only
 > use `docker ps -a --filter "ancestor=din-worker:dev"` while an install is
 > running.
 
-> `din-node` currently idles (`sleep infinity`) and you `exec` into it, because
-> `dincli` is a CLI, not yet a daemon. When the `dind` daemon lands it becomes the
-> container's main process and logs will carry real activity.
+> `din-node`'s main process is the `dind` daemon (`command: ["dind", "start"]`
+> in the compose file), so `docker compose logs -f din-node` carries real
+> daemon activity. Use `docker compose exec din-node dincli <args>` (or
+> `bash`, above) to run one-off commands against the same state.
 
 ### Upgrades and your data
 
@@ -267,8 +268,8 @@ $DIN_STATE_DIR/
   but **not for production**.
 - **Production:** Import an **encrypted keystore** using `--keystore` into a named
   account, then select it via `--wallet` or `DIN_WALLET_NAME`. See
-  [wallet-setup.md](../../../Documentation/guides/wallet-setup.md) and
-  [keystore-migration.md](../../../Documentation/guides/keystore-migration.md).
+  [wallet-setup.md](../../../Documentation/public/guides/wallet-setup.md) and
+  [keystore-migration.md](../../../Documentation/public/guides/keystore-migration.md).
 
 
 > The commands below use `$DIN_STATE_DIR`. `docker compose` reads `.env`
@@ -336,9 +337,10 @@ job status first).
 
 ## Scope and limitations (devnet)
 
-- Not included (later roadmap phases): `/health` endpoint, structured JSON logs,
-  graceful `SIGTERM` handling, `systemd`/`launchd` units, vault / remote-signer
-  integration.
+- Not included (later roadmap phases): `systemd`/`launchd` units, vault /
+  remote-signer integration. (The `/health` endpoint, structured JSON logs,
+  and graceful `SIGTERM` handling — `dincli/dind/signals.py` — shipped with
+  the `dind` daemon in PR #32.)
 - The `docker.sock` exposure above is accepted for devnet, not solved.
 - Image pins Python (`3.12-slim`) and `dincli` (built from source, deps pinned via
   `dincli/requirements.txt`). For stricter reproducibility, pin the base image by

@@ -23,7 +23,7 @@ Make workload requirements machine-readable and available to every role through 
 
 - `Documentation/technical/manifest.md`
 - `cache_model_0/manifest.json`
-- optionally `Documentation/model-owner.md`, `Documentation/aggregators.md`, and `Documentation/auditors.md`
+- optionally `Documentation/public/roles/model-owner.md`, `Documentation/public/roles/aggregators.md`, and `Documentation/public/roles/auditors.md`
 
 ### Changes
 
@@ -255,12 +255,12 @@ Make the new model understandable and reproducible for contributors and model ow
 
 ### Files To Update
 
-- `Documentation/technical/DINTaskCoordinator.md`
-- `Documentation/technical/DINTaskAuditor.md`
+- `Documentation/technical/contracts/DINTaskCoordinator.md`
+- `Documentation/technical/contracts/DINTaskAuditor.md`
 - `Documentation/technical/manifest.md`
-- `Documentation/aggregators.md`
-- `Documentation/auditors.md`
-- `Documentation/model-owner.md`
+- `Documentation/public/roles/aggregators.md`
+- `Documentation/public/roles/auditors.md`
+- `Documentation/public/roles/model-owner.md`
 
 ### Changes
 

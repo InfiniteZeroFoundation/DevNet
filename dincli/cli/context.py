@@ -16,10 +16,11 @@ from rich.console import Console
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger, logging
 from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
-                              get_config, get_manifest, get_manifest_key, get_w3,
+                              get_config, get_manifest, get_manifest_key,
                               load_account, load_config, load_din_info,
                               resolve_network, get_active_account_name,
-                              validate_account_name)
+                              validate_account_name, resolve_wallet_path)
+from dincli.sdk.session import DinSession
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
 
@@ -43,40 +44,53 @@ class DinContext:
         self._logger = logger
         self.network_arg = network_arg
         self.wallet_name: Optional[str] = None
-        self._resolved_network: Optional[str] = None
         self._resolved_wallet_name: Optional[str] = None
-        self._w3 = None
         self._account = None
-        self._config = None
+        self._session: DinSession | None = None
 
         # Initialize logging
         log_level_str = get_config("log_level", default="INFO")
         self._logger.setLevel(getattr(logging, log_level_str.upper(), logging.INFO))
 
     @property
+    def session(self) -> DinSession:
+        """The single source of truth for network / w3 / account / config.
+
+        The session is built with the FULLY RESOLVED wallet name (--wallet, then
+        DIN_WALLET_NAME, then config wallet_name, then "default") and the CLI's
+        interactive signer. Passing the raw ``self.wallet_name`` here would only
+        honour the --wallet flag, so an env/config-configured wallet would be
+        displayed while the *default* key signed (remediation R2/R5).
+        """
+        if self._session is None:
+            from dincli.cli.signer import InteractiveKeystoreSigner
+            self._session = DinSession(
+                network=self.network_arg,
+                wallet=self.resolved_wallet_name,
+                signer=InteractiveKeystoreSigner(self.resolved_wallet_name),
+            )
+        return self._session
+
+    @property
     def network(self) -> str:
-        if self._resolved_network is None:
-            self._resolved_network = resolve_network(self.network_arg)
-        return self._resolved_network
+        return self.session.network
 
     @property
     def config(self) -> dict:
-        if self._config is None:
-            self._config = load_config()
-        return self._config
+        return self.session.config
 
     @property
     def w3(self):
-        if self._w3 is None:
-            self._w3 = get_w3(self.network)
-        return self._w3
+        return self.session.w3
 
     @property
     def account(self):
         if self._account is None:
             try:
-                name = self.resolved_wallet_name
-                self._account = load_account(name=name)
+                # Delegate to the session so there is exactly ONE account
+                # resolution (and one keystore decrypt) per invocation — the
+                # CLI's interactive signer is already injected there (R5/M1).
+                self._account = self.session.account
             except Exception as e:
                 self.console.print(f"[red]Error loading account: {e}[/red]")
                 import sys
@@ -109,33 +123,73 @@ class DinContext:
         return self.network, self.w3, self.account, self.console
     
     def get_tx_params(self):
-        return {
-            "from": self.account.address,  
-            "maxFeePerGas": self.w3.eth.gas_price * 2, # Strategy to ensure inclusion
-            "maxPriorityFeePerGas": self.w3.eth.max_priority_fee, # The "tip" to the miner/validator
-            "chainId": self.w3.eth.chain_id,
-            "nonce": self.w3.eth.get_transaction_count(self.account.address),
-        } 
+        from dincli.sdk.tx import build_tx_params
+        return build_tx_params(self.session)
     
     def select_network(self, network: Optional[str]):
-        """Update network selection and invalidate w3 cache if changed."""
+        """Update network selection and invalidate session cache if changed."""
         if network:
             self.network_arg = network
-            self._resolved_network = None
-            self._w3 = None
+            self._session = None
         return self
 
     def select_wallet(self, name: Optional[str]):
-        """Update wallet selection and invalidate account cache if changed."""
+        """Update wallet selection and invalidate account/session cache if changed."""
         if name:
             try:
                 validate_account_name(name)
             except ValueError as e:
                 self.console.print(f"[red]{e}[/red]")
                 raise typer.Exit(1)
+            wallet_path, exists = resolve_wallet_path(name)
+            if not exists:
+                self.console.print(
+                    f"[red]No wallet found for name '{name}' at {wallet_path}. "
+                    f"Run `dincli system register-wallet --name {name}` first.[/red]"
+                )
+                raise typer.Exit(1)
             self.wallet_name = name
             self._resolved_wallet_name = None
             self._account = None
+            self._session = None
+        return self
+
+    def select_demo_account(self, index: Optional[int]):
+        """DEMO MODE ONLY: sign this invocation with Hardhat dev account `index`.
+
+        Loads the private key straight from the bundled demo accounts file and
+        injects a PrivateKeySigner into the session — the named-wallet machinery
+        (wallet files, keystore encryption/decryption, password prompts) is
+        bypassed entirely. Takes precedence over every wallet-name source
+        (--wallet / DIN_WALLET_NAME / config wallet_name) because it fills the
+        account cache directly. Refuses to run outside demo mode so raw-key
+        loading can never be reached with production configuration.
+        """
+        if index is None:
+            return self
+        if not get_config("demo_mode"):
+            self.console.print(
+                "[red]--demokey works only in demo mode. "
+                "Enable it with `dincli system configure-demo` (local testing only).[/red]"
+            )
+            raise typer.Exit(1)
+        from dincli.cli.utils import get_demo_private_key
+        from dincli.sdk.wallet import PrivateKeySigner
+        try:
+            private_key = get_demo_private_key(index)
+        except (FileNotFoundError, IndexError) as e:
+            self.console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        from eth_account import Account
+        self._account = Account.from_key(private_key)
+        # Display-only label; never resolved against wallet files.
+        self._resolved_wallet_name = f"demo-{index}"
+        # Rebuild session with demo signer so get_tx_params uses correct address.
+        self._session = DinSession(
+            network=self.network_arg,
+            wallet=self.wallet_name,
+            signer=PrivateKeySigner(private_key),
+        )
         return self
     
     def get_deployed_din_coordinator_contract(self, verbose: bool = True):
@@ -523,15 +577,24 @@ class DinContext:
         return gi
 
     def validate_GIstate_ET_given_GIstate(self, curr_GIstate: int, given_GIstate: str, msg: str) -> bool:
-        if GIstateToStr(curr_GIstate) != given_GIstate:
+        from dincli.sdk.state import validate_gi_state_equals
+        from dincli.sdk.errors import ValidationError
+        try:
+            validate_gi_state_equals(curr_GIstate, given_GIstate)
+        except ValidationError:
             self.console.print(f"[bold red]✗ {msg}. Current state: {GIstateToStr(curr_GIstate)} [/bold red]")
             raise typer.Exit(1)
         return True
 
     def validate_GIstate_LTE_given_GIstate(self, target_gi: int, curr_gi: int, curr_GIstate: int, given_GIstate: str, msg: str) -> bool:
-        if target_gi == curr_gi and curr_GIstate < GIstatestrToIndex(given_GIstate):
-            self.console.print(f"[bold red]✗ {msg}. Current state: {GIstateToStr(curr_GIstate)} [/bold red]")
-            raise typer.Exit(1)
+        from dincli.sdk.state import validate_gi_state_at_least
+        from dincli.sdk.errors import ValidationError
+        if target_gi == curr_gi:
+            try:
+                validate_gi_state_at_least(curr_GIstate, given_GIstate)
+            except ValidationError:
+                self.console.print(f"[bold red]✗ {msg}. Current state: {GIstateToStr(curr_GIstate)} [/bold red]")
+                raise typer.Exit(1)
         return True
 
     def get_model_base_dir(self, model_id: int) -> Path:

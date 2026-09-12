@@ -40,7 +40,7 @@ def ensure_artifacts():
 
 def test_connect_wallet_model_owner(run, state):
     """Switch to account 1 — model owner."""
-    result = run(["system", "connect-wallet", "--account", "1"])
+    result = run(["system", "connect-wallet", "modelowner"])
     assert result.returncode == 0
 
 
@@ -114,7 +114,7 @@ def test_din_rep_authorizes_task_coordinator_as_slasher(run, state):
 
     SDK candidate: dindao_add_slasher(network, account, task_coordinator=addr)
     """
-    run(["system", "connect-wallet", "--account", "0"])
+    run(["system", "connect-wallet", "dindao"])
     result = run(["dindao", "add-slasher", "--taskCoordinator"])
     assert result.returncode == 0
 
@@ -130,7 +130,7 @@ def test_model_owner_registers_task_coordinator_slasher(run):
 
     SDK candidate: model_owner_add_slasher(network, account, task_coordinator=addr)
     """
-    run(["system", "connect-wallet", "--account", "1"])
+    run(["system", "connect-wallet", "modelowner"])
     result = run(["model-owner", "add-slasher", "--taskCoordinator"])
     assert result.returncode == 0
 

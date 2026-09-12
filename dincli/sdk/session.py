@@ -1,0 +1,152 @@
+"""DinSession + SignerProvider protocol — lazy, non-interactive runtime context.
+
+DinSession is the SDK's shared runtime: it lazily resolves network, web3,
+account, and config, and never prints, exits, or prompts. The CLI's DinContext
+delegates to it for those properties (§4a of the plan); the daemon constructs
+its own session at startup.
+
+SignerProvider is a Protocol that both SDK signers (KeystoreSigner,
+PrivateKeySigner) and the daemon's interactive adapter satisfy. Any
+SignerProvider can be injected into a DinSession for per-use-case key
+management without threading interactive dependencies through the SDK.
+
+Daemon adapter contract (D3):
+  The daemon's SignerProvider adapter is backed by session-held state
+  bootstrapped once, interactively, at ``dind start`` — held in memory for
+  that daemon's lifetime. Config changes mid-run arrive via a separate
+  ``dind config`` command (interactive there is fine) plus a non-interactive
+  ``dind load config`` trigger; the daemon process itself never blocks on stdin
+  mid-run, and any missing credential raises ``SignerUnavailable`` for the job
+  layer to turn into a job error. This is explicitly not a raw env-var lookup.
+
+  The CLI's own adapter (``dincli/cli/signer.py::InteractiveKeystoreSigner``)
+  is the only component permitted to prompt. A reference implementation of the
+  *daemon* adapter lives under ``tests/`` — see
+  ``test_sdk_session.py::TestDaemonAdapter`` and
+  ``test_sdk_regressions.py::MinimalSigner`` — so the contract is exercised
+  without landing daemon code on ``feat/din-daemon`` in this task.
+
+  Note that ``local_account`` is deliberately NOT part of the protocol: signers
+  that never hold a decrypted key in process (hardware, remote, or agent-backed)
+  must remain possible. Nothing in the SDK's signing path may depend on it.
+"""
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+from web3 import Web3
+
+from dincli.sdk.config import load_config, resolve_network
+from dincli.sdk.errors import NetworkError, RPC_UNREACHABLE
+from dincli.sdk.wallet import KeystoreSigner
+
+
+@runtime_checkable
+class SignerProvider(Protocol):
+    """Protocol that every signer — SDK and daemon adapter — satisfies."""
+
+    def address(self) -> str: ...
+    def can_decrypt(self) -> bool: ...
+    def sign_transaction(self, tx: dict): ...
+
+
+def _resolve_w3(network: str) -> Web3:
+    """Lazy web3 factory for DinSession.
+
+    Delegates to sdk.web3.get_w3 rather than duplicating the connect-and-check
+    logic — two copies would drift, and get_w3 already raises
+    NetworkError(code=rpc_unreachable) with a sanitized endpoint host (M4).
+    """
+    from dincli.sdk.web3 import get_w3
+
+    return get_w3(network)
+
+
+class _SignerAccount:
+    """Minimal ``LocalAccount``-shaped view over a protocol-only SignerProvider.
+
+    Exposes just what CLI call sites read off ``ctx.account`` (``.address``) plus
+    ``sign_transaction`` delegation, so a signer that never holds a decrypted
+    key in process still satisfies those callers.
+    """
+
+    __slots__ = ("_signer",)
+
+    def __init__(self, signer: "SignerProvider"):
+        self._signer = signer
+
+    @property
+    def address(self) -> str:
+        return self._signer.address()
+
+    def sign_transaction(self, tx: dict):
+        return self._signer.sign_transaction(tx)
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"<SignerAccount {self.address}>"
+
+
+class DinSession:
+    """Lazily resolves network, web3, account, config. No printing, no exit, no prompts.
+
+    Default signer when none supplied: ``KeystoreSigner(wallet_name)`` —
+    non-interactive, so a bare ``DinSession()`` can never hang.
+    """
+
+    def __init__(self, network: str | None = None,
+                 wallet: str | None = None,
+                 signer: SignerProvider | None = None):
+        self._network_arg = network
+        self._wallet_name = wallet
+        self._signer: SignerProvider | None = signer
+
+        self._resolved_network: str | None = None
+        self._w3: Web3 | None = None
+        self._config: dict | None = None
+
+    # -- lazy properties --------------------------------------------------
+
+    @property
+    def network(self) -> str:
+        if self._resolved_network is None:
+            self._resolved_network = resolve_network(self._network_arg)
+        return self._resolved_network
+
+    @property
+    def w3(self) -> Web3:
+        if self._w3 is None:
+            self._w3 = _resolve_w3(self.network)
+        return self._w3
+
+    @property
+    def config(self) -> dict:
+        if self._config is None:
+            self._config = load_config()
+        return self._config
+
+    @property
+    def signer(self) -> SignerProvider:
+        if self._signer is None:
+            self._signer = KeystoreSigner(self._wallet_name or "default")
+        return self._signer
+
+    @property
+    def account(self):
+        """Lazily resolved via the signer. Raises SignerUnavailable / WalletError.
+
+        ``local_account`` is NOT part of the SignerProvider protocol, so signers
+        that only implement the published contract (daemon adapters, hardware
+        or remote signers) have none. For those we return a thin adapter that
+        exposes the ``.address`` / ``.sign_transaction`` surface callers rely on.
+        Signing inside the SDK always goes through ``self.signer`` directly —
+        never through this property (remediation R4).
+        """
+        if not hasattr(self, "_account"):
+            local = getattr(self.signer, "local_account", None)
+            self._account = local if local is not None else _SignerAccount(self.signer)
+        return self._account
+
+    @property
+    def address(self) -> str:
+        """Cheap — no decrypt, delegates to signer.address()."""
+        return self.signer.address()

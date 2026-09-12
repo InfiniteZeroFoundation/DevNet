@@ -815,7 +815,7 @@
             },
             {
               "internalType": "uint256",
-              "name": "finalAvgScore",
+              "name": "finalMedianScore",
               "type": "uint256"
             }
           ],
@@ -1009,7 +1009,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "finalAvgScore",
+          "name": "finalMedianScore",
           "type": "uint256"
         }
       ],

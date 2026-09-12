@@ -3,8 +3,8 @@ title: "Migrate DIN contracts to Foundry-only vs. upgrade to Hardhat 3"
 date: 2026-06-30
 status: open
 participants:
-  - Umer Majeed (Principal Engineer) — @/home/azureuser/projects/HR/Umer
-  - Robbert Abimbola (Solidity Engineer) — @/home/azureuser/projects/HR/Robbert
+  - Umer Majeed (Principal Engineer) — @~/projects/HR/Umer
+  - Robbert Abimbola (Solidity Engineer) — @~/projects/HR/Robbert
 assigned-to: Robbert Abimbola (investigate and deliver recommendation)
 decision-target: TBD
 ---

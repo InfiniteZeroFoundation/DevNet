@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 import torch.nn as nn
@@ -23,6 +24,13 @@ DEFAULT_SCORING_POLICY: dict[str, Any] = {
         "max_update_norm": 100.0,
         "max_abs_weight": 100.0,
         "min_eval_examples": 1,
+        # Cosine-to-consensus (run_cosine_to_consensus_check): shadow-mode by
+        # default. min_cosine_to_consensus=-1.0 means "never flag" (cosine
+        # similarity is always >= -1), matching the S3-style pattern of
+        # shipping new anomaly signals settable-but-non-gating until
+        # empirically validated (task_210726_6 §1d).
+        "min_consensus_peers": 3,
+        "min_cosine_to_consensus": -1.0,
     },
     "metrics": {
         "primary": ["accuracy", "loss", "macro_f1", "baseline_delta"],
@@ -236,6 +244,123 @@ def run_eligibility_anomaly_gate(
     )
 
 
+@dataclass
+class ConsensusDeviationResult:
+    computed: bool
+    cosine_similarity: float | None
+    outlier: bool
+    reason: str
+
+
+def _flatten_update_vector(
+    base_state: dict[str, torch.Tensor], candidate_state: dict[str, torch.Tensor]
+) -> torch.Tensor:
+    """Flatten a candidate's delta from the base model into one 1-D vector.
+
+    Shared by cosine-to-consensus and marginal-gain scoring so both compare
+    updates in the same coordinate space. Only floating tensors are included
+    for the same reason `run_eligibility_anomaly_gate`'s norm computation
+    excludes integer buffers/counters.
+    """
+
+    pieces = []
+    for name, base_tensor in _iter_floating_tensors(base_state):
+        candidate_tensor = candidate_state.get(name)
+        if candidate_tensor is None or not torch.is_tensor(candidate_tensor):
+            continue
+        delta = candidate_tensor.detach().float() - base_tensor.detach().float()
+        pieces.append(delta.reshape(-1))
+    if not pieces:
+        return torch.zeros(1)
+    return torch.cat(pieces)
+
+
+def run_cosine_to_consensus_check(
+    *,
+    base_state: dict[str, torch.Tensor],
+    candidate_state: dict[str, torch.Tensor],
+    batch_candidate_states: list[dict[str, torch.Tensor]],
+    policy: dict[str, Any],
+) -> ConsensusDeviationResult:
+    """Second eligibility signal: is this update's direction an outlier vs. the batch?
+
+    `scoring-mechanism.md` §1 describes this as "update direction is not an
+    obvious outlier against the round's consensus direction **when enough
+    candidate updates exist**" — the conditional matters. With too few peers,
+    a "consensus direction" is not a meaningful signal (e.g. one other
+    submission just IS the direction, not a consensus), so this returns
+    `computed=False` rather than fabricating a decision from noise.
+
+    Consensus direction is the mean of all *other* candidates' update vectors
+    in the batch (self excluded, so a lone attacker can't drag the consensus
+    toward themselves). Deviation is `1 - cosine_similarity`; the caller
+    decides eligibility impact via `policy["eligibility_checks"]
+    ["min_cosine_to_consensus"]` — kept as a separate, explicitly-optional
+    signal (not folded into `run_eligibility_anomaly_gate`'s `eligible` output)
+    because, like the S3 deviation threshold in task_210726_6 §1d, this needs
+    empirical validation before it gates anything. Ships informational-only
+    until a threshold is validated; wiring it into `eligible` is a follow-up.
+    """
+
+    checks = policy.get("eligibility_checks", {})
+    min_peers = int(checks.get("min_consensus_peers", 3))
+
+    peers = [s for s in batch_candidate_states if s is not candidate_state]
+    if len(peers) < min_peers:
+        return ConsensusDeviationResult(
+            computed=False,
+            cosine_similarity=None,
+            outlier=False,
+            reason=f"insufficient_batch_peers:{len(peers)}<{min_peers}",
+        )
+
+    candidate_vec = _flatten_update_vector(base_state, candidate_state)
+
+    consensus_vec = torch.zeros_like(candidate_vec)
+    counted = 0
+    for peer_state in peers:
+        peer_vec = _flatten_update_vector(base_state, peer_state)
+        if peer_vec.shape != candidate_vec.shape:
+            # A peer that fails architecture match is not part of a meaningful
+            # consensus direction; skip rather than error the whole check.
+            continue
+        consensus_vec += peer_vec
+        counted += 1
+
+    if counted < min_peers:
+        return ConsensusDeviationResult(
+            computed=False,
+            cosine_similarity=None,
+            outlier=False,
+            reason=f"insufficient_shape_matched_peers:{counted}<{min_peers}",
+        )
+
+    consensus_vec /= counted
+
+    candidate_norm = float(torch.linalg.vector_norm(candidate_vec).item())
+    consensus_norm = float(torch.linalg.vector_norm(consensus_vec).item())
+    if candidate_norm == 0.0 or consensus_norm == 0.0:
+        # A zero update (or zero consensus, degenerate batch) has no direction
+        # to compare; treat as non-computable rather than a forced 0 or 1.
+        return ConsensusDeviationResult(
+            computed=False,
+            cosine_similarity=None,
+            outlier=False,
+            reason="zero_norm_vector",
+        )
+
+    cosine_similarity = float(torch.dot(candidate_vec, consensus_vec).item() / (candidate_norm * consensus_norm))
+    min_cosine = float(checks.get("min_cosine_to_consensus", -1.0))
+    outlier = cosine_similarity < min_cosine
+
+    return ConsensusDeviationResult(
+        computed=True,
+        cosine_similarity=cosine_similarity,
+        outlier=outlier,
+        reason="ok",
+    )
+
+
 def evaluate_classification_model(
     model: torch.nn.Module,
     dataset,
@@ -358,6 +483,93 @@ def normalize_holdout_delta_score(
             "max_abs_weight": eligibility.max_abs_weight,
         },
     )
+
+
+def _aggregate_subset(
+    base_state: dict[str, torch.Tensor], candidate_states: list[dict[str, torch.Tensor]]
+) -> dict[str, torch.Tensor]:
+    """Uniform FedAvg of the base model plus zero or more candidate updates.
+
+    Mirrors `aggregator.py`'s `_average_state_dicts`, but operates on in-memory
+    state dicts (no file I/O) since `mc_marginal_gain_score` calls this once
+    per coalition size per permutation and needs it fast. An empty
+    `candidate_states` returns the base model unchanged — this is `v(∅)`, the
+    characteristic function's baseline in the permutation game below.
+    """
+
+    if not candidate_states:
+        return {k: v.clone() for k, v in base_state.items()}
+
+    agg: dict[str, torch.Tensor] = {}
+    for key, base_tensor in base_state.items():
+        if torch.is_tensor(base_tensor) and torch.is_floating_point(base_tensor):
+            acc = torch.zeros_like(base_tensor, dtype=torch.float32)
+            for state in candidate_states:
+                acc += state[key].detach().float()
+            agg[key] = (acc / len(candidate_states)).to(base_tensor.dtype)
+        else:
+            agg[key] = base_tensor.clone()
+    return agg
+
+
+def mc_marginal_gain_score(
+    *,
+    base_state: dict[str, torch.Tensor],
+    candidate_states: list[dict[str, torch.Tensor]],
+    evaluate_fn: Callable[[dict[str, torch.Tensor]], float],
+    n_perms: int = 1,
+    seed: int | None = None,
+) -> list[float]:
+    """Permutation-averaged Monte Carlo Shapley via sequential fold-in.
+
+    The third validator-side algorithm scoring-mechanism.md §6 specifies
+    (`mc_marginal_gain_score`) and which task_210726_6 §1a found genuinely
+    absent from this codebase. Implements the `truncated_MC` pattern from
+    `LabeliaLabs/distributed-learning-contributivity`
+    (`mplc/contributivity.py`) that `scoring-auditing-references.md` points
+    at: for each of `n_perms` random orderings of the batch's candidates,
+    fold them in one at a time (`M = M ⊕ u_i`, via `_aggregate_subset`),
+    measure `evaluate_fn`'s marginal delta at each step, and average each
+    candidate's marginal contribution across permutations.
+
+    `n_perms=1` is the cheap detection baseline the scoring-mechanism issue
+    describes ("increase only when reward attribution fairness matters") —
+    at n_perms=1 this is plain sequential fold-in with no permutation
+    averaging yet, which is enough to validate duplicate discounting cheaply.
+
+    `evaluate_fn` is injected rather than hard-coded to `evaluate_classification_model`
+    so this stays testable without a real model/dataset (see the scoring
+    tests) and reusable for non-classification metric families later, per
+    scoring-mechanism.md's task-type-specific metric guidance.
+
+    Returns one contribution score per `candidate_states` entry, in the same
+    order as the input list, NOT yet normalized into bps or clamped to
+    non-negative — normalization is `normalize_holdout_delta_score`'s pattern
+    to follow once this is wired into a real submission path, out of scope
+    for this reference implementation.
+    """
+
+    n = len(candidate_states)
+    if n == 0:
+        return []
+
+    rng = random.Random(seed)
+    contributions = [0.0] * n
+    base_value = evaluate_fn(_aggregate_subset(base_state, []))
+
+    for _ in range(n_perms):
+        order = list(range(n))
+        rng.shuffle(order)
+
+        included: list[dict[str, torch.Tensor]] = []
+        prev_value = base_value
+        for idx in order:
+            included.append(candidate_states[idx])
+            new_value = evaluate_fn(_aggregate_subset(base_state, included))
+            contributions[idx] += new_value - prev_value
+            prev_value = new_value
+
+    return [c / n_perms for c in contributions]
 
 
 def write_metric_bundle(

@@ -7,7 +7,7 @@ name = "dincli"
 version = "0.1.0"
 description = "Command-line interface for Decentralized Intelligence Network"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
   { name = "Umer Majeed", email = "umermjd11@gmail.com"},
   { name = "Abraham Nash", email = "abrahamnash@protonmail.com"}
@@ -17,15 +17,20 @@ keywords = ["blockchain", "federated-learning", "privacy", "cli", "fastapi", "DI
 
 dependencies = [
   "typer>=0.9.0",
+  "click>=8.1.0",
+  "rich>=13.0.0,<15.0.0",
+  "requests>=2.31.0",
+  "eth-account>=0.13.0",
   "python-dotenv>=1.0.0",
   "web3>=6.0.0",
   "platformdirs>=4.3.0",
-  "py-cid>=0.5.0"
-
+  "py-cid>=0.5.0",
+  "py-multibase>=1.0.0"
 ]
 
 [project.scripts]
 dincli = "dincli.main:app"
+dind = "dincli.dind.main:app"
 
 # ✅ Let setuptools auto-find packages (including 'dincli')
 [tool.setuptools.packages.find]
@@ -33,7 +38,8 @@ where = ["."]  # look in project root
 include = ["dincli*"]  # only include dincli and subpackages
 
 [tool.setuptools.package-data]
-dincli = ["config/*.json", "abis/*", "docker/worker/*", "services/*.py"]
+"dincli" = ["config/*.json", "abis/*", "docker/worker/*", "services/*.py"]
+"dincli.dind" = ["examples/*"]
 
 [tool.pytest.ini_options]
 markers = [
