@@ -41,4 +41,18 @@ contract UpgradeValidationTest is Test {
             opts
         );
     }
+
+    /// @dev Validates DinTreasury is upgrade-safe (Initializable, OwnableUpgradeable,
+    ///      ReentrancyGuardTransient, __gap reservation).
+    function test_validateImplementation_DinTreasury() public {
+        Options memory opts;
+        Upgrades.validateImplementation("DinTreasury.sol:DinTreasury", opts);
+    }
+
+    /// @dev Validates DinFeeRouter is upgrade-safe (Initializable, OwnableUpgradeable,
+    ///      ReentrancyGuardTransient, __gap reservation).
+    function test_validateImplementation_DinFeeRouter() public {
+        Options memory opts;
+        Upgrades.validateImplementation("DinFeeRouter.sol:DinFeeRouter", opts);
+    }
 }

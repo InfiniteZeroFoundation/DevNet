@@ -19,6 +19,7 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
     uint256[50] private __gap;
 
     event TokensMinted(address indexed to, uint256 amount);
+    event TokensBurned(address indexed from, uint256 amount);
     event CoordinatorSet(address indexed coordinator);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -57,5 +58,14 @@ contract DinToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         if (to == address(0)) revert InvalidAddress();
         _mint(to, amount);
         emit TokensMinted(to, amount);
+    }
+
+    /// @notice Burns the caller's own DIN tokens, reducing total supply.
+    /// @dev No extra access control — same trust model as transfer. Called by
+    ///      DinFeeRouter on its own balance after pulling via transferFrom.
+    /// @param amount Token amount to burn.
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount);
+        emit TokensBurned(msg.sender, amount);
     }
 }

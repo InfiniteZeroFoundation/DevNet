@@ -17,17 +17,17 @@ tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
 /cache_model_0/services/__pycache__/*
 
 
-# for main # for dincli branch just comment below lines
+# for main # for develop branch just comment below lines
 /changes/*  
 /bashscripts/*
 /tasks/*
 /scripts/*
 /hardhat/ignition/*
-/hardhat/scripts/*
-/hardhat/test/*
-/hardhat/test-output.txt
+# /hardhat/scripts/*
+# /hardhat/test/*
+#/hardhat/test-output.txt
 /dincli/config/accounts.json
-/dincli/config/din_info.json 
+# /dincli/config/din_info.json 
 /dincli/CliDOC.md
 /dincli/README.md
 foundry/.github/*

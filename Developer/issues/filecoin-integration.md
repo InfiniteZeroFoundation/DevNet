@@ -22,11 +22,11 @@ Relevant code paths today:
   - upload and retrieval already flow through one shared interface
 - `dincli/cli/utils.py`
   - runtime IPFS configuration and Filebase endpoints
-- `dincli/services/client.py`
+- `cache_model_0/services/client.py`
   - client training produces a local artifact and uploads it to IPFS
-- `dincli/services/aggregator.py`
+- `cache_model_0/services/aggregator.py`
   - aggregator retrieves client artifacts and uploads aggregated artifacts
-- `dincli/services/auditor.py`
+- `cache_model_0/services/auditor.py`
   - auditor retrieves artifacts by CID
 - on-chain task flows
   - contracts and CLI submission logic already treat model artifacts as CIDs rather than provider-specific URLs

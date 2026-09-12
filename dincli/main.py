@@ -52,15 +52,37 @@ def main(
     wallet: str = typer.Option(
         None,
         "--wallet",
-        help="Select a named keystore (default: 'default')",
+        help=(
+            "Use a registered named wallet for this invocation only "
+            "(highest precedence; overrides DIN_WALLET_NAME and the "
+            "`system connect-wallet` config setting)"
+        ),
         callback=None,
         is_eager=True,
     ),
-    
+    demokey: int = typer.Option(
+        None,
+        "--demokey",
+        help=(
+            "DEMO MODE ONLY: sign this invocation with Hardhat dev account "
+            "<index>, loaded straight from the bundled accounts file — no "
+            "named wallet, no keystore, no prompts. Mutually exclusive with "
+            "--wallet. Intended for local testing/harnesses."
+        ),
+        callback=None,
+        is_eager=True,
+    ),
+
 ):
     ctx.obj = DinContext()
     console = ctx.obj.console
+
+    if wallet is not None and demokey is not None:
+        console.print("[red]❌ --wallet and --demokey are mutually exclusive.[/red]")
+        raise typer.Exit(1)
+
     ctx.obj.select_wallet(wallet)
+    ctx.obj.select_demo_account(demokey)
 
     configured_network  = ctx.obj.select_network(network).network
     if configured_network:

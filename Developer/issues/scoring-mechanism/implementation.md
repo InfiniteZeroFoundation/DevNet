@@ -23,7 +23,7 @@ Make the task’s scoring scenario explicit and machine-readable.
 
 - `Documentation/technical/manifest.md`
 - `cache_model_0/manifest.json`
-- optionally `Documentation/auditors.md`, `Documentation/model-owner.md`, and `Developer/tooling/model-owner-services.md`
+- optionally `Documentation/public/roles/auditors.md`, `Documentation/public/roles/model-owner.md`, and `Developer/proposals/model-owner-services.md`
 
 ### Changes
 
@@ -44,8 +44,8 @@ Create one reusable scoring layer instead of scattering scoring rules across `au
 
 ### Recommended New Modules
 
-- `dincli/services/scoring.py`
-- optionally `dincli/services/contribution.py`
+- `cache_model_0/services/scoring.py`
+- optionally `cache_model_0/services/contribution.py`
 
 ### Responsibilities
 
@@ -70,7 +70,6 @@ Replace the current hardcoded per-batch dataset shard behavior with policy-drive
 
 ### Existing Files To Update
 
-- `dincli/services/modelowner.py`
 - `cache_model_0/services/modelowner.py`
 - `dincli/cli/modelownerd/auditor_batches.py`
 
@@ -101,7 +100,6 @@ Widen the auditor service interface from one scalar plus one boolean to a richer
 
 ### Existing Files To Update
 
-- `dincli/services/auditor.py`
 - `cache_model_0/services/auditor.py`
 - `dincli/cli/auditor.py`
 
@@ -235,7 +233,7 @@ Add reward-oriented contribution scoring without polluting the base admission pa
 
 ### Recommended New Module
 
-- `dincli/services/contribution.py`
+- `cache_model_0/services/contribution.py`
 
 ### Initial Backends
 
@@ -280,12 +278,12 @@ Make the new scenario-driven model understandable for contributors and model own
 
 ### Files To Update
 
-- `Documentation/technical/DINTaskAuditor.md`
+- `Documentation/technical/contracts/DINTaskAuditor.md`
 - `Documentation/technical/manifest.md`
-- `Documentation/auditors.md`
-- `Documentation/model-owner.md`
-- `Developer/tooling/model-owner-services.md`
-- optionally `Developer/tooling/model-owner-contracts.md`
+- `Documentation/public/roles/auditors.md`
+- `Documentation/public/roles/model-owner.md`
+- `Developer/proposals/model-owner-services.md`
+- optionally `Developer/proposals/model-owner-contracts.md`
 
 ### Changes
 

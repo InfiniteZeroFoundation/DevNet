@@ -58,7 +58,7 @@ Required scoring outputs:
 - `eligible`: whether the client model/update passed admission checks;
 - `utility_score_bps`: normalized utility score used for model admission;
 - `contribution_score_bps`: normalized reward contribution score;
-- `contribution_mode`: for example `leave_one_out` or `marginal_global_delta` (note: `tknn_shapley` and `dp_tknn_shapley` are rejected - see [Rejected Ideas: TKNN-Shapley](rejected-ideas/tknn-shapley.md));
+- `contribution_mode`: for example `leave_one_out` or `marginal_global_delta` (note: `tknn_shapley` and `dp_tknn_shapley` are rejected - see [Rejected Ideas: TKNN-Shapley](../rejected-ideas/tknn-shapley.md));
 - `contributionReportCID`: off-chain report containing detailed contribution evidence;
 - optional `anomaly_score_bps` or disagreement fields for reward suppression.
 

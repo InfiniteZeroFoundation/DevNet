@@ -14,6 +14,10 @@ interface IOwnable {
     function owner() external view returns (address);
 }
 
+interface IDinFeeRouter {
+    function routeFeeETH(address payer) external payable;
+}
+
 /// @title DIN Model Registry
 /// @notice Manages model registration requests, manifest updates, and per-model
 ///         lifecycle controls. Deployed once per network behind a Transparent Proxy.
@@ -34,7 +38,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     error AuditorNoLongerSlasher();
     error CoordinatorOwnershipChanged();
     error AuditorOwnershipChanged();
-    error TransferFailed();
+    error FeeRouterNotSet();
 
     event ModelRegistrationRequested(
         uint256 indexed requestId,
@@ -64,8 +68,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         uint256 openSourceUpdateFee,
         uint256 proprietaryUpdateFee
     );
-    event FeesWithdrawn(address indexed to, uint256 amount);
-    event DAOAdminUpdated(address indexed oldAdmin, address indexed newAdmin);
+    event FeeRouterUpdated(address indexed feeRouter);
+    event FeesSweptToRouter(uint256 amount);
 
     struct Model {
         address owner;
@@ -111,6 +115,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     mapping(address => uint256) private _modelIdByTaskCoordinator;
     mapping(address => uint256) private _modelIdByTaskAuditor;
     mapping(uint256 => bool) public modelDisabled;
+
+    IDinFeeRouter public feeRouter;
 
     // Reserved for future state variables at this inheritance level.
     uint256[50] private __gap;
@@ -467,31 +473,24 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         );
     }
 
-    /// @notice Transfers the contract's entire ETH balance to the specified address.
-    /// @param to Destination address for the fee withdrawal.
-    function withdrawFees(address payable to) external onlyOwner {
+    /// @notice Sets the fee router used to split and route accumulated ETH fees.
+    function setFeeRouter(address feeRouter_) external onlyOwner {
+        if (feeRouter_ == address(0)) revert ZeroAddress();
+        feeRouter = IDinFeeRouter(feeRouter_);
+        emit FeeRouterUpdated(feeRouter_);
+    }
+
+    /// @notice Sweeps the contract's entire accumulated ETH balance to the fee
+    ///         router in one call, which splits it across treasury/validator-pool/
+    ///         storage/public-goods per its configured split.
+    /// @dev Fees accrue here per-request (no per-request router call) and get
+    ///      batched through this sweep to amortize the router's external-call
+    ///      cost across many registrations/updates instead of paying it on each one.
+    function sweepFeesToRouter() external onlyOwner {
+        if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
         uint256 balance = address(this).balance;
-        (bool success, ) = to.call{value: balance}("");
-        if (!success) revert TransferFailed();
-        emit FeesWithdrawn(to, balance);
-    }
-
-    // Backward-compat shims — dincli calls daoAdmin() / setDAOAdmin().
-    // Underlying auth model is OwnableUpgradeable; these are read-through facades.
-
-    /// @notice Returns the current admin address. Delegates to OwnableUpgradeable.owner().
-    /// @dev Compatibility shim preserving the pre-upgrade daoAdmin() ABI surface.
-    /// @return The current owner address.
-    function daoAdmin() external view returns (address) {
-        return owner();
-    }
-
-    /// @notice Transfers ownership and emits DAOAdminUpdated for off-chain indexers.
-    /// @dev Compatibility shim preserving the pre-upgrade setDAOAdmin() ABI surface.
-    /// @param newAdmin Address to transfer ownership to.
-    function setDAOAdmin(address newAdmin) external onlyOwner {
-        address old = owner();
-        transferOwnership(newAdmin);
-        emit DAOAdminUpdated(old, newAdmin);
+        if (balance == 0) return;
+        feeRouter.routeFeeETH{value: balance}(address(this));
+        emit FeesSweptToRouter(balance);
     }
 }

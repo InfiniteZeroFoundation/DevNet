@@ -80,7 +80,7 @@ Without a coherent token model:
 
 ### 1. DIN is administratively priced
 
-`dinPerEth` is an owner-controlled issuance parameter. That means the amount of DIN required to become a validator can be diluted or tightened administratively rather than through a clear monetary policy.
+`dinPerEth` is an owner-controlled issuance parameter. That means the amount of DIN required to become a validator can be diluted or tightened administratively rather than through a clear monetary policy. Tracked as open decision [§9-13](../design/MECHANISM_DESIGN.md#9-consolidated-open-decision-list).
 
 ### 2. ETH-backed issuance has no explicit reserve policy
 
@@ -146,6 +146,8 @@ If so:
 - remove direct mint-on-ETH-deposit issuance
 - let DIN trade externally
 - use protocol revenues to buy back, reward, or subsidize validators instead of administratively pricing DIN
+
+If an ICO/token-sale is the mechanism for getting there, quantity, pricing, operating/legal entity, and KYC posture are all undefined — tracked as open decision [§9-14](../design/MECHANISM_DESIGN.md#9-consolidated-open-decision-list).
 
 DIN can support governance and utility in any of these models, but the protocol should not mix them implicitly.
 

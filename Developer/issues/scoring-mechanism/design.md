@@ -32,8 +32,8 @@ The design has to fit the code that exists today.
 
 Today:
 
-- `cache_model_0/services/auditor.py` and `dincli/services/auditor.py` return `(score, eligible)`;
-- `cache_model_0/services/modelowner.py` and `dincli/services/modelowner.py` generate one test shard CID per batch;
+- `cache_model_0/services/auditor.py` returns `(score, eligible)`;
+- `cache_model_0/services/modelowner.py` generates one test shard CID per batch;
 - `DINTaskAuditor.setAuditScorenEligibility(...)` accepts one scalar score and one boolean vote;
 - `DINTaskAuditor.finalizeEvaluation(...)` uses mean score and `passScore`;
 - `DINTaskAuditor.AuditBatch` stores `testDataCID`, not a richer evaluation spec.
