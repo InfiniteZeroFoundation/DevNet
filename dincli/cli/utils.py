@@ -59,9 +59,51 @@ from dincli.sdk.wallet import (  # moved to SDK — re-exported for CLI compatib
     KeystoreSigner,
     PrivateKeySigner,
 )
-from dincli.sdk.errors import ChainIdMismatchError, SignerUnavailable, WalletError  # noqa: F401 — re-exported for CLI/test compatibility
+from dincli.sdk.errors import ChainIdMismatchError, DinError, SignerUnavailable, WalletError  # noqa: F401 — re-exported for CLI/test compatibility
 
 MIN_STAKE = 10*10**18
+
+
+def reraise_din_error_cause(error: DinError) -> None:
+    """Compatibility adapter for `din-info`/`read-stake` (task_110926_14/15
+    review finding 5, `Plans/task-14-15-remediation-plan.md` §7 fallback
+    route).
+
+    Pre-refactor, `get_deployed_din_stake_contract()` and direct contract
+    calls let the underlying exception (contract construction, `getStake()`,
+    file/JSON errors reading din_info.json) propagate unhandled: no extra
+    printed line, and the original exception type reached the CLI's caller
+    (`Plans/task-14-15-review-evidence/cli-before.json`). The SDK's
+    operations layer (`dincli.sdk.operations.platform`) now wraps those into
+    typed `DinError` subclasses — task 15's taxonomy requirement — chaining
+    `raise ... from e`. That means `error.__cause__` IS the original
+    exception object for every one of those cases, still holding its own
+    traceback, so re-raising it here exactly reproduces the old observable
+    behavior: nothing extra printed on the way out, original exception type
+    seen by `CliRunner`/callers.
+
+    Some `DinError`s the SDK raises with NO wrapped cause at all — chiefly a
+    missing/malformed network entry or malformed root in din_info.json
+    (`ConfigError` raised directly in `_load_din_info_entry()`/
+    `get_stake_contract_address()`), and an invalid explicit `--address`
+    (`ValidationError` in `get_stake()`). Pre-refactor, the network cases
+    were a bare `KeyError`/`TypeError` from unchecked dict indexing — not an
+    `Exception` instance the old code ever constructed or could hand back —
+    and the address case did not exist as a validated path at all. There is
+    no real prior exception object to re-raise for these, and fabricating
+    one (e.g. a synthetic `KeyError`) would assert a traceback path that
+    never executed, which is worse than an honestly-labeled behavior change.
+    This is the one declared, accepted exception (see
+    `test_din_info_missing_network_fails_clean_not_with_a_traceback` in
+    `tests/test_cli_platform_operations_golden.py`): for those cases this
+    function returns normally, and the caller keeps its own existing
+    "print message, exit 1" handling exactly as before this adapter existed
+    — deliberately not centralized here, since `din-info` and `read-stake`
+    use slightly different message styles pre-dating this adapter and
+    neither is being changed as part of this fix.
+    """
+    if error.__cause__ is not None:
+        raise error.__cause__
 
 
 class ReadResult(NamedTuple):

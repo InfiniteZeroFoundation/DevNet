@@ -30,7 +30,8 @@ from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
                               validate_account_name, wallet_path_for_name,
                               atomic_write_wallet, resolve_wallet_path,
                               list_accounts, get_active_account_name, load_account,
-                              _extract_keystore, ensure_wallets_dir)
+                              _extract_keystore, ensure_wallets_dir,
+                              reraise_din_error_cause)
 
 from dincli.services import bridge as bridge_service
 from dincli.sdk.errors import DinError
@@ -822,6 +823,7 @@ def din_info(ctx: typer.Context,
     try:
         addresses = get_platform_addresses(ctx.obj.session)
     except DinError as e:
+        reraise_din_error_cause(e)
         console.print(f"[red]{e.message}[/red]")
         raise typer.Exit(1)
 

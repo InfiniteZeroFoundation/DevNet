@@ -237,8 +237,21 @@ def test_dintoken_read_stake_prints_address_before_getstake_fails(monkeypatch):
     """When getStake() fails, the address line must already be on stdout —
     pre-refactor, get_deployed_din_stake_contract() printed it as a side
     effect strictly before the contract call could fail; the refactor must
-    preserve that ordering even though it now fails through DinError/a clean
-    message instead of an unhandled exception."""
+    preserve that ordering even though it now fails through
+    sdk.operations.platform.get_stake() instead of a direct contract call.
+
+    Full-behavior version of task_110926_14/15 review finding 5: the earlier
+    version of this test only asserted an output prefix, exit code, and the
+    absence of "DinTokens" — which passed even though a real difference
+    existed (an extra "✗ getStake call failed..." line, and SystemExit
+    instead of the original RuntimeError reaching CliRunner). The CLI's
+    compatibility adapter (`dincli.cli.utils.reraise_din_error_cause`, wired
+    into `read_dintoken_stake()`) re-raises `ContractError.__cause__` — the
+    original `RuntimeError` — for exactly this case, so complete output,
+    exit code, AND exception type are now identical to pre-refactor
+    `66d9860` (verified against it directly; see
+    `Plans/task-14-15-review-evidence/cli-before.json` and this file's
+    module docstring)."""
 
     class _FailingGetStakeCall:
         def call(self):
@@ -261,15 +274,15 @@ def test_dintoken_read_stake_prints_address_before_getstake_fails(monkeypatch):
     )
 
     result = _invoke(["dintoken", "read-stake"])
-    # exit_code and the address-line-first property below hold identically
-    # pre- and post-refactor (verified against 66d9860). The error text
-    # itself is not: pre-refactor this was an unhandled RuntimeError with a
-    # traceback, post-refactor it's a caught DinError printed as "✗ ...".
-    # That upgrade is intentional (task 15's DinError taxonomy requirement)
-    # and orthogonal to finding 3, which is only about ordering.
+    # Complete parity with pre-refactor 66d9860: nothing printed past the
+    # address line (no "✗ ..." message), exit code 1, and the original
+    # RuntimeError itself — not a SystemExit wrapping a DinError — is what
+    # CliRunner observes.
+    assert result.output == _READ_STAKE_HEADER
     assert result.exit_code == 1
-    assert result.output.startswith(_READ_STAKE_HEADER)
-    assert "DinTokens" not in result.output
+    assert isinstance(result.exception, RuntimeError)
+    assert not isinstance(result.exception, SystemExit)
+    assert str(result.exception) == "boom"
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +295,24 @@ def test_dintoken_read_stake_prints_address_before_getstake_fails(monkeypatch):
 
 
 def test_din_info_missing_network_fails_clean_not_with_a_traceback():
+    """Full-behavior version of task_110926_14/15 review finding 5. Unlike
+    the getStake case above, there is no real pre-refactor exception object
+    to restore here: this used to be a bare KeyError/TypeError from
+    unchecked `din_info[network]` dict indexing, never an `Exception`
+    instance the old code constructed — so
+    `dincli.cli.utils.reraise_din_error_cause()` cannot and does not
+    re-raise anything for it (`ConfigError` has no `__cause__` on this
+    path; see that function's docstring). This asserts the CURRENT stable
+    behavior completely instead of only "not a KeyError" + a substring, so
+    a future change to this message/exit path is caught here rather than
+    silently passing this loosened check."""
     result = _invoke(["--network", "sepolia_devnet", "system", "din-info"])
+    assert result.output == (
+        "Active Network: sepolia_devnet\n"
+        "✓ Active Wallet: default (0x1111111111111111111111111111111111111111)\n"
+        "✓ Active Web3: https://rpc.example.com/v1/****\n"
+        "Network 'sepolia_devnet' is not configured in din_info.json.\n"
+    )
     assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
     assert not isinstance(result.exception, KeyError)
-    assert "sepolia_devnet" in result.output
