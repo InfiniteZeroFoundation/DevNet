@@ -335,6 +335,12 @@ error TC_DisputeNotOpen();
 error TC_DisputeAlreadyResolved();
 /// @dev Caller has no claimable dispute-bond balance.
 error TC_NoBondClaimable();
+/// @dev The dispute is not in the awaiting-recomputation phase (fresh subgroup not yet assigned).
+error TC_DisputeNotAwaitingRecomputation();
+/// @dev The resolution window has not yet expired; expireDispute cannot be called yet.
+error TC_ResolutionWindowOpen();
+/// @dev The dispute has already been finalized via settleRecomputation or expireDispute.
+error TC_DisputeAlreadyFinalized();
 /// @dev Aggregation CID cannot be bytes32(0); zero is reserved as the "no submission" sentinel.
 error TC_ZeroCID();
 /// @dev Maximum aggregator registrations for this GI has been reached.

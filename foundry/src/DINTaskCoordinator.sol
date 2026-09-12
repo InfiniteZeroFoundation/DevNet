@@ -112,8 +112,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         address challenger;
         uint256 bond;
         uint64 openedAt;
-        bool resolved;
-        bool upheld;
+        uint64 resolutionDeadline; // set when fresh subgroup assigned; 0 until then
+        bool resolved;    // true after resolveDispute() first decision
+        bool upheld;      // true if fresh subgroup was assigned
+        bool finalized;   // true after settleRecomputation() or expireDispute()
     }
 
     IERC20 public dinToken;
@@ -126,7 +128,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     // (task_210726_5), the resolveDispute forfeiture TODO already cites item 1's
     // burn/treasury destination — no ETH-burn path is needed.
     uint256 public disputeBond = 100 * 1e18; // placeholder default, DAO-settable
-    uint64 public disputeWindow = 1 days; // placeholder default, DAO-settable
+    uint64 public disputeWindow = 1 days;    // placeholder default, DAO-settable
+    uint64 public resolutionWindow = 2 days; // how long fresh subgroup has to recompute; DAO-settable
     address public treasuryAddress;
     uint256 public treasuryAccrued; // TODO(task_210726_5): forward to DinTreasury once merged
 
@@ -158,6 +161,17 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         address[] freshAggregators
     );
     event DisputeBondClaimed(address indexed challenger, uint256 amount);
+    event RecomputationSettled(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        bool confirmed
+    );
+    event DisputeExpired(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId
+    );
 
     modifier onlyCurrentGI(uint _GI) {
         if (_GI != GI) revert TC_WrongGI();
@@ -964,19 +978,20 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         dinToken = IERC20(_dinToken);
     }
 
-    /// @notice Sets the dispute bond amount and dispute window duration.
-    /// @dev Both values are DAO-settable placeholders; the numbers shipped
-    ///      here are not final, per this task's brief.
-    /// @param _disputeBond Token amount a challenger must post to open a dispute.
-    /// @param _disputeWindow Seconds after batch finalization during which a dispute can be opened.
+    /// @notice Sets the three dispute timing/bond parameters.
+    /// @param _disputeBond       Token amount a challenger must post to open a dispute.
+    /// @param _disputeWindow     Seconds after batch finalization during which a dispute can be opened.
+    /// @param _resolutionWindow  Seconds the fresh subgroup has to recompute after being assigned.
     function setDisputeParams(
         uint256 _disputeBond,
-        uint64 _disputeWindow
+        uint64 _disputeWindow,
+        uint64 _resolutionWindow
     ) external onlyOwner {
-        if (_disputeBond == 0 || _disputeWindow == 0)
+        if (_disputeBond == 0 || _disputeWindow == 0 || _resolutionWindow == 0)
             revert TC_InvalidDisputeParams();
         disputeBond = _disputeBond;
         disputeWindow = _disputeWindow;
+        resolutionWindow = _resolutionWindow;
     }
 
     /// @notice Sets the address forfeited dispute bonds will eventually be forwarded to.
@@ -1030,8 +1045,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             challenger: msg.sender,
             bond: disputeBond,
             openedAt: uint64(block.timestamp),
+            resolutionDeadline: 0,
             resolved: false,
-            upheld: false
+            upheld: false,
+            finalized: false
         });
 
         dinToken.safeTransferFrom(msg.sender, address(this), disputeBond);
@@ -1064,9 +1081,12 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         d.upheld = upheld;
 
         if (upheld) {
-            // TODO(task_210726_5): top up with a bounty from DinTreasury
-            // once it exists; for now the challenger only reclaims their bond.
-            disputeBondClaimable[d.challenger] += d.bond;
+            // Assign fresh subgroup and start the resolution clock.
+            // Bond credit is deferred: the challenger gets it back in
+            // settleRecomputation(confirmed=true) or expireDispute(). If the
+            // fresh subgroup's recomputation clears the original CID the bond
+            // is forfeited in settleRecomputation(confirmed=false) instead.
+            d.resolutionDeadline = uint64(block.timestamp) + resolutionWindow;
 
             address[] memory freshSubgroup = _assignFreshSubgroup(
                 _GI,
@@ -1076,6 +1096,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             reEvaluationAssignees[_GI][tierKind][batchId] = freshSubgroup;
             emit ReEvaluationAssigned(_GI, tierKind, batchId, freshSubgroup);
         } else {
+            // Immediate rejection: dispute is fully closed.
+            d.finalized = true;
             // TODO(task_210726_5): forward to DinTreasury (50% burn / 50%
             // treasury per MECHANISM_DESIGN.md §4) once it exists.
             treasuryAccrued += d.bond;
@@ -1094,6 +1116,101 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         dinToken.safeTransfer(msg.sender, amount);
 
         emit DisputeBondClaimed(msg.sender, amount);
+    }
+
+    /// @notice Final verdict after the fresh subgroup has recomputed.
+    ///         Owner calls this as the normal adjudication path (within the
+    ///         resolution window) or as a last-resort fallback after it
+    ///         (e.g. if the fresh subgroup itself produced no quorum).
+    ///
+    /// @param _GI       GI index.
+    /// @param tierKind  Tier-1 or Tier-2.
+    /// @param batchId   Batch index within its tier.
+    /// @param confirmed True if the fresh subgroup's recomputation confirmed
+    ///                  the original CID was wrong (dispute stands).
+    ///                  False if recomputation matched the original CID
+    ///                  (original aggregators were right, dispute dismissed).
+    function settleRecomputation(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId,
+        bool confirmed
+    ) external onlyOwner {
+        Dispute storage d = disputes[_GI][tierKind][batchId];
+        if (!(d.resolved && d.upheld)) revert TC_DisputeNotAwaitingRecomputation();
+        if (d.finalized) revert TC_DisputeAlreadyFinalized();
+
+        d.finalized = true;
+
+        if (confirmed) {
+            // Recomputation confirmed the original CID was wrong.
+            // Return challenger's bond and slash the original batch for S4.
+            disputeBondClaimable[d.challenger] += d.bond;
+
+            address[] memory originalAggs = tierKind == TierKind.Tier1
+                ? tier1Batches[_GI][batchId].aggregators
+                : tier2Batches[_GI][batchId].aggregators;
+            uint256 slashAmount = dinvalidatorStakeContract.minStake();
+            for (uint i = 0; i < originalAggs.length; i++) {
+                uint256 actual = dinvalidatorStakeContract.slash(
+                    originalAggs[i],
+                    slashAmount,
+                    "S4_INVALID_AGGREGATION"
+                );
+                emit AggregatorSlashed(
+                    _GI, batchId, originalAggs[i],
+                    "S4_INVALID_AGGREGATION", slashAmount, actual
+                );
+            }
+        } else {
+            // Recomputation matched the original CID — dispute was wrong.
+            // Forfeit challenger's bond to treasury.
+            // TODO(task_210726_5): forward to DinTreasury once it exists.
+            treasuryAccrued += d.bond;
+        }
+
+        emit RecomputationSettled(_GI, tierKind, batchId, confirmed);
+    }
+
+    /// @notice Times out a dispute whose fresh subgroup did not recompute
+    ///         within the resolution window.
+    ///         Callable by anyone after the resolution deadline — silence is
+    ///         not free for the fresh subgroup.
+    ///
+    ///         Outcome: dispute dismissed (original CID stands); challenger
+    ///         bond returned (the fault is the fresh subgroup's, not theirs);
+    ///         fresh subgroup slashed for liveness failure.
+    function expireDispute(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId
+    ) external {
+        Dispute storage d = disputes[_GI][tierKind][batchId];
+        if (!(d.resolved && d.upheld)) revert TC_DisputeNotAwaitingRecomputation();
+        if (d.finalized) revert TC_DisputeAlreadyFinalized();
+        if (block.timestamp <= d.resolutionDeadline) revert TC_ResolutionWindowOpen();
+
+        d.finalized = true;
+
+        // Return challenger's bond — they acted in good faith.
+        disputeBondClaimable[d.challenger] += d.bond;
+
+        // Slash every member of the fresh subgroup for liveness failure.
+        address[] memory freshSubgroup = reEvaluationAssignees[_GI][tierKind][batchId];
+        uint256 slashAmount = dinvalidatorStakeContract.minStake();
+        for (uint i = 0; i < freshSubgroup.length; i++) {
+            uint256 actual = dinvalidatorStakeContract.slash(
+                freshSubgroup[i],
+                slashAmount,
+                "S4_FRESH_SUBGROUP_TIMEOUT"
+            );
+            emit AggregatorSlashed(
+                _GI, batchId, freshSubgroup[i],
+                "S4_FRESH_SUBGROUP_TIMEOUT", slashAmount, actual
+            );
+        }
+
+        emit DisputeExpired(_GI, tierKind, batchId);
     }
 
     /// @notice Selects a fresh aggregator subgroup for re-evaluation, excluding
