@@ -7,6 +7,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./DINShared.sol";
 
+interface IBurnableDinToken {
+    function burn(uint256 amount) external;
+}
+
 /// @title DIN Task Coordinator
 /// @notice Orchestrates the full Global Iteration (GI) lifecycle for a single
 ///         federated-learning model: slasher setup, validator registration,
@@ -1091,10 +1095,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     /// @notice Resolves a dispute, either upholding or rejecting it.
     /// @dev Upheld: bond becomes claimable by the challenger (pull payment)
     ///      and a fresh aggregator subgroup is assigned, excluding the
-    ///      accused batch's original aggregators. The bounty top-up from
-    ///      treasury is stubbed (TODO below) since DinTreasury doesn't exist
-    ///      yet. Rejected (frivolous): bond is forfeited to treasuryAccrued,
-    ///      same stub pattern as Part 3's reward engine.
+    ///      accused batch's original aggregators.
+    ///      Bounty top-up (task_100926_12 #43): out of scope — DinTreasury's
+    ///      withdrawERC20 is onlyOwner, so task contracts cannot pull a bounty
+    ///      from it. The challenger currently only reclaims their bond. Flagged
+    ///      for Umer: the fix requires either an authorized-withdrawer role on
+    ///      DinTreasury or an alternate bounty source (forfeited-stake pool).
+    ///      Rejected (frivolous): bond is split 50% burn / 50% treasury per
+    ///      MECHANISM_DESIGN.md §4. treasuryAccrued accumulates the full bond
+    ///      for observability regardless of whether the transfer succeeds.
     /// @param _GI GI index the disputed batch belongs to.
     /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
     /// @param batchId Index of the disputed batch within its tier.
@@ -1113,8 +1122,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         d.upheld = upheld;
 
         if (upheld) {
-            // TODO(task_210726_5): top up with a bounty from DinTreasury
-            // once it exists; for now the challenger only reclaims their bond.
+            // Bounty top-up from treasury: out of scope (see NatSpec above).
             disputeBondClaimable[d.challenger] += d.bond;
 
             address[] memory freshSubgroup = _assignFreshSubgroup(
@@ -1125,9 +1133,16 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             reEvaluationAssignees[_GI][tierKind][batchId] = freshSubgroup;
             emit ReEvaluationAssigned(_GI, tierKind, batchId, freshSubgroup);
         } else {
-            // TODO(task_210726_5): forward to DinTreasury (50% burn / 50%
-            // treasury per MECHANISM_DESIGN.md §4) once it exists.
-            treasuryAccrued += d.bond;
+            // Frivolous forfeiture: 50% burn / 50% treasury (MECHANISM_DESIGN §4).
+            uint256 burnAmt = d.bond / 2;
+            uint256 treasuryAmt = d.bond - burnAmt;
+            IBurnableDinToken(address(dinToken)).burn(burnAmt);
+            if (treasuryAddress != address(0)) {
+                dinToken.safeTransfer(treasuryAddress, treasuryAmt);
+            } else {
+                IBurnableDinToken(address(dinToken)).burn(treasuryAmt);
+            }
+            treasuryAccrued += d.bond; // cumulative counter for observability
         }
 
         emit DisputeResolved(_GI, tierKind, batchId, upheld);

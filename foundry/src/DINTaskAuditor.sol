@@ -509,6 +509,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 treasuryShare = pool - clientPool - auditorPool - aggregatorPool;
 
         treasuryAccrued += treasuryShare;
+        if (treasuryShare > 0 && treasuryAddress != address(0)) {
+            dinToken.safeTransfer(treasuryAddress, treasuryShare);
+        }
 
         giRewardSnapshot[gi] = GIRewardSnapshot({
             clientPool:            clientPool,
