@@ -29,6 +29,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     // Track if an address is registered for a given _GI as an aggregator
     mapping(uint => mapping(address => bool)) public isDINAggregator;
 
+    /// @notice Guard: prevents releaseGIRegistrationSlots from being called
+    ///         twice for the same GI (which would double-decrement counters).
+    mapping(uint256 => bool) public registrationSlotsReleased;
+
     uint256 public constant T1_AGGREGATORS_PER_BATCH = 3;
     uint256 public constant T1_MODELS_PER_BATCH = 3;
     uint256 public constant MIN_T1_MODELS_PER_BATCH = 2;
@@ -176,14 +180,20 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint256 actual
     );
 
+    /// @notice Model registry ID this coordinator manages.
+    /// @dev Used to look up modelMinStakeBounds and enforce per-model stake floors.
+    uint256 public immutable modelId;
+
     /// @notice Deploys the coordinator and sets the validator stake contract.
     /// @dev GI state is initialised to AwaitingDINTaskAuditorToBeSet; the model
     ///      owner must call setDINTaskAuditorContract before any other setup step.
     /// @param dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
-    constructor(address dinvalidatorStakeContract_address) Ownable(msg.sender) {
+    /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
+    constructor(address dinvalidatorStakeContract_address, uint256 modelId_) Ownable(msg.sender) {
         dinvalidatorStakeContract = IDinValidatorStake(
             dinvalidatorStakeContract_address
         );
+        modelId = modelId_;
         GIstate = GIstates.AwaitingDINTaskAuditorToBeSet;
     }
 
@@ -295,9 +305,25 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (dinAggregators[_GI].length >= MAX_REGISTERED_AGGREGATORS)
             revert TC_RegistrationCapReached();
 
+        // Per-model stake floor: enforced when the model owner has set a non-zero bound.
+        uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
+        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
+            revert TC_StakeBelowModelFloor();
+
+        // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
+        // Formula: each MIN_STAKE unit of stake allows capPerUnit concurrent registrations.
+        uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
+        if (capPerUnit > 0) {
+            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
+                dinvalidatorStakeContract.minStake()) * capPerUnit;
+            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                revert TC_ConcurrentRegistrationCapReached();
+        }
+
         // Add to list and mark as registered
         dinAggregators[_GI].push(msg.sender);
         isDINAggregator[_GI][msg.sender] = true;
+        dinvalidatorStakeContract.incrementActiveRegistration(msg.sender);
 
         emit DINValidatorRegistered(_GI, msg.sender);
     }
@@ -951,6 +977,29 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         dinTaskAuditorContract.settleRewards(_GI, totalAggregatorWeight[_GI]);
 
         GIstate = GIstates.GIended;
+    }
+
+    /// @notice Decrements the concurrent-registration counter on DinValidatorStake
+    ///         for every aggregator and auditor that participated in the given GI.
+    /// @dev Separated from endGI (task_100926_12 §#37) to keep endGI O(1) (BL-10).
+    ///      Call after endGI for each ended GI. O(n_aggregators + n_auditors), bounded
+    ///      by MAX_REGISTERED_AGGREGATORS and MAX_REGISTERED_AUDITORS. Idempotent
+    ///      guard: reverts on a second call for the same GI (registrationSlotsReleased).
+    /// @param _GI GI whose participants' registration slots should be released.
+    ///            Must be a GI that has already ended (< current GI, or == current GI
+    ///            with state GIended).
+    function releaseGIRegistrationSlots(uint _GI) external onlyOwner {
+        bool giEnded = (_GI < GI) ||
+            (_GI == GI && GIstate == GIstates.GIended);
+        require(giEnded, "GI has not ended");
+        require(!registrationSlotsReleased[_GI], "slots already released");
+        registrationSlotsReleased[_GI] = true;
+
+        address[] storage aggs = dinAggregators[_GI];
+        for (uint256 i = 0; i < aggs.length; i++) {
+            dinvalidatorStakeContract.decrementActiveRegistration(aggs[i]);
+        }
+        dinTaskAuditorContract.decrementAuditorRegistrations(_GI);
     }
 
     // ─────────────────────────────────────────────────────────────────────

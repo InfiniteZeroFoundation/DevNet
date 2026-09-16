@@ -121,8 +121,8 @@ contract DisputeResolutionTest is Test {
 
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
-        tc = new DINTaskCoordinator(address(stake));
-        ta = new DINTaskAuditor(address(stake), address(tc));
+        tc = new DINTaskCoordinator(address(stake), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1);
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
