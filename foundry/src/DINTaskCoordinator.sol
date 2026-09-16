@@ -136,7 +136,11 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     uint256 public disputeBond = 100 * 1e18; // placeholder default, DAO-settable
     uint64 public disputeWindow = 1 days; // placeholder default, DAO-settable
     address public treasuryAddress;
-    uint256 public treasuryAccrued; // TODO(task_210726_5): forward to DinTreasury once merged
+    uint256 public treasuryAccrued; // cumulative observability counter; tokens forwarded immediately
+    /// @dev Gas units required per validator per GI to cover on-chain submission costs.
+    ///      Set by the DAO via setNetworkFeeFloor; not yet enforced at depositRewards
+    ///      (enforcement point to be confirmed with Umer — see task_100926_12 #78).
+    uint256 public networkFeeFloor;
 
     mapping(uint => mapping(uint => uint64)) public tier1FinalizedAt;
     mapping(uint => mapping(uint => uint64)) public tier2FinalizedAt;
@@ -1039,6 +1043,16 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     function setTreasuryAddress(address _treasuryAddress) external onlyOwner {
         if (_treasuryAddress == address(0)) revert TC_InvalidAddress();
         treasuryAddress = _treasuryAddress;
+    }
+
+    /// @notice Sets the minimum gas-cost floor (in gas units) each validator must
+    ///         be covered for per GI.  The DAO reads the measured number from
+    ///         GasSimulation tests and posts it here; model owners should deposit
+    ///         enough rewards to cover `networkFeeFloor × nValidators` before GI start.
+    /// @param _floor Gas units derived from `commitAuditScore + revealAuditScore`
+    ///               measurements (worst-case auditor path per GasSimulation S2).
+    function setNetworkFeeFloor(uint256 _floor) external onlyOwner {
+        networkFeeFloor = _floor;
     }
 
     /// @notice Opens a dispute against a finalized Tier-1 or Tier-2 batch.
