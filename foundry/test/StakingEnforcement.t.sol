@@ -296,4 +296,142 @@ contract StakingEnforcementTest is Test {
         ta.registerDINAuditor(1);
         assertEq(stake.activeRegistrationCount(aud1), 1);
     }
+
+    // ── releaseGIRegistrationSlots: happy path + double-release guard ────────
+
+    /// @dev Drives GI 1 through an entire honest lifecycle (3 auditors, 3
+    ///      aggregators, 3 clients, all honest -- same shape as
+    ///      RewardEngine.t.sol's _runFullHonestGI) all the way through
+    ///      endGI(1), leaving GIstate == GIended so releaseGIRegistrationSlots
+    ///      is callable. Returns the third aggregator/auditor addresses
+    ///      (agg1/agg2/aud1/aud2 are the shared fixture actors).
+    function _runFullGIToEnded() internal returns (address agg3, address aud3) {
+        agg3 = makeAddr("agg3_release");
+        aud3 = makeAddr("aud3_release");
+        address client1 = makeAddr("client1_release");
+        address client2 = makeAddr("client2_release");
+        address client3 = makeAddr("client3_release");
+
+        _stake(agg1, MIN_STAKE_AMOUNT);
+        _stake(agg2, MIN_STAKE_AMOUNT);
+        _stake(agg3, MIN_STAKE_AMOUNT);
+        _stake(aud1, MIN_STAKE_AMOUNT);
+        _stake(aud2, MIN_STAKE_AMOUNT);
+        _stake(aud3, MIN_STAKE_AMOUNT);
+
+        _advanceToAggregatorRegistration();
+
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+        vm.prank(agg2);
+        tc.registerDINaggregator(1);
+        vm.prank(agg3);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(aud1);
+        ta.registerDINAuditor(1);
+        vm.prank(aud2);
+        ta.registerDINAuditor(1);
+        vm.prank(aud3);
+        ta.registerDINAuditor(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(100)), 1);
+        vm.prank(client2);
+        ta.submitLocalModel(bytes32(uint256(200)), 1);
+        vm.prank(client3);
+        ta.submitLocalModel(bytes32(uint256(300)), 1);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        tc.createAuditorsBatches(1);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        bytes32 salt = bytes32(uint256(0xC0FFEE));
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, salt));
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 80, true, salt);
+            }
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        tc.autoCreateTier1AndTier2(1);
+        tc.startT1Aggregation(1);
+        vm.stopPrank();
+
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+        bytes32 realCID = bytes32(uint256(0xC1D));
+        for (uint i = 0; i < t1aggs.length; i++) {
+            vm.prank(t1aggs[i]);
+            tc.submitT1Aggregation(1, 0, realCID);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+        tc.startT2Aggregation(1);
+        tc.finalizeT2Aggregation(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.slashAuditors(1);
+        tc.slashAggregators(1);
+        tc.endGI(1);
+        vm.stopPrank();
+    }
+
+    function test_releaseGIRegistrationSlots_happyPath() public {
+        (address agg3, address aud3) = _runFullGIToEnded();
+
+        assertEq(stake.activeRegistrationCount(agg1), 1);
+        assertEq(stake.activeRegistrationCount(agg2), 1);
+        assertEq(stake.activeRegistrationCount(agg3), 1);
+        assertEq(stake.activeRegistrationCount(aud1), 1);
+        assertEq(stake.activeRegistrationCount(aud2), 1);
+        assertEq(stake.activeRegistrationCount(aud3), 1);
+        assertFalse(tc.registrationSlotsReleased(1));
+
+        vm.prank(modelOwner);
+        tc.releaseGIRegistrationSlots(1);
+
+        assertTrue(tc.registrationSlotsReleased(1));
+        assertEq(stake.activeRegistrationCount(agg1), 0);
+        assertEq(stake.activeRegistrationCount(agg2), 0);
+        assertEq(stake.activeRegistrationCount(agg3), 0);
+        assertEq(stake.activeRegistrationCount(aud1), 0);
+        assertEq(stake.activeRegistrationCount(aud2), 0);
+        assertEq(stake.activeRegistrationCount(aud3), 0);
+    }
+
+    function test_releaseGIRegistrationSlots_revertsOnDoubleRelease() public {
+        _runFullGIToEnded();
+
+        vm.startPrank(modelOwner);
+        tc.releaseGIRegistrationSlots(1);
+        vm.expectRevert(bytes("slots already released"));
+        tc.releaseGIRegistrationSlots(1);
+        vm.stopPrank();
+    }
 }

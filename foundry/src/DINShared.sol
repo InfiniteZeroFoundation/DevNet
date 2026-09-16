@@ -116,7 +116,8 @@ interface IDINTaskAuditor {
     function settleRewards(uint256 gi, uint256 aggregatorTotalWeight) external;
 
     /// @dev Decrements activeRegistrationCount for every auditor registered in _GI.
-    ///      Called by the coordinator in endGI after settleRewards.
+    ///      Called by the coordinator's releaseGIRegistrationSlots (not endGI itself,
+    ///      to keep endGI's gas cost O(1) per BL-10).
     function decrementAuditorRegistrations(uint256 _GI) external;
 }
 

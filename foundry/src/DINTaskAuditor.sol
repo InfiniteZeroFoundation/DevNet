@@ -647,8 +647,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     }
 
     /// @notice Decrements the active-registration counter for every auditor in _GI.
-    /// @dev Called by the paired DINTaskCoordinator in endGI after settleRewards,
-    ///      so each auditor's slot is released for future GIs. onlyTaskCoordinator
+    /// @dev Called by the paired DINTaskCoordinator's releaseGIRegistrationSlots
+    ///      (not endGI itself, to keep endGI's gas cost O(1) per BL-10), so each
+    ///      auditor's slot is released for future GIs. onlyTaskCoordinator
     ///      enforces the trust boundary.
     function decrementAuditorRegistrations(uint256 _GI) external onlyTaskCoordinator {
         address[] storage auditors = dinAuditors[_GI];
