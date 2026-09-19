@@ -336,6 +336,60 @@ contract GasSimulationTest is Test {
         console.log("[GAS][S2] revealAuditScore (quorum trigger, eligibility write):", before - gasleft());
     }
 
+    /// @dev Gas cost of commitAuditScore (the commit half of commit-then-reveal).
+    ///      This is the cold path: first commit for this (batch, model) slot.
+    ///      Measures the LOW-tier scale (3 audit batches, 3 auditors/batch, 3 models/batch).
+    ///      Per-auditor per-GI cost = 3 commits (one per assigned model) × this number.
+    function test_gas_s2_commitAuditScore_cold_3batches() public {
+        _setupToEvalStart(3);
+        (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
+
+        uint before = gasleft();
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        console.log("[GAS][S2] commitAuditScore (cold, LOW 3 batches):", before - gasleft());
+    }
+
+    /// @dev Same measurement at MID scale (5 T1 batches). Gas is per-call constant.
+    function test_gas_s2_commitAuditScore_cold_5batches() public {
+        _setupToEvalStart(5);
+        (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
+
+        uint before = gasleft();
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        console.log("[GAS][S2] commitAuditScore (cold, MID 5 batches):", before - gasleft());
+    }
+
+    /// @dev Same measurement at HIGH scale (10 T1 batches). Gas is per-call constant.
+    function test_gas_s2_commitAuditScore_cold_10batches() public {
+        _setupToEvalStart(10);
+        (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
+
+        uint before = gasleft();
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        console.log("[GAS][S2] commitAuditScore (cold, HIGH 10 batches):", before - gasleft());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // networkFeeFloor setter round-trip (issue #78)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    function test_networkFeeFloor_setAndGet() public {
+        assertEq(tc.networkFeeFloor(), 0, "default is zero");
+        // Use measured cold-path total: commitAuditScore + revealAuditScore per model × 3 models
+        uint256 floor = 581_238; // (commit ~56,474 + reveal ~137,272) per model × 3 models
+        tc.setNetworkFeeFloor(floor);
+        assertEq(tc.networkFeeFloor(), floor, "getter returns set value");
+    }
+
+    function test_networkFeeFloor_onlyOwner() public {
+        vm.prank(makeAddr("notOwner"));
+        vm.expectRevert();
+        tc.setNetworkFeeFloor(1);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // SCENARIO 3 — Slashing (worst-case proxy for dispute resolution cost)
     //

@@ -1,11 +1,11 @@
 # Gas Simulation — Validator Network Fee Sizing
 
-**Status:** Complete (issue #78)
+**Status:** Complete (issue #78, updated task_100926_12)
 **Owner:** Robbert
 **Tracking:** [GitHub issue #78](https://github.com/InfiniteZeroFoundation/DevNet/issues/78)
 **Simulation code:** `foundry/test/GasSimulation.t.sol`
 **Run:** `forge clean && forge test --match-contract GasSimulationTest -vv`
-**All 14 tests pass** (re-measured after H-1 quorum fix — see Scenario 3 notes).
+**All 19 tests pass** (re-measured at task_100926_12 baseline; `commitAuditScore` added).
 
 ---
 
@@ -84,27 +84,35 @@ costs < 0.5M gas — well within block limits.
 Re-measured after commit-then-reveal (task_210726_6 §2a, merged to `develop` via #63)
 replaced the single-shot `setAuditScorenEligibility` with `commitAuditScore` +
 `revealAuditScore`. `revealAuditScore` is what now does the eligibility bookkeeping
-(`_tryFinalizeEligibility` fires there, not at commit time), so it's the direct successor
-to the old call for benchmarking purposes — `commitAuditScore`'s own gas is **not measured
-here** (see Open Items).
+(`_tryFinalizeEligibility` fires there, not at commit time). `commitAuditScore` is now
+also measured here (task_100926_12 #78), closing the Open Item below.
+
+### `commitAuditScore` (cold, first commit for a batch/model slot)
+
+Gas is per-call constant regardless of participation scale (confirmed at LOW/MID/HIGH):
 
 | Call | Gas | ETH @ 0.005 gwei |
 |------|-----|-----------------|
-| `revealAuditScore` (cold, below quorum) | 91,972 | 0.000000460 |
-| `revealAuditScore` (quorum-trigger vote) | 87,200 | 0.000000436 |
+| `commitAuditScore` (cold SSTORE) | 56,474 | 0.000000282 |
 
-The cold call (first reveal for a model) costs slightly more than the quorum-trigger call
-because it hits more cold SSTORE slots. The quorum-trigger call does write `eligible=true`
-on top but benefits from warm storage reads. In practice, the difference is small (~5%),
-same shape as the pre-commit-reveal measurement.
+### `revealAuditScore`
 
-**For fee-floor purposes: use 91,972 gas per call (cold path, worst case per auditor).**
-**This covers `revealAuditScore` only — see Open Items for why the fee floor below is
-provisional until `commitAuditScore`'s gas is folded in.**
+Re-measured at task_100926_12 baseline (post-#65, #63, #124-134 merges):
 
-**Per-auditor gas per GI** (default 3 models/batch, reveal only):
+| Call | Gas | ETH @ 0.005 gwei |
+|------|-----|-----------------|
+| `revealAuditScore` (cold, below quorum) | 137,272 | 0.000000686 |
+| `revealAuditScore` (quorum-trigger vote) | 110,600 | 0.000000553 |
+
+The cold call (first reveal for a model) costs slightly more than the quorum-trigger call.
+The absolute numbers are higher than the initial post-#63 measurement due to additional
+storage writes from subsequent merges (#65 stake tracking, #124-134 slashing/treasury wires).
+
+**For fee-floor purposes: use 56,474 (commit) + 137,272 (reveal) = 193,746 gas per model.**
+
+**Per-auditor gas per GI** (default 3 models/batch, commit + reveal both counted):
 ```
-3 × 91,972 = 275,916 gas
+3 × (56,474 + 137,272) = 3 × 193,746 = 581,238 gas
 ```
 
 ---
@@ -155,38 +163,45 @@ rate would signal an unhealthy network.
 |------|-----------|-----------------|-----------------|----------------|
 | T1 aggregator | 71,509 | 0.0000000715 | 0.000000358 | 0.00000143 |
 | T2 aggregator | 71,428 | 0.0000000714 | 0.000000357 | 0.00000143 |
-| Auditor (3 models, `revealAuditScore` only) | 275,916 | 0.000000276 | 0.00000138 | 0.00000552 |
+| Auditor (3 models, commit + reveal) | 581,238 | 0.000000581 | 0.00000291 | 0.0000116 |
 
-The **auditor role is the most gas-intensive** at ~3.9× a single aggregator submission.
-The fee floor must be set to cover the auditor's cost, or auditors will lose ETH net of gas.
-This is the `revealAuditScore`-only figure — see Open Items on `commitAuditScore`.
+The **auditor role is the most gas-intensive** at ~8.1× a single aggregator submission
+(up from the prior 3.9× estimate, which only counted `revealAuditScore`).  The fee floor
+must be set to cover the auditor's cost, or auditors will lose ETH net of gas.
 
 ### Recommended floor
 
 ```
-fee_floor_ETH = 275,916 gas × gas_price_ETH
+fee_floor_ETH = 581,238 gas × gas_price_ETH
 ```
+
+(Replaces the previous 275,916-gas provisional floor; prior floor excluded `commitAuditScore`.)
+
+The on-chain parameter `DINTaskCoordinator.networkFeeFloor` (added task_100926_12 #78,
+setter `setNetworkFeeFloor`) carries this value in gas units for DAO governance.
+Enforcement point (where the deposited reward pool is checked against
+`networkFeeFloor × nValidators`) to be confirmed with Umer before the next release.
 
 | Gas price | Fee floor per validator per GI |
 |-----------|-------------------------------|
-| 0.001 gwei (L2 quiet) | 0.000000276 ETH (~$0.00088 at $3,200/ETH) |
-| 0.005 gwei (L2 typical) | 0.00000138 ETH (~$0.0044) |
-| 0.02 gwei (L2 busy) | 0.00000552 ETH (~$0.018) |
+| 0.001 gwei (L2 quiet) | 0.000000581 ETH (~$0.00186 at $3,200/ETH) |
+| 0.005 gwei (L2 typical) | 0.00000291 ETH (~$0.0093) |
+| 0.02 gwei (L2 busy) | 0.0000116 ETH (~$0.037) |
 
 These are per-validator figures. The model trainer pays the total across all validators
 participating in their GI. At LOW tier (21 validators) and 0.005 gwei, the total network
-fee per GI would be approximately **0.000029 ETH (~$0.09)**.
+fee per GI would be approximately **0.000061 ETH (~$0.20)**.
 
 ### Sensitivity table
 
 | Tier | Validators | Total gas (auditor path) | Fee (0.001 gwei) | Fee (0.005 gwei) | Fee (0.02 gwei) |
 |------|-----------|--------------------------|-----------------|-----------------|----------------|
-| LOW (3 batches) | 21 | 5,794,236 | 0.0000058 ETH | 0.000029 ETH | 0.000116 ETH |
-| MID (5 batches) | 36 | 9,932,976 | 0.0000099 ETH | 0.0000497 ETH | 0.000199 ETH |
-| HIGH (10 batches) | 63 | 17,382,708 | 0.0000174 ETH | 0.0000869 ETH | 0.000348 ETH |
+| LOW (3 batches) | 21 | 12,205,998 | 0.0000122 ETH | 0.000061 ETH | 0.000244 ETH |
+| MID (5 batches) | 36 | 20,924,568 | 0.0000209 ETH | 0.0001046 ETH | 0.000419 ETH |
+| HIGH (10 batches) | 63 | 36,617,994 | 0.0000366 ETH | 0.0001831 ETH | 0.000732 ETH |
 
-All tiers are profitable at all tested gas prices — the numbers are small enough that the
-network fee is not a participation barrier even at HIGH tier and busy-L2 prices.
+All tiers remain economically tractable at all tested gas prices — even at HIGH tier and
+busy-L2 prices the total fee is well under $1 per GI.
 
 **Flag:** No scenario in the simulation makes validator participation unprofitable at the
 proposed fee floor (cost always > 0 when fee floor is set to cover the auditor path).
@@ -205,12 +220,12 @@ proposed fee floor (cost always > 0 when fee floor is set to cover the auditor p
 
 ## Open items
 
-- **`commitAuditScore` gas is not yet in the fee floor:** commit-then-reveal (#63) means
-  each auditor now makes two on-chain calls per model, not one — this document only prices
-  `revealAuditScore`. The fee floor above therefore understates the auditor's real per-GI
-  cost by the commit call's gas. Needs a dedicated measurement (add a timed
-  `test_gas_s2_commitAuditScore_cold` case to `GasSimulation.t.sol`) and folding into the
-  "Auditor" row above before this floor is treated as final.
+- ~~**`commitAuditScore` gas is not yet in the fee floor**~~ — **Resolved (task_100926_12 #78).**
+  `commitAuditScore` measured at 56,474 gas (cold); folded into the fee floor above.
+  `DINTaskCoordinator.setNetworkFeeFloor` carries the result for DAO governance.
+- **Enforcement point for `networkFeeFloor`:** `depositRewards` / `startGI` should reject
+  a reward pool that can't cover `networkFeeFloor × nExpectedValidators`.  Enforcement
+  point to confirm with Umer before the next release.
 - **Gas price oracle:** The fee floor should track actual Optimism gas prices rather than
   a fixed constant. At steady state, validators should self-report or a TWAP from L1 gas
   oracles could feed into the fee setter.
@@ -220,5 +235,5 @@ proposed fee floor (cost always > 0 when fee floor is set to cover the auditor p
 - **Reward split:** Out of scope here; see MECHANISM_DESIGN §5 for the (clients/validators/
   treasury) split discussion.
 - **Spec-level audit params:** At spec params (10 auditors/batch, 100 models/batch), the
-  auditor cost per GI scales to ~8.99M gas — still tractable but warrants a separate
-  measurement run once those params are adopted.
+  auditor cost per GI scales significantly — warrants a separate measurement run once those
+  params are adopted.
