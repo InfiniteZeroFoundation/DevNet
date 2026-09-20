@@ -55,9 +55,15 @@ git fetch origin develop "pull/$N/head:pr-$N-review"     # fork PRs work too —
 git worktree add "$WT" "pr-$N-review"                    # branch pr-<N>-review, dir PRreview_<N>
 cd "$WT"
 
-git merge-tree $(git merge-base origin/develop pr-$N-review) origin/develop pr-$N-review  # local conflict check
+git merge-tree --write-tree --name-only origin/develop pr-$N-review  # local conflict check: exit 0 = clean, 1 = conflicts (lists files)
 gh pr view $N --json mergeable,mergeStateStatus          # GitHub's own verdict — must agree
 ```
+
+Use `--write-tree`, not the old three-argument `git merge-tree <base> <a> <b>`:
+that form prints conflicts as `+<<<<<<<` diff lines, so grepping for
+`^<<<<<<<` finds nothing and reports a false "clean" (this happened on PR 146,
+which GitHub correctly showed as `CONFLICTING`). If the two verdicts disagree,
+don't proceed — find out why first.
 
 Run all verification (build, tests, `git status`/`git diff` checks) from `$WT`.
 The worktree has its own `foundry/node_modules`, so `npm ci` runs again there.
