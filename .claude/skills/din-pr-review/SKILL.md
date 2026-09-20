@@ -40,14 +40,39 @@ verified and communicated in this repo specifically.
 
 ## 1. Set up an isolated review
 
-Fetch and check out the PR in a worktree or scratch clone, don't work directly
-on `develop`:
+Every review gets its own git worktree under `~/tempdir/DIN/PRs/`, on a branch
+named `pr-<N>-review`. Never `gh pr checkout` in the main repo checkout and
+never work directly on `develop` — the main checkout stays clean so `git
+status` there means something. Do this as the first step of every review, even
+if the PR is small or you only plan to read the diff; `~/tempdir/DIN/PRs/` is
+the record of what has been reviewed.
 
 ```bash
-gh pr checkout <N> -b review-pr-<N>   # or: git fetch origin pull/<N>/head:review-pr-<N>
-git merge-tree $(git merge-base develop review-pr-<N>) develop review-pr-<N>  # local conflict check
-gh pr view <N> --json mergeable,mergeStateStatus                              # GitHub's own verdict — must agree
+N=<N>
+WT=~/tempdir/DIN/PRs/PRreview_$N
+cd ~/projects/devnet
+git fetch origin develop "pull/$N/head:pr-$N-review"     # fork PRs work too — pull/N/head is a GitHub ref
+git worktree add "$WT" "pr-$N-review"                    # branch pr-<N>-review, dir PRreview_<N>
+cd "$WT"
+
+git merge-tree $(git merge-base origin/develop pr-$N-review) origin/develop pr-$N-review  # local conflict check
+gh pr view $N --json mergeable,mergeStateStatus          # GitHub's own verdict — must agree
 ```
+
+Run all verification (build, tests, `git status`/`git diff` checks) from `$WT`.
+The worktree has its own `foundry/node_modules`, so `npm ci` runs again there.
+
+**Re-review after the author pushes fixes:** reuse the existing worktree —
+don't create a second one. The branch is throwaway, so hard-reset it to the new
+head (this also survives force-pushes):
+
+```bash
+cd ~/tempdir/DIN/PRs/PRreview_$N
+git fetch origin "pull/$N/head" && git reset --hard FETCH_HEAD
+```
+
+If `git worktree add` says the branch or path already exists, run `git worktree
+list` first — the review may already be set up.
 
 ## 2. Fast build/test path
 
