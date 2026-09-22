@@ -34,8 +34,11 @@ contract DinCoordinator is
     uint256 public totalMinted;
     IDinFeeRouter public feeRouter;
 
+    /// @notice Address of the DinEmission contract authorised to call mintEmission().
+    address public emissionContract;
+
     // Reserved for future state variables at this inheritance level.
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     event EthDepositAndDINminted(
         address indexed user,
@@ -50,6 +53,8 @@ contract DinCoordinator is
     event FaucetRetiredEvent();
     event FeeRouterUpdated(address indexed feeRouter);
     event FeesSweptToRouter(uint256 amount);
+    event EmissionContractUpdated(address indexed emissionContract);
+    event EmissionMinted(address indexed to, uint256 amount);
 
     error InvalidAddress();
     error ValidatorStakeContractNotSet();
@@ -57,6 +62,7 @@ contract DinCoordinator is
     error FaucetRetired();
     error MintCapExceeded();
     error FeeRouterNotSet();
+    error UnauthorizedEmissionCaller();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -159,5 +165,29 @@ contract DinCoordinator is
         if (newRate == 0) revert ZeroValue();
         dinPerEth = newRate;
         emit DinPerEthUpdated(newRate);
+    }
+
+    /// @notice Sets the emission contract authorised to call mintEmission().
+    /// @param emissionContract_ Address of the DinEmission proxy.
+    function setEmissionContract(address emissionContract_) external onlyOwner {
+        if (emissionContract_ == address(0)) revert InvalidAddress();
+        emissionContract = emissionContract_;
+        emit EmissionContractUpdated(emissionContract_);
+    }
+
+    /// @notice Mints DIN for the emission subsidy. Only callable by the authorised
+    ///         emission contract. Respects faucetRetired and mintCap exactly like
+    ///         depositAndMint — emission cannot bypass the supply cap machinery.
+    /// @param to  Recipient of the minted DIN (normally the emission contract itself,
+    ///            which then deposits into the GI reward pool).
+    /// @param amount Token amount in wei (18 decimals).
+    function mintEmission(address to, uint256 amount) external nonReentrant {
+        if (msg.sender != emissionContract) revert UnauthorizedEmissionCaller();
+        if (faucetRetired) revert FaucetRetired();
+        if (amount == 0) revert ZeroValue();
+        if (mintCap > 0 && totalMinted + amount > mintCap) revert MintCapExceeded();
+        totalMinted += amount;
+        dinToken.mint(to, amount);
+        emit EmissionMinted(to, amount);
     }
 }
