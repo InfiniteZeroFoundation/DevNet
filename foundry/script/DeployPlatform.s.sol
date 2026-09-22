@@ -13,7 +13,7 @@ import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DinEmission} from "../src/DinEmission.sol";
 
-/// @notice Deploys the six DIN platform contracts behind Transparent Proxies
+/// @notice Deploys the seven DIN platform contracts behind Transparent Proxies
 ///         on a local anvil chain, wires them together, and writes
 ///         foundry/deployments/localhost.json in the same schema as
 ///         hardhat/deployments/localhost.json so dincli import-deployments

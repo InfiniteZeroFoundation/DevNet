@@ -38,7 +38,7 @@ contract DinCoordinator is
     address public emissionContract;
 
     // Reserved for future state variables at this inheritance level.
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     event EthDepositAndDINminted(
         address indexed user,

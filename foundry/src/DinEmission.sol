@@ -22,6 +22,15 @@ interface IDINTaskAuditor {
 ///         the "final epoch" design: explicit retirement rather than an asymptotic
 ///         tail, consistent with DinCoordinator.faucetRetired semantics.
 ///
+///         GI is a per-DINTaskCoordinator counter — every model has its own
+///         "GI 1", "GI 2", etc., independent of every other model's. This
+///         contract is a single platform-level deployment shared by every
+///         model, so the funded-GI guard and the epoch/decay progress are
+///         tracked per taskAuditor (i.e. per model) rather than globally;
+///         otherwise two models would collide on identically-numbered GIs
+///         and a schedule tuned for one model's cadence would burn down N
+///         times faster with N models concurrently drawing emission.
+///
 ///         Minting goes through DinCoordinator.mintEmission(), which enforces
 ///         mintCap, totalMinted, and faucetRetired — emission cannot bypass
 ///         the supply-cap machinery.
@@ -73,24 +82,35 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     ///         fundGI() is a no-op (returns 0) — the final-epoch retirement.
     uint256 public maxEpochs;
 
-    /// @notice Current epoch index (0-based).
-    uint256 public currentEpoch;
+    /// @notice One taskAuditor's (model's) independent progress through the
+    ///         shared decay schedule.
+    struct EmissionState {
+        /// @notice Current epoch index (0-based) for this taskAuditor.
+        uint256 currentEpoch;
+        /// @notice Number of GIs funded in the current epoch so far.
+        uint256 gisInCurrentEpoch;
+        /// @notice Per-GI emission amount for the current epoch.
+        ///         Updated at each epoch boundary via the decay formula.
+        uint256 currentEmissionPerGI;
+        /// @notice Set on this taskAuditor's first fundGI() call. Distinguishes
+        ///         "hasn't started yet" (use initialEmissionPerGI) from
+        ///         "exhausted" (currentEmissionPerGI legitimately decayed to 0).
+        bool started;
+    }
 
-    /// @notice Number of GIs funded in the current epoch so far.
-    uint256 public gisInCurrentEpoch;
+    /// @notice Per-taskAuditor (per-model) emission schedule progress.
+    mapping(address => EmissionState) public emissionState;
 
-    /// @notice Per-GI emission amount for the current epoch.
-    ///         Updated at each epoch boundary via the decay formula.
-    uint256 public currentEmissionPerGI;
-
-    /// @notice Cumulative DIN minted through this contract.
+    /// @notice Cumulative DIN minted through this contract, across all models.
     uint256 public totalEmitted;
 
-    /// @notice Guards against funding the same GI twice.
-    mapping(uint256 => bool) public giEmissionFunded;
+    /// @notice Guards against funding the same GI twice, scoped per
+    ///         taskAuditor so identically-numbered GIs on different models
+    ///         don't collide.
+    mapping(address => mapping(uint256 => bool)) public giEmissionFunded;
 
     // Reserved for future state variables.
-    uint256[38] private __gap;
+    uint256[40] private __gap;
 
     // ── Constructor / initializer ─────────────────────────────────────────
 
@@ -123,7 +143,6 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
         decayBps = decayBps_;
         epochLength = epochLength_;
         maxEpochs = maxEpochs_;
-        currentEmissionPerGI = initialEmissionPerGI_;
     }
 
     // ── Core function ─────────────────────────────────────────────────────
@@ -135,46 +154,61 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     ///         schedule so there is no benefit to restricting the caller.
     ///         A GI can only be funded once; subsequent calls revert.
     ///
-    ///         If emission is exhausted (currentEpoch >= maxEpochs) the call
-    ///         reverts with EmissionExhausted — callers should check
-    ///         emissionForCurrentEpoch() == 0 before calling to avoid gas waste.
+    ///         If taskAuditor's schedule is exhausted (currentEpoch >=
+    ///         maxEpochs) the call reverts with EmissionExhausted — callers
+    ///         should check emissionForCurrentEpoch(taskAuditor) == 0 before
+    ///         calling to avoid gas waste.
     ///
-    /// @param gi          GI index to subsidise. Must match or exceed the task
-    ///                    coordinator's current GI (enforced by depositRewards).
+    /// @param gi          GI index to subsidise, scoped to taskAuditor's own
+    ///                    model. Must match or exceed the task coordinator's
+    ///                    current GI (enforced by depositRewards).
     /// @param taskAuditor Address of the DINTaskAuditor whose depositRewards
-    ///                    will receive the minted DIN.
+    ///                    will receive the minted DIN. Also identifies which
+    ///                    model's independent epoch/decay schedule and
+    ///                    funded-GI guard this call operates on.
     /// @return amount     DIN amount deposited (0 if already retired, never
     ///                    negative — the return value is informational only;
     ///                    the revert paths cover the error cases).
     function fundGI(uint256 gi, address taskAuditor) external nonReentrant returns (uint256 amount) {
         if (taskAuditor == address(0)) revert InvalidAddress();
-        if (giEmissionFunded[gi]) revert GIAlreadyFunded(gi);
-        if (currentEpoch >= maxEpochs) revert EmissionExhausted();
+        if (giEmissionFunded[taskAuditor][gi]) revert GIAlreadyFunded(gi);
 
-        amount = currentEmissionPerGI;
+        EmissionState storage state = emissionState[taskAuditor];
+        if (!state.started) {
+            state.currentEmissionPerGI = initialEmissionPerGI;
+            state.started = true;
+        }
+        if (state.currentEpoch >= maxEpochs) revert EmissionExhausted();
 
-        giEmissionFunded[gi] = true;
+        amount = state.currentEmissionPerGI;
+        uint256 epochFunded = state.currentEpoch;
+
+        giEmissionFunded[taskAuditor][gi] = true;
         totalEmitted += amount;
 
         // Advance epoch counter before external calls (CEI).
-        _advanceEpoch();
+        _advanceEpoch(state);
 
         // Mint → approve → deposit.
         coordinator.mintEmission(address(this), amount);
         dinToken.safeIncreaseAllowance(taskAuditor, amount);
         IDINTaskAuditor(taskAuditor).depositRewards(gi, amount);
 
-        emit GIFunded(gi, taskAuditor, amount, currentEpoch > 0 ? currentEpoch - 1 : 0);
+        emit GIFunded(gi, taskAuditor, amount, epochFunded);
         return amount;
     }
 
     // ── View helpers ──────────────────────────────────────────────────────
 
-    /// @notice Returns the emission amount for the current epoch.
-    ///         Returns 0 when emission is exhausted.
-    function emissionForCurrentEpoch() external view returns (uint256) {
-        if (currentEpoch >= maxEpochs) return 0;
-        return currentEmissionPerGI;
+    /// @notice Returns the emission amount for taskAuditor's (model's)
+    ///         current epoch. Returns initialEmissionPerGI for a taskAuditor
+    ///         that hasn't funded a GI yet, and 0 once its schedule is
+    ///         exhausted.
+    function emissionForCurrentEpoch(address taskAuditor) external view returns (uint256) {
+        EmissionState storage state = emissionState[taskAuditor];
+        if (!state.started) return initialEmissionPerGI;
+        if (state.currentEpoch >= maxEpochs) return 0;
+        return state.currentEmissionPerGI;
     }
 
     /// @notice Computes the emission amount at any future epoch index.
@@ -191,13 +225,14 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     // ── Governance ────────────────────────────────────────────────────────
 
     /// @notice Updates all four emission schedule parameters.
-    ///         Takes effect from the NEXT epoch boundary — the current epoch's
-    ///         per-GI emission (currentEmissionPerGI) is not retroactively changed.
-    ///         Resets currentEmissionPerGI to initialEmissionPerGI_ so the new
-    ///         schedule starts fresh.
-    /// @dev Intentionally resets the epoch counters so the new schedule is
-    ///      predictable. DAO should time this call at an epoch boundary if
-    ///      continuity matters.
+    ///         Takes effect from each taskAuditor's NEXT fundGI() call — an
+    ///         already-started model's in-flight currentEpoch/
+    ///         currentEmissionPerGI progress is not retroactively reset here
+    ///         (per-model progress lives in a mapping and isn't centrally
+    ///         enumerable on-chain); a taskAuditor that hasn't funded a GI
+    ///         yet picks up initialEmissionPerGI_ on its first call.
+    /// @dev DAO should time this call at an epoch boundary for models
+    ///      already in progress if continuity matters.
     function setEmissionParams(
         uint256 initialEmissionPerGI_,
         uint256 decayBps_,
@@ -209,23 +244,20 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
         decayBps = decayBps_;
         epochLength = epochLength_;
         maxEpochs = maxEpochs_;
-        currentEpoch = 0;
-        gisInCurrentEpoch = 0;
-        currentEmissionPerGI = initialEmissionPerGI_;
         emit EmissionParamsUpdated(initialEmissionPerGI_, decayBps_, epochLength_, maxEpochs_);
     }
 
     // ── Internal ──────────────────────────────────────────────────────────
 
-    function _advanceEpoch() internal {
-        gisInCurrentEpoch++;
-        if (gisInCurrentEpoch >= epochLength) {
-            gisInCurrentEpoch = 0;
-            currentEpoch++;
-            if (currentEpoch < maxEpochs) {
-                currentEmissionPerGI = (currentEmissionPerGI * decayBps) / 10_000;
+    function _advanceEpoch(EmissionState storage state) internal {
+        state.gisInCurrentEpoch++;
+        if (state.gisInCurrentEpoch >= epochLength) {
+            state.gisInCurrentEpoch = 0;
+            state.currentEpoch++;
+            if (state.currentEpoch < maxEpochs) {
+                state.currentEmissionPerGI = (state.currentEmissionPerGI * decayBps) / 10_000;
             } else {
-                currentEmissionPerGI = 0;
+                state.currentEmissionPerGI = 0;
             }
         }
     }

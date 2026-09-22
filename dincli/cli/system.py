@@ -795,9 +795,12 @@ def din_info(ctx: typer.Context,
     stake: bool = typer.Option(False, "--stake", help="Show staking contract"),
     representative: bool = typer.Option(False, "--representative", help="Show representative logic"),
     registry: bool = typer.Option(False, "--registry", help="Show registry contract"),
-    
+    treasury: bool = typer.Option(False, "--treasury", help="Show treasury contract"),
+    fee_router: bool = typer.Option(False, "--fee-router", help="Show fee router contract"),
+    emission: bool = typer.Option(False, "--emission", help="Show emission contract"),
+
 ):
-    
+
     # Resolve effective network
     effective_network, _, _, console = ctx.obj.get_en_w3_account_console()
 
@@ -814,13 +817,25 @@ def din_info(ctx: typer.Context,
         console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
     if registry:
         console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
+    if treasury:
+        console.print(f"[blue]Treasury:[/blue] {data.get('treasury', 'N/A')}")
+    if fee_router:
+        console.print(f"[blue]Fee Router:[/blue] {data.get('fee_router', 'N/A')}")
+    if emission:
+        console.print(f"[blue]Emission:[/blue] {data.get('emission', 'N/A')}")
 
-    if not any([coordinator, token, stake, representative, registry]):
+    if not any([coordinator, token, stake, representative, registry, treasury, fee_router, emission]):
         console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
         console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
         console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
         console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
         console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
+        if data.get("treasury"):
+            console.print(f"[blue]Treasury:[/blue] {data.get('treasury')}")
+        if data.get("fee_router"):
+            console.print(f"[blue]Fee Router:[/blue] {data.get('fee_router')}")
+        if data.get("emission"):
+            console.print(f"[blue]Emission:[/blue] {data.get('emission')}")
 
 
 # ---------------------------------------------------------------------------
@@ -868,12 +883,14 @@ _DEPLOYMENTS_TO_DIN_INFO = {
     "dinModelRegistry": "registry",
     "dinTreasury": "treasury",
     "dinFeeRouter": "fee_router",
+    "dinEmission": "emission",
     "proxyAdminToken": "proxy_admin_token",
     "proxyAdminCoordinator": "proxy_admin_coordinator",
     "proxyAdminStake": "proxy_admin_stake",
     "proxyAdminRegistry": "proxy_admin_registry",
     "proxyAdminTreasury": "proxy_admin_treasury",
     "proxyAdminFeeRouter": "proxy_admin_fee_router",
+    "proxyAdminEmission": "proxy_admin_emission",
 }
 _REQUIRED_DEPLOYMENT_KEYS = ("dinToken", "dinCoordinator", "dinValidatorStake", "dinModelRegistry")
 
@@ -906,18 +923,19 @@ def import_deployments(ctx: typer.Context,
       cd hardhat && npx hardhat run scripts/deploy-platform.ts --network localhost
       dincli system import-deployments --hardhat
 
-    Foundry writes 12 keys (6 contracts + 6 proxy admins, including
-    dinTreasury and dinFeeRouter added in PR #51); hardhat still writes
-    the four-contract shape — both toolchains use per-contract proxyAdmin
-    keys, but hardhat predates PR #51 and carries no treasury or fee-router
+    Foundry writes 14 keys (7 contracts + 7 proxy admins, including
+    dinTreasury and dinFeeRouter added in PR #51 and dinEmission added in
+    PR #148); hardhat still writes the four-contract shape — both
+    toolchains use per-contract proxyAdmin keys, but hardhat predates both
+    of those additions and carries no treasury, fee-router, or emission
     entries (consistent with hardhat being the secondary toolchain).
     Pass --file to supply an explicit path. --foundry, --hardhat, and --file
     are all mutually exclusive with each other.
 
     Only the platform address keys of the active network's din_info entry are
     updated (coordinator, token, stake, registry, treasury, fee_router,
-    proxy_admin_*); everything else (representative, explorer, default
-    CIDs, ...) is preserved.
+    emission, proxy_admin_*); everything else (representative, explorer,
+    default CIDs, ...) is preserved.
     """
     console = ctx.obj.console
     effective_network = ctx.obj.network
@@ -976,6 +994,8 @@ def import_deployments(ctx: typer.Context,
         console.print(f"[blue]Treasury:[/blue] {entry.get('treasury')}")
     if entry.get("fee_router"):
         console.print(f"[blue]Fee Router:[/blue] {entry.get('fee_router')}")
+    if entry.get("emission"):
+        console.print(f"[blue]Emission:[/blue] {entry.get('emission')}")
     for _label, _key in [
         ("Proxy Admin (token)", "proxy_admin_token"),
         ("Proxy Admin (coordinator)", "proxy_admin_coordinator"),
@@ -983,6 +1003,7 @@ def import_deployments(ctx: typer.Context,
         ("Proxy Admin (registry)", "proxy_admin_registry"),
         ("Proxy Admin (treasury)", "proxy_admin_treasury"),
         ("Proxy Admin (fee router)", "proxy_admin_fee_router"),
+        ("Proxy Admin (emission)", "proxy_admin_emission"),
     ]:
         if entry.get(_key):
             console.print(f"[magenta]{_label}:[/magenta] {entry[_key]}")

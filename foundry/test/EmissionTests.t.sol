@@ -147,9 +147,10 @@ contract EmissionTests is Test {
         for (uint256 gi = 1; gi <= EPOCH_LENGTH; gi++) {
             emission.fundGI(gi, address(auditor));
         }
-        assertEq(emission.currentEpoch(), 1);
+        (uint256 currentEpoch,, uint256 currentEmissionPerGI,) = emission.emissionState(address(auditor));
+        assertEq(currentEpoch, 1);
         uint256 expected = (INITIAL_EMISSION * DECAY_BPS) / 10_000; // 80 DIN
-        assertEq(emission.currentEmissionPerGI(), expected, "epoch 1 emission should be 80 DIN");
+        assertEq(currentEmissionPerGI, expected, "epoch 1 emission should be 80 DIN");
     }
 
     function test_decaySchedule_multipleEpochs() public {
@@ -157,10 +158,11 @@ contract EmissionTests is Test {
         for (uint256 gi = 1; gi <= EPOCH_LENGTH * 3; gi++) {
             emission.fundGI(gi, address(auditor));
         }
-        assertEq(emission.currentEpoch(), 3);
+        (uint256 currentEpoch,, uint256 currentEmissionPerGI,) = emission.emissionState(address(auditor));
+        assertEq(currentEpoch, 3);
         // 100 * 0.8^3 = 51.2 DIN → integer: 100 * 8000/10000 * 8000/10000 * 8000/10000
         uint256 expected = (((INITIAL_EMISSION * DECAY_BPS) / 10_000) * DECAY_BPS / 10_000) * DECAY_BPS / 10_000;
-        assertEq(emission.currentEmissionPerGI(), expected);
+        assertEq(currentEmissionPerGI, expected);
     }
 
     function test_emissionAtEpoch_matchesFormula() public view {
@@ -180,7 +182,8 @@ contract EmissionTests is Test {
         for (uint256 gi = 1; gi <= EPOCH_LENGTH * MAX_EPOCHS; gi++) {
             emission.fundGI(gi, address(auditor));
         }
-        assertEq(emission.currentEpoch(), MAX_EPOCHS);
+        (uint256 currentEpoch,,,) = emission.emissionState(address(auditor));
+        assertEq(currentEpoch, MAX_EPOCHS);
         vm.expectRevert(DinEmission.EmissionExhausted.selector);
         emission.fundGI(EPOCH_LENGTH * MAX_EPOCHS + 1, address(auditor));
     }
@@ -189,7 +192,7 @@ contract EmissionTests is Test {
         for (uint256 gi = 1; gi <= EPOCH_LENGTH * MAX_EPOCHS; gi++) {
             emission.fundGI(gi, address(auditor));
         }
-        assertEq(emission.emissionForCurrentEpoch(), 0);
+        assertEq(emission.emissionForCurrentEpoch(address(auditor)), 0);
     }
 
     // ── mintCap respected ────────────────────────────────────────────────
@@ -217,17 +220,43 @@ contract EmissionTests is Test {
 
     // ── setEmissionParams ────────────────────────────────────────────────
 
-    function test_setEmissionParams_resetsSchedule() public {
-        // Fund a few GIs first.
+    // NOTE: setEmissionParams updates only the four global schedule constants.
+    // It deliberately does NOT reset any taskAuditor's in-flight progress —
+    // that progress now lives in a per-taskAuditor mapping and isn't
+    // centrally enumerable on-chain (see DinEmission.setEmissionParams's
+    // natspec). Split into two tests covering both halves of that contract.
+
+    function test_setEmissionParams_doesNotResetInProgressAuditor() public {
+        // Fund a few GIs first — auditor has already "started".
         emission.fundGI(1, address(auditor));
         emission.fundGI(2, address(auditor));
 
         vm.prank(admin);
         emission.setEmissionParams(200e18, 9000, 5, 3);
 
-        assertEq(emission.currentEpoch(), 0);
-        assertEq(emission.gisInCurrentEpoch(), 0);
-        assertEq(emission.currentEmissionPerGI(), 200e18);
+        // Already-started auditor's own progress is untouched by the new
+        // params — no retroactive reset.
+        (uint256 currentEpoch, uint256 gisInCurrentEpoch, uint256 currentEmissionPerGI,) =
+            emission.emissionState(address(auditor));
+        assertEq(currentEpoch, 0);
+        assertEq(gisInCurrentEpoch, 2);
+        assertEq(currentEmissionPerGI, INITIAL_EMISSION);
+    }
+
+    function test_setEmissionParams_appliesToFreshAuditorOnFirstFundGI() public {
+        vm.prank(admin);
+        emission.setEmissionParams(200e18, 9000, 5, 3);
+
+        // A taskAuditor that hasn't funded a GI yet picks up the new
+        // schedule on its first call.
+        MockTaskAuditorReal freshAuditor = new MockTaskAuditorReal(token);
+        emission.fundGI(1, address(freshAuditor));
+
+        (uint256 currentEpoch, uint256 gisInCurrentEpoch, uint256 currentEmissionPerGI,) =
+            emission.emissionState(address(freshAuditor));
+        assertEq(currentEpoch, 0);
+        assertEq(gisInCurrentEpoch, 1);
+        assertEq(currentEmissionPerGI, 200e18);
     }
 
     function test_setEmissionParams_invalidRevertsZeroInitial() public {
@@ -279,5 +308,47 @@ contract EmissionTests is Test {
             INITIAL_EMISSION + externalDeposit,
             "pool should be emission + external without double-counting"
         );
+    }
+
+    // ── Cross-model isolation (regression) ────────────────────────────────
+    //
+    // giEmissionFunded and the epoch/decay counters used to be single global
+    // values, so two unrelated models' identically-numbered GIs collided —
+    // only the first model to call fundGI for a given number could ever
+    // succeed, and one model's cadence silently sped up every other model's
+    // decay schedule. These regression-test the per-taskAuditor fix.
+
+    function test_crossModel_identicalGiNumbersDoNotCollide() public {
+        // Model A funds its own "GI 1".
+        emission.fundGI(1, address(auditor));
+
+        // Model B is a different taskAuditor with its own, unrelated "GI 1"
+        // — must succeed, not revert with GIAlreadyFunded.
+        MockTaskAuditorReal auditorB = new MockTaskAuditorReal(token);
+        emission.fundGI(1, address(auditorB));
+
+        assertEq(auditor.giRewardPool(1), INITIAL_EMISSION, "model A's GI 1 funded");
+        assertEq(auditorB.giRewardPool(1), INITIAL_EMISSION, "model B's GI 1 funded independently");
+    }
+
+    function test_crossModel_independentDecaySchedules() public {
+        // Model A advances through a full epoch (EPOCH_LENGTH GIs) alone.
+        for (uint256 gi = 1; gi <= EPOCH_LENGTH; gi++) {
+            emission.fundGI(gi, address(auditor));
+        }
+        (uint256 epochA,,,) = emission.emissionState(address(auditor));
+        assertEq(epochA, 1, "model A should be in epoch 1 after EPOCH_LENGTH GIs");
+
+        // Model B has funded nothing yet — its schedule must be untouched by
+        // model A's progress (no shared global counter).
+        MockTaskAuditorReal auditorB = new MockTaskAuditorReal(token);
+        (uint256 epochB,,, bool startedB) = emission.emissionState(address(auditorB));
+        assertEq(epochB, 0, "model B's schedule is unaffected by model A's progress");
+        assertFalse(startedB, "model B hasn't started yet");
+
+        // Model B's first GI still gets the full epoch-0 rate, not model
+        // A's already-decayed rate.
+        emission.fundGI(1, address(auditorB));
+        assertEq(auditorB.giRewardPool(1), INITIAL_EMISSION, "model B starts at epoch-0 rate independently");
     }
 }
