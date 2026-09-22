@@ -19,6 +19,12 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
+import "../src/DINShared.sol" as Shared;
+
+// Pull the custom errors into scope so vm.expectRevert(Error.selector) compiles.
+error TC_DisputeNotAwaitingRecomputation();
+error TC_ResolutionWindowOpen();
+error TC_DisputeAlreadyFinalized();
 
 contract DisputeResolutionTest is Test {
     DinToken tokenImpl;
@@ -245,6 +251,111 @@ contract DisputeResolutionTest is Test {
         tc.finalizeT1Aggregation(1);
     }
 
+    /// @dev Same as `_runToT1Finalized`, except one of the disputed batch's
+    ///      3 assigned aggregators submits a different CID than the other
+    ///      two. The majority CID (WINNING_CID, 2 votes) still finalizes the
+    ///      batch, but this leaves an honest dissenter in `b.aggregators`
+    ///      whose own submission never matched `finalCID` -- the scenario
+    ///      `test_settleRecomputation_confirmed_onlyMatchingSubmittersSlashed`
+    ///      exercises. Returns the dissenter's address.
+    function _runToT1FinalizedWithDissent(
+        uint256 numAggregators
+    ) internal returns (address dissenter) {
+        _deployPlatform();
+        _deployTaskPair();
+
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        _fundAndStake(auditor3);
+
+        address[] memory aggs = new address[](numAggregators);
+        for (uint i = 0; i < numAggregators; i++) {
+            aggs[i] = makeAddr(string(abi.encodePacked("dissentAgg", i)));
+            _fundAndStake(aggs[i]);
+        }
+
+        vm.prank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        for (uint i = 0; i < numAggregators; i++) {
+            vm.prank(aggs[i]);
+            tc.registerDINaggregator(1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(100)), 1);
+        vm.prank(client2);
+        ta.submitLocalModel(bytes32(uint256(200)), 1);
+        vm.prank(client3);
+        ta.submitLocalModel(bytes32(uint256(300)), 1);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        tc.createAuditorsBatches(1);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta
+            .getAuditorsBatch(1, 0);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                bytes32 commitHash = keccak256(
+                    abi.encodePacked(uint256(100), true, TEST_SALT)
+                );
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 100, true, TEST_SALT);
+            }
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        tc.autoCreateTier1AndTier2(1);
+        tc.startT1Aggregation(1);
+        vm.stopPrank();
+
+        // 2 of the 3 assigned aggregators vote WINNING_CID; the 3rd (the
+        // dissenter) votes a different CID. WINNING_CID still wins 2-1.
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+        dissenter = t1aggs[2];
+        for (uint i = 0; i < t1aggs.length; i++) {
+            bytes32 cid = t1aggs[i] == dissenter
+                ? bytes32(uint256(0xBAD))
+                : WINNING_CID;
+            vm.prank(t1aggs[i]);
+            tc.submitT1Aggregation(1, 0, cid);
+        }
+
+        vm.prank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Setters
     // ─────────────────────────────────────────────────────────────────────
@@ -273,7 +384,7 @@ contract DisputeResolutionTest is Test {
 
         vm.prank(challenger);
         vm.expectRevert();
-        tc.setDisputeParams(50 ether, 2 days);
+        tc.setDisputeParams(50 ether, 2 days, 3 days);
     }
 
     function test_setDisputeParams_rejectsZeroValues() public {
@@ -282,10 +393,13 @@ contract DisputeResolutionTest is Test {
 
         vm.startPrank(modelOwner);
         vm.expectRevert(); // TC_InvalidDisputeParams
-        tc.setDisputeParams(0, 2 days);
+        tc.setDisputeParams(0, 2 days, 3 days);
 
         vm.expectRevert(); // TC_InvalidDisputeParams
-        tc.setDisputeParams(50 ether, 0);
+        tc.setDisputeParams(50 ether, 0, 3 days);
+
+        vm.expectRevert(); // TC_InvalidDisputeParams
+        tc.setDisputeParams(50 ether, 2 days, 0);
         vm.stopPrank();
     }
 
@@ -294,10 +408,11 @@ contract DisputeResolutionTest is Test {
         _deployTaskPair();
 
         vm.prank(modelOwner);
-        tc.setDisputeParams(50 ether, 2 days);
+        tc.setDisputeParams(50 ether, 2 days, 3 days);
 
         assertEq(tc.disputeBond(), 50 ether);
         assertEq(tc.disputeWindow(), 2 days);
+        assertEq(tc.resolutionWindow(), 3 days);
     }
 
     function test_setTreasuryAddress_rejectsZeroAddress() public {
@@ -327,15 +442,19 @@ contract DisputeResolutionTest is Test {
             address disputeChallenger,
             uint256 bond,
             uint64 openedAt,
+            uint64 resolutionDeadline,
             bool resolved,
-            bool upheld
+            bool upheld,
+            bool finalized
         ) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
 
         assertEq(disputeChallenger, challenger);
         assertEq(bond, tc.disputeBond());
         assertEq(openedAt, block.timestamp);
+        assertEq(resolutionDeadline, 0);
         assertFalse(resolved);
         assertFalse(upheld);
+        assertFalse(finalized);
         assertEq(token.balanceOf(challenger), balanceBefore - tc.disputeBond());
         assertEq(token.balanceOf(address(tc)), tc.disputeBond());
     }
@@ -392,7 +511,7 @@ contract DisputeResolutionTest is Test {
     // resolveDispute
     // ─────────────────────────────────────────────────────────────────────
 
-    function test_resolveDispute_upheld_creditsBondClaimableAndAssignsFreshSubgroup()
+    function test_resolveDispute_upheld_assignsFreshSubgroupAndSetsDeadline()
         public
     {
         _runToT1Finalized(6); // 3 in the disputed batch, 3 excludable
@@ -402,11 +521,18 @@ contract DisputeResolutionTest is Test {
         vm.prank(challenger);
         tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
 
+        uint64 before = uint64(block.timestamp);
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
 
-        assertEq(tc.disputeBondClaimable(challenger), tc.disputeBond());
+        // Bond is NOT claimable yet — deferred to settleRecomputation / expireDispute.
+        assertEq(tc.disputeBondClaimable(challenger), 0);
 
+        // Resolution deadline was set.
+        (,,, uint64 deadline,,, ) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        assertEq(deadline, before + tc.resolutionWindow());
+
+        // Fresh subgroup excludes the accused batch.
         (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
         for (uint i = 0; i < originalAggs.length; i++) {
             assertFalse(
@@ -414,7 +540,7 @@ contract DisputeResolutionTest is Test {
                 "fresh subgroup must exclude the accused batch's aggregators"
             );
         }
-        assertEq(_freshSubgroupOf(1, 0).length, 3); // T1_AGGREGATORS_PER_BATCH
+        assertEq(_freshSubgroupOf(1, 0).length, 3);
     }
 
     function test_resolveDispute_upheld_revertsIfNotEnoughEligibleAggregators()
@@ -500,6 +626,10 @@ contract DisputeResolutionTest is Test {
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
 
+        // Settle with confirmed=true so bond becomes claimable.
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
         vm.prank(challenger);
         tc.claimDisputeBond();
 
@@ -514,6 +644,225 @@ contract DisputeResolutionTest is Test {
         vm.prank(challenger);
         vm.expectRevert(); // TC_NoBondClaimable
         tc.claimDisputeBond();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // settleRecomputation
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_settleRecomputation_confirmed_returnsBondAndSlashesOriginals() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+        uint256[] memory stakesBefore = new uint256[](originalAggs.length);
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (stakesBefore[i], , , , ) = stake.validators(originalAggs[i]);
+        }
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Bond claimable after confirmed settlement.
+        assertEq(tc.disputeBondClaimable(challenger), tc.disputeBond());
+
+        // Original aggregators slashed (stake reduced).
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (uint256 stakeAfter, , , , ) = stake.validators(originalAggs[i]);
+            assertLt(stakeAfter, stakesBefore[i], "original agg should be slashed");
+        }
+    }
+
+    /// @dev Regression for the blanket-slash defect found in review: a
+    ///      dissenting aggregator who submitted a *different* CID than the
+    ///      disputed majority must not be slashed when settleRecomputation
+    ///      confirms the majority was wrong -- only the matching submitters
+    ///      (who actually produced the bad CID) are at fault.
+    function test_settleRecomputation_confirmed_onlyMatchingSubmittersSlashed()
+        public
+    {
+        address dissenter = _runToT1FinalizedWithDissent(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+        uint256[] memory stakesBefore = new uint256[](originalAggs.length);
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (stakesBefore[i], , , , ) = stake.validators(originalAggs[i]);
+        }
+        (uint256 dissenterStakeBefore, , , , ) = stake.validators(dissenter);
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // The two aggregators who actually submitted the disputed (winning)
+        // CID are slashed; the dissenter, who submitted something else, is not.
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (uint256 stakeAfter, , , , ) = stake.validators(originalAggs[i]);
+            if (originalAggs[i] == dissenter) {
+                assertEq(
+                    stakeAfter,
+                    stakesBefore[i],
+                    "dissenter must not be slashed for S4_INVALID_AGGREGATION"
+                );
+            } else {
+                assertLt(
+                    stakeAfter,
+                    stakesBefore[i],
+                    "matching submitter should be slashed"
+                );
+            }
+        }
+        (uint256 dissenterStakeAfter, , , , ) = stake.validators(dissenter);
+        assertEq(dissenterStakeAfter, dissenterStakeBefore);
+    }
+
+    function test_settleRecomputation_notConfirmed_forfeitsBond() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        uint256 treasuryBefore = tc.treasuryAccrued();
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        assertEq(tc.disputeBondClaimable(challenger), 0);
+        assertEq(tc.treasuryAccrued(), treasuryBefore + tc.disputeBond());
+    }
+
+    function test_settleRecomputation_requiresAwaitingRecomputation_reverts() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        // No dispute opened — settleRecomputation should revert.
+        vm.prank(modelOwner);
+        vm.expectRevert(TC_DisputeNotAwaitingRecomputation.selector);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Dispute opened but immediately rejected (upheld=false) — also not awaiting.
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(TC_DisputeNotAwaitingRecomputation.selector);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+    }
+
+    function test_settleRecomputation_cannotSettleTwice() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.startPrank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.expectRevert(TC_DisputeAlreadyFinalized.selector);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+        vm.stopPrank();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // expireDispute
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_expireDispute_afterDeadline_returnsBondAndSlashesFreshSubgroup()
+        public
+    {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        address[] memory freshSubgroup = _freshSubgroupOf(1, 0);
+        uint256[] memory freshStakesBefore = new uint256[](freshSubgroup.length);
+        for (uint i = 0; i < freshSubgroup.length; i++) {
+            (freshStakesBefore[i], , , , ) = stake.validators(freshSubgroup[i]);
+        }
+
+        // Advance past the resolution window.
+        vm.warp(block.timestamp + tc.resolutionWindow() + 1);
+
+        tc.expireDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // Challenger bond returned.
+        assertEq(tc.disputeBondClaimable(challenger), tc.disputeBond());
+
+        // Fresh subgroup slashed for timeout.
+        for (uint i = 0; i < freshSubgroup.length; i++) {
+            (uint256 stakeAfter, , , , ) = stake.validators(freshSubgroup[i]);
+            assertLt(stakeAfter, freshStakesBefore[i], "fresh subgroup should be slashed");
+        }
+    }
+
+    function test_expireDispute_beforeDeadline_reverts() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Still within the resolution window.
+        vm.expectRevert(TC_ResolutionWindowOpen.selector);
+        tc.expireDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function test_expireDispute_cannotExpireIfAlreadySettled() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.warp(block.timestamp + tc.resolutionWindow() + 1);
+
+        vm.expectRevert(TC_DisputeAlreadyFinalized.selector);
+        tc.expireDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
     }
 
     // ─────────────────────────────────────────────────────────────────────
