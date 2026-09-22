@@ -81,6 +81,18 @@ interface IDinValidatorStake {
 
     /// @dev Network-wide cap: max concurrent registrations per MIN_STAKE unit of stake.
     function maxConcurrentRegistrationsPerStakeUnit() external view returns (uint256);
+
+    function slashPartial(
+        address validator,
+        uint256 amount,
+        bytes32 reason,
+        uint256 giIndex
+    ) external returns (uint256);
+
+    function recordNoParticipation(
+        address validator,
+        bytes32 reason
+    ) external returns (uint256);
 }
 
 interface IDINTaskCoordinator {
@@ -202,6 +214,7 @@ error TA_RegistrationCapReached();
 error TA_CannotSlashAuditors();
 /// @dev S3 deviation threshold must be in the range [0, 100].
 error TA_InvalidDeviationThreshold();
+error TA_InvalidSlashFraction();
 /// @dev _medianOf requires at least one entry to compute a median over.
 error TA_EmptyScoreSet();
 /// @dev No X25519 encryption key registered for this auditor on DinValidatorStake.
@@ -369,3 +382,4 @@ error TC_ConcurrentRegistrationCapReached();
 error TA_StakeBelowModelFloor();
 /// @dev Auditor already holds the maximum concurrent registrations permitted by their stake.
 error TA_ConcurrentRegistrationCapReached();
+error TC_InvalidSlashFraction();
