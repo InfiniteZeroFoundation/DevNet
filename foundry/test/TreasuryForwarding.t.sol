@@ -285,7 +285,7 @@ contract TreasuryForwardingTest is Test {
         _runFullGI(10_000 ether);
 
         vm.prank(modelOwner);
-        tc.setDisputeParams(bondOverride, 1 days);
+        tc.setDisputeParams(bondOverride, 1 days, 2 days);
 
         uint256 bond = _openDispute();
         assertEq(bond, bondOverride);
@@ -318,7 +318,14 @@ contract TreasuryForwardingTest is Test {
         // No burn, no treasury transfer on upheld
         assertEq(token.totalSupply(), supplyBefore, "no burn on upheld");
         assertEq(token.balanceOf(treasury), 0, "no treasury transfer on upheld");
-        assertEq(tc.disputeBondClaimable(challenger), bond, "challenger claimable == bond");
+
+        // Bond credit is deferred to settleRecomputation()/expireDispute()
+        // (S4 second-phase state machine) rather than paid here.
+        assertEq(tc.disputeBondClaimable(challenger), 0, "claimable deferred until settled");
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+        assertEq(tc.disputeBondClaimable(challenger), bond, "challenger claimable == bond after settlement");
     }
 
     // ── settleRewards: treasury share forwarded ───────────────────────────────
