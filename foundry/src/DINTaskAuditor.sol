@@ -1338,8 +1338,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                         s1Amount,
                         actualSlashed
                     );
-                    // S6: accumulate no-participation counter across GIs.
-                    dinvalidatorStakeContract.recordNoParticipation(auditor, "S6_NO_PARTICIPATION");
+                    // No S6 recordNoParticipation here: slashPartial above already
+                    // penalises this missed vote (S1, escalating to S5 on repeat).
+                    // Also firing S6 on the same event could slash more than
+                    // MIN_STAKE in one event (S1/S5 + S6 stacking).
                 } else if (exceededDeviation) {
                     // S3: full-severity slash (dishonesty fault, not liveness).
                     uint256 actualSlashed = dinvalidatorStakeContract.slash(

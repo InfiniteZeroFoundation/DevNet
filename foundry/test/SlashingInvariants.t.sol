@@ -508,8 +508,10 @@ contract SlashingInvariantsTest is StdInvariant, Test {
         (, , , uint64 jailedUntil, ) = stake.validators(validator1);
         assertGt(jailedUntil, block.timestamp, "validator jailed after S5 escalation");
 
-        // Ring should be cleared after escalation.
-        uint256[] memory ring = stake.getPartialSlashGIs(validator1);
+        // Ring should be cleared after escalation. Ring is namespaced per calling
+        // slasher contract (see DinValidatorStake._partialSlashGIs), so pass `slasher`
+        // — the address that pranked the slashPartial calls above.
+        uint256[] memory ring = stake.getPartialSlashGIs(validator1, slasher);
         assertEq(ring.length, 0, "ring cleared after escalation");
     }
 
@@ -530,7 +532,8 @@ contract SlashingInvariantsTest is StdInvariant, Test {
         uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 6);
         assertEq(actual, partialAmt, "window expiry: count resets, partial amount applied");
 
-        uint256[] memory ring = stake.getPartialSlashGIs(validator1);
+        // Ring is namespaced per calling slasher contract — see note above.
+        uint256[] memory ring = stake.getPartialSlashGIs(validator1, slasher);
         assertEq(ring.length, 2, "ring has 2 entries after trim: [2, 6]");
     }
 

@@ -104,21 +104,6 @@ contract DinValidatorStake is
     event MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256 value);
     event SlashTreasuryUpdated(address indexed treasury);
     event EncryptionKeyRegistered(address indexed validator, bytes pubkey);
-    event S5RecidivismParamsUpdated(uint256 window, uint256 threshold, uint256 jailDuration);
-    event ValidatorEscalatedS5(
-        address indexed validator,
-        uint256 slashedAmount,
-        uint256 giIndex,
-        address indexed slasher
-    );
-    event S6ParamsUpdated(uint256 threshold);
-    event S6NoParticipationRecorded(
-        address indexed validator,
-        uint256 count,
-        bytes32 reason,
-        address indexed slasher
-    );
-    event S6PartialSlashFired(address indexed validator, uint256 slashedAmount, address indexed slasher);
 
     mapping(address => ValidatorInfo) public validators;
 
@@ -148,9 +133,25 @@ contract DinValidatorStake is
     uint256 public s5RecidivismThreshold;
     /// @notice Jail duration (seconds) applied on S5 escalation.
     uint256 public s5JailDuration;
-    /// @dev Per-validator ordered list of GI indices at which a partial slash
-    ///      was recorded. Entries older than s5RecidivismWindow GIs are trimmed.
-    mapping(address => uint256[]) private _partialSlashGIs;
+    /// @dev Per-validator, per-calling-slasher-contract ordered list of GI
+    ///      indices at which a partial slash was recorded. Entries older than
+    ///      s5RecidivismWindow GIs are trimmed. Namespaced by msg.sender (the
+    ///      calling task contract) rather than by validator alone: giIndex is
+    ///      a per-model counter, so a validator active in multiple models
+    ///      would otherwise push non-monotonic values into a single shared
+    ///      ring and underflow the ascending-order trim in
+    ///      _trimAndRecordPartialSlash. Each calling model's GI sequence is
+    ///      independently monotonic, so keying by [validator][msg.sender]
+    ///      keeps the ascending-order assumption safe.
+    mapping(address => mapping(address => uint256[])) private _partialSlashGIs;
+
+    event S5RecidivismParamsUpdated(uint256 window, uint256 threshold, uint256 jailDuration);
+    event ValidatorEscalatedS5(
+        address indexed validator,
+        uint256 slashedAmount,
+        uint256 giIndex,
+        address indexed slasher
+    );
 
     // ── S6 — Registration-without-capacity counter ─────────────────────────
     /// @notice Number of no-participation GIs that triggers an escalating
@@ -160,8 +161,17 @@ contract DinValidatorStake is
     ///         never submitted anything (reported by slasher contracts).
     mapping(address => uint256) public s6NoParticipationCount;
 
+    event S6ParamsUpdated(uint256 threshold);
+    event S6NoParticipationRecorded(
+        address indexed validator,
+        uint256 count,
+        bytes32 reason,
+        address indexed slasher
+    );
+    event S6PartialSlashFired(address indexed validator, uint256 slashedAmount, address indexed slasher);
+
     // Reserved for future state variables at this inheritance level.
-    uint256[44] private __gap;
+    uint256[50] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -270,14 +280,16 @@ contract DinValidatorStake is
     /// @notice Partial-severity slash for S1/S2 liveness faults, with S5
     ///         recidivism tracking. Applies a fraction of MIN_STAKE rather than
     ///         the full amount. If the validator's partial-slash count within
-    ///         s5RecidivismWindow GIs reaches s5RecidivismThreshold, the slash
+    ///         s5RecidivismWindow GIs (tracked per calling slasher contract,
+    ///         see _partialSlashGIs) reaches s5RecidivismThreshold, the slash
     ///         is automatically escalated to MIN_STAKE and the validator is jailed.
     /// @param validator Address of the validator to slash.
     /// @param amount Partial slash amount (computed by the calling task contract
     ///        as a fraction of minStake). Ignored on S5 escalation — full MIN_STAKE
     ///        is used instead.
     /// @param reason Reason code emitted on-chain (e.g. "AUD_NO_VOTE").
-    /// @param giIndex Current GI index, used for the rolling recidivism window.
+    /// @param giIndex Current GI index (in the calling task contract's own GI
+    ///        sequence), used for the rolling recidivism window.
     /// @return The actual amount slashed.
     function slashPartial(
         address validator,
@@ -289,18 +301,20 @@ contract DinValidatorStake is
         if (amount == 0) revert InvalidSlashAmount();
 
         // Record this partial slash and trim entries outside the window.
+        // Namespaced by msg.sender (the calling task contract) — see
+        // _partialSlashGIs and _trimAndRecordPartialSlash for why.
         _trimAndRecordPartialSlash(validator, giIndex);
 
         // Count entries now in the window (includes the one just added).
-        uint256 countInWindow = _partialSlashGIs[validator].length;
+        uint256 countInWindow = _partialSlashGIs[validator][msg.sender].length;
 
         if (countInWindow >= s5RecidivismThreshold) {
             // Escalate: full MIN_STAKE slash + jail.
             uint256 escalatedAmount = _applySlash(validator, MIN_STAKE, "S5_RECIDIVISM");
             _jailInternal(validator, uint64(s5JailDuration), "S5_RECIDIVISM");
             emit ValidatorEscalatedS5(validator, escalatedAmount, giIndex, msg.sender);
-            // Clear the ring so the next GI starts a fresh window after jail exit.
-            delete _partialSlashGIs[validator];
+            // Clear this caller's ring so its next GI starts a fresh window after jail exit.
+            delete _partialSlashGIs[validator][msg.sender];
             return escalatedAmount;
         }
 
@@ -587,9 +601,16 @@ contract DinValidatorStake is
         emit S6ParamsUpdated(threshold);
     }
 
-    /// @notice Returns the partial-slash GI ring for a validator (for testing/inspection).
-    function getPartialSlashGIs(address validator) external view returns (uint256[] memory) {
-        return _partialSlashGIs[validator];
+    /// @notice Returns the partial-slash GI ring for a validator, as tracked by
+    ///         a specific calling slasher contract (for testing/inspection).
+    /// @param validator Validator address to query.
+    /// @param slasherContract The task contract whose ring to read (rings are
+    ///        namespaced per caller — see _partialSlashGIs).
+    function getPartialSlashGIs(
+        address validator,
+        address slasherContract
+    ) external view returns (uint256[] memory) {
+        return _partialSlashGIs[validator][slasherContract];
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────
@@ -648,11 +669,16 @@ contract DinValidatorStake is
         emit ValidatorJailed(validator, v.jailedUntil, reason, msg.sender);
     }
 
-    /// @dev Appends giIndex to the validator's partial-slash ring and removes
-    ///      any entries that fall outside the current s5RecidivismWindow.
-    ///      Entries are kept in ascending GI order (callers pass the current GI).
+    /// @dev Appends giIndex to the calling slasher contract's partial-slash
+    ///      ring for this validator, and removes any entries that fall
+    ///      outside the current s5RecidivismWindow. Entries are kept in
+    ///      ascending GI order (callers pass their own current GI). The ring
+    ///      is namespaced by msg.sender specifically so this ascending-order
+    ///      assumption holds: each task contract's GI sequence is independently
+    ///      monotonic, even though different models' GI counters interleave
+    ///      arbitrarily relative to each other.
     function _trimAndRecordPartialSlash(address validator, uint256 giIndex) internal {
-        uint256[] storage ring = _partialSlashGIs[validator];
+        uint256[] storage ring = _partialSlashGIs[validator][msg.sender];
         ring.push(giIndex);
 
         uint256 window = s5RecidivismWindow;

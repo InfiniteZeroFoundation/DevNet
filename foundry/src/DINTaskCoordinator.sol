@@ -890,7 +890,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                         _GI
                     );
                     emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T1_NO_SUBMISSION", s2Amount, actualSlashed);
-                    dinvalidatorStakeContract.recordNoParticipation(aggregator, "S6_NO_PARTICIPATION");
+                    // No S6 recordNoParticipation here: slashPartial above already
+                    // penalises this missed submission (S2, escalating to S5 on
+                    // repeat). Also firing S6 on the same event could slash more
+                    // than MIN_STAKE in one event (S2/S5 + S6 stacking).
                 } else {
                     bytes32 cid = t1SubmissionCID[_GI][b.batchId][aggregator];
                     if (cid != b.finalCID) {
@@ -923,7 +926,9 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                         _GI
                     );
                     emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T2_NO_SUBMISSION", s2Amount, actualSlashed);
-                    dinvalidatorStakeContract.recordNoParticipation(aggregator, "S6_NO_PARTICIPATION");
+                    // No S6 recordNoParticipation here: same rationale as the T1
+                    // branch above (S2/S5 already covers this event; avoids
+                    // stacking past MIN_STAKE).
                 } else {
                     bytes32 cid = t2SubmissionCID[_GI][b.batchId][aggregator];
                     if (cid != b.finalCID) {
