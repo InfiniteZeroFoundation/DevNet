@@ -89,7 +89,7 @@ Total weight = successful T1 agg + 2 (T2). Each T1 aggregator's share = 7.50 / t
 
 | Tier | T1 agg | T2 agg | Total weight | DIN/T1-agg/GI | DIN/T2-agg/GI | APY on 10 DIN MIN_STAKE (T1) |
 |------|--------|--------|-------------|---------------|---------------|------------------------------|
-| LOW  | 6      | 2      | 8           | 0.938         | 0.938         | 489%                         |
+| LOW  | 6      | 2      | 8           | 0.938         | 0.938         | 488%                         |
 | MID  | 10     | 2      | 12          | 0.625         | 0.625         | 325%                         |
 | HIGH | 20     | 2      | 22          | 0.341         | 0.341         | 177%                         |
 
@@ -213,13 +213,17 @@ At MID tier, 50 DIN/GI:
 
 | Config     | Per-auditor (DIN) | Per-T1-agg (DIN) |
 |------------|-------------------|------------------|
-| Agg-heavy  | 0.058             | 0.233            |
-| Aud-heavy  | 0.233             | 0.058            |
+| Agg-heavy  | 0.233             | 1.167            |
+| Aud-heavy  | 0.933             | 0.292            |
 | **Baseline** | **0.667**       | **0.625**        |
 
-Observation: at the extremes, the minority role earns less than gas costs per GI (gas for
-`revealAuditScore` at 0.005 gwei ≈ 0.00000138 ETH; DIN reward at extreme low is still
-positive in DIN terms). No role receives more than its configured pool.
+(Agg-heavy: auditorPool = 50 × 700/10000 = 3.5 DIN / 15 auditors = 0.233; aggregatorPool =
+50 × 2800/10000 = 14 DIN / weight 12 = 1.167. Aud-heavy: auditorPool = 14 DIN / 15 = 0.933;
+aggregatorPool = 3.5 DIN / weight 12 = 0.292.)
+
+Observation: at the extremes, the minority role's per-participant reward drops well below
+baseline (e.g. 0.233 DIN/auditor at Agg-heavy vs 0.667 DIN baseline — a 65% cut) but stays
+meaningfully positive in DIN terms; no role receives more than its configured pool.
 Invariants: ✅ all pass at both extremes.
 
 ### Case 9 — Max-share cap (single successful validator, full role share)
