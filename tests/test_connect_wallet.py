@@ -507,41 +507,170 @@ class TestCLICommands:
         assert "DIN_WALLET_NAME" in _plain(result.output)
 
 
-class TestFixARegression:
-    def test_demo_mode_creates_wallets_dir(self, monkeypatch):
-        bare = tempfile.mkdtemp()
+class TestConnectDemoWallet:
+    """connect-demo-wallet owns the whole demo lane — there is no separate
+    register-demo-wallet; the command both creates (with --account) and
+    connects, or just connects an already-created demo wallet by name.
+    See dincli/cli/system.py:connect_demo_wallet / _connect_registered_wallet.
+    """
+
+    def _base_monkeypatch(self, monkeypatch):
+        monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
+        monkeypatch.setattr(system_mod, "get_demo_private_key", lambda idx: [DUMMY_KEY_0, DUMMY_KEY_1][idx])
+
+    def test_one_shot_creates_wallets_dir_and_connects(self, temp_config, monkeypatch):
+        # Regression coverage for the old "demo connect creates WALLETS_DIR if
+        # missing" fix, now against connect-demo-wallet (register-wallet's demo
+        # branch was removed — see the register-wallet/connect-demo-wallet split).
+        import shutil
+        shutil.rmtree(temp_config["wallets_dir"])
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": true}')
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        self._base_monkeypatch(monkeypatch)
         try:
-            config_dir = Path(bare) / "config"
-            config_dir.mkdir()
-            (config_dir / "config.json").write_text('{"demo_mode": true}')
-            wallets_dir = config_dir / "wallets"
-            orig_config = utils_mod.CONFIG_DIR
-            orig_wallets = utils_mod.WALLETS_DIR
-            orig_wallet_file = utils_mod.WALLET_FILE
-            orig_legacy = utils_mod.LEGACY_WALLET_FILE
-            utils_mod.CONFIG_DIR = config_dir
-            utils_mod.WALLETS_DIR = wallets_dir
-            utils_mod.WALLET_FILE = config_dir / "wallet.json"
-            utils_mod.LEGACY_WALLET_FILE = config_dir / "wallet.json"
-            try:
-                monkeypatch.setattr(system_mod, "get_config", lambda key, default=None: key == "demo_mode")
-                monkeypatch.setattr(system_mod, "load_config", lambda: {"demo_mode": True})
-                monkeypatch.setattr(system_mod, "get_demo_private_key", lambda idx: DUMMY_KEY_0)
-                ctx = make_ctx()
-                system_mod.register_wallet(
-                    ctx=ctx, privatekey=None, key_file=None,
-                    account=0, keystore=None, name="default",
-                )
-                saved = wallets_dir / "wallet_default.json"
-                assert saved.exists()
-            finally:
-                utils_mod.CONFIG_DIR = orig_config
-                utils_mod.WALLETS_DIR = orig_wallets
-                utils_mod.WALLET_FILE = orig_wallet_file
-                utils_mod.LEGACY_WALLET_FILE = orig_legacy
+            result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "--account", "0"])
+            assert result.exit_code == 0, result.output
+            saved = temp_config["wallets_dir"] / "wallet_demo-default.json"
+            assert saved.exists()
+            data = json.loads(saved.read_text())
+            assert data["demo_mode"] is True
+            assert data["address"] == Account.from_key(DUMMY_KEY_0).address
+            assert utils_mod.load_config().get("wallet_name") == "demo-default"
         finally:
-            import shutil
-            shutil.rmtree(bare, ignore_errors=True)
+            utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_demo_mode_off_refuses(self, temp_config, monkeypatch):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": false}')
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        self._base_monkeypatch(monkeypatch)
+        try:
+            result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "--account", "0"])
+            assert result.exit_code == 1
+            assert "Demo mode is off" in _plain(result.output)
+            assert not (temp_config["wallets_dir"] / "wallet_demo-default.json").exists()
+        finally:
+            utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_named_one_shot_and_reconnect_without_account(self, temp_config, monkeypatch):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": true}')
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        self._base_monkeypatch(monkeypatch)
+        try:
+            result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "bob", "--account", "1"])
+            assert result.exit_code == 0, result.output
+            assert Account.from_key(DUMMY_KEY_1).address in _plain(result.output)
+
+            # Reconnect by name alone, no --account — must not re-derive/re-write.
+            before = (temp_config["wallets_dir"] / "wallet_bob.json").read_text()
+            result2 = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "bob"])
+            assert result2.exit_code == 0, result2.output
+            assert (temp_config["wallets_dir"] / "wallet_bob.json").read_text() == before
+            assert utils_mod.load_config().get("wallet_name") == "bob"
+        finally:
+            utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_reconnect_unregistered_name_exits_with_hint(self, temp_config, monkeypatch):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": true}')
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        self._base_monkeypatch(monkeypatch)
+        try:
+            result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "ghost"])
+            assert result.exit_code == 1
+            # Normalize away Rich's terminal-width line wrapping before matching.
+            plain = " ".join(_plain(result.output).split())
+            assert "not found" in plain
+            assert "connect-demo-wallet ghost --account N" in plain
+        finally:
+            utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_refuses_a_real_wallet(self, temp_config, monkeypatch):
+        self._base_monkeypatch(monkeypatch)
+        _write_encrypted_wallet(temp_config["wallets_dir"], "realacct", DUMMY_KEY_0, DUMMY_PW)
+        result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "realacct"])
+        assert result.exit_code == 1
+        plain = _plain(result.output)
+        assert "not a demo wallet" in plain
+        assert "connect-wallet realacct" in plain
+
+    def test_overwrite_guard_declined_leaves_wallet_unchanged(self, temp_config, monkeypatch):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": true}')
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        self._base_monkeypatch(monkeypatch)
+        monkeypatch.setattr(typer, "confirm", lambda *a, **k: False)
+        addr0 = _write_demo_wallet(temp_config["wallets_dir"], "demo-default", DUMMY_KEY_0)
+        try:
+            result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "--account", "1"])
+            assert result.exit_code == 0
+            assert "Aborted" in _plain(result.output)
+            data = json.loads((temp_config["wallets_dir"] / "wallet_demo-default.json").read_text())
+            assert data["address"] == addr0
+        finally:
+            utils_mod.CONFIG_FILE = orig_config_file
+
+    def test_overwrite_guard_yes_skips_confirm(self, temp_config, monkeypatch):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": true}')
+        orig_config_file = utils_mod.CONFIG_FILE
+        utils_mod.CONFIG_FILE = config_file
+        self._base_monkeypatch(monkeypatch)
+        called = []
+        monkeypatch.setattr(typer, "confirm", lambda *a, **k: called.append(True) or True)
+        _write_demo_wallet(temp_config["wallets_dir"], "demo-default", DUMMY_KEY_0)
+        try:
+            result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "--account", "1", "--yes"])
+            assert result.exit_code == 0, result.output
+            assert called == []  # confirm never invoked
+            data = json.loads((temp_config["wallets_dir"] / "wallet_demo-default.json").read_text())
+            assert data["address"] == Account.from_key(DUMMY_KEY_1).address
+        finally:
+            utils_mod.CONFIG_FILE = orig_config_file
+
+
+class TestDemoRealCrossGuards:
+    """The demo/real split enforced from both directions: connect-wallet (and
+    its deprecated alias set-wallet) refuse a demo wallet; register-wallet
+    refuses outright while demo mode is on. connect-demo-wallet's refusal of a
+    real wallet is covered by TestConnectDemoWallet.test_refuses_a_real_wallet.
+    """
+
+    def _ipfs_stub(self, monkeypatch):
+        monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
+
+    def test_connect_wallet_refuses_demo_wallet(self, temp_config, monkeypatch):
+        self._ipfs_stub(monkeypatch)
+        _write_demo_wallet(temp_config["wallets_dir"], "demo-default", DUMMY_KEY_0)
+        result = CliRunner().invoke(main_app, ["system", "connect-wallet", "demo-default"])
+        assert result.exit_code == 1
+        plain = _plain(result.output)
+        assert "is a demo wallet" in plain
+        assert "connect-demo-wallet demo-default" in plain
+
+    def test_set_wallet_refuses_demo_wallet(self, temp_config, monkeypatch):
+        self._ipfs_stub(monkeypatch)
+        _write_demo_wallet(temp_config["wallets_dir"], "demo-default", DUMMY_KEY_0)
+        result = CliRunner().invoke(main_app, ["system", "set-wallet", "demo-default"])
+        assert result.exit_code == 1
+        assert "is a demo wallet" in _plain(result.output)
+
+    def test_register_wallet_refuses_when_demo_mode_on(self, temp_config, monkeypatch):
+        self._ipfs_stub(monkeypatch)
+        monkeypatch.setattr(system_mod, "get_config", lambda key, default=None: key == "demo_mode")
+        result = CliRunner().invoke(main_app, ["system", "register-wallet", "--account", "0"])
+        assert result.exit_code == 1
+        plain = _plain(result.output)
+        assert "Demo mode is on" in plain
+        assert "connect-demo-wallet" in plain
+        assert not (temp_config["wallets_dir"] / "wallet_default.json").exists()
 
 
 class TestFixBRegression:
@@ -704,6 +833,14 @@ def _write_encrypted_wallet(wallets_dir, name, key, pw):
     wrapper = {"version": 1, "address": acct.address, "keystore": ks,
                "source": "created", "name": name}
     (wallets_dir / f"wallet_{name}.json").write_text(json.dumps(wrapper))
+    return acct.address
+
+
+def _write_demo_wallet(wallets_dir, name, key):
+    """Write a plaintext demo-format wallet (as connect-demo-wallet produces) to wallet_<name>.json; return the address."""
+    acct = Account.from_key(key)
+    data = {"address": acct.address, "private_key": key, "demo_mode": True}
+    (wallets_dir / f"wallet_{name}.json").write_text(json.dumps(data))
     return acct.address
 
 

@@ -127,9 +127,10 @@ docker compose exec din-node dincli system init
 # configure-network saves the network from the global --network flag (it is not
 # interactive; with no flag it defaults to "local"):
 docker compose exec din-node dincli --network sepolia_devnet system configure-network
-docker compose exec din-node dincli system connect-wallet         # set up your wallet
-# For a local Hardhat devnet you can instead use a plaintext demo wallet:
+docker compose exec din-node dincli system register-wallet --connect   # register + activate your wallet
+# For a local Hardhat devnet, use a plaintext demo wallet instead:
 #   docker compose exec din-node dincli system configure-demo --mode yes
+#   docker compose exec din-node dincli system connect-demo-wallet --account 0
 ```
 
 You're set. Run role commands the same way, e.g.:
@@ -262,9 +263,10 @@ $DIN_STATE_DIR/
 
 ### Dev vs production key management
 
-- **Development/testing:** Configure demo mode (`dincli system configure-demo --mode yes`)
-  or use `ETH_PRIVATE_KEY_<n>` in `.env`. These are plaintext paths — convenient,
-  but **not for production**.
+- **Development/testing:** Configure demo mode and connect a demo wallet
+  (`dincli system configure-demo --mode yes && dincli system connect-demo-wallet --account 0`),
+  or use `ETH_PRIVATE_KEY_<n>` in `.env` via `register-wallet --account <n>`. These are
+  plaintext paths — convenient, but **not for production**.
 - **Production:** Import an **encrypted keystore** using `--keystore` into a named
   account, then select it via `--wallet` or `DIN_WALLET_NAME`. See
   [wallet-setup.md](../../../Documentation/public/guides/wallet-setup.md) and

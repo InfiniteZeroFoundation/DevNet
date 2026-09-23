@@ -2,15 +2,24 @@
 
 This document describes the unit test suite for the named-wallet system in
 `dincli/cli/system.py`: the `dincli system register-wallet` command (stores
-key material under a name — this was called `connect-wallet` before the
-2026-07 register/connect split), the new `connect-wallet <name>` command
+real key material under a name — this was called `connect-wallet` before the
+2026-07 register/connect split), the `connect-wallet <name>` command
 (switches the persistent active wallet; `set-wallet` is its deprecated
-alias), the `read-wallet` / `list-accounts` / `todo` routing, and
+alias), the `connect-demo-wallet` command (the 2026-09 demo-mode split — the
+*only* command that ever touches a well-known Hardhat dev key; it both
+creates and connects, or just reconnects an already-created demo wallet by
+name), the `read-wallet` / `list-accounts` / `todo` routing, and
 the wallet helpers in `dincli/cli/utils.py` (`validate_account_name`,
 `wallet_path_for_name`, `resolve_wallet_path`, `atomic_write_wallet`,
 `load_account`, `list_accounts`, `_extract_keystore`, and the in-memory
 password cache `_get_password` / `_cache_password_in_memory` /
 `_clear_memory_cache`).
+
+`register-wallet`/`connect-wallet` (real accounts) and `connect-demo-wallet`
+(demo accounts) are mutually exclusive by construction: each refuses if
+pointed at the wrong kind of wallet, and `register-wallet` refuses outright
+while demo mode is on. There is no `register-demo-wallet` — `connect-demo-wallet`
+owns the whole demo lane.
 
 Unlike the integration harness (`tests/dincli/`, see
 [dincli-testing-guide.md](dincli-testing-guide.md)), these are pure unit
@@ -139,6 +148,36 @@ global `--wallet` flag → `DIN_WALLET_NAME` env var → config `wallet_name` �
 | `test_connect_wallet_help_documents_priority` | `connect-wallet --help` documents the resolution priority (mentions `DIN_WALLET_NAME`) |
 | `test_set_wallet_persists_config` | `set-wallet` (deprecated alias) still persists `wallet_name` and prints the deprecation notice |
 
+### `connect-demo-wallet` (`TestConnectDemoWallet`)
+
+The command both creates and connects in one shot (with `--account`), or just
+reconnects an already-created demo wallet by name. Wallet files are
+discriminated by a top-level `"demo_mode": true` key (the plaintext demo
+format never appears in the encrypted wrapper format `register-wallet`
+writes), which is what `_connect_registered_wallet`'s `require_demo`
+parameter checks.
+
+| Test | Behavior pinned down |
+|------|----------------------|
+| `test_one_shot_creates_wallets_dir_and_connects` | `--account 0` with no prior `WALLETS_DIR` creates it, writes `wallet_demo-default.json` (the default name), and connects it — regression coverage carried over from the old `register-wallet` demo-mode path |
+| `test_demo_mode_off_refuses` | With demo mode off, `--account 0` exits 1 and writes nothing |
+| `test_named_one_shot_and_reconnect_without_account` | `connect-demo-wallet bob --account 1` creates+connects `bob`; a later `connect-demo-wallet bob` (no `--account`) reconnects it without rewriting the file |
+| `test_reconnect_unregistered_name_exits_with_hint` | Reconnecting a name with no wallet file and no `--account` exits 1, hinting the exact `connect-demo-wallet <name> --account N` command to fix it |
+| `test_refuses_a_real_wallet` | Pointing `connect-demo-wallet` at an encrypted (real) wallet exits 1, hinting `connect-wallet` instead |
+| `test_overwrite_guard_declined_leaves_wallet_unchanged` / `test_overwrite_guard_yes_skips_confirm` | Same overwrite-confirmation pattern as `register-wallet` (`typer.confirm` unless `--yes`) |
+
+### Demo/real cross-guards (`TestDemoRealCrossGuards`)
+
+The other direction of the same split: `connect-wallet` and its deprecated
+alias `set-wallet` must refuse a demo-flagged wallet, and `register-wallet`
+must refuse outright while demo mode is on.
+
+| Test | Behavior pinned down |
+|------|----------------------|
+| `test_connect_wallet_refuses_demo_wallet` | `connect-wallet <demo-name>` exits 1, hinting `connect-demo-wallet <name>` |
+| `test_set_wallet_refuses_demo_wallet` | Same, via the deprecated `set-wallet` alias |
+| `test_register_wallet_refuses_when_demo_mode_on` | `register-wallet --account 0` with demo mode on exits 1 before writing anything, hinting `connect-demo-wallet` |
+
 ### Loading accounts (`TestLoadAccount`, `TestReadWallet`, `TestTodoWalletAwareness`)
 
 | Test | Behavior pinned down |
@@ -168,7 +207,7 @@ Each class pins a specific fix from the multi-wallet code review:
 
 | Class / test | Regression pinned down |
 |------|----------------------|
-| `TestFixARegression.test_demo_mode_creates_wallets_dir` | Fix A: demo-mode connect creates `WALLETS_DIR` if missing instead of crashing |
+| `TestConnectDemoWallet.test_one_shot_creates_wallets_dir_and_connects` | Fix A: demo-mode connect creates `WALLETS_DIR` if missing instead of crashing (originally pinned against `register-wallet`'s demo branch, moved here when that branch was split out into `connect-demo-wallet`) |
 | `TestFixBRegression` (see path-helper table above) | Fix B: wallet-name path traversal is rejected at every entry point |
 | `TestFixCRegression.test_import_single_level_keystore` | Fix C: importing a bare keystore stores exactly one wrapper level (`data["keystore"]["crypto"]`, no nested `keystore.keystore`) |
 | `TestFixCRegression.test_reimport_wrapped_keystore_not_double_wrapped` | Re-importing an already-wrapped dincli wallet file does not double-wrap; the result stays loadable via `load_account` |
@@ -194,6 +233,32 @@ Conventions to reuse when adding tests to this suite:
   so the same fixture can also derive `CONFIG_FILE`/`WORKER_CACHE_DIR`
   conditionally.
 
+- **`utils_mod.CONFIG_FILE` is NOT covered by `temp_config`** — it's computed
+  once (`CONFIG_FILE = CONFIG_DIR / "config.json"`) at module import time, so
+  reassigning `CONFIG_DIR` afterwards does not retarget it; every
+  `load_config()`/`save_config()` call (used by `configure-demo`,
+  `_connect_registered_wallet`'s `wallet_name` persistence, etc.) goes through
+  this same un-patched real path unless a test **also** patches
+  `utils_mod.CONFIG_FILE` directly (see `TestFixERegression` and
+  `TestConnectDemoWallet` for the pattern: write a config file inside
+  `temp_config["config_dir"]`, save/restore `utils_mod.CONFIG_FILE` around
+  the test body). Forgetting this is not just a test-isolation bug outside
+  pytest — it's exactly how ad hoc manual verification of this command family
+  wrote real `demo_mode`/`wallet_name` values into a real `~/.config/dincli`
+  during development of the `connect-demo-wallet` split; `WALLETS_DIR` has
+  the identical failure mode for wallet files. Prefer the pattern below over
+  hand-rolled scripts for any manual CLI check of this command family.
+
+- **For manual (non-pytest) CLI verification**, don't hand-patch module
+  constants at all — invoke `python -m dincli.main` as a **subprocess** with
+  `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` pointed at a temp dir (which
+  `platformdirs`, what `CONFIG_DIR` is built from, honors natively) and `cwd`
+  set to a directory with no `.env`. This is what
+  `tests/dincli/conftest.py`'s `din_env`/`workdir` fixtures already do for
+  the integration suite, and it sidesteps the whole "did I patch every
+  derived constant" class of mistake above entirely, since every constant is
+  computed fresh in the subprocess.
+
 - **Direct command invocation** — most command tests call
   `system_mod.register_wallet(ctx=make_ctx(), ...)` with explicit kwargs
   rather than going through `CliRunner`. `DummyCtxObj` fakes the
@@ -201,7 +266,10 @@ Conventions to reuse when adding tests to this suite:
   `resolved_wallet_name`, `account`, `get_en_w3_account_console`).
   `CliRunner().invoke(main_app, [...])` is reserved for tests where the
   Typer layer itself is under test (help text, global `--wallet` flag,
-  callback skip list, `connect-wallet`/`set-wallet`).
+  callback skip list, `connect-wallet`/`set-wallet`/`connect-demo-wallet` —
+  the latter is CliRunner-only since it ends by calling
+  `ctx.obj.select_wallet(...)`, which the lightweight `DummyCtxObj` used for
+  direct calls doesn't implement).
 
 - **No interactive prompts** — `getpass` is patched *on the consuming
   module* (`system_mod.getpass` for the command's passphrase prompts,
@@ -218,8 +286,9 @@ Conventions to reuse when adding tests to this suite:
 - **Real crypto, dummy keys** — keystores are produced with the real
   `Account.encrypt` on the well-known dummy keys `DUMMY_KEY_0/1`, so decrypt
   round-trips (and wrong-password failures) are genuine. The
-  `_write_encrypted_wallet` helper writes a wrapper-schema wallet file
-  directly for tests that need a pre-existing wallet.
+  `_write_encrypted_wallet` helper writes a wrapper-schema (real) wallet file
+  directly for tests that need one pre-existing; `_write_demo_wallet` does the
+  same for the plaintext demo format (`{"address", "private_key", "demo_mode": true}`).
 
 ---
 
@@ -227,11 +296,18 @@ Conventions to reuse when adding tests to this suite:
 
 Behavior of the wallet layer this suite does not yet exercise:
 
-- **`register-wallet` input paths** — only the private-key argument,
-  `--keystore`, and demo-mode `--account` paths are tested. Untested:
-  `--key-file` (including missing file), `--account` without demo mode
-  (`ETH_PRIVATE_KEY_<n>` env lookup), and the fully interactive path
-  (hidden private-key prompt).
+- **`register-wallet` input paths** — only the private-key argument and
+  `--keystore` are exercised end-to-end. Untested: `--key-file` (including
+  missing file), `--account` (the `ETH_PRIVATE_KEY_<n>` env lookup —
+  `test_register_wallet_refuses_when_demo_mode_on` only exercises the
+  demo-mode-on refusal, never reaching the actual lookup, since `register-wallet`
+  no longer has a demo-mode branch to test separately), and the fully
+  interactive path (hidden private-key prompt).
+- **`connect-demo-wallet` gaps** — the `get_demo_private_key` error paths
+  (`FileNotFoundError`/`IndexError` for an out-of-range `--account`) and the
+  `--wallet X` global-override trap guard (mirroring `connect-wallet`'s, at
+  `dincli/cli/system.py`'s `connect_demo_wallet`) are both implemented but
+  untested.
 - **Private-key format validation** — the `0x` + 64-hex-chars check
   (`register_wallet`) has no test for malformed keys.
 - **Create-password flow** — the `Create wallet password:` / confirm-mismatch

@@ -249,6 +249,12 @@ ETH_PRIVATE_KEY_0=...
 ETH_PRIVATE_KEY_1=...
 ```
 
+> `dincli system init` (above) defaults demo mode off, so `register-wallet --account <n>`
+> below reads straight from these `.env` keys. If you'd rather use a well-known local
+> Hardhat dev key instead of your own, use `dincli system connect-demo-wallet --account <n>`
+> (requires `dincli system configure-demo --mode yes`) in place of `register-wallet` in the
+> steps below.
+
 ### Recommended
 
 * Use Filebase as your IPFS provider
