@@ -93,6 +93,9 @@ interface IDinValidatorStake {
         address validator,
         bytes32 reason
     ) external returns (uint256);
+
+    /// @dev Returns the platform slash-treasury address set on DinValidatorStake.
+    function slashTreasury() external view returns (address);
 }
 
 interface IDINTaskCoordinator {

@@ -138,8 +138,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     uint256 public disputeBond = 100 * 1e18; // placeholder default, DAO-settable
     uint64 public disputeWindow = 1 days;    // placeholder default, DAO-settable
     uint64 public resolutionWindow = 2 days; // how long fresh subgroup has to recompute; DAO-settable
-    address public treasuryAddress;
-    uint256 public treasuryAccrued; // cumulative observability counter; tokens forwarded immediately
+    uint256 public treasuryAccrued; // cumulative observability counter
     /// @dev Gas units required per validator per GI to cover on-chain submission costs.
     ///      Set by the DAO via setNetworkFeeFloor; not yet enforced at depositRewards
     ///      (enforcement point to be confirmed with Umer — see task_100926_12 #78).
@@ -1075,15 +1074,6 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         emit S2SlashFractionBpsUpdated(old, bps);
     }
 
-    /// @notice Sets the address forfeited dispute bonds will eventually be forwarded to.
-    /// @dev Storage only -- no forwarding happens yet since DinTreasury doesn't
-    ///      exist on develop. See treasuryAccrued.
-    /// @param _treasuryAddress Address of the future DinTreasury deployment.
-    function setTreasuryAddress(address _treasuryAddress) external onlyOwner {
-        if (_treasuryAddress == address(0)) revert TC_InvalidAddress();
-        treasuryAddress = _treasuryAddress;
-    }
-
     /// @notice Sets the minimum gas-cost floor (in gas units) each validator must
     ///         be covered for per GI.  The DAO reads the measured number from
     ///         GasSimulation tests and posts it here; model owners should deposit
@@ -1147,6 +1137,24 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         emit DisputeOpened(_GI, tierKind, batchId, msg.sender, disputeBond);
     }
 
+    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
+    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
+    ///      the slash-treasury is unset, mirroring DinValidatorStake.slash() behaviour.
+    ///      Also increments `treasuryAccrued` by the full amount for observability.
+    function _burnAndForward(uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 burnAmt = amount / 2;
+        uint256 fwdAmt  = amount - burnAmt;
+        IBurnableDinToken(address(dinToken)).burn(burnAmt);
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, fwdAmt);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(fwdAmt);
+        }
+        treasuryAccrued += amount;
+    }
+
     /// @notice Resolves a dispute, either upholding or rejecting it.
     /// @dev Upheld: a fresh aggregator subgroup is assigned and the
     ///      resolution clock starts; the bond credit is deferred to
@@ -1198,16 +1206,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             // Immediate rejection: dispute is fully closed, no Phase-2 needed.
             d.finalized = true;
 
-            // Frivolous forfeiture: 50% burn / 50% treasury (MECHANISM_DESIGN §4).
-            uint256 burnAmt = d.bond / 2;
-            uint256 treasuryAmt = d.bond - burnAmt;
-            IBurnableDinToken(address(dinToken)).burn(burnAmt);
-            if (treasuryAddress != address(0)) {
-                dinToken.safeTransfer(treasuryAddress, treasuryAmt);
-            } else {
-                IBurnableDinToken(address(dinToken)).burn(treasuryAmt);
-            }
-            treasuryAccrued += d.bond; // cumulative counter for observability
+            // Frivolous forfeiture: 50% burn / 50% platform treasury (MECHANISM_DESIGN §4).
+            _burnAndForward(d.bond);
         }
 
         emit DisputeResolved(_GI, tierKind, batchId, upheld);
@@ -1288,9 +1288,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             }
         } else {
             // Recomputation matched the original CID — dispute was wrong.
-            // Forfeit challenger's bond to treasury.
-            // TODO(task_210726_5): forward to DinTreasury once it exists.
-            treasuryAccrued += d.bond;
+            // Forfeit challenger's bond: 50% burn / 50% platform treasury (MECHANISM_DESIGN §4).
+            _burnAndForward(d.bond);
         }
 
         emit RecomputationSettled(_GI, tierKind, batchId, confirmed);
