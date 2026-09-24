@@ -389,3 +389,7 @@ error TA_StakeBelowModelFloor();
 /// @dev Auditor already holds the maximum concurrent registrations permitted by their stake.
 error TA_ConcurrentRegistrationCapReached();
 error TC_InvalidSlashFraction();
+
+error TC_DisputeSeedNotLocked();
+error TC_DisputeSeedBlockNotMined();
+error TC_DisputeSeedAlreadyLocked();

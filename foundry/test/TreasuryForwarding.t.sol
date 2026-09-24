@@ -237,6 +237,13 @@ contract TreasuryForwardingTest is Test {
         tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
     }
 
+    /// @dev Rolls past the dispute's seedBlock and locks the seed.
+    function _lockSeed(uint _GI, DINTaskCoordinator.TierKind tierKind, uint batchId) internal {
+        (,,,, uint64 seedBlock,,,,) = tc.disputes(_GI, tierKind, batchId);
+        vm.roll(uint256(seedBlock) + 1);
+        tc.lockDisputeSeed(_GI, tierKind, batchId);
+    }
+
     // ── dispute bond: frivolous forfeiture ────────────────────────────────────
 
     function test_frivolous_burns50pct_sends50pctToTreasury() public {
@@ -285,7 +292,7 @@ contract TreasuryForwardingTest is Test {
         _runFullGI(10_000 ether);
 
         vm.prank(modelOwner);
-        tc.setDisputeParams(bondOverride, 1 days, 2 days);
+        tc.setDisputeParams(bondOverride, 1 days, 2 days, 7);
 
         uint256 bond = _openDispute();
         assertEq(bond, bondOverride);
@@ -310,6 +317,8 @@ contract TreasuryForwardingTest is Test {
 
         vm.prank(modelOwner);
         tc.setTreasuryAddress(treasury);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
 
         uint256 supplyBefore = token.totalSupply();
         vm.prank(modelOwner);
