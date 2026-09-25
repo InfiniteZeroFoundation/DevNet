@@ -81,3 +81,5 @@ For red or missing runs, remind Umer of the clock: if it's not fixed within ~6h 
 `scripts/guard.py` is registered as a `PreToolUse` Bash hook in `.claude/settings.local.json`. It blocks any `git push` whose destination is `develop`, whether given explicitly, as `HEAD:develop`, or as a bare `git push` while on develop, unless the command carries `DIN_PUSH_DEVELOP=1`. If you get blocked, that's the signal to use this skill.
 
 It only covers Claude's Bash tool. Umer's own terminal pushes are unaffected.
+
+`settings.local.json` is untracked, so the hook has to be registered on each machine. If a push to develop is *not* blocked when it should be, the hook is missing: see [`README.md`](README.md) for the snippet and the machine-specific paths `precheck.sh` expects.
