@@ -2,7 +2,7 @@
 Phase 2 — Deploy task-level contracts and authorise slashers.
 
 Account 1 (model owner) deploys DINTaskCoordinator and DINTaskAuditor.
-Account 0 (DIN-Representative) then authorises both as slashers via dindao.
+Account 0 (DIN-Representative) then authorises both as slashers via dinrep.
 Account 1 registers the slashers on the task contracts.
 
 SDK candidates:
@@ -110,16 +110,16 @@ def test_dump_abi_task_auditor(run):
 def test_din_rep_authorizes_task_coordinator_as_slasher(run, state):
     """DIN-Representative (account 0) authorises TaskCoordinator as slasher.
 
-    SDK candidate: dindao_add_slasher(network, account, task_coordinator=addr)
+    SDK candidate: dinrep_add_slasher(network, account, task_coordinator=addr)
     """
-    run(["system", "connect-wallet", "dindao"])
-    result = run(["dindao", "add-slasher", "--taskCoordinator"])
+    run(["system", "connect-wallet", "dinrep"])
+    result = run(["dinrep", "add-slasher", "--taskCoordinator"])
     assert result.returncode == 0
 
 
 def test_din_rep_authorizes_task_auditor_as_slasher(run):
     """DIN-Representative (account 0) authorises TaskAuditor as slasher."""
-    result = run(["dindao", "add-slasher", "--taskAuditor"])
+    result = run(["dinrep", "add-slasher", "--taskAuditor"])
     assert result.returncode == 0
 
 

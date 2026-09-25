@@ -48,7 +48,7 @@ What `dincli` needs as *input*: the ABI + creation bytecode of each implementati
 
 ### Option A — dincli shells out to Hardhat: `npx hardhat run scripts/deploy-platform.ts` ❌
 
-- **Runtime dependency on the entire Node toolchain.** Every operator machine that runs `dincli dindao deploy ...` would need Node, npm, the repo's `node_modules` (~hundreds of MB), and a compiled Hardhat project. `dincli` is a pip-installable Python CLI; its deploy commands must work on a machine that has never run `npm install`.
+- **Runtime dependency on the entire Node toolchain.** Every operator machine that runs `dincli dinrep deploy ...` would need Node, npm, the repo's `node_modules` (~hundreds of MB), and a compiled Hardhat project. `dincli` is a pip-installable Python CLI; its deploy commands must work on a machine that has never run `npm install`.
 - **Split-brain signing.** The Hardhat script signs with accounts from `hardhat.config.ts`/env, not with the wallet `dincli system connect-wallet` loaded. Two key-management paths for one action is exactly the kind of security seam the keystore work (task_300626_3) is trying to eliminate.
 - **Dies with the migration.** The team decision of 2026-07-03 is Foundry-only; `hardhat/` is scheduled for deletion. Building dincli on top of it now means rebuilding dincli when it goes.
 - **Output parsing.** dincli would learn deployed addresses by scraping stdout or reading `deployments/<network>.json` — brittle coupling to script log format.

@@ -25,7 +25,7 @@ The `--artifact` flag must point to the compiled Hardhat/Foundry JSON output (co
 
 ### Register Task Coordinator & Task Auditor as Slashers
 
-After the DIN DAO has authorized the contracts as slashers in the DIN Coordinator, confirm them on the task side.
+After the DIN-Representative has authorized the contracts as slashers in the DIN Coordinator, confirm them on the task side.
 
 > **Prerequisite** — the following key must be set in your `.env` file:
 > - `<NETWORK>_DINTaskCoordinator_Contract_Address`  
@@ -76,7 +76,7 @@ The Model Owner must provide a set of service files tailored to the task. For de
 
 ## 1b. Model Registration (Request → Approval)
 
-Model registration is a **two-step process**. The Model Owner submits a request; the DIN DAO reviews and approves (or rejects) it.
+Model registration is a **two-step process**. The Model Owner submits a request; the DIN-Representative reviews and approves (or rejects) it.
 
 ### Step 1 — Submit Registration Request
 
@@ -95,7 +95,7 @@ On success you receive a **`requestId`**. Track it to monitor approval status.
 
 ### Step 2 — Wait for DAO Approval
 
-The DIN DAO reviews your request and calls `approveModel(requestId)`. You will receive a **`modelId`** once approved.
+The DIN-Representative reviews your request and calls `approveModel(requestId)`. You will receive a **`modelId`** once approved.
 
 Check the status of your request:
 

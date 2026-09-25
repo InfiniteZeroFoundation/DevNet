@@ -1,6 +1,6 @@
-# DIN DAO Documentation
+# DIN-Representative Documentation
 
-The DIN DAO (Decentralized Autonomous Organization) administers the core infrastructure contracts of the DIN network. This includes deploying the fundamental contracts and authorizing participants (slashers) who can penalize misbehaving validators.
+The DIN-Representative administers the core infrastructure contracts of the DIN network (a DIN-DAO is planned to take over this role after mainnet). This includes deploying the fundamental contracts and authorizing participants (slashers) who can penalize misbehaving validators.
 
 ---
 
@@ -16,7 +16,7 @@ Deploy the core contracts in the order listed below. Each contract depends on th
 The main coordinator contract that governs network-wide operations.
 
 ```bash
-dincli dindao deploy din-coordinator --artifact <path_to_artifact>
+dincli dinrep deploy din-coordinator --artifact <path_to_artifact>
 ```
 
 ### 2. Validator Stake
@@ -24,7 +24,7 @@ dincli dindao deploy din-coordinator --artifact <path_to_artifact>
 The staking contract used by validators (Auditors, Aggregators).
 
 ```bash
-dincli dindao deploy din-validator-stake --artifact <path_to_artifact>
+dincli dinrep deploy din-validator-stake --artifact <path_to_artifact>
 ```
 
 ### 3. Model Registry
@@ -32,7 +32,7 @@ dincli dindao deploy din-validator-stake --artifact <path_to_artifact>
 Records federated learning tasks, assigns a unique `model_id` to each task, and stores the initial global model reference and manifest for a task.
 
 ```bash
-dincli dindao deploy din-model-registry --artifact <path_to_artifact>
+dincli dinrep deploy din-model-registry --artifact <path_to_artifact>
 ```
 
 ---
@@ -44,25 +44,25 @@ dincli dindao deploy din-model-registry --artifact <path_to_artifact>
 Check how many models are currently approved in the network.
 
 ```bash
-dincli dindao registry total-models
+dincli dinrep registry total-models
 ```
 
 ---
 
 ### Model Registration Approval
 
-Model registration follows a **request → approval** flow. Model Owners submit requests; the DAO reviews and approves or rejects them.
+Model registration follows a **request → approval** flow. Model Owners submit requests; the DIN-Representative reviews and approves or rejects them.
 
 **List pending registration requests:**
 
 ```bash
-dincli dindao registry list-requests [--pending]
+dincli dinrep registry list-requests [--pending]
 ```
 
 **Approve a model registration request:**
 
 ```bash
-dincli dindao registry approve-model <requestId>
+dincli dinrep registry approve-model <requestId>
 ```
 
 > [!IMPORTANT]
@@ -71,7 +71,7 @@ dincli dindao registry approve-model <requestId>
 **Reject a model registration request:**
 
 ```bash
-dincli dindao registry reject-model <requestId>
+dincli dinrep registry reject-model <requestId>
 ```
 
 The registration fee is retained by the contract in both cases.
@@ -85,7 +85,7 @@ Manifest updates also follow a request → approval flow.
 **Approve a manifest update:**
 
 ```bash
-dincli dindao registry approve-manifest-update <requestId>
+dincli dinrep registry approve-manifest-update <requestId>
 ```
 
 > [!NOTE]
@@ -94,7 +94,7 @@ dincli dindao registry approve-manifest-update <requestId>
 **Reject a manifest update:**
 
 ```bash
-dincli dindao registry reject-manifest-update <requestId>
+dincli dinrep registry reject-manifest-update <requestId>
 ```
 
 ---
@@ -105,10 +105,10 @@ Disable a model immediately. This blocks manifest update requests from the model
 
 ```bash
 # Disable a model (emergency stop)
-dincli dindao registry disable-model <modelId>
+dincli dinrep registry disable-model <modelId>
 
 # Re-enable a model
-dincli dindao registry enable-model <modelId>
+dincli dinrep registry enable-model <modelId>
 ```
 
 > [!CAUTION]
@@ -118,7 +118,7 @@ dincli dindao registry enable-model <modelId>
 
 ## 3. Fee Governance
 
-The registry charges fees for model registration and manifest update requests. All four fee parameters are DAO-controlled.
+The registry charges fees for model registration and manifest update requests. All four fee parameters are controlled by the DIN-Representative.
 
 | Parameter | Default | Applies To |
 |-----------|---------|-----------|
@@ -130,16 +130,16 @@ The registry charges fees for model registration and manifest update requests. A
 **Update a single fee:**
 
 ```bash
-dincli dindao registry set-fee --open-source-fee <wei>
-dincli dindao registry set-fee --proprietary-fee <wei>
-dincli dindao registry set-fee --open-source-update-fee <wei>
-dincli dindao registry set-fee --proprietary-update-fee <wei>
+dincli dinrep registry set-fee --open-source-fee <wei>
+dincli dinrep registry set-fee --proprietary-fee <wei>
+dincli dinrep registry set-fee --open-source-update-fee <wei>
+dincli dinrep registry set-fee --proprietary-update-fee <wei>
 ```
 
 **Update all fees atomically (preferred for governance proposals):**
 
 ```bash
-dincli dindao registry set-fees \
+dincli dinrep registry set-fees \
   --open-source-fee <wei> \
   --proprietary-fee <wei> \
   --open-source-update-fee <wei> \
@@ -149,7 +149,7 @@ dincli dindao registry set-fees \
 **Withdraw accumulated fees:**
 
 ```bash
-dincli dindao registry withdraw-fees --to <address>
+dincli dinrep registry withdraw-fees --to <address>
 ```
 
 ---
@@ -165,7 +165,7 @@ Slashers are contracts authorized to penalize misbehaving participants. The Task
 >   *(e.g. `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address`)*
 
 ```bash
-dincli dindao add-slasher --taskCoordinator
+dincli dinrep add-slasher --taskCoordinator
 ```
 
 ### Register Task Auditor as a Slasher
@@ -177,7 +177,7 @@ dincli dindao add-slasher --taskCoordinator
 >   *(e.g. `SEPOLIA_OP_DEVNET_0x1234...7890_DINTaskAuditor_Contract_Address`)*
 
 ```bash
-dincli dindao add-slasher --taskAuditor
+dincli dinrep add-slasher --taskAuditor
 ```
 
 ### Register by Address Directly
@@ -185,7 +185,7 @@ dincli dindao add-slasher --taskAuditor
 If you already know the contract address, you can pass it explicitly instead of relying on the `.env` file:
 
 ```bash
-dincli dindao add-slasher --contract <contract_address>
+dincli dinrep add-slasher --contract <contract_address>
 ```
 
 ---
@@ -195,7 +195,7 @@ dincli dindao add-slasher --contract <contract_address>
 The DAO admin role can be transferred to a multisig or on-chain timelock without redeploying the registry.
 
 ```bash
-dincli dindao registry set-admin <new_admin_address>
+dincli dinrep registry set-admin <new_admin_address>
 ```
 
 > [!CAUTION]

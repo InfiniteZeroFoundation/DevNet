@@ -21,7 +21,7 @@ Documentation for the DIN Protocol DevNet as implemented on the `develop` branch
 
 ### Role guides — [`public/roles/`](public/roles/)
 
-One guide per network role: [Clients](public/roles/clients.md) · [Auditors](public/roles/auditors.md) · [Aggregators](public/roles/aggregators.md) · [Model Owners](public/roles/model-owner.md) · [DIN-Representative (dindao)](public/roles/dindao.md)
+One guide per network role: [Clients](public/roles/clients.md) · [Auditors](public/roles/auditors.md) · [Aggregators](public/roles/aggregators.md) · [Model Owners](public/roles/model-owner.md) · [DIN-Representative (dinrep)](public/roles/dinrep.md)
 
 ### Workflows — [`public/workflows/`](public/workflows/)
 
