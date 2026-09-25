@@ -7,9 +7,9 @@ from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
                                resolve_task_coordinator_address, save_din_info)
 
-app = typer.Typer(help="Commands for DIN DAO")
+app = typer.Typer(help="Commands for the DIN-Representative")
 
-registry_app = typer.Typer(help="Registry sub-app (for 'dincli dindao registry to interact with DINRegistry ...')")
+registry_app = typer.Typer(help="Registry sub-app (for 'dincli dinrep registry to interact with DINRegistry ...')")
 deploy_app = typer.Typer(help="Deploy DIN smart contracts")
 
 app.add_typer(deploy_app, name="deploy")

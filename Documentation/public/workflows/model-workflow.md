@@ -109,10 +109,10 @@ Once the DIN-Representative reviews and approves the request, they execute the f
 ```bash
 
 # Register TaskCoordinator as an authorized slasher
-dincli dindao add-slasher --contract <TASK_COORDINATOR_ADDRESS>
+dincli dinrep add-slasher --contract <TASK_COORDINATOR_ADDRESS>
 
 # Register TaskAuditor as an authorized slasher
-dincli dindao add-slasher --contract <TASK_AUDITOR_ADDRESS>
+dincli dinrep add-slasher --contract <TASK_AUDITOR_ADDRESS>
 ```
 
 > [!NOTE]

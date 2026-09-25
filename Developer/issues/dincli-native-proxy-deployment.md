@@ -4,7 +4,7 @@
 
 Implement the chosen architecture of
 [proxy-deployment-architecture.md](../../Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md):
-`dincli dindao deploy ...` performs Transparent-Proxy deployment **natively in
+`dincli dinrep deploy ...` performs Transparent-Proxy deployment **natively in
 web3.py** — no `npx hardhat run` / `forge script` at runtime.
 
 ## Interim state (2026-07-15)
@@ -38,14 +38,14 @@ Supporting pieces (from the record §6):
   `bytecode: {object: "0x…"}` in `get_contract_instance` / deploy path
 - ship/pin the OZ `TransparentUpgradeableProxy` artifact (v5.x) with dincli —
   do not recompile it ad hoc
-- new `dindao deploy din-token` command; existing deploy commands become
+- new `dinrep deploy din-token` command; existing deploy commands become
   proxy-aware; write resulting addresses (incl. `proxy_admin`) to `din_info.json`
 - scope: **V1 bootstrap only** — upgrades stay behind the toolchain scripts
 
 ## Acceptance
 
 - Harness Phase 1 replaces the script+import scaffolding with per-contract
-  `dincli dindao deploy ...` tests (restore the original test structure)
+  `dincli dinrep deploy ...` tests (restore the original test structure)
 - `system import-deployments` remains as a secondary sync utility (adopting
   script/upgrade-driven deployments), no longer the canonical bootstrap path
 - No Node/toolchain invocation anywhere in the dincli deploy path

@@ -110,7 +110,7 @@ The extraction of `dincli`'s reusable core into a library layer (`dincli/sdk/`) 
 
 ### 3.6 Applications: `dincli` and `dind`
 
-- **`dincli`** (exists) — the interactive Typer CLI with one sub-app per role (`model-owner`, `client`, `auditor`, `aggregator`, `dindao`, …). Today it *contains* the functionality the SDK will extract; post-extraction its commands keep working unchanged as thin wrappers.
+- **`dincli`** (exists) — the interactive Typer CLI with one sub-app per role (`model-owner`, `client`, `auditor`, `aggregator`, `dinrep`, …). Today it *contains* the functionality the SDK will extract; post-extraction its commands keep working unchanged as thin wrappers.
 - **`dind`** (planned) — the always-on daemon that automates participation: it watches on-chain events (via the indexer), decides which jobs to take based on a **personalized local configuration** (preferences on domain, risk tolerance, expected rewards, privacy constraints), orchestrates sandboxed Worker Node jobs with resource awareness and failure recovery, and persists execution state across restarts. Ships with `start/stop/status`, health endpoints, and structured logging. CLI and daemon coexist and share preferences/state through the SDK layer.
 
 ### 3.7 IPFS layer

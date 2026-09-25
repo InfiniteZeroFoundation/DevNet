@@ -962,7 +962,7 @@ def din_info(ctx: typer.Context,
 #
 # NOTE — this is not the target architecture. The decision record
 # Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md
-# chose native web3.py proxy deployment inside `dindao deploy` (its Option C;
+# chose native web3.py proxy deployment inside `dinrep deploy` (its Option C;
 # backlog: Developer/issues/dincli-native-proxy-deployment.md). Once that
 # lands, this command demotes to a secondary sync utility for script-driven
 # deployments/upgrades and for adopting already-deployed networks.
@@ -1477,7 +1477,7 @@ def dump_abi(
     in Hardhat-compatible format to dincli/abis/.
     
     Example:
-      dincli dindao dump-abi --artifact "hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json" --bytecode
+      dincli system dump-abi --artifact "hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json" --bytecode
     """
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()

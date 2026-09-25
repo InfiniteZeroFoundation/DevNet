@@ -285,7 +285,7 @@ def register_request(
         console.print(f"  Request ID: {args['requestId']}")
         console.print(f"  Requester: {args['requester']}")
         console.print("  Status: pending")
-        console.print("[yellow]The model is not registered until DIN DAO approves this request.[/yellow]")
+        console.print("[yellow]The model is not registered until the DIN-Representative approves this request.[/yellow]")
     else:
         console.print("[yellow]Warning: ModelRegistrationRequested event not found in receipt.[/yellow]")
 
@@ -362,7 +362,7 @@ def update_manifest_request(
         console.print(f"  Request ID: {args['requestId']}")
         console.print(f"  Model ID: {args['modelId']}")
         console.print("  Status: pending")
-        console.print("[yellow]The manifest is not updated until DIN DAO approves this request.[/yellow]")
+        console.print("[yellow]The manifest is not updated until the DIN-Representative approves this request.[/yellow]")
         console.print(f"  Transaction Hash: {tx_receipt.transactionHash.hex()}")
     else:
         console.print("[yellow]Warning: ManifestUpdateRequested event not found in receipt.[/yellow]")
