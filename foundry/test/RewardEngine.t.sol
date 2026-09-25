@@ -801,10 +801,11 @@ contract RewardEngineTest is Test {
 
         // No participant-indexed loop remains; endGI is a bounded state
         // transition (one cross-contract call, ~4 mul + 4 div, one struct
-        // SSTORE, one event). Ceiling is generous headroom over the measured
-        // cost, not a tight bound -- its job is to fail loudly if a loop is
-        // ever reintroduced into this path.
-        assertLt(endGIGas, 150_000, "endGI must stay a bounded O(1) transition");
+        // SSTORE, one event, one treasury SLOAD via settleRewards). Ceiling is
+        // generous headroom over the measured cost (~152k after issue-152
+        // treasury forwarding added one slashTreasury() SLOAD), not a tight
+        // bound -- its job is to fail loudly if a loop is ever reintroduced.
+        assertLt(endGIGas, 165_000, "endGI must stay a bounded O(1) transition");
     }
 
     function test_gas_endGI_invariantToSettlementScale() public {
