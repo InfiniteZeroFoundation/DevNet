@@ -592,6 +592,9 @@ class TestConnectDemoWallet:
             utils_mod.CONFIG_FILE = orig_config_file
 
     def test_refuses_a_real_wallet(self, temp_config, monkeypatch):
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": true}')
+        monkeypatch.setattr(utils_mod, "CONFIG_FILE", config_file)
         self._base_monkeypatch(monkeypatch)
         _write_encrypted_wallet(temp_config["wallets_dir"], "realacct", DUMMY_KEY_0, DUMMY_PW)
         result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "realacct"])
