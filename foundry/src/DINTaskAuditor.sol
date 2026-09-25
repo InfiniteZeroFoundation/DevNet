@@ -385,6 +385,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 requested,
         uint256 actual
     );
+    event LocalModelSubmitted(uint indexed GI, uint indexed modelIndex, address indexed client, bytes32 modelCID);
 
     /// @notice Model registry ID this auditor manages.
     /// @dev Mirrors DINTaskCoordinator.modelId — used to look up per-model stake floors.
@@ -722,6 +723,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             })
         );
         clientHasSubmitted[_GI][msg.sender] = true;
+        emit LocalModelSubmitted(_GI, modelIndex, msg.sender, _clientModel);
     }
 
     /// @notice Returns all local model submissions for the given GI.
