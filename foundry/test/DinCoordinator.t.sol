@@ -130,6 +130,26 @@ contract DinCoordinatorTest is Test {
         assertEq(coordinator.totalMinted(), expected);
     }
 
+    // ── depositAndMint: zero-mint rounding (L-2) ─────────────────────────────────
+
+    function test_depositAndMint_revertsWhenMintAmountRoundsToZero() public {
+        // A non-round dinPerEth (1 wei of the scaled unit, vs. the default
+        // 1_000_000 * 1e18) means any msg.value below 1e18 wei rounds to a
+        // zero mint via integer division.
+        coordinator.updateDinPerEth(1);
+
+        vm.deal(alice, 1 ether);
+        uint256 balanceBefore = alice.balance;
+
+        vm.prank(alice);
+        vm.expectRevert(DinCoordinator.ZeroMintAmount.selector);
+        coordinator.depositAndMint{value: 1}();
+
+        // Revert is atomic -- confirms the ETH isn't retained by a partial effect.
+        assertEq(alice.balance, balanceBefore, "ETH must not be retained when the mint reverts");
+        assertEq(coordinator.totalMinted(), 0);
+    }
+
     // ── retireFaucet ──────────────────────────────────────────────────────────
 
     function test_retireFaucet_isOneWay() public {
