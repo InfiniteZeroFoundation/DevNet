@@ -51,7 +51,12 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             treasuryBps: 500
         });
 
-    /// @notice Treasury's accrued share of settled reward pools.
+    /// @notice Cumulative DIN routed out via burn + platform treasury: each
+    ///         settled reward pool's treasury share plus every forfeited
+    ///         test-data dispute bond / owner penalty (burned half included,
+    ///         and the whole amount when slashTreasury is unset).
+    /// @dev Observability only -- tokens leave the contract immediately
+    ///      (_forwardToTreasury / _burnAndForward); nothing is held against it.
     uint256 public treasuryAccrued; // cumulative observability counter
 
     /// @notice Per-address claimable reward balance across all GIs.

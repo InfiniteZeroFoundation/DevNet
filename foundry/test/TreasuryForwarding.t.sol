@@ -120,7 +120,9 @@ contract TreasuryForwardingTest is Test {
     }
 
     /// @dev Runs a complete honest GI through to AggregatorsSlashed then endGI.
-    function _runFullGI(uint256 pool) internal {
+    /// @dev Everything _runFullGI does except the final endGI (which triggers
+    ///      settleRewards), so settleRewards tests can snapshot balances around it.
+    function _runGIUntilEnd(uint256 pool) internal {
         _fundAndStake(auditor1);
         _fundAndStake(auditor2);
         _fundAndStake(auditor3);
@@ -226,8 +228,13 @@ contract TreasuryForwardingTest is Test {
         tc.finalizeT2Aggregation(1);
         tc.slashAuditors(1);
         tc.slashAggregators(1);
-        tc.endGI(1);
         vm.stopPrank();
+    }
+
+    function _runFullGI(uint256 pool) internal {
+        _runGIUntilEnd(pool);
+        vm.prank(modelOwner);
+        tc.endGI(1);
     }
 
     /// @dev Stakes + funds the challenger and opens a dispute against T1 batch 0.
@@ -258,6 +265,7 @@ contract TreasuryForwardingTest is Test {
 
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
+        uint256 tcBefore = token.balanceOf(address(tc));
 
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
@@ -272,6 +280,7 @@ contract TreasuryForwardingTest is Test {
         assertEq(treasuryReceived, expectTreasury, "treasury transfer wrong");
         assertEq(burned + treasuryReceived, bond, "conservation: burn+treasury == bond");
         assertEq(tc.treasuryAccrued(), bond, "treasuryAccrued counter == full bond");
+        assertEq(tcBefore - token.balanceOf(address(tc)), bond, "task contract retains none of the bond");
     }
 
     function test_frivolous_noTreasurySet_burnsAll() public {
@@ -280,6 +289,7 @@ contract TreasuryForwardingTest is Test {
 
         // slashTreasury not set — both halves burned.
         uint256 supplyBefore = token.totalSupply();
+        uint256 tcBefore = token.balanceOf(address(tc));
 
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
@@ -287,6 +297,7 @@ contract TreasuryForwardingTest is Test {
         uint256 burned = supplyBefore - token.totalSupply();
         assertEq(burned, bond, "all should be burned when no treasury set");
         assertEq(tc.treasuryAccrued(), bond, "treasuryAccrued counter == full bond");
+        assertEq(tcBefore - token.balanceOf(address(tc)), bond, "task contract retains none of the bond");
     }
 
     function testFuzz_frivolous_conservesBond(uint256 bondOverride) public {
@@ -304,12 +315,14 @@ contract TreasuryForwardingTest is Test {
         stake.setSlashTreasury(treasury);
 
         uint256 supplyBefore = token.totalSupply();
+        uint256 tcBefore = token.balanceOf(address(tc));
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
 
         uint256 burned = supplyBefore - token.totalSupply();
         uint256 treasuryReceived = token.balanceOf(treasury);
         assertEq(burned + treasuryReceived, bond, "burn+treasury must equal bond");
+        assertEq(tcBefore - token.balanceOf(address(tc)), bond, "task contract retains none of the bond");
     }
 
     // ── dispute bond: upheld — bond still claimable (bounty out of scope) ─────
@@ -324,12 +337,14 @@ contract TreasuryForwardingTest is Test {
         _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
 
         uint256 supplyBefore = token.totalSupply();
+        uint256 tcBefore = token.balanceOf(address(tc));
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
 
         // No burn, no treasury transfer on upheld
         assertEq(token.totalSupply(), supplyBefore, "no burn on upheld");
         assertEq(token.balanceOf(treasury), 0, "no treasury transfer on upheld");
+        assertEq(token.balanceOf(address(tc)), tcBefore, "bond stays in task contract, owed to challenger");
 
         // Bond credit is deferred to settleRecomputation()/expireDispute()
         // (S4 second-phase state machine) rather than paid here.
@@ -347,7 +362,12 @@ contract TreasuryForwardingTest is Test {
         stake.setSlashTreasury(treasury);
 
         uint256 pool = 10_000 ether;
-        _runFullGI(pool);
+        _runGIUntilEnd(pool);
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 taBefore = token.balanceOf(address(ta));
+        vm.prank(modelOwner);
+        tc.endGI(1);
 
         // treasuryBps = 500 (5% default); pool = 10_000 ether
         // treasuryShare = pool - clientPool - auditorPool - aggregatorPool
@@ -357,17 +377,24 @@ contract TreasuryForwardingTest is Test {
 
         assertEq(token.balanceOf(treasury), expectedShare, "treasury balance wrong");
         assertEq(ta.treasuryAccrued(), expectedShare, "treasuryAccrued counter wrong");
+        assertEq(token.totalSupply(), supplyBefore, "fee share forwarded, not burned");
+        assertEq(taBefore - token.balanceOf(address(ta)), expectedShare, "task contract retains none of the share");
     }
 
     function test_settleRewards_noTreasurySet_burnsFull() public {
         // slashTreasury not set — full 5% share is burned, treasury address gets nothing.
         uint256 pool = 10_000 ether;
-        _runFullGI(pool);
+        _runGIUntilEnd(pool);
 
-        // Supply before endGI (which triggers settleRewards) is not easily isolated
-        // because _runFullGI mints tokens; we verify the observable effects instead.
+        uint256 supplyBefore = token.totalSupply();
+        uint256 taBefore = token.balanceOf(address(ta));
+        vm.prank(modelOwner);
+        tc.endGI(1);
+
         assertEq(token.balanceOf(treasury), 0, "treasury address gets nothing");
         assertEq(ta.treasuryAccrued(), 500 ether, "treasuryAccrued still accumulates");
+        assertEq(supplyBefore - token.totalSupply(), 500 ether, "full share burned");
+        assertEq(taBefore - token.balanceOf(address(ta)), 500 ether, "task contract retains none of the share");
     }
 
     function testFuzz_settleRewards_poolConservation(uint256 pool) public {
@@ -376,13 +403,20 @@ contract TreasuryForwardingTest is Test {
         vm.prank(admin);
         stake.setSlashTreasury(treasury);
 
-        _runFullGI(pool);
+        _runGIUntilEnd(pool);
 
-        // After settlement: claimable (client+auditor+aggregator) + treasury == pool
-        // (no rounding precision loss requirement — just that treasury got its share)
+        uint256 supplyBefore = token.totalSupply();
+        uint256 taBefore = token.balanceOf(address(ta));
+        vm.prank(modelOwner);
+        tc.endGI(1);
+
+        // Treasury share is the bps-split remainder; it must leave the task
+        // contract in full, with nothing burned (treasury is set).
         uint256 treasuryShare = ta.treasuryAccrued();
         assertEq(token.balanceOf(treasury), treasuryShare, "forwarded == accrued");
         assertLe(treasuryShare, pool, "treasury share cannot exceed pool");
+        assertEq(token.totalSupply(), supplyBefore, "nothing burned when treasury set");
+        assertEq(taBefore - token.balanceOf(address(ta)), treasuryShare, "task contract retains none of the share");
     }
 
     // ── settleRecomputation(false): 50/50 split (was full-bond-to-treasury) ──
@@ -397,11 +431,13 @@ contract TreasuryForwardingTest is Test {
         vm.prank(admin);
         stake.setSlashTreasury(treasury);
 
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
 
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
+        uint256 tcBefore = token.balanceOf(address(tc));
 
         vm.prank(modelOwner);
         tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
@@ -413,6 +449,7 @@ contract TreasuryForwardingTest is Test {
         assertEq(treasuryReceived, bond - bond / 2, "50% to treasury");
         assertEq(burned + treasuryReceived, bond, "bond fully distributed");
         assertEq(tc.treasuryAccrued(), bond, "treasuryAccrued == bond");
+        assertEq(tcBefore - token.balanceOf(address(tc)), bond, "task contract retains none of the bond");
     }
 
     /// settleRecomputation(false) burns all when slashTreasury is unset.
@@ -420,10 +457,12 @@ contract TreasuryForwardingTest is Test {
         _runFullGI(10_000 ether);
         uint256 bond = _openDispute();
 
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
 
         uint256 supplyBefore = token.totalSupply();
+        uint256 tcBefore = token.balanceOf(address(tc));
 
         vm.prank(modelOwner);
         tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
@@ -431,6 +470,7 @@ contract TreasuryForwardingTest is Test {
         uint256 burned = supplyBefore - token.totalSupply();
         assertEq(burned, bond, "full bond burned when no treasury");
         assertEq(tc.treasuryAccrued(), bond, "treasuryAccrued counter == bond");
+        assertEq(tcBefore - token.balanceOf(address(tc)), bond, "task contract retains none of the bond");
     }
 
     // ── auditor test-data dispute treasury paths ──────────────────────────────
@@ -522,6 +562,7 @@ contract TreasuryForwardingTest is Test {
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
         uint256 accruedBefore = ta.treasuryAccrued();
+        uint256 taBefore = token.balanceOf(address(ta));
 
         // resolveTestDataDispute with correct K — dispute is false, bond forfeited.
         vm.prank(modelOwner);
@@ -532,12 +573,13 @@ contract TreasuryForwardingTest is Test {
         assertEq(burned, bond / 2, "50% burned on false dispute");
         assertEq(treasuryReceived, bond - bond / 2, "50% to treasury on false dispute");
         assertEq(ta.treasuryAccrued() - accruedBefore, bond, "treasuryAccrued delta == bond");
+        assertEq(taBefore - token.balanceOf(address(ta)), bond, "task contract retains none of the bond");
     }
 
     /// resolveTestDataDispute upheld (commitment mismatch) burns 50% of penalty and sends 50%.
     function test_testDataDispute_upheld_penaltyBurns50pct_sends50pctToTreasury() public {
         _runToTestDataAssigned();
-        _openTestDataDispute();
+        uint256 bond = _openTestDataDispute();
 
         vm.prank(admin);
         stake.setSlashTreasury(treasury);
@@ -548,6 +590,7 @@ contract TreasuryForwardingTest is Test {
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
         uint256 accruedBefore = ta.treasuryAccrued();
+        uint256 taBefore = token.balanceOf(address(ta));
 
         // Wrong K — commitment mismatch, dispute upheld.
         bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xDEADBEEF)));
@@ -559,6 +602,8 @@ contract TreasuryForwardingTest is Test {
         assertEq(burned, penalty / 2, "50% of penalty burned");
         assertEq(treasuryReceived, penalty - penalty / 2, "50% of penalty to treasury");
         assertEq(ta.treasuryAccrued() - accruedBefore, penalty, "treasuryAccrued delta == penalty");
+        // Upheld: bond refunded to the disputer + penalty routed out; nothing retained.
+        assertEq(taBefore - token.balanceOf(address(ta)), bond + penalty, "task contract retains none of bond + penalty");
     }
 
     /// closeExpiredDispute burns 50% and sends 50% to treasury.
@@ -576,6 +621,7 @@ contract TreasuryForwardingTest is Test {
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
         uint256 accruedBefore = ta.treasuryAccrued();
+        uint256 taBefore = token.balanceOf(address(ta));
 
         ta.closeExpiredDispute(2, 0);
 
@@ -584,6 +630,7 @@ contract TreasuryForwardingTest is Test {
         assertEq(burned, bond / 2, "50% burned on expired dispute");
         assertEq(treasuryReceived, bond - bond / 2, "50% to treasury on expired dispute");
         assertEq(ta.treasuryAccrued() - accruedBefore, bond, "treasuryAccrued delta == bond");
+        assertEq(taBefore - token.balanceOf(address(ta)), bond, "task contract retains none of the bond");
     }
 
 }

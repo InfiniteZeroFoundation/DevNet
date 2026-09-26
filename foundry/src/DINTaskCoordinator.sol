@@ -1238,8 +1238,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ///      alternate bounty source (forfeited-stake pool).
     ///      Rejected (frivolous): fully closed immediately — bond is split
     ///      50% burn / 50% treasury per MECHANISM_DESIGN.md §4.
-    ///      treasuryAccrued accumulates the full bond for observability
-    ///      regardless of whether the transfer succeeds.
+    ///      treasuryAccrued accumulates the full bond for observability.
     /// @param _GI GI index the disputed batch belongs to.
     /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
     /// @param batchId Index of the disputed batch within its tier.
