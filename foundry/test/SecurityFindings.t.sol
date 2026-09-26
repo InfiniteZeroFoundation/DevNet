@@ -19,7 +19,7 @@ import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates, TC_ZeroCID} from "../src/DINShared.sol";
+import {GIstates, TC_ZeroCID, TC_InvalidAddress, TA_InvalidAddress} from "../src/DINShared.sol";
 
 contract SecurityFindingsTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -563,5 +563,34 @@ contract SecurityFindingsTest is Test {
         // the point of this test, this assertion just guards against the
         // measurement accidentally becoming a no-op.
         assertGt(gasLarge, gasSmall * 2, "finalizeEvaluation should scale well above linearly with batch count");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // L-6: zero-address dependencies rejected at construction / one-shot setup
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_DINTaskCoordinator_constructor_rejectsZeroStakeAddress() public {
+        vm.expectRevert(TC_InvalidAddress.selector);
+        new DINTaskCoordinator(address(0), 1);
+    }
+
+    function test_DINTaskAuditor_constructor_rejectsZeroStakeAddress() public {
+        _deployPlatform();
+        DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        vm.expectRevert(TA_InvalidAddress.selector);
+        new DINTaskAuditor(address(0), address(tcLocal), 1);
+    }
+
+    function test_DINTaskAuditor_constructor_rejectsZeroCoordinatorAddress() public {
+        _deployPlatform();
+        vm.expectRevert(TA_InvalidAddress.selector);
+        new DINTaskAuditor(address(stake), address(0), 1);
+    }
+
+    function test_setDINTaskAuditorContract_rejectsZeroAddress() public {
+        _deployPlatform();
+        DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        vm.expectRevert(TC_InvalidAddress.selector);
+        tcLocal.setDINTaskAuditorContract(address(0));
     }
 }

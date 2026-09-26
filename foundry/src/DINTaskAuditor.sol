@@ -393,7 +393,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @notice Deploys the auditor, wiring it to the validator stake and coordinator contracts.
     /// @dev Batch parameters are set to demo defaults (3 auditors/batch, 3 models/batch,
     ///      quorum of 2, pass score of 50). The model owner can adjust pass score via
-    ///      updatePassScore.
+    ///      updatePassScore. Rejects a zero address for either dependency (L-6):
+    ///      this contract is non-upgradeable, so a bad deploy means a full
+    ///      redeploy, not a fix.
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
@@ -402,6 +404,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         address _dintaskcoordinator_contract_address,
         uint256 modelId_
     ) Ownable(msg.sender) {
+        if (
+            _dinvalidatorStakeContract_address == address(0) ||
+            _dintaskcoordinator_contract_address == address(0)
+        ) revert TA_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
         );
