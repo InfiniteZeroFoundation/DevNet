@@ -303,8 +303,10 @@ contract EncryptedTestDataTest is Test {
         vm.prank(modelOwner);
         ta.resolveTestDataDispute(1, 0, TEST_K, TEST_PLAINTEXT_HASH);
 
-        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND / 2, "treasury should receive half the bond");
-        assertEq(token.totalSupply(), supplyBefore - BOND / 2, "half the bond should be burned");
+        // No slash treasury set in this test — _burnAndForward burns both halves;
+        // treasuryAccrued tracks the full forfeited amount as an observability counter.
+        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND, "treasuryAccrued tracks full forfeited bond");
+        assertEq(token.totalSupply(), supplyBefore - BOND, "full bond burned when no slash treasury set");
         assertFalse(_disputeActive(1, 0), "dispute should be inactive after resolution");
     }
 
@@ -419,8 +421,9 @@ contract EncryptedTestDataTest is Test {
         vm.roll(expires + 1);
         ta.closeExpiredDispute(1, 0);
 
-        assertEq(token.totalSupply(), supplyBefore - BOND / 2, "half bond burned on expiry");
-        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND / 2, "half bond to treasury on expiry");
+        // No slash treasury set — both halves burned; counter tracks full forfeited amount.
+        assertEq(token.totalSupply(), supplyBefore - BOND, "full bond burned when no slash treasury set");
+        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND, "treasuryAccrued tracks full forfeited bond");
         assertFalse(_disputeActive(1, 0));
     }
 

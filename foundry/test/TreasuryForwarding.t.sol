@@ -2,9 +2,12 @@
 pragma solidity ^0.8.28;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests for task_100926_12 Issue #43: treasury forwarding.
-//   - DINTaskCoordinator.resolveDispute (frivolous): 50% burn / 50% treasury
-//   - DINTaskAuditor.settleRewards: treasury share forwarded to treasuryAddress
+// Tests for task_240926_16 Part B Issue #152: platform-resolved treasury forwarding.
+//   Treasury is resolved via DinValidatorStake.slashTreasury() — not a per-task setter.
+//   - DINTaskCoordinator.resolveDispute (frivolous): 50% burn / 50% platform treasury
+//   - DINTaskCoordinator.settleRecomputation (false): 50% burn / 50% platform treasury
+//   - DINTaskAuditor.settleRewards: full 5% fee forwarded to platform treasury
+//   - DINTaskAuditor test-data dispute paths: 50% burn / 50% treasury
 // Run: forge test --match-contract TreasuryForwardingTest -vv
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -250,8 +253,8 @@ contract TreasuryForwardingTest is Test {
         _runFullGI(10_000 ether);
         uint256 bond = _openDispute();
 
-        vm.prank(modelOwner);
-        tc.setTreasuryAddress(treasury);
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
 
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
@@ -275,7 +278,7 @@ contract TreasuryForwardingTest is Test {
         _runFullGI(10_000 ether);
         uint256 bond = _openDispute();
 
-        // treasuryAddress is address(0) (not set)
+        // slashTreasury not set — both halves burned.
         uint256 supplyBefore = token.totalSupply();
 
         vm.prank(modelOwner);
@@ -297,8 +300,8 @@ contract TreasuryForwardingTest is Test {
         uint256 bond = _openDispute();
         assertEq(bond, bondOverride);
 
-        vm.prank(modelOwner);
-        tc.setTreasuryAddress(treasury);
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
 
         uint256 supplyBefore = token.totalSupply();
         vm.prank(modelOwner);
@@ -315,8 +318,8 @@ contract TreasuryForwardingTest is Test {
         _runFullGI(10_000 ether);
         uint256 bond = _openDispute();
 
-        vm.prank(modelOwner);
-        tc.setTreasuryAddress(treasury);
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
 
         _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
 
@@ -340,8 +343,8 @@ contract TreasuryForwardingTest is Test {
     // ── settleRewards: treasury share forwarded ───────────────────────────────
 
     function test_settleRewards_forwardsToTreasury() public {
-        vm.prank(modelOwner);
-        ta.setTreasuryAddress(treasury);
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
 
         uint256 pool = 10_000 ether;
         _runFullGI(pool);
@@ -356,20 +359,22 @@ contract TreasuryForwardingTest is Test {
         assertEq(ta.treasuryAccrued(), expectedShare, "treasuryAccrued counter wrong");
     }
 
-    function test_settleRewards_noTreasurySet_noTransfer() public {
-        // treasuryAddress not set — no transfer, but counter still accumulates
+    function test_settleRewards_noTreasurySet_burnsFull() public {
+        // slashTreasury not set — full 5% share is burned, treasury address gets nothing.
         uint256 pool = 10_000 ether;
         _runFullGI(pool);
 
-        assertEq(token.balanceOf(treasury), 0, "no transfer without treasury set");
+        // Supply before endGI (which triggers settleRewards) is not easily isolated
+        // because _runFullGI mints tokens; we verify the observable effects instead.
+        assertEq(token.balanceOf(treasury), 0, "treasury address gets nothing");
         assertEq(ta.treasuryAccrued(), 500 ether, "treasuryAccrued still accumulates");
     }
 
     function testFuzz_settleRewards_poolConservation(uint256 pool) public {
         pool = bound(pool, 10_000 ether, 100_000 ether);
 
-        vm.prank(modelOwner);
-        ta.setTreasuryAddress(treasury);
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
 
         _runFullGI(pool);
 
@@ -379,4 +384,206 @@ contract TreasuryForwardingTest is Test {
         assertEq(token.balanceOf(treasury), treasuryShare, "forwarded == accrued");
         assertLe(treasuryShare, pool, "treasury share cannot exceed pool");
     }
+
+    // ── settleRecomputation(false): 50/50 split (was full-bond-to-treasury) ──
+
+    /// settleRecomputation(false) now uses _burnAndForward: 50% burn, 50% to treasury.
+    /// The owner calls settleRecomputation(false) to declare the recomputation matched
+    /// the original CID — the dispute was wrong, challenger's bond is forfeited.
+    function test_settleRecomputation_false_burns50pct_sends50pctToTreasury() public {
+        _runFullGI(10_000 ether);
+        uint256 bond = _openDispute();
+
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 treasuryBefore = token.balanceOf(treasury);
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        uint256 burned = supplyBefore - token.totalSupply();
+        uint256 treasuryReceived = token.balanceOf(treasury) - treasuryBefore;
+
+        assertEq(burned, bond / 2, "50% burned");
+        assertEq(treasuryReceived, bond - bond / 2, "50% to treasury");
+        assertEq(burned + treasuryReceived, bond, "bond fully distributed");
+        assertEq(tc.treasuryAccrued(), bond, "treasuryAccrued == bond");
+    }
+
+    /// settleRecomputation(false) burns all when slashTreasury is unset.
+    function test_settleRecomputation_false_noTreasurySet_burnsAll() public {
+        _runFullGI(10_000 ether);
+        uint256 bond = _openDispute();
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        uint256 supplyBefore = token.totalSupply();
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        uint256 burned = supplyBefore - token.totalSupply();
+        assertEq(burned, bond, "full bond burned when no treasury");
+        assertEq(tc.treasuryAccrued(), bond, "treasuryAccrued counter == bond");
+    }
+
+    // ── auditor test-data dispute treasury paths ──────────────────────────────
+
+    // Fixed test vectors matching EncryptedTestData.t.sol.
+    bytes constant TEST_K             = abi.encodePacked(bytes32(uint256(0xBEEF)));
+    bytes32 constant TEST_PLAINTEXT_HASH = bytes32(uint256(0xDEAD));
+    bytes constant TEST_ENC_CID       = abi.encodePacked(bytes32(uint256(0xCCC)));
+    uint256 constant DISPUTE_BOND     = 100 ether;
+
+    function _buildCommitment(uint256 gi, uint256 bid, bytes memory K, bytes32 ph)
+        internal pure returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(gi, bid, keccak256(K), ph));
+    }
+
+    /// @dev Runs a minimal GI to AuditorsBatchesCreated then assigns test data
+    ///      for batch 0 with TEST_K/TEST_PLAINTEXT_HASH commitment. Returns
+    ///      the commitment bytes32.
+    function _runToTestDataAssigned() internal returns (bytes32 commitment) {
+        _runFullGI(10_000 ether);
+
+        // Fund reward pool for GI 2, then start it.
+        _fundDin(modelOwner, 1_000 ether);
+        vm.prank(modelOwner);
+        ta.depositRewards(2, 1_000 ether);
+
+        vm.startPrank(modelOwner);
+        tc.startGI(2);
+        tc.startDINaggregatorsRegistration(2);
+        tc.closeDINaggregatorsRegistration(2);
+        tc.startDINauditorsRegistration(2);
+        vm.stopPrank();
+
+        vm.prank(auditor1); ta.registerDINAuditor(2);
+        vm.prank(auditor2); ta.registerDINAuditor(2);
+        vm.prank(auditor3); ta.registerDINAuditor(2);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(2);
+        tc.startLMsubmissions(2);
+        vm.stopPrank();
+
+        vm.prank(client1); ta.submitLocalModel(bytes32(uint256(100)), 2);
+        vm.prank(client2); ta.submitLocalModel(bytes32(uint256(200)), 2);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(2);
+        tc.createAuditorsBatches(2);
+        vm.stopPrank();
+
+        vm.prank(auditor1); stake.registerEncryptionKey(abi.encodePacked(bytes32(uint256(1))));
+        vm.prank(auditor2); stake.registerEncryptionKey(abi.encodePacked(bytes32(uint256(2))));
+        vm.prank(auditor3); stake.registerEncryptionKey(abi.encodePacked(bytes32(uint256(3))));
+
+        (, address[] memory batchAuditors,,) = ta.getAuditorsBatch(2, 0);
+        bytes[] memory keys = new bytes[](batchAuditors.length);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            keys[i] = abi.encodePacked(bytes32(uint256(i + 100)));
+        }
+        commitment = _buildCommitment(2, 0, TEST_K, TEST_PLAINTEXT_HASH);
+        vm.prank(modelOwner);
+        ta.assignAuditTestDataset(2, 0, TEST_ENC_CID, keys, commitment);
+    }
+
+    /// @dev Funds and stakes the disputer, sets bond, opens dispute on gi=2 batch=0.
+    function _openTestDataDispute() internal returns (uint256 bond) {
+        vm.prank(modelOwner);
+        ta.setDisputeBondAmount(DISPUTE_BOND);
+        bond = ta.disputeBondAmount();
+
+        address disputer = makeAddr("disputer");
+        _fundAndStake(disputer);
+        _fundDin(disputer, bond);
+        vm.startPrank(disputer);
+        token.approve(address(ta), type(uint256).max);
+        ta.openTestDataDispute(2, 0);
+        vm.stopPrank();
+    }
+
+    /// resolveTestDataDispute false (commitment matches) burns 50% and sends 50% to treasury.
+    function test_testDataDispute_false_burns50pct_sends50pctToTreasury() public {
+        _runToTestDataAssigned();
+        uint256 bond = _openTestDataDispute();
+
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 treasuryBefore = token.balanceOf(treasury);
+        uint256 accruedBefore = ta.treasuryAccrued();
+
+        // resolveTestDataDispute with correct K — dispute is false, bond forfeited.
+        vm.prank(modelOwner);
+        ta.resolveTestDataDispute(2, 0, TEST_K, TEST_PLAINTEXT_HASH);
+
+        uint256 burned = supplyBefore - token.totalSupply();
+        uint256 treasuryReceived = token.balanceOf(treasury) - treasuryBefore;
+        assertEq(burned, bond / 2, "50% burned on false dispute");
+        assertEq(treasuryReceived, bond - bond / 2, "50% to treasury on false dispute");
+        assertEq(ta.treasuryAccrued() - accruedBefore, bond, "treasuryAccrued delta == bond");
+    }
+
+    /// resolveTestDataDispute upheld (commitment mismatch) burns 50% of penalty and sends 50%.
+    function test_testDataDispute_upheld_penaltyBurns50pct_sends50pctToTreasury() public {
+        _runToTestDataAssigned();
+        _openTestDataDispute();
+
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
+
+        uint256 poolBefore = ta.giRewardPool(2);
+        uint256 penalty = (poolBefore * ta.disputePenaltyBps()) / 10000;
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 treasuryBefore = token.balanceOf(treasury);
+        uint256 accruedBefore = ta.treasuryAccrued();
+
+        // Wrong K — commitment mismatch, dispute upheld.
+        bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xDEADBEEF)));
+        vm.prank(modelOwner);
+        ta.resolveTestDataDispute(2, 0, wrongK, TEST_PLAINTEXT_HASH);
+
+        uint256 burned = supplyBefore - token.totalSupply();
+        uint256 treasuryReceived = token.balanceOf(treasury) - treasuryBefore;
+        assertEq(burned, penalty / 2, "50% of penalty burned");
+        assertEq(treasuryReceived, penalty - penalty / 2, "50% of penalty to treasury");
+        assertEq(ta.treasuryAccrued() - accruedBefore, penalty, "treasuryAccrued delta == penalty");
+    }
+
+    /// closeExpiredDispute burns 50% and sends 50% to treasury.
+    function test_closeExpiredDispute_burns50pct_sends50pctToTreasury() public {
+        _runToTestDataAssigned();
+        uint256 bond = _openTestDataDispute();
+
+        vm.prank(admin);
+        stake.setSlashTreasury(treasury);
+
+        // Roll past the dispute window.
+        (, , uint256 expiresAtBlock,,) = ta.testDataDisputes(2, 0);
+        vm.roll(expiresAtBlock + 1);
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 treasuryBefore = token.balanceOf(treasury);
+        uint256 accruedBefore = ta.treasuryAccrued();
+
+        ta.closeExpiredDispute(2, 0);
+
+        uint256 burned = supplyBefore - token.totalSupply();
+        uint256 treasuryReceived = token.balanceOf(treasury) - treasuryBefore;
+        assertEq(burned, bond / 2, "50% burned on expired dispute");
+        assertEq(treasuryReceived, bond - bond / 2, "50% to treasury on expired dispute");
+        assertEq(ta.treasuryAccrued() - accruedBefore, bond, "treasuryAccrued delta == bond");
+    }
+
 }

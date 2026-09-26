@@ -52,15 +52,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         });
 
     /// @notice Treasury's accrued share of settled reward pools.
-    /// @dev No live consumer yet -- DinTreasury doesn't exist on develop.
-    // TODO(task_210726_5): forward to DinTreasury once merged, instead of
-    // just accruing here.
-    uint256 public treasuryAccrued;
-
-    /// @notice Destination for treasuryAccrued once DinTreasury exists.
-    /// @dev Settable now so the wiring is a one-line change later, not a
-    ///      redeploy -- see treasuryAccrued's TODO.
-    address public treasuryAddress;
+    uint256 public treasuryAccrued; // cumulative observability counter
 
     /// @notice Per-address claimable reward balance across all GIs.
     /// @dev Pull-payment only -- claimReward(gi) credits this per GI,
@@ -317,7 +309,6 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     );
     event DinTokenSet(address indexed dinToken);
     event RewardSplitUpdated(RewardSplit split);
-    event TreasuryAddressUpdated(address indexed treasuryAddress);
     event RewardsSettled(
         uint256 indexed gi,
         uint256 clientPool,
@@ -449,17 +440,6 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         emit RewardSplitUpdated(newSplit);
     }
 
-    /// @notice Sets the address treasuryAccrued will eventually forward to.
-    /// @dev No forwarding happens yet -- DinTreasury doesn't exist on develop
-    ///      (task_210726_5). This only records the destination so wiring it
-    ///      up later is a one-line change, not a redeploy.
-    /// @param treasuryAddress_ Destination address for the treasury's reward share.
-    function setTreasuryAddress(address treasuryAddress_) external onlyOwner {
-        if (treasuryAddress_ == address(0)) revert TA_InvalidAddress();
-        treasuryAddress = treasuryAddress_;
-        emit TreasuryAddressUpdated(treasuryAddress_);
-    }
-
     /// @notice Funds the reward pool for a specific Global Iteration.
     /// @dev Pulls `amount` DIN from the caller via safeTransferFrom -- caller
     ///      must have approved this contract first. Anyone may fund any GI's
@@ -486,6 +466,38 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         dinToken.safeTransferFrom(msg.sender, address(this), amount);
         giRewardPool[gi] += amount;
         emit RewardDeposited(gi, msg.sender, amount);
+    }
+
+    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
+    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
+    ///      the slash-treasury is unset. Increments `treasuryAccrued` for observability.
+    function _burnAndForward(uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 burnAmt = amount / 2;
+        uint256 fwdAmt  = amount - burnAmt;
+        IBurnableDinToken(address(dinToken)).burn(burnAmt);
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, fwdAmt);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(fwdAmt);
+        }
+        treasuryAccrued += amount;
+    }
+
+    /// @dev Forwards `amount` in full to the platform slash-treasury.
+    ///      Burns the full amount when the treasury is unset.
+    ///      Used for protocol-fee shares (settleRewards), not forfeitures.
+    ///      Increments `treasuryAccrued` for observability.
+    function _forwardToTreasury(uint256 amount) internal {
+        if (amount == 0) return;
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, amount);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(amount);
+        }
+        treasuryAccrued += amount;
     }
 
     /// @notice Stores the per-GI reward pool snapshot at endGI time.
@@ -530,10 +542,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 aggregatorPool = (pool * split.aggregatorBps) / BPS_DENOMINATOR;
         uint256 treasuryShare = pool - clientPool - auditorPool - aggregatorPool;
 
-        treasuryAccrued += treasuryShare;
-        if (treasuryShare > 0 && treasuryAddress != address(0)) {
-            dinToken.safeTransfer(treasuryAddress, treasuryShare);
-        }
+        _forwardToTreasury(treasuryShare);
 
         giRewardSnapshot[gi] = GIRewardSnapshot({
             clientPool:            clientPool,
@@ -1471,15 +1480,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bool commitmentMatches = (reconstructed == testDataCommitments[gi][batchId]);
 
         if (commitmentMatches) {
-            // Dispute is false — forfeited bond: 50% burn, 50% treasury
+            // Dispute is false — forfeited bond: 50% burn, 50% platform treasury.
             uint256 bond = d.bond;
             d.active = false;
-            if (bond > 0) {
-                uint256 burnAmt = bond / 2;
-                uint256 treasuryAmt = bond - burnAmt;
-                IBurnableDinToken(address(dinToken)).burn(burnAmt);
-                treasuryAccrued += treasuryAmt;
-            }
+            _burnAndForward(bond);
             emit TestDataDisputeResolvedFalse(gi, batchId, d.disputer, bond);
         } else {
             // Dispute upheld — return bond, penalise owner's reward pool
@@ -1495,10 +1499,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
             if (penalty > 0 && giRewardPool[gi] >= penalty) {
                 giRewardPool[gi] -= penalty;
-                uint256 burnAmt = penalty / 2;
-                uint256 treasuryAmt = penalty - burnAmt;
-                IBurnableDinToken(address(dinToken)).burn(burnAmt);
-                treasuryAccrued += treasuryAmt;
+                _burnAndForward(penalty);
             }
 
             emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
@@ -1516,12 +1517,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 bond = d.bond;
         d.active = false;
 
-        if (bond > 0) {
-            uint256 burnAmt = bond / 2;
-            uint256 treasuryAmt = bond - burnAmt;
-            IBurnableDinToken(address(dinToken)).burn(burnAmt);
-            treasuryAccrued += treasuryAmt;
-        }
+        _burnAndForward(bond);
 
         emit DisputeExpired(gi, batchId, bond);
     }

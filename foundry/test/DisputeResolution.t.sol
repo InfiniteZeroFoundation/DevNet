@@ -436,15 +436,6 @@ contract DisputeResolutionTest is Test {
         assertEq(tc.disputeSeedDelay(), 10);
     }
 
-    function test_setTreasuryAddress_rejectsZeroAddress() public {
-        _deployPlatform();
-        _deployTaskPair();
-
-        vm.prank(modelOwner);
-        vm.expectRevert(); // TC_InvalidAddress
-        tc.setTreasuryAddress(address(0));
-    }
-
     // ─────────────────────────────────────────────────────────────────────
     // openDispute
     // ─────────────────────────────────────────────────────────────────────
