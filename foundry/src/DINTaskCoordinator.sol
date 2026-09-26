@@ -121,9 +121,11 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint256 bond;
         uint64 openedAt;
         uint64 resolutionDeadline; // set when fresh subgroup assigned; 0 until then
+        uint64 seedBlock;          // block number after which anyone may lock the seed
         bool resolved;    // true after resolveDispute() first decision
         bool upheld;      // true if fresh subgroup was assigned
         bool finalized;   // true after settleRecomputation() or expireDispute()
+        bytes32 seed;     // locked via lockDisputeSeed(); zero means not yet locked
     }
 
     IERC20 public dinToken;
@@ -138,6 +140,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     uint256 public disputeBond = 100 * 1e18; // placeholder default, DAO-settable
     uint64 public disputeWindow = 1 days;    // placeholder default, DAO-settable
     uint64 public resolutionWindow = 2 days; // how long fresh subgroup has to recompute; DAO-settable
+    /// @notice Blocks to wait after openDispute before the seed can be locked.
+    ///         On OP Stack, blocks are ~2 s, so the default (7) is ~14 s —
+    ///         enough for honest validators to observe the seedBlock, yet short
+    ///         enough not to delay dispute resolution meaningfully.
+    ///         Trust caveat: blockhash is sequencer-produced on OP Stack, so this
+    ///         design trusts the sequencer not to grind. Acceptable for DevNet/
+    ///         testnet; VRF or multi-party commit-reveal with a slashable
+    ///         non-reveal penalty is the mainnet-grade follow-up.
+    uint64 public disputeSeedDelay = 7; // DAO-settable; non-zero enforced by setDisputeParams
     address public treasuryAddress;
     uint256 public treasuryAccrued; // cumulative observability counter; tokens forwarded immediately
     /// @dev Gas units required per validator per GI to cover on-chain submission costs.
@@ -191,6 +202,18 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint indexed GI,
         TierKind tierKind,
         uint indexed batchId
+    );
+    event DisputeSeedLocked(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        bytes32 seed
+    );
+    event DisputeSeedReanchored(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        uint64 newSeedBlock
     );
 
     modifier onlyCurrentGI(uint _GI) {
@@ -495,7 +518,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         address[] memory valPool = _activeAggregatorPool(_GI);
         uint vLen = valPool.length;
         if (vLen < T1_AGGREGATORS_PER_BATCH) revert TC_NotEnoughValidators();
-        _shuffleAddressArray(valPool);
+        // Seed from the previous block — grinding-resistant enough for T1/T2
+        // batch assignment (no single party controls this call path).
+        // The dispute path uses the stronger future-block seed; see lockDisputeSeed.
+        _shuffleAddressArray(valPool, blockhash(block.number - 1));
 
         // ▸ 2. Build list of approved model indexes
         uint[] memory modelIdx = _collectApprovedModelIndexes(_GI);
@@ -550,12 +576,12 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     }
 
     // ──────────── internal shuffle helpers ────────────
-    function _shuffleAddressArray(address[] memory arr) internal view {
+    function _shuffleAddressArray(address[] memory arr, bytes32 seed) internal pure {
         if (arr.length < 2) return;
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(blockhash(block.number - 1), i, arr.length)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
@@ -1054,13 +1080,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     function setDisputeParams(
         uint256 _disputeBond,
         uint64 _disputeWindow,
-        uint64 _resolutionWindow
+        uint64 _resolutionWindow,
+        uint64 _disputeSeedDelay
     ) external onlyOwner {
-        if (_disputeBond == 0 || _disputeWindow == 0 || _resolutionWindow == 0)
+        if (_disputeBond == 0 || _disputeWindow == 0 || _resolutionWindow == 0 || _disputeSeedDelay == 0)
             revert TC_InvalidDisputeParams();
         disputeBond = _disputeBond;
         disputeWindow = _disputeWindow;
         resolutionWindow = _resolutionWindow;
+        disputeSeedDelay = _disputeSeedDelay;
     }
 
     /// @notice Updates the S2 liveness-fault slash fraction.
@@ -1137,14 +1165,50 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             bond: disputeBond,
             openedAt: uint64(block.timestamp),
             resolutionDeadline: 0,
+            seedBlock: uint64(block.number) + disputeSeedDelay,
             resolved: false,
             upheld: false,
-            finalized: false
+            finalized: false,
+            seed: bytes32(0)
         });
 
         dinToken.safeTransferFrom(msg.sender, address(this), disputeBond);
 
         emit DisputeOpened(_GI, tierKind, batchId, msg.sender, disputeBond);
+    }
+
+    /// @notice Permissionless: locks the entropy seed for an open dispute.
+    /// @dev Anyone can call this once `block.number > d.seedBlock`. The seed is
+    ///      derived from `blockhash(d.seedBlock)`, which nobody can predict when
+    ///      the dispute opens and nobody can choose once the block is mined —
+    ///      so neither the model owner nor the challenger can steer the subgroup.
+    ///
+    ///      256-block edge: if `blockhash(d.seedBlock)` returns 0 (more than 256
+    ///      blocks have elapsed since `seedBlock` was set), the function re-anchors
+    ///      to a fresh future block instead of recording a zero-derived seed. The
+    ///      party who dislikes the eventual draw cannot stop any honest validator
+    ///      from locking the seed first, so re-anchoring is not a free re-roll.
+    function lockDisputeSeed(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId
+    ) external {
+        Dispute storage d = disputes[_GI][tierKind][batchId];
+        if (d.challenger == address(0)) revert TC_DisputeNotOpen();
+        if (d.resolved) revert TC_DisputeAlreadyResolved();
+        if (d.seed != bytes32(0)) revert TC_DisputeSeedAlreadyLocked();
+        if (block.number <= d.seedBlock) revert TC_DisputeSeedBlockNotMined();
+
+        bytes32 bh = blockhash(d.seedBlock);
+        if (bh == bytes32(0)) {
+            // >256 blocks since seedBlock — re-anchor to a fresh future block.
+            d.seedBlock = uint64(block.number) + disputeSeedDelay;
+            emit DisputeSeedReanchored(_GI, tierKind, batchId, d.seedBlock);
+            return;
+        }
+
+        d.seed = keccak256(abi.encodePacked(bh, _GI, uint8(tierKind), batchId));
+        emit DisputeSeedLocked(_GI, tierKind, batchId, d.seed);
     }
 
     /// @notice Resolves a dispute, either upholding or rejecting it.
@@ -1179,6 +1243,11 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         d.upheld = upheld;
 
         if (upheld) {
+            // Require a locked seed before assigning the fresh subgroup.
+            // lockDisputeSeed must be called first so the subgroup draw
+            // cannot be steered by timing resolveDispute to a favourable block.
+            if (d.seed == bytes32(0)) revert TC_DisputeSeedNotLocked();
+
             // Assign fresh subgroup and start the resolution clock.
             // Bond credit is deferred: the challenger gets it back in
             // settleRecomputation(confirmed=true) or expireDispute(). If the
@@ -1190,7 +1259,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             address[] memory freshSubgroup = _assignFreshSubgroup(
                 _GI,
                 tierKind,
-                batchId
+                batchId,
+                d.seed
             );
             reEvaluationAssignees[_GI][tierKind][batchId] = freshSubgroup;
             emit ReEvaluationAssigned(_GI, tierKind, batchId, freshSubgroup);
@@ -1340,14 +1410,16 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     /// @notice Selects a fresh aggregator subgroup for re-evaluation, excluding
     ///         the accused batch's original aggregators.
     /// @dev Draws from the same active-aggregator pool autoCreateTier1AndTier2
-    ///      uses, shuffled with the same blockhash-based entropy. Bookkeeping
+    ///      uses, shuffled with the dispute's locked future-block seed so the
+    ///      draw is independent of when resolveDispute is called. Bookkeeping
     ///      only -- does not re-open the GI state machine to actually re-run
     ///      aggregation against this subgroup; see the scaffold-wide comment
     ///      above the state declarations.
     function _assignFreshSubgroup(
         uint _GI,
         TierKind tierKind,
-        uint batchId
+        uint batchId,
+        bytes32 seed
     ) internal view returns (address[] memory subgroup) {
         address[] memory excluded = tierKind == TierKind.Tier1
             ? tier1Batches[_GI][batchId].aggregators
@@ -1370,7 +1442,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_NotEnoughValidators();
         }
 
-        _shuffleAddressArray(eligible);
+        _shuffleAddressArray(eligible, seed);
 
         subgroup = new address[](T1_AGGREGATORS_PER_BATCH);
         for (uint i = 0; i < T1_AGGREGATORS_PER_BATCH; i++) {

@@ -404,6 +404,30 @@ def connect_demo_wallet(ctx: typer.Context,
     if not isinstance(account, int):
         account = None
 
+    # Early guard: if a wallet by this name already exists as a real (encrypted)
+    # wallet, surface the specific mismatch error before the demo-mode check so
+    # the user always gets the actionable message regardless of demo-mode state.
+    if account is None:
+        try:
+            _rn = validate_account_name(name)
+            _wp, _wexists = resolve_wallet_path(_rn)
+            if _wexists:
+                with open(_wp) as _f:
+                    _wd = json.load(_f)
+                if not _wd.get("demo_mode"):
+                    console.print(
+                        f"[red]❌ '{_rn}' is not a demo wallet — connect-demo-wallet only "
+                        f"connects wallets created via `connect-demo-wallet`.[/red]"
+                    )
+                    console.print(
+                        f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {_rn}"
+                    )
+                    raise typer.Exit(1)
+        except typer.Exit:
+            raise
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+
     if not get_config("demo_mode"):
         console.print(
             "[red]❌ Demo mode is off — connect-demo-wallet only works with demo "
