@@ -26,10 +26,11 @@ soon as a proxy is actually deployed and holds state worth preserving.
 (`_initialized`, `_owner`, etc.) are determined by their upstream storage layout and
 must not be touched.
 
-**`ReentrancyGuardTransient` is slot-neutral.** `DinCoordinator` and
-`DinValidatorStake` inherit from `ReentrancyGuardTransient`, which stores its lock in
-EIP-1153 transient storage (cleared each transaction). It contributes zero persistent
-storage slots.
+**`ReentrancyGuardTransient` is slot-neutral.** `DinCoordinator`,
+`DinValidatorStake`, and `DINModelRegistry` (added for the `requestModelRegistration`
+overpayment refund, L-3) inherit from `ReentrancyGuardTransient`, which stores its
+lock in EIP-1153 transient storage (cleared each transaction). It contributes zero
+persistent storage slots.
 
 ---
 

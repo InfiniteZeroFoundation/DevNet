@@ -1033,6 +1033,11 @@
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
+    },
+    {
+      "type": "error",
+      "name": "RefundFailed",
+      "inputs": []
     }
   ]
 }
