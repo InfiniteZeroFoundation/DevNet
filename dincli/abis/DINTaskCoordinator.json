@@ -1,2336 +1,2338 @@
-[
-  {
-    "type": "constructor",
-    "inputs": [
-      {
-        "name": "dinvalidatorStakeContract_address",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "modelId_",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "GI",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "GIstate",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum GIstates"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_REGISTERED_AGGREGATORS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MIN_T1_MODELS_PER_BATCH",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "T1_AGGREGATORS_PER_BATCH",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "T1_MODELS_PER_BATCH",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "aggregatorWeight",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "autoCreateTier1AndTier2",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "claimDisputeBond",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "closeDINaggregatorsRegistration",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "closeDINauditorsRegistration",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "closeLMsubmissions",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "closeLMsubmissionsEvaluation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "createAuditorsBatches",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "dinAggregators",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "dinTaskAuditorContract",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IDINTaskAuditor"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "dinToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IERC20"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "dinvalidatorStakeContract",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IDinValidatorStake"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "disputeBond",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "disputeBondClaimable",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "disputeSeedDelay",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "disputeWindow",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "disputes",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "challenger",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bond",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "openedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "resolutionDeadline",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "seedBlock",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "resolved",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "upheld",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "finalized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "seed",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "endGI",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "expireDispute",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "finalizeT1Aggregation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "finalizeT2Aggregation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "genesisModelIpfsHash",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getDINtaskAggregators",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTier1Batch",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "validators",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "modelIndexes",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "finalized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "finalCID",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTier2Batch",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "validators",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "finalized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "finalCID",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTier2Score",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isDINAggregator",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "lockDisputeSeed",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "modelId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "networkFeeFloor",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "openDispute",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "reEvaluationAssignees",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "registerDINaggregator",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "registrationSlotsReleased",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "releaseGIRegistrationSlots",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "renounceOwnership",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "resolutionWindow",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "resolveDispute",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "upheld",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "s2SlashFractionBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setDINTaskAuditorAsSlasher",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setDINTaskAuditorContract",
-    "inputs": [
-      {
-        "name": "_dintaskauditor_contract_address",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setDINTaskCoordinatorAsSlasher",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setDinToken",
-    "inputs": [
-      {
-        "name": "_dinToken",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setDisputeParams",
-    "inputs": [
-      {
-        "name": "_disputeBond",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_disputeWindow",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "_resolutionWindow",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "_disputeSeedDelay",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setGenesisModelIpfsHash",
-    "inputs": [
-      {
-        "name": "_genesisModelIpfsHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setNetworkFeeFloor",
-    "inputs": [
-      {
-        "name": "_floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setS2SlashFractionBps",
-    "inputs": [
-      {
-        "name": "bps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTestDataAssignedFlag",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "flag",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTier2Score",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_score",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTreasuryAddress",
-    "inputs": [
-      {
-        "name": "_treasuryAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "settleRecomputation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "confirmed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slashAggregators",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slashAuditors",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startDINaggregatorsRegistration",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startDINauditorsRegistration",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startGI",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startGI",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "score",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startLMsubmissions",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startLMsubmissionsEvaluation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startLMsubmissionsEvaluationReveal",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startT1Aggregation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startT2Aggregation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "submitT1Aggregation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_aggregationCID",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "submitT2Aggregation",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_aggregationCID",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "t1SubmissionCID",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "t1Submitted",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "t1Votes",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "t2SubmissionCID",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "t2Submitted",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "t2Votes",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tier1BatchCount",
-    "inputs": [
-      {
-        "name": "_GI",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tier1Batches",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "finalized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "finalCID",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tier1FinalizedAt",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tier2Batches",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "finalized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "finalCID",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tier2FinalizedAt",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tier2Score",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "totalAggregatorWeight",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "transferOwnership",
-    "inputs": [
-      {
-        "name": "newOwner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "treasuryAccrued",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "treasuryAddress",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "AggregatorSlashed",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "aggregator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "reason",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requested",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "actual",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DINValidatorRegistered",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "validator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DisputeBondClaimed",
-    "inputs": [
-      {
-        "name": "challenger",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DisputeExpired",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DisputeOpened",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "challenger",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "bond",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DisputeResolved",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "upheld",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DisputeSeedLocked",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "seed",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DisputeSeedReanchored",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newSeedBlock",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OwnershipTransferred",
-    "inputs": [
-      {
-        "name": "previousOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReEvaluationAssigned",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "freshAggregators",
-        "type": "address[]",
-        "indexed": false,
-        "internalType": "address[]"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RecomputationSettled",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tierKind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum DINTaskCoordinator.TierKind"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "confirmed",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "S2SlashFractionBpsUpdated",
-    "inputs": [
-      {
-        "name": "oldBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Tier1BatchAuto",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Tier2BatchAuto",
-    "inputs": [
-      {
-        "name": "GI",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "OwnableInvalidOwner",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OwnableUnauthorizedAccount",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TC_AggregatorAlreadyRegistered",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AggregatorNotActive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AggregatorsRegistrationCannotBeFinished",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AggregatorsRegistrationCannotBeStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AggregatorsRegistrationNotOpen",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AlreadySubmitted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AuditorCannotBeSetAsSlasher",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AuditorIsNotSlasher",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AuditorsRegistrationCannotBeFinished",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_AuditorsRegistrationCannotBeStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_BatchNotFinalized",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_BatchNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_CannotSetTestDataAssignedFlag",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_ConcurrentRegistrationCapReached",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_CoordinatorCannotBeSetAsSlasher",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_CoordinatorIsNotSlasher",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeAlreadyFinalized",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeAlreadyOpen",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeAlreadyResolved",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeNotAwaitingRecomputation",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeNotOpen",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeSeedAlreadyLocked",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeSeedBlockNotMined",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeSeedNotLocked",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_DisputeWindowClosed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_EvalPhaseNotClosed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_FailedToCreateAuditorsBatches",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_FailedToFinalizeEvaluation",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_FailedToSlashAuditors",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_GICannotBeStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_GIRewardPoolNotFunded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_GenesisModelHashCannotBeSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_InsufficientSubmissions",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_InvalidAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_InvalidBatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_InvalidDisputeParams",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_InvalidSlashFraction",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_LMEvalCannotBeFinished",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_LMEvalCannotBeStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_LMSubmissionsCannotBeStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_LMSubmissionsNotStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NoBondClaimable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NoSubmissions",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotBatchAggregator",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotEnoughApprovedModels",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotEnoughValidators",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyForT1Aggregation",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyForT2Aggregation",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyToEndGI",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyToFinalizeT1",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyToFinalizeT2",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyToSetTier2Score",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyToSlashAggregators",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_NotReadyToSlashAuditors",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_OnlyOneTier2Batch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_RegistrationCapReached",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_ResolutionWindowOpen",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_RevealCannotBeStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_StakeBelowModelFloor",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_T1AggregationNotStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_T2AggregationNotStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_TaskAuditorContractCannotBeSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_WrongGI",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TC_ZeroCID",
-    "inputs": []
-  }
-]
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "dinvalidatorStakeContract_address",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "modelId_",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "GI",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "GIstate",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "enum GIstates"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "MAX_REGISTERED_AGGREGATORS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "MIN_T1_MODELS_PER_BATCH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "T1_AGGREGATORS_PER_BATCH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "T1_MODELS_PER_BATCH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "aggregatorWeight",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "autoCreateTier1AndTier2",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "claimDisputeBond",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "closeDINaggregatorsRegistration",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "closeDINauditorsRegistration",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "closeLMsubmissions",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "closeLMsubmissionsEvaluation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "createAuditorsBatches",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "dinAggregators",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "dinTaskAuditorContract",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDINTaskAuditor"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "dinToken",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IERC20"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "dinvalidatorStakeContract",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDinValidatorStake"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "disputeBond",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "disputeBondClaimable",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "disputeSeedDelay",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "disputeWindow",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "disputes",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "challenger",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "bond",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "openedAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "resolutionDeadline",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "seedBlock",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "resolved",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "upheld",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "seed",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "endGI",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "expireDispute",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "finalizeT1Aggregation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "finalizeT2Aggregation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "genesisModelIpfsHash",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getDINtaskAggregators",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address[]",
+          "internalType": "address[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTier1Batch",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_id",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "validators",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "modelIndexes",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTier2Batch",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_id",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "validators",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTier2Score",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isDINAggregator",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "lockDisputeSeed",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "modelId",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "networkFeeFloor",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "openDispute",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "reEvaluationAssignees",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "registerDINaggregator",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "registrationSlotsReleased",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "releaseGIRegistrationSlots",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "resolutionWindow",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "resolveDispute",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "upheld",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "s2SlashFractionBps",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setDINTaskAuditorAsSlasher",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setDINTaskAuditorContract",
+      "inputs": [
+        {
+          "name": "_dintaskauditor_contract_address",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setDINTaskCoordinatorAsSlasher",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setDinToken",
+      "inputs": [
+        {
+          "name": "_dinToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setDisputeParams",
+      "inputs": [
+        {
+          "name": "_disputeBond",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_disputeWindow",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "_resolutionWindow",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "_disputeSeedDelay",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setGenesisModelIpfsHash",
+      "inputs": [
+        {
+          "name": "_genesisModelIpfsHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setNetworkFeeFloor",
+      "inputs": [
+        {
+          "name": "_floor",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setS2SlashFractionBps",
+      "inputs": [
+        {
+          "name": "bps",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setTestDataAssignedFlag",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "flag",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setTier2Score",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_score",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setTreasuryAddress",
+      "inputs": [
+        {
+          "name": "_treasuryAddress",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "settleRecomputation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "confirmed",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "slashAggregators",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "slashAuditors",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startDINaggregatorsRegistration",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startDINauditorsRegistration",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startGI",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startGI",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "score",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startLMsubmissions",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startLMsubmissionsEvaluation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startLMsubmissionsEvaluationReveal",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startT1Aggregation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "startT2Aggregation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "submitT1Aggregation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_aggregationCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "submitT2Aggregation",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_aggregationCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "t1SubmissionCID",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "t1Submitted",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "t1Votes",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "t2SubmissionCID",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "t2Submitted",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "t2Votes",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tier1BatchCount",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tier1Batches",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tier1FinalizedAt",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tier2Batches",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tier2FinalizedAt",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tier2Score",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalAggregatorWeight",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "treasuryAccrued",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "treasuryAddress",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "AggregatorSlashed",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "aggregator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "reason",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "requested",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "actual",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DINValidatorRegistered",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DisputeBondClaimed",
+      "inputs": [
+        {
+          "name": "challenger",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DisputeExpired",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DisputeOpened",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "challenger",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "bond",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DisputeResolved",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "upheld",
+          "type": "bool",
+          "indexed": false,
+          "internalType": "bool"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DisputeSeedLocked",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seed",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DisputeSeedReanchored",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "newSeedBlock",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ReEvaluationAssigned",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "freshAggregators",
+          "type": "address[]",
+          "indexed": false,
+          "internalType": "address[]"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "RecomputationSettled",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierKind",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "confirmed",
+          "type": "bool",
+          "indexed": false,
+          "internalType": "bool"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "S2SlashFractionBpsUpdated",
+      "inputs": [
+        {
+          "name": "oldBps",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "newBps",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Tier1BatchAuto",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Tier2BatchAuto",
+      "inputs": [
+        {
+          "name": "GI",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "batchId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ReentrancyGuardReentrantCall",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "TC_AggregatorAlreadyRegistered",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AggregatorNotActive",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AggregatorsRegistrationCannotBeFinished",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AggregatorsRegistrationCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AggregatorsRegistrationNotOpen",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AlreadySubmitted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AuditorCannotBeSetAsSlasher",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AuditorIsNotSlasher",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AuditorsRegistrationCannotBeFinished",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_AuditorsRegistrationCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_BatchNotFinalized",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_BatchNotFound",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_CannotSetTestDataAssignedFlag",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_ConcurrentRegistrationCapReached",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_CoordinatorCannotBeSetAsSlasher",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_CoordinatorIsNotSlasher",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeAlreadyFinalized",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeAlreadyOpen",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeAlreadyResolved",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeNotAwaitingRecomputation",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeNotOpen",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeSeedAlreadyLocked",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeSeedBlockNotMined",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeSeedNotLocked",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_DisputeWindowClosed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_EvalPhaseNotClosed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_FailedToCreateAuditorsBatches",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_FailedToFinalizeEvaluation",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_FailedToSlashAuditors",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_GICannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_GIRewardPoolNotFunded",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_GenesisModelHashCannotBeSet",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_InsufficientSubmissions",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_InvalidAddress",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_InvalidBatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_InvalidDisputeParams",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_InvalidSlashFraction",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_LMEvalCannotBeFinished",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_LMEvalCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_LMSubmissionsCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_LMSubmissionsNotStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NoBondClaimable",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NoSubmissions",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotBatchAggregator",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotEnoughApprovedModels",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotEnoughValidators",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyForT1Aggregation",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyForT2Aggregation",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyToEndGI",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyToFinalizeT1",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyToFinalizeT2",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyToSetTier2Score",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyToSlashAggregators",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_NotReadyToSlashAuditors",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_OnlyOneTier2Batch",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_RegistrationCapReached",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_ResolutionWindowOpen",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_RevealCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_StakeBelowModelFloor",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_T1AggregationNotStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_T2AggregationNotStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_TaskAuditorContractCannotBeSet",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_WrongGI",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_ZeroCID",
+      "inputs": []
+    }
+  ]
+}

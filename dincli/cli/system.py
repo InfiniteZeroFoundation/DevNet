@@ -248,6 +248,32 @@ def configure_network(ctx: typer.Context):
 # when a command actually needs to sign — see utils.load_account().
 
 
+def _refuse_real_wallet_in_demo_lane(console, resolved: str) -> None:
+    """Refuse connect-demo-wallet on a real (encrypted) wallet, pointing at connect-wallet."""
+    console.print(
+        f"[red]❌ '{resolved}' is not a demo wallet — connect-demo-wallet only "
+        f"connects wallets created via `connect-demo-wallet`.[/red]"
+    )
+    console.print(f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {resolved}")
+    raise typer.Exit(1)
+
+
+def _is_existing_real_wallet(name: str) -> bool:
+    """True if `name` resolves to an existing, readable wallet file that is not demo-format.
+
+    Invalid names, missing files and unreadable files return False so the caller's
+    normal error path reports them.
+    """
+    try:
+        wallet_path, exists = resolve_wallet_path(validate_account_name(name))
+        if not exists:
+            return False
+        with open(wallet_path) as f:
+            return json.load(f).get("demo_mode") is not True
+    except (ValueError, OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
 def _connect_registered_wallet(console, name: str, require_demo: Optional[bool] = None) -> str:
     """Persist `name` as the active wallet (config "wallet_name").
 
@@ -295,12 +321,7 @@ def _connect_registered_wallet(console, name: str, require_demo: Optional[bool] 
     is_demo = wallet_data.get("demo_mode") is True
 
     if require_demo is True and not is_demo:
-        console.print(
-            f"[red]❌ '{resolved}' is not a demo wallet — connect-demo-wallet only "
-            f"connects wallets created via `connect-demo-wallet`.[/red]"
-        )
-        console.print(f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {resolved}")
-        raise typer.Exit(1)
+        _refuse_real_wallet_in_demo_lane(console, resolved)
     if require_demo is False and is_demo:
         console.print(
             f"[red]❌ '{resolved}' is a demo wallet — connect-wallet refuses to activate it, "
@@ -404,29 +425,11 @@ def connect_demo_wallet(ctx: typer.Context,
     if not isinstance(account, int):
         account = None
 
-    # Early guard: if a wallet by this name already exists as a real (encrypted)
-    # wallet, surface the specific mismatch error before the demo-mode check so
-    # the user always gets the actionable message regardless of demo-mode state.
-    if account is None:
-        try:
-            _rn = validate_account_name(name)
-            _wp, _wexists = resolve_wallet_path(_rn)
-            if _wexists:
-                with open(_wp) as _f:
-                    _wd = json.load(_f)
-                if not _wd.get("demo_mode"):
-                    console.print(
-                        f"[red]❌ '{_rn}' is not a demo wallet — connect-demo-wallet only "
-                        f"connects wallets created via `connect-demo-wallet`.[/red]"
-                    )
-                    console.print(
-                        f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {_rn}"
-                    )
-                    raise typer.Exit(1)
-        except typer.Exit:
-            raise
-        except (json.JSONDecodeError, OSError, ValueError):
-            pass
+    # Reconnecting by name to a real (encrypted) wallet: refuse with the specific
+    # "not a demo wallet" message before the demo-mode check. Turning demo mode
+    # on would not make this command accept it, so "Demo mode is off" misleads.
+    if account is None and _is_existing_real_wallet(name):
+        _refuse_real_wallet_in_demo_lane(console, validate_account_name(name))
 
     if not get_config("demo_mode"):
         console.print(
@@ -1499,12 +1502,13 @@ def dump_abi(
     """
     Extract ABI (and optionally bytecode) from a contract artifact and save it 
     in Hardhat-compatible format to dincli/abis/.
-    
+
     Example:
-      dincli dindao dump-abi --artifact "hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json" --bytecode
+      dincli system dump-abi --official --artifact "foundry/out/DinCoordinator.sol/DinCoordinator.json" --bytecode
     """
 
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    # File-only operation: no network, web3 or wallet needed.
+    console = ctx.obj.console
     
     artifact = Path(artifact_path)
     if not artifact.exists():

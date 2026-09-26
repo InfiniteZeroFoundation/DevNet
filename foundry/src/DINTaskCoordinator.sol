@@ -148,7 +148,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ///         design trusts the sequencer not to grind. Acceptable for DevNet/
     ///         testnet; VRF or multi-party commit-reveal with a slashable
     ///         non-reveal penalty is the mainnet-grade follow-up.
-    uint64 public disputeSeedDelay = 7; // DAO-settable; non-zero enforced by setDisputeParams
+    uint64 public disputeSeedDelay = 7; // DAO-settable; 1–256 enforced by setDisputeParams
     address public treasuryAddress;
     uint256 public treasuryAccrued; // cumulative observability counter; tokens forwarded immediately
     /// @dev Gas units required per validator per GI to cover on-chain submission costs.
@@ -1073,18 +1073,25 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         dinToken = IERC20(_dinToken);
     }
 
-    /// @notice Sets the three dispute timing/bond parameters.
+    /// @notice Sets the four dispute timing/bond parameters.
     /// @param _disputeBond       Token amount a challenger must post to open a dispute.
     /// @param _disputeWindow     Seconds after batch finalization during which a dispute can be opened.
     /// @param _resolutionWindow  Seconds the fresh subgroup has to recompute after being assigned.
+    /// @param _disputeSeedDelay  Blocks after openDispute before the seed can be locked (1–256,
+    ///                           within the blockhash window).
     function setDisputeParams(
         uint256 _disputeBond,
         uint64 _disputeWindow,
         uint64 _resolutionWindow,
         uint64 _disputeSeedDelay
     ) external onlyOwner {
-        if (_disputeBond == 0 || _disputeWindow == 0 || _resolutionWindow == 0 || _disputeSeedDelay == 0)
-            revert TC_InvalidDisputeParams();
+        if (
+            _disputeBond == 0 ||
+            _disputeWindow == 0 ||
+            _resolutionWindow == 0 ||
+            _disputeSeedDelay == 0 ||
+            _disputeSeedDelay > 256
+        ) revert TC_InvalidDisputeParams();
         disputeBond = _disputeBond;
         disputeWindow = _disputeWindow;
         resolutionWindow = _resolutionWindow;
@@ -1409,9 +1416,14 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
     /// @notice Selects a fresh aggregator subgroup for re-evaluation, excluding
     ///         the accused batch's original aggregators.
-    /// @dev Draws from the same active-aggregator pool autoCreateTier1AndTier2
-    ///      uses, shuffled with the dispute's locked future-block seed so the
-    ///      draw is independent of when resolveDispute is called. Bookkeeping
+    /// @dev Shuffles the GI's full registered pool (push-only, closed before any
+    ///      dispute can open) with the dispute's locked future-block seed, then
+    ///      takes the first T1_AGGREGATORS_PER_BATCH entries that are still
+    ///      active and were not in the accused batch. Shuffling the fixed
+    ///      registered pool rather than the live active pool means the draw is
+    ///      independent of when resolveDispute is called, and an aggregator who
+    ///      exits after the seed is public can only remove itself from the draw,
+    ///      not re-permute everyone else's position. Bookkeeping
     ///      only -- does not re-open the GI state machine to actually re-run
     ///      aggregation against this subgroup; see the scaffold-wide comment
     ///      above the state declarations.
@@ -1424,29 +1436,22 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         address[] memory excluded = tierKind == TierKind.Tier1
             ? tier1Batches[_GI][batchId].aggregators
             : tier2Batches[_GI][batchId].aggregators;
-        address[] memory pool = _activeAggregatorPool(_GI);
+        address[] memory pool = dinAggregators[_GI];
 
-        uint eligibleCount;
-        for (uint i = 0; i < pool.length; i++) {
-            if (!_isInArray(pool[i], excluded)) eligibleCount++;
-        }
-
-        address[] memory eligible = new address[](eligibleCount);
-        uint ptr;
-        for (uint i = 0; i < pool.length; i++) {
-            if (!_isInArray(pool[i], excluded)) {
-                eligible[ptr++] = pool[i];
-            }
-        }
-        if (eligible.length < T1_AGGREGATORS_PER_BATCH) {
-            revert TC_NotEnoughValidators();
-        }
-
-        _shuffleAddressArray(eligible, seed);
+        _shuffleAddressArray(pool, seed);
 
         subgroup = new address[](T1_AGGREGATORS_PER_BATCH);
-        for (uint i = 0; i < T1_AGGREGATORS_PER_BATCH; i++) {
-            subgroup[i] = eligible[i];
+        uint ptr;
+        for (uint i = 0; i < pool.length && ptr < T1_AGGREGATORS_PER_BATCH; i++) {
+            if (
+                !_isInArray(pool[i], excluded) &&
+                dinvalidatorStakeContract.isValidatorActive(pool[i])
+            ) {
+                subgroup[ptr++] = pool[i];
+            }
+        }
+        if (ptr < T1_AGGREGATORS_PER_BATCH) {
+            revert TC_NotEnoughValidators();
         }
     }
 

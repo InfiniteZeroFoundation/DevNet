@@ -603,6 +603,23 @@ class TestConnectDemoWallet:
         assert "not a demo wallet" in plain
         assert "connect-wallet realacct" in plain
 
+    def test_refuses_a_real_wallet_even_with_demo_mode_off(self, temp_config, monkeypatch):
+        # The wallet-type refusal must win over the demo-mode check: "Demo mode is
+        # off" would send the user to enable demo mode, and the command would
+        # still refuse this real wallet afterwards.
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": false}')
+        monkeypatch.setattr(utils_mod, "CONFIG_FILE", config_file)
+        self._base_monkeypatch(monkeypatch)
+        _write_encrypted_wallet(temp_config["wallets_dir"], "realacct", DUMMY_KEY_0, DUMMY_PW)
+        result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "realacct"])
+        assert result.exit_code == 1
+        plain = _plain(result.output)
+        assert "not a demo wallet" in plain
+        assert "connect-wallet realacct" in plain
+        assert "Demo mode is off" not in plain
+        assert utils_mod.load_config().get("wallet_name") != "realacct"
+
     def test_overwrite_guard_declined_leaves_wallet_unchanged(self, temp_config, monkeypatch):
         config_file = temp_config["config_dir"] / "config.json"
         config_file.write_text('{"demo_mode": true}')
@@ -1115,3 +1132,24 @@ class TestPasswordVerboseFalse:
         finally:
             utils_mod.console = orig_console
 
+
+
+class TestDumpAbiNeedsNoWallet:
+    """dump-abi is a file-only operation: it must run with no wallet connected
+    and write the {"abi": [...]} shape get_contract_instance expects."""
+
+    def test_dump_abi_foundry_artifact_without_wallet(self, temp_config, tmp_path):
+        (temp_config["config_dir"] / "config.json").write_text('{"network": "local"}')
+        artifact = tmp_path / "Foo.json"
+        artifact.write_text(json.dumps({
+            "abi": [{"type": "function", "name": "foo", "inputs": [], "outputs": [], "stateMutability": "view"}],
+            "bytecode": {"object": "0x6080", "sourceMap": "", "linkReferences": {}},
+        }))
+        out_dir = tmp_path / "abis_out"
+        result = CliRunner().invoke(main_app, [
+            "system", "dump-abi", "--artifact", str(artifact), "--output", str(out_dir), "--bytecode",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Error loading account" not in _plain(result.output)
+        data = json.loads((out_dir / "Foo.json").read_text())
+        assert data == {"abi": json.loads(artifact.read_text())["abi"], "bytecode": "0x6080"}

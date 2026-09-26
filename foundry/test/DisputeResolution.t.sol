@@ -406,6 +406,23 @@ contract DisputeResolutionTest is Test {
         vm.stopPrank();
     }
 
+    function test_setDisputeParams_rejectsSeedDelayAboveBlockhashWindow() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.startPrank(modelOwner);
+        vm.expectRevert(Shared.TC_InvalidDisputeParams.selector);
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 257);
+
+        // Previously overflowed openDispute's `block.number + disputeSeedDelay`.
+        vm.expectRevert(Shared.TC_InvalidDisputeParams.selector);
+        tc.setDisputeParams(50 ether, 2 days, 3 days, type(uint64).max);
+
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 256);
+        vm.stopPrank();
+        assertEq(tc.disputeSeedDelay(), 256);
+    }
+
     function test_setDisputeParams_updatesValues() public {
         _deployPlatform();
         _deployTaskPair();
@@ -899,41 +916,74 @@ contract DisputeResolutionTest is Test {
     // lockDisputeSeed (Part A — BL-11)
     // ─────────────────────────────────────────────────────────────────────
 
-    /// Timing independence: two resolveDispute calls at different blocks yield
-    /// the same subgroup because the seed was locked before either call.
+    /// Timing independence: once the seed is locked, resolving the same
+    /// dispute at different blocks/timestamps yields the same subgroup.
+    /// Snapshot/revert lets us re-resolve the identical dispute at 20 offsets;
+    /// with the pre-fix `blockhash(block.number - 1)` seed this fails.
     function test_lockDisputeSeed_subgroupIndependentOfResolveTiming() public {
-        _runToT1Finalized(6);
-        _fundAndStake(challenger);
-        _fundDinBalance(challenger, 1_000 ether);
+        _openAndLockDispute(9);
 
-        vm.prank(challenger);
-        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        uint256 snap = vm.snapshotState();
+        address[] memory baseline = _resolveUpheldAndGetSubgroup();
 
-        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
-
-        // Capture subgroup from resolve at block N.
-        uint256 blockA = block.number;
-        vm.prank(modelOwner);
-        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
-        address[] memory subgroupA = _freshSubgroupOf(1, 0);
-
-        // Verify: a second call would be reverted (dispute already resolved),
-        // but we can prove timing independence by checking the seed is fixed
-        // and re-running _assignFreshSubgroup would produce identical output
-        // from any block — confirmed by the seed being invariant after lock.
-        (,,,, , , , , bytes32 seed) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
-        assertTrue(seed != bytes32(0), "seed must be locked and non-zero");
-        assertGt(block.number, blockA - 1, "block advanced for the resolve");
-
-        // Subgroup is non-empty and excludes the original accused batch.
-        assertEq(subgroupA.length, 3);
-        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
-        for (uint i = 0; i < originalAggs.length; i++) {
-            assertFalse(
-                _addrInArray(originalAggs[i], subgroupA),
-                "original agg must not appear in fresh subgroup"
+        for (uint k = 1; k <= 20; k++) {
+            vm.revertToState(snap);
+            vm.roll(block.number + k * 37);
+            vm.warp(block.timestamp + k * 101);
+            assertTrue(
+                _sameAddrs(baseline, _resolveUpheldAndGetSubgroup()),
+                "subgroup must not depend on resolve block/timestamp"
             );
         }
+    }
+
+    /// Residual No. 3: an eligible aggregator who was NOT drawn cannot re-roll
+    /// the draw by exiting after the seed is public. The draw walks the fixed
+    /// registered pool in shuffled order, so leaving only removes oneself.
+    function test_resolveDispute_nonDrawnAggregatorExitDoesNotChangeSubgroup()
+        public
+    {
+        _openAndLockDispute(9);
+
+        uint256 snap = vm.snapshotState();
+        address[] memory baseline = _resolveUpheldAndGetSubgroup();
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+
+        uint tried;
+        for (uint i = 0; i < 9; i++) {
+            address agg = makeAddr(string(abi.encodePacked("agg", i)));
+            if (_addrInArray(agg, originalAggs) || _addrInArray(agg, baseline)) {
+                continue;
+            }
+            vm.revertToState(snap);
+            vm.prank(agg);
+            stake.unstake(1);
+            assertFalse(stake.isValidatorActive(agg));
+            assertTrue(
+                _sameAddrs(baseline, _resolveUpheldAndGetSubgroup()),
+                "non-drawn aggregator exit must not change the subgroup"
+            );
+            tried++;
+        }
+        assertEq(tried, 3, "expected 3 eligible non-drawn aggregators");
+    }
+
+    /// A drawn aggregator who exits before resolve is replaced, and the other
+    /// drawn members keep their seats.
+    function test_resolveDispute_drawnAggregatorExitOnlyReplacesSelf() public {
+        _openAndLockDispute(9);
+
+        uint256 snap = vm.snapshotState();
+        address[] memory baseline = _resolveUpheldAndGetSubgroup();
+
+        vm.revertToState(snap);
+        vm.prank(baseline[0]);
+        stake.unstake(1);
+        address[] memory afterExit = _resolveUpheldAndGetSubgroup();
+
+        assertFalse(_addrInArray(baseline[0], afterExit));
+        assertTrue(_addrInArray(baseline[1], afterExit));
+        assertTrue(_addrInArray(baseline[2], afterExit));
     }
 
     /// lockDisputeSeed reverts before seedBlock is mined.
@@ -1078,6 +1128,34 @@ contract DisputeResolutionTest is Test {
     ///      Call this before resolveDispute(upheld=true) in every test that exercises
     ///      the upheld path — the contract now requires a locked seed before it will
     ///      assign a fresh subgroup.
+    function _openAndLockDispute(uint256 numAggregators) internal {
+        _runToT1Finalized(numAggregators);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function _resolveUpheldAndGetSubgroup() internal returns (address[] memory) {
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+        return _freshSubgroupOf(1, 0);
+    }
+
+    function _sameAddrs(
+        address[] memory a,
+        address[] memory b
+    ) internal pure returns (bool) {
+        if (a.length != b.length) return false;
+        for (uint i = 0; i < a.length; i++) {
+            if (a[i] != b[i]) return false;
+        }
+        return true;
+    }
+
     function _lockSeed(
         uint _GI,
         DINTaskCoordinator.TierKind tierKind,
