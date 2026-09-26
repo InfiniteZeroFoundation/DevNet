@@ -218,9 +218,13 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     /// @notice Deploys the coordinator and sets the validator stake contract.
     /// @dev GI state is initialised to AwaitingDINTaskAuditorToBeSet; the model
     ///      owner must call setDINTaskAuditorContract before any other setup step.
+    ///      Rejects a zero address (L-6): task contracts are non-upgradeable,
+    ///      so a bad deploy here means a full redeploy, not a fix.
     /// @param dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
     constructor(address dinvalidatorStakeContract_address, uint256 modelId_) Ownable(msg.sender) {
+        if (dinvalidatorStakeContract_address == address(0))
+            revert TC_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             dinvalidatorStakeContract_address
         );
@@ -229,13 +233,18 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     }
 
     /// @notice Sets the paired DINTaskAuditor contract for this model.
-    /// @dev One-shot: reverts if called after the initial setup step.
+    /// @dev One-shot: reverts if called after the initial setup step. Rejects
+    ///      a zero address (L-6) -- this is a one-shot setter that immediately
+    ///      advances GIstate, so a zero address here bricks the contract the
+    ///      same way an unchecked constructor argument would.
     /// @param _dintaskauditor_contract_address Address of the DINTaskAuditor contract.
     function setDINTaskAuditorContract(
         address _dintaskauditor_contract_address
     ) public onlyOwner {
         if (GIstate != GIstates.AwaitingDINTaskAuditorToBeSet)
             revert TC_TaskAuditorContractCannotBeSet();
+        if (_dintaskauditor_contract_address == address(0))
+            revert TC_InvalidAddress();
         dinTaskAuditorContract = IDINTaskAuditor(
             _dintaskauditor_contract_address
         );

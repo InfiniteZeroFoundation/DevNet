@@ -24,6 +24,32 @@ contract MockTaskContractRegistry {
     }
 }
 
+/// @dev Has no receive()/fallback(), so any plain ETH transfer to it fails --
+///      used to prove a failed overpayment refund reverts the whole
+///      requestModelRegistration call instead of silently swallowing it (L-3).
+contract RevertingReceiver {
+    DINModelRegistry private immutable registry;
+
+    constructor(DINModelRegistry registry_) {
+        registry = registry_;
+    }
+
+    function register(
+        bytes32 manifestCID,
+        address taskCoordinator,
+        address taskAuditor,
+        bool isOpenSource
+    ) external payable returns (uint256) {
+        return
+            registry.requestModelRegistration{value: msg.value}(
+                manifestCID,
+                taskCoordinator,
+                taskAuditor,
+                isOpenSource
+            );
+    }
+}
+
 /// @notice Registry stays ETH-only (see PR #51 comment thread) — no DIN fee
 ///         tiers or DIN-paying entry points. Fees accumulate in the registry
 ///         per request, then sweepFeesToRouter() batches the whole balance
@@ -204,6 +230,70 @@ contract DINModelRegistryTest is Test {
 
         // Request succeeds either way — feeRouter wiring only matters at sweep time.
         assertEq(address(bareRegistry).balance, fee);
+    }
+
+    // ── requestModelRegistration: overpayment refund (L-3) ──────────────────────
+
+    function test_requestModelRegistration_refundsOverpayment() public {
+        uint256 fee = registry.openSourceFee();
+        uint256 overpay = 0.01 ether;
+        uint256 balanceBefore = alice.balance;
+
+        vm.prank(alice);
+        uint256 requestId = registry.requestModelRegistration{value: fee + overpay}(
+            keccak256("manifest"),
+            taskCoordinator,
+            taskAuditor,
+            true
+        );
+
+        assertEq(alice.balance, balanceBefore - fee, "overpayment should be refunded");
+        assertEq(address(registry).balance, fee, "registry should only keep the required fee");
+
+        (, , , , , uint256 feePaid, , , ) = registry.modelRequests(requestId);
+        assertEq(feePaid, fee, "feePaid must record requiredFee, not msg.value");
+    }
+
+    function test_requestModelRegistration_exactPaymentUnchanged() public {
+        uint256 fee = registry.openSourceFee();
+        uint256 balanceBefore = alice.balance;
+
+        vm.prank(alice);
+        uint256 requestId = registry.requestModelRegistration{value: fee}(
+            keccak256("manifest"),
+            taskCoordinator,
+            taskAuditor,
+            true
+        );
+
+        assertEq(alice.balance, balanceBefore - fee, "no refund attempted on an exact payment");
+        assertEq(address(registry).balance, fee);
+
+        (, , , , , uint256 feePaid, , , ) = registry.modelRequests(requestId);
+        assertEq(feePaid, fee);
+    }
+
+    function test_requestModelRegistration_revertsWholeCallIfRefundFails() public {
+        RevertingReceiver bad = new RevertingReceiver(registry);
+        address badTaskCoordinator = address(new MockTaskContractRegistry(address(bad)));
+        address badTaskAuditor = address(new MockTaskContractRegistry(address(bad)));
+        coordinator.addSlasherContract(badTaskCoordinator);
+        coordinator.addSlasherContract(badTaskAuditor);
+
+        uint256 fee = registry.openSourceFee();
+        vm.deal(address(bad), fee + 0.01 ether);
+
+        vm.expectRevert(DINModelRegistry.RefundFailed.selector);
+        bad.register{value: fee + 0.01 ether}(
+            keccak256("manifest"),
+            badTaskCoordinator,
+            badTaskAuditor,
+            true
+        );
+
+        // Whole call reverted -- no request was recorded, no fee retained.
+        assertEq(registry.totalModelRequests(), 0);
+        assertEq(address(registry).balance, 0);
     }
 
     // ── sweepFeesToRouter ──────────────────────────────────────────────────────

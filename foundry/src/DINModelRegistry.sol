@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 interface IDinValidatorStake {
     function isSlasherContract(
@@ -21,12 +22,13 @@ interface IDinFeeRouter {
 /// @title DIN Model Registry
 /// @notice Manages model registration requests, manifest updates, and per-model
 ///         lifecycle controls. Deployed once per network behind a Transparent Proxy.
-contract DINModelRegistry is Initializable, OwnableUpgradeable {
+contract DINModelRegistry is Initializable, OwnableUpgradeable, ReentrancyGuardTransient {
     error NotModelOwner();
     error InvalidModelId();
     error InvalidRequestId();
     error AlreadyProcessed();
     error InsufficientFee();
+    error RefundFailed();
     error TaskCoordinatorEqualsTaskAuditor();
     error NotOwnerOfTaskCoordinator();
     error NotOwnerOfTaskAuditor();
@@ -153,6 +155,9 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
     /// @notice Submits a model registration request for DIN-Representative review.
     /// @dev Both task contracts must be registered slashers and owned by msg.sender
     ///      at submission time. These conditions are re-validated at approval.
+    ///      Any `msg.value` above `requiredFee` is refunded to the caller (L-3) --
+    ///      `feePaid` always records `requiredFee`, never the raw `msg.value`.
+    ///      `nonReentrant` because the refund is an external call to `msg.sender`.
     /// @param manifestCID IPFS CID of the model manifest.
     /// @param taskCoordinator Address of the model's DINTaskCoordinator contract.
     /// @param taskAuditor Address of the model's DINTaskAuditor contract.
@@ -163,7 +168,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         address taskCoordinator,
         address taskAuditor,
         bool isOpenSource
-    ) external payable returns (uint256 requestId) {
+    ) external payable nonReentrant returns (uint256 requestId) {
         uint256 requiredFee = isOpenSource ? openSourceFee : proprietaryFee;
         if (msg.value < requiredFee) revert InsufficientFee();
 
@@ -189,7 +194,7 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
                 manifestCID: manifestCID,
                 taskCoordinator: taskCoordinator,
                 taskAuditor: taskAuditor,
-                feePaid: msg.value,
+                feePaid: requiredFee,
                 processed: false,
                 approved: false,
                 createdAt: block.timestamp
@@ -197,6 +202,12 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         );
 
         emit ModelRegistrationRequested(requestId, msg.sender);
+
+        uint256 overpayment = msg.value - requiredFee;
+        if (overpayment > 0) {
+            (bool ok, ) = msg.sender.call{value: overpayment}("");
+            if (!ok) revert RefundFailed();
+        }
     }
 
     /// @notice Approves a pending registration request and adds the model to the registry.
