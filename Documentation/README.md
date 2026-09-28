@@ -14,6 +14,7 @@ Documentation for the DIN Protocol DevNet as implemented on the `develop` branch
 | Document | Purpose |
 |---|---|
 | [Getting Started](public/getting-started.md) | Onboarding guide for Model_0 on the live devnet (`sepolia-op-devnet`) |
+| [What can be trained on DIN?](public/what-can-be-trained.md) | DevNet 2.0 model fit, custom services, practical limits, and the path to trying a new task |
 | [Setup Guide](public/setup.md) | Installing and configuring `dincli`: venv, wallet, network, logging, demo mode, IPFS |
 | [CLI Reference](public/cli-reference.md) | Common `dincli` reference across all roles |
 | [Manifest](public/manifest.md) | The per-model `manifest.json`: metadata, services, contract addresses |
