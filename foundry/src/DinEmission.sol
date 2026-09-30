@@ -17,10 +17,12 @@ interface IDINTaskAuditor {
 
 /// @title DIN Emission
 /// @notice Per-GI protocol reward subsidy on a geometric decay schedule.
-///         Emission decays by (decayBps/10000) per epoch, where one epoch is
-///         epochLength completed GIs. After maxEpochs epochs the subsidy is zero —
-///         the "final epoch" design: explicit retirement rather than an asymptotic
-///         tail, consistent with DinCoordinator.faucetRetired semantics.
+///         Each epoch's emission is multiplied by (decayBps/10000), retaining
+///         that fraction of the prior epoch's rate (e.g. 8000 = 80% retained,
+///         20% decay per epoch). One epoch is epochLength completed GIs.
+///         After maxEpochs epochs the subsidy is zero — the "final epoch"
+///         design: explicit retirement rather than an asymptotic tail,
+///         consistent with DinCoordinator.faucetRetired semantics.
 ///
 ///         GI is a per-DINTaskCoordinator counter — every model has its own
 ///         "GI 1", "GI 2", etc., independent of every other model's. This
@@ -110,7 +112,7 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     mapping(address => mapping(uint256 => bool)) public giEmissionFunded;
 
     // Reserved for future state variables.
-    uint256[40] private __gap;
+    uint256[50] private __gap;
 
     // ── Constructor / initializer ─────────────────────────────────────────
 

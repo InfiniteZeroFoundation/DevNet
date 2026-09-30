@@ -137,14 +137,14 @@ def test_model_owner_submit_registration_request(run):
 
 def test_din_rep_lists_pending_requests(run):
     """DIN-Representative can see the pending registration request."""
-    run(["system", "connect-wallet", "dindao"])
-    result = run(["dindao", "registry", "list-pending-requests"])
+    run(["system", "connect-wallet", "dinrep"])
+    result = run(["dinrep", "registry", "list-pending-requests"])
     assert result.returncode == 0
 
 
 def test_din_rep_explores_registration_request(run):
     """DIN-Representative inspects request 0 (model type)."""
-    result = run(["dindao", "registry", "explore-request", "0", "-t", "model"])
+    result = run(["dinrep", "registry", "explore-request", "0", "-t", "model"])
     assert result.returncode == 0
 
 
@@ -153,7 +153,7 @@ def test_din_rep_approves_registration_request(run, state):
 
     SDK candidate: approve_registration_request(network, account, request_id)
     """
-    result = run(["dindao", "registry", "approve-registration-request", "0"])
+    result = run(["dinrep", "registry", "approve-registration-request", "0"])
     assert result.returncode == 0
     state["model_id"] = 0
 
@@ -207,13 +207,13 @@ def test_model_owner_update_manifest_request(run, din_tmp):
 
 def test_din_rep_lists_manifest_requests(run):
     run(["system", "connect-wallet", "modelowner"])
-    result = run(["dindao", "registry", "list-pending-requests"])
+    result = run(["dinrep", "registry", "list-pending-requests"])
     assert result.returncode == 0
 
 
 def test_din_rep_explores_manifest_request(run):
-    run(["system", "connect-wallet", "dindao"])
-    result = run(["dindao", "registry", "explore-request", "0", "-t", "manifest"])
+    run(["system", "connect-wallet", "dinrep"])
+    result = run(["dinrep", "registry", "explore-request", "0", "-t", "manifest"])
     assert result.returncode == 0
 
 
@@ -222,5 +222,5 @@ def test_din_rep_approves_manifest_update(run):
 
     SDK candidate: approve_manifest_update(network, account, request_id)
     """
-    result = run(["dindao", "registry", "approve-manifest-update", "0"])
+    result = run(["dinrep", "registry", "approve-manifest-update", "0"])
     assert result.returncode == 0

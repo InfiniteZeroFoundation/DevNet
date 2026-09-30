@@ -208,6 +208,8 @@ contract RewardEngineTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -236,6 +238,8 @@ contract RewardEngineTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(1);
         tc.autoCreateTier1AndTier2(1);
         tc.startT1Aggregation(1);
         vm.stopPrank();
@@ -243,14 +247,26 @@ contract RewardEngineTest is Test {
         (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
         bytes32 realCID = bytes32(uint256(0xC1D));
         for (uint i = 0; i < t1aggs.length; i++) {
+            bytes32 commitHash = keccak256(
+                abi.encode(realCID, TEST_SALT, t1aggs[i], uint(1), DINTaskCoordinator.TierKind.Tier1, uint(0))
+            );
             vm.prank(t1aggs[i]);
-            tc.submitT1Aggregation(1, 0, realCID);
+            tc.commitT1Aggregation(1, 0, commitHash);
+        }
+
+        vm.prank(modelOwner);
+        tc.startT1AggregationReveal(1);
+
+        for (uint i = 0; i < t1aggs.length; i++) {
+            vm.prank(t1aggs[i]);
+            tc.revealT1Aggregation(1, 0, realCID, TEST_SALT);
         }
 
         vm.startPrank(modelOwner);
         tc.finalizeT1Aggregation(1);
         tc.startT2Aggregation(1);
-        tc.finalizeT2Aggregation(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.startT2AggregationReveal(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.finalizeT2Aggregation(1);
         tc.slashAuditors(1);
         tc.slashAggregators(1);
         vm.stopPrank();
@@ -801,10 +817,11 @@ contract RewardEngineTest is Test {
 
         // No participant-indexed loop remains; endGI is a bounded state
         // transition (one cross-contract call, ~4 mul + 4 div, one struct
-        // SSTORE, one event). Ceiling is generous headroom over the measured
-        // cost, not a tight bound -- its job is to fail loudly if a loop is
-        // ever reintroduced into this path.
-        assertLt(endGIGas, 150_000, "endGI must stay a bounded O(1) transition");
+        // SSTORE, one event, one treasury SLOAD via settleRewards). Ceiling is
+        // generous headroom over the measured cost (~152k after issue-152
+        // treasury forwarding added one slashTreasury() SLOAD), not a tight
+        // bound -- its job is to fail loudly if a loop is ever reintroduced.
+        assertLt(endGIGas, 165_000, "endGI must stay a bounded O(1) transition");
     }
 
     function test_gas_endGI_invariantToSettlementScale() public {
@@ -933,6 +950,8 @@ contract RewardEngineTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -961,19 +980,34 @@ contract RewardEngineTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(1);
         tc.autoCreateTier1AndTier2(1);
         tc.startT1Aggregation(1);
         vm.stopPrank();
 
         (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+        bytes32 t1cid = bytes32(uint256(0xC1D));
+        for (uint i = 0; i < t1aggs.length; i++) {
+            bytes32 commitHash = keccak256(
+                abi.encode(t1cid, TEST_SALT, t1aggs[i], uint(1), DINTaskCoordinator.TierKind.Tier1, uint(0))
+            );
+            vm.prank(t1aggs[i]);
+            tc.commitT1Aggregation(1, 0, commitHash);
+        }
+
+        vm.prank(modelOwner);
+        tc.startT1AggregationReveal(1);
+
         for (uint i = 0; i < t1aggs.length; i++) {
             vm.prank(t1aggs[i]);
-            tc.submitT1Aggregation(1, 0, bytes32(uint256(0xC1D)));
+            tc.revealT1Aggregation(1, 0, t1cid, TEST_SALT);
         }
 
         vm.startPrank(modelOwner);
         tc.finalizeT1Aggregation(1);
         tc.startT2Aggregation(1);
+        tc.startT2AggregationReveal(1);
         tc.finalizeT2Aggregation(1);
         tc.slashAuditors(1);
         tc.slashAggregators(1);

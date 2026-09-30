@@ -6,11 +6,12 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {Upgrades} from "@openzeppelin/foundry-upgrades/Upgrades.sol";
 
 import {DinFairLaunchDistributor} from "../src/DinFairLaunchDistributor.sol";
+import {DeploymentsPath} from "./DeploymentsPath.sol";
 
 /// @notice Deploys DinFairLaunchDistributor behind a Transparent Proxy.
 ///
 /// Prerequisites:
-///   - Platform contracts already deployed (foundry/deployments/localhost.json must exist).
+///   - Platform contracts already deployed (foundry/deployments/<network>.json must exist; see DeploymentsPath).
 ///   - DIN tokens available and the treasury admin has approved this contract.
 ///
 /// Required environment variables:
@@ -31,9 +32,20 @@ import {DinFairLaunchDistributor} from "../src/DinFairLaunchDistributor.sol";
 ///     --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
 ///     --unlocked
 ///
+/// On Optimism Sepolia, sign with a keystore account instead of --unlocked
+/// (--unlocked only works against anvil's dev accounts). SEPOLIA_OP_DEVNET_RPC_URL comes
+/// from .env.sepolia_op_devnet (from the repo root: set -a; source .env.sepolia_op_devnet; set +a):
+///   cd foundry && forge script script/DeployFairLaunchDistributor.s.sol \
+///     --rpc-url "$SEPOLIA_OP_DEVNET_RPC_URL" \
+///     --broadcast \
+///     --account <keystore_name> \
+///     --sender <din_representative_address>
+///
+/// Writes foundry/deployments/fair-launch-<network>.json.
+///
 /// Note: this script does NOT wire the distributor into dincli import-deployments;
 ///       dincli manages only platform/task contracts. Record the proxy address manually.
-contract DeployFairLaunchDistributor is Script {
+contract DeployFairLaunchDistributor is DeploymentsPath {
     using stdJson for string;
 
     uint64 constant DEFAULT_CLIFF_SECONDS   = 90 days;  // placeholder
@@ -41,10 +53,7 @@ contract DeployFairLaunchDistributor is Script {
 
     function run() external {
         // Read dinToken address from the platform deployments file
-        string memory deploymentsPath = string.concat(
-            vm.projectRoot(),
-            "/deployments/localhost.json"
-        );
+        string memory deploymentsPath = _deploymentsFile("");
         string memory deploymentsJson = vm.readFile(deploymentsPath);
         address dinToken = deploymentsJson.readAddress(".dinToken");
 
@@ -98,7 +107,7 @@ contract DeployFairLaunchDistributor is Script {
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
         vm.createDir(outDir, true);
 
-        string memory outPath = string.concat(outDir, "/fair-launch-localhost.json");
+        string memory outPath = _deploymentsFile("fair-launch-");
         vm.writeJson(finalJson, outPath);
         console.log("Deployments written to:", outPath);
     }

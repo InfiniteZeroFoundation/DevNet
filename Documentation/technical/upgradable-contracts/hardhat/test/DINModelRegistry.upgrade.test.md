@@ -42,7 +42,7 @@ Raw implementation deploy; `initialize(signer.address)` must revert with `Invali
 
 ## Not covered here (by design)
 
-The `daoAdmin()` / `setDAOAdmin()` backward-compat shims and the manifest-update request flow have no dedicated upgrade tests — they are thin wrappers over `OwnableUpgradeable` and the same request-array pattern proven in Test 3. Their functional correctness is exercised at the CLI integration layer (`tests/dincli/`).
+The manifest-update request flow has no dedicated upgrade test — it uses the same request-array pattern proven in Test 3, and is exercised at the CLI integration layer (`tests/dincli/test_03_registration.py`). (The former `daoAdmin()` / `setDAOAdmin()` compatibility shims and the `DAOAdminUpdated` event have been removed from the contract.)
 
 ## What V2 is
 

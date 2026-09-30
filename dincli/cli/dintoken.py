@@ -3,7 +3,9 @@ import time
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import MIN_STAKE, build_and_send_tx, read_after_write
+from dincli.cli.utils import MIN_STAKE, build_and_send_tx, reraise_din_error_cause, read_after_write
+from dincli.sdk.errors import DinError
+from dincli.sdk.operations.platform import get_stake, get_stake_contract_address
 
 app = typer.Typer(help="Commands for DIN Token in DIN.")
 
@@ -131,10 +133,32 @@ def stake_dintokens(
 
 def read_dintoken_stake(ctx: typer.Context, name ="Account"):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    din_stake_contract = ctx.obj.get_deployed_din_stake_contract()
 
-    stake = din_stake_contract.functions.getStake(account.address).call()
-    console.print(f"[bold green] {name}'s DIN token stake:[/bold green] ", Web3.from_wei(stake, "ether"), "DinTokens")
+    # Resolved and printed BEFORE the getStake() call, matching
+    # get_deployed_din_stake_contract()'s pre-refactor behavior: that getter
+    # printed the address as an unconditional side effect strictly before
+    # the contract call could fail. Printed exactly as configured (not
+    # checksummed) for the same reason (finding 3, task_110926_14/15 review).
+    try:
+        stake_address = get_stake_contract_address(effective_network)
+    except DinError as e:
+        reraise_din_error_cause(e)
+        console.print(f"[bold red]✗ {e.message}[/bold red]")
+        raise typer.Exit(1)
+
+    console.print("[bold green]✓ DIN Stake contract address:[/bold green] ", stake_address)
+
+    try:
+        result = get_stake(ctx.obj.session, address=account.address)
+    except DinError as e:
+        reraise_din_error_cause(e)
+        console.print(f"[bold red]✗ {e.message}[/bold red]")
+        raise typer.Exit(1)
+
+    console.print(
+        f"[bold green] {name}'s DIN token stake:[/bold green] ",
+        Web3.from_wei(result.stake_wei, "ether"), "DinTokens",
+    )
 
 
 def read_din_per_eth_rate(ctx: typer.Context):

@@ -1,5 +1,7 @@
 # Hardhat Tooling — Technical Documentation
 
+> **Secondary toolchain.** `hardhat/contracts/` lags the reference contracts in `foundry/src/` (no treasury, fee router or emission; older registry/coordinator/stake/task logic). For current behavior see the [Foundry docs](../foundry/README.md).
+
 Per-file documentation for the Hardhat workspace's supporting code: test suites, test helpers, deployment/upgrade scripts, deploy utilities, and test-only Solidity (mocks and V2 upgrade fixtures). The platform contracts themselves are documented one level up in [`Documentation/technical/contracts/`](../).
 
 | Doc | Source file | What it is |

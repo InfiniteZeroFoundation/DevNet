@@ -10,6 +10,10 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
+import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
+import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {TA_InvalidSlashFraction, TC_InvalidSlashFraction} from "../src/DINShared.sol";
+import {PR146SlashingRegressionTest} from "./PR146SlashingRegression.t.sol";
 
 import {DinTokenV2} from "../src/upgrade/DinTokenV2.sol";
 import {DinCoordinatorV2} from "../src/upgrade/DinCoordinatorV2.sol";
@@ -615,5 +619,150 @@ contract DINModelRegistryUpgradeTest is PlatformTest {
 
         p.dinModelRegistry.approveModel(0);
         assertEq(p.dinModelRegistry.totalModels(), 1);
+    }
+}
+
+// ─── §3a DeployPlatform tokenomics overrides (issue #155) ────────────────────
+
+contract DeployPlatformTokenomicsOverrideTest is PlatformTest {
+    Platform p;
+
+    function setUp() public {
+        p = _deployPlatform();
+    }
+
+    function test_dinCoordinator_defaultDinPerEth() public view {
+        assertEq(p.dinCoordinator.dinPerEth(), 1_000_000 * 1e18, "default dinPerEth");
+    }
+
+    function test_dinCoordinator_defaultMintCap_isUncapped() public view {
+        assertEq(p.dinCoordinator.mintCap(), 0, "default mintCap is uncapped");
+    }
+
+    function test_dinValidatorStake_defaultMinStake() public view {
+        assertEq(p.dinValidatorStake.MIN_STAKE(), 10 * 1e18, "default MIN_STAKE");
+    }
+
+    function test_dinValidatorStake_defaultS5Params() public view {
+        assertEq(p.dinValidatorStake.s5RecidivismWindow(), 5, "default s5Window");
+        assertEq(p.dinValidatorStake.s5RecidivismThreshold(), 3, "default s5Threshold");
+        assertEq(p.dinValidatorStake.s5JailDuration(), 7 days, "default s5JailDuration");
+    }
+
+    function test_dinValidatorStake_defaultS6Threshold() public view {
+        assertEq(p.dinValidatorStake.s6NoParticipationThreshold(), 3, "default s6Threshold");
+    }
+
+    function test_dinCoordinator_overrideDinPerEth_appliesAfterDeploy() public {
+        uint256 newRate = 2_000_000 * 1e18;
+        p.dinCoordinator.updateDinPerEth(newRate);
+        assertEq(p.dinCoordinator.dinPerEth(), newRate, "updated dinPerEth");
+    }
+
+    function test_dinCoordinator_overrideMintCap_appliesAfterDeploy() public {
+        uint256 cap = 1_000_000 * 1e18;
+        p.dinCoordinator.setMintCap(cap);
+        assertEq(p.dinCoordinator.mintCap(), cap, "updated mintCap");
+    }
+
+    function test_dinValidatorStake_overrideMinStake_appliesAfterDeploy() public {
+        uint256 newStake = 50 * 1e18;
+        p.dinValidatorStake.setMinStake(newStake);
+        assertEq(p.dinValidatorStake.MIN_STAKE(), newStake, "updated minStake");
+    }
+
+    function test_dinValidatorStake_overrideS5Params_appliesAfterDeploy() public {
+        p.dinValidatorStake.setS5RecidivismParams(10, 5, 14 days);
+        assertEq(p.dinValidatorStake.s5RecidivismWindow(), 10, "updated s5Window");
+        assertEq(p.dinValidatorStake.s5RecidivismThreshold(), 5, "updated s5Threshold");
+        assertEq(p.dinValidatorStake.s5JailDuration(), 14 days, "updated s5JailDuration");
+    }
+
+    function test_dinValidatorStake_overrideS6Threshold_appliesAfterDeploy() public {
+        p.dinValidatorStake.setS6NoParticipationThreshold(5);
+        assertEq(p.dinValidatorStake.s6NoParticipationThreshold(), 5, "updated s6Threshold");
+    }
+}
+
+// ─── §3b S1/S2 zero-bps regression tests (issue #155) ────────────────────────
+// The setter guards are plain (non-upgradeable) task-contract logic, so the
+// task contracts are deployed directly, without the platform or proxies.
+
+contract SlashFractionZeroBpsTest is Test {
+    DINTaskCoordinator tc;
+    DINTaskAuditor ta;
+
+    function setUp() public {
+        // Deploy a stub stake contract address — the setter guards don't call it.
+        tc = new DINTaskCoordinator(address(0x1), 1);
+        ta = new DINTaskAuditor(address(0x1), address(tc), 1);
+    }
+
+    function test_setS1SlashFractionBps_rejectsZero() public {
+        vm.expectRevert(TA_InvalidSlashFraction.selector);
+        ta.setS1SlashFractionBps(0);
+    }
+
+    function test_setS2SlashFractionBps_rejectsZero() public {
+        vm.expectRevert(TC_InvalidSlashFraction.selector);
+        tc.setS2SlashFractionBps(0);
+    }
+
+    function test_setS1SlashFractionBps_rejectsAbove10000() public {
+        vm.expectRevert(TA_InvalidSlashFraction.selector);
+        ta.setS1SlashFractionBps(10_001);
+    }
+
+    function test_setS2SlashFractionBps_rejectsAbove10000() public {
+        vm.expectRevert(TC_InvalidSlashFraction.selector);
+        tc.setS2SlashFractionBps(10_001);
+    }
+
+    function test_setS1SlashFractionBps_accepts1() public {
+        ta.setS1SlashFractionBps(1);
+        assertEq(ta.s1SlashFractionBps(), 1, "minimum 1 bps accepted");
+    }
+
+    function test_setS2SlashFractionBps_accepts10000() public {
+        tc.setS2SlashFractionBps(10_000);
+        assertEq(tc.s2SlashFractionBps(), 10_000, "10000 bps accepted");
+    }
+
+    function test_setS1SlashFractionBps_defaultIsNonZero() public view {
+        assertGt(ta.s1SlashFractionBps(), 0, "s1SlashFractionBps always > 0 after deploy");
+    }
+
+    function test_setS2SlashFractionBps_defaultIsNonZero() public view {
+        assertGt(tc.s2SlashFractionBps(), 0, "s2SlashFractionBps always > 0 after deploy");
+    }
+}
+
+// ─── §3b S1/S2 zero-amount rounding path (issue #155) ────────────────────────
+// With MIN_STAKE < 10_000 wei, MIN_STAKE * bps / 10_000 rounds to 0 even with a
+// non-zero fraction. slashPartial reverts InvalidSlashAmount on 0, so before
+// the fix slashAuditors / slashAggregators reverted and the GI could not
+// advance. Reuses the PR146 GI harness (batch-1 auditors miss their votes,
+// agg3 misses its T1 submission); inheriting it also re-runs its 3 tests here.
+
+contract SlashZeroAmountRoundingTest is PR146SlashingRegressionTest {
+    function test_roundingPath_S1S2_zeroAmount_doesNotBrick() public {
+        address[] memory auditors = _runToSlashAuditors(6);
+
+        vm.prank(admin);
+        stake.setMinStake(1);
+        // Precondition: both computed slash amounts round to 0.
+        assertEq((stake.MIN_STAKE() * ta.s1SlashFractionBps()) / 10_000, 0, "s1Amount rounds to 0");
+        assertEq((stake.MIN_STAKE() * tc.s2SlashFractionBps()) / 10_000, 0, "s2Amount rounds to 0");
+
+        uint256 audBefore = stake.getStake(auditors[3]);
+        uint256 aggBefore = stake.getStake(agg3);
+
+        vm.startPrank(modelOwner);
+        tc.slashAuditors(1);    // batch-1 auditors missed votes (S1)
+        tc.slashAggregators(1); // agg3 missed its T1 submission (S2)
+        vm.stopPrank();
+
+        assertEq(stake.getStake(auditors[3]), audBefore, "zero S1 amount moves no stake");
+        assertEq(stake.getStake(agg3), aggBefore, "zero S2 amount moves no stake");
     }
 }

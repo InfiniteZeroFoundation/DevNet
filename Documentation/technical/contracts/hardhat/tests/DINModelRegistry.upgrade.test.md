@@ -72,5 +72,5 @@ so it can never have an owner or wired stake contract — the contract is only
 ## 5. Coverage Gaps
 
 - Manifest update requests, the kill switch (`disableModel`), and `withdrawFees` are not exercised across an upgrade.
-- The `daoAdmin()` / `setDAOAdmin()` compatibility shims are untested here (and have no functional suite either).
+- The former `daoAdmin()` / `setDAOAdmin()` compatibility shims and the `DAOAdminUpdated` event have been removed from `hardhat/contracts/DINModelRegistry.sol`.
 - No functional (non-upgrade) suite exists for the registry at all — request/approve/reject edge cases are only covered incidentally by this file.

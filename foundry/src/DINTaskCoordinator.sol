@@ -54,11 +54,18 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     mapping(uint => mapping(uint => mapping(address => bool))) isTier1Aggregator;
 
     // Audit & voting maps            GI  ➜  batchId ➜ validator  ➜  …
+    // t1SubmissionCID/t1Submitted are written at REVEAL time only (issue #156
+    // M-1, task_240926_18 Part C commit-then-reveal) -- a committed-but-
+    // never-revealed aggregator leaves t1Submitted false, which is exactly
+    // what slashAggregators()'s existing "no submission" (S2) check already
+    // reads, so that loop needed no changes for the commit-reveal split.
     mapping(uint => mapping(uint => mapping(address => bytes32)))
         public t1SubmissionCID;
     mapping(uint => mapping(uint => mapping(address => bool)))
         public t1Submitted;
     mapping(uint => mapping(uint => mapping(bytes32 => uint))) public t1Votes; // CID ➜ votes
+    mapping(uint => mapping(uint => mapping(address => bytes32))) public t1CommitHash;
+    mapping(uint => mapping(uint => mapping(address => bool))) public t1Committed;
 
     struct Tier2Batch {
         uint batchId;
@@ -76,6 +83,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     mapping(uint => mapping(uint => mapping(address => bool)))
         public t2Submitted;
     mapping(uint => mapping(uint => mapping(bytes32 => uint))) public t2Votes;
+    mapping(uint => mapping(uint => mapping(address => bytes32))) public t2CommitHash;
+    mapping(uint => mapping(uint => mapping(address => bool))) public t2Committed;
 
     /// @notice Per-aggregator count of finalized T1/T2 batches they were
     ///         assigned to in a GI, one increment per (aggregator,
@@ -121,9 +130,11 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint256 bond;
         uint64 openedAt;
         uint64 resolutionDeadline; // set when fresh subgroup assigned; 0 until then
+        uint64 seedBlock;          // block number after which anyone may lock the seed
         bool resolved;    // true after resolveDispute() first decision
         bool upheld;      // true if fresh subgroup was assigned
         bool finalized;   // true after settleRecomputation() or expireDispute()
+        bytes32 seed;     // locked via lockDisputeSeed(); zero means not yet locked
     }
 
     IERC20 public dinToken;
@@ -138,14 +149,37 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     uint256 public disputeBond = 100 * 1e18; // placeholder default, DAO-settable
     uint64 public disputeWindow = 1 days;    // placeholder default, DAO-settable
     uint64 public resolutionWindow = 2 days; // how long fresh subgroup has to recompute; DAO-settable
-    address public treasuryAddress;
-    uint256 public treasuryAccrued; // cumulative observability counter; tokens forwarded immediately
+    /// @notice Blocks to wait after openDispute before the seed can be locked.
+    ///         On OP Stack, blocks are ~2 s, so the default (7) is ~14 s —
+    ///         enough for honest validators to observe the seedBlock, yet short
+    ///         enough not to delay dispute resolution meaningfully.
+    ///         Trust caveat: blockhash is sequencer-produced on OP Stack, so this
+    ///         design trusts the sequencer not to grind. Acceptable for DevNet/
+    ///         testnet; VRF or multi-party commit-reveal with a slashable
+    ///         non-reveal penalty is the mainnet-grade follow-up.
+    uint64 public disputeSeedDelay = 7; // DAO-settable; 1–256 enforced by setDisputeParams
+
+    // ── Ungrindable batch-assignment seed (issue #156 H-2, both tiers) ──────
+    // Same future-block-seed + permissionless-lock pattern as the dispute
+    // seed above, reusing disputeSeedDelay rather than adding a second delay
+    // knob -- one randomness pattern, one sequencer-trust caveat, across the
+    // whole protocol. aggSeed* covers autoCreateTier1AndTier2 (T1+T2);
+    // auditSeed* covers DINTaskAuditor.createAuditorsBatches, anchored here
+    // (at the closeLMsubmissions state transition this contract owns) and
+    // passed across the interface once locked -- the same cross-contract
+    // shape DINTaskAuditor.claimReward already uses for aggregatorWeight.
+    mapping(uint256 => uint64) public aggSeedBlock;
+    mapping(uint256 => bytes32) public aggSeed;
+    mapping(uint256 => uint64) public auditSeedBlock;
+    mapping(uint256 => bytes32) public auditSeed;
+
+    uint256 public treasuryAccrued; // cumulative observability counter
     /// @dev Gas units required per validator per GI to cover on-chain submission costs.
     ///      Set by the DAO via setNetworkFeeFloor; not yet enforced at depositRewards
     ///      (enforcement point to be confirmed with Umer — see task_100926_12 #78).
     uint256 public networkFeeFloor;
 
-    /// @notice S2 liveness-fault slash fraction in basis points (0–10000).
+    /// @notice S2 liveness-fault slash fraction in basis points (1–10000).
     ///         Applied to missed-submission slashes (AGG_T*_NO_SUBMISSION) only.
     ///         Bad-consensus faults (AGG_T*_BAD_CONSENSUS) keep a full minStake()
     ///         amount — they imply an active incorrect submission, not a liveness
@@ -192,6 +226,22 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         TierKind tierKind,
         uint indexed batchId
     );
+    event DisputeSeedLocked(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        bytes32 seed
+    );
+    event DisputeSeedReanchored(
+        uint indexed GI,
+        TierKind tierKind,
+        uint indexed batchId,
+        uint64 newSeedBlock
+    );
+    event AggSeedLocked(uint indexed GI, bytes32 seed);
+    event AggSeedReanchored(uint indexed GI, uint64 newSeedBlock);
+    event AuditSeedLocked(uint indexed GI, bytes32 seed);
+    event AuditSeedReanchored(uint indexed GI, uint64 newSeedBlock);
 
     modifier onlyCurrentGI(uint _GI) {
         if (_GI != GI) revert TC_WrongGI();
@@ -211,6 +261,17 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     );
     event S2SlashFractionBpsUpdated(uint256 oldBps, uint256 newBps);
 
+    // ── Indexer lifecycle events (task_240926_16 Part C / issue #153) ──────────
+    /// @notice Emitted on every GI state transition.
+    /// @dev GI is 0 during constructor/setup transitions (ordinals 0–4); expected.
+    event GIStateChanged(uint indexed GI, uint8 indexed newState);
+    event T1AggregationCommitted(uint indexed GI, uint indexed batchId, address indexed aggregator, bytes32 commitHash);
+    event T1AggregationSubmitted(uint indexed GI, uint indexed batchId, address indexed aggregator, bytes32 cid);
+    event T2AggregationCommitted(uint indexed GI, uint indexed batchId, address indexed aggregator, bytes32 commitHash);
+    event T2AggregationSubmitted(uint indexed GI, uint indexed batchId, address indexed aggregator, bytes32 cid);
+    event T1BatchFinalized(uint indexed GI, uint indexed batchId, bytes32 winningCID);
+    event T2Finalized(uint indexed GI, bytes32 globalModelCID);
+
     /// @notice Model registry ID this coordinator manages.
     /// @dev Used to look up modelMinStakeBounds and enforce per-model stake floors.
     uint256 public immutable modelId;
@@ -218,28 +279,37 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     /// @notice Deploys the coordinator and sets the validator stake contract.
     /// @dev GI state is initialised to AwaitingDINTaskAuditorToBeSet; the model
     ///      owner must call setDINTaskAuditorContract before any other setup step.
+    ///      Rejects a zero address (L-6): task contracts are non-upgradeable,
+    ///      so a bad deploy here means a full redeploy, not a fix.
     /// @param dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
     constructor(address dinvalidatorStakeContract_address, uint256 modelId_) Ownable(msg.sender) {
+        if (dinvalidatorStakeContract_address == address(0))
+            revert TC_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             dinvalidatorStakeContract_address
         );
         modelId = modelId_;
-        GIstate = GIstates.AwaitingDINTaskAuditorToBeSet;
+        _setGIstate(GIstates.AwaitingDINTaskAuditorToBeSet);
     }
 
     /// @notice Sets the paired DINTaskAuditor contract for this model.
-    /// @dev One-shot: reverts if called after the initial setup step.
+    /// @dev One-shot: reverts if called after the initial setup step. Rejects
+    ///      a zero address (L-6) -- this is a one-shot setter that immediately
+    ///      advances GIstate, so a zero address here bricks the contract the
+    ///      same way an unchecked constructor argument would.
     /// @param _dintaskauditor_contract_address Address of the DINTaskAuditor contract.
     function setDINTaskAuditorContract(
         address _dintaskauditor_contract_address
     ) public onlyOwner {
         if (GIstate != GIstates.AwaitingDINTaskAuditorToBeSet)
             revert TC_TaskAuditorContractCannotBeSet();
+        if (_dintaskauditor_contract_address == address(0))
+            revert TC_InvalidAddress();
         dinTaskAuditorContract = IDINTaskAuditor(
             _dintaskauditor_contract_address
         );
-        GIstate = GIstates.AwaitingDINTaskCoordinatorAsSlasher;
+        _setGIstate(GIstates.AwaitingDINTaskCoordinatorAsSlasher);
     }
 
     /// @notice Confirms that this coordinator is registered as a slasher on the
@@ -251,7 +321,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_CoordinatorCannotBeSetAsSlasher();
         if (!dinvalidatorStakeContract.isSlasherContract(address(this)))
             revert TC_CoordinatorIsNotSlasher();
-        GIstate = GIstates.AwaitingDINTaskAuditorAsSlasher;
+        _setGIstate(GIstates.AwaitingDINTaskAuditorAsSlasher);
     }
 
     /// @notice Confirms that the paired DINTaskAuditor is registered as a slasher,
@@ -266,7 +336,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 address(dinTaskAuditorContract)
             )
         ) revert TC_AuditorIsNotSlasher();
-        GIstate = GIstates.AwaitingGenesisModel;
+        _setGIstate(GIstates.AwaitingGenesisModel);
     }
 
     /// @notice Records the genesis model IPFS hash, enabling GI 1 to be started.
@@ -277,7 +347,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (GIstate != GIstates.AwaitingGenesisModel)
             revert TC_GenesisModelHashCannotBeSet();
         genesisModelIpfsHash = _genesisModelIpfsHash;
-        GIstate = GIstates.GenesisModelCreated;
+        _setGIstate(GIstates.GenesisModelCreated);
     }
 
     /// @notice Starts the next Global Iteration and updates the auditor pass score.
@@ -307,8 +377,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (updatePassScore) {
             dinTaskAuditorContract.updatePassScore(score);
         }
-        GIstate = GIstates.GIstarted;
         GI++;
+        _setGIstate(GIstates.GIstarted);
     }
 
     /// @notice Opens the aggregator registration window for the current GI.
@@ -318,7 +388,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.GIstarted)
             revert TC_AggregatorsRegistrationCannotBeStarted();
-        GIstate = GIstates.DINaggregatorsRegistrationStarted;
+        _setGIstate(GIstates.DINaggregatorsRegistrationStarted);
     }
 
     /// @notice Registers the caller as an aggregator for the current GI.
@@ -366,7 +436,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.DINaggregatorsRegistrationStarted)
             revert TC_AggregatorsRegistrationCannotBeFinished();
-        GIstate = GIstates.DINaggregatorsRegistrationClosed;
+        _setGIstate(GIstates.DINaggregatorsRegistrationClosed);
     }
 
     /// @notice Returns the list of aggregators registered for the given GI.
@@ -385,7 +455,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.DINaggregatorsRegistrationClosed)
             revert TC_AuditorsRegistrationCannotBeStarted();
-        GIstate = GIstates.DINauditorsRegistrationStarted;
+        _setGIstate(GIstates.DINauditorsRegistrationStarted);
     }
 
     /// @notice Closes the auditor registration window.
@@ -395,7 +465,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.DINauditorsRegistrationStarted)
             revert TC_AuditorsRegistrationCannotBeFinished();
-        GIstate = GIstates.DINauditorsRegistrationClosed;
+        _setGIstate(GIstates.DINauditorsRegistrationClosed);
     }
 
     /// @notice Opens the local model submission window for the current GI.
@@ -403,28 +473,39 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     function startLMsubmissions(uint _GI) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.DINauditorsRegistrationClosed)
             revert TC_LMSubmissionsCannotBeStarted();
-        GIstate = GIstates.LMSstarted;
+        _setGIstate(GIstates.LMSstarted);
     }
 
     /// @notice Closes the local model submission window.
     /// @param _GI Current GI index.
     function closeLMsubmissions(uint _GI) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.LMSstarted) revert TC_LMSubmissionsNotStarted();
-        GIstate = GIstates.LMSclosed;
+        // Anchor the auditor-batch seed here, at the transition that gates
+        // createAuditorsBatches -- by the time this function could possibly
+        // be called next, the seed block is already fixed but not yet mined,
+        // so the caller (model owner) cannot aim for a favourable outcome.
+        auditSeedBlock[_GI] = uint64(block.number) + disputeSeedDelay;
+        _setGIstate(GIstates.LMSclosed);
     }
 
     /// @notice Delegates auditor batch creation to DINTaskAuditor and advances GI state.
     /// @dev Reverts if the auditor contract returns false (e.g. insufficient auditors).
+    ///      Requires auditSeed[_GI] to already be locked via lockAuditSeed
+    ///      (issue #156 H-2) -- the locked seed is passed across the interface
+    ///      so DINTaskAuditor's shuffles are ungrindable without duplicating
+    ///      the seed-anchoring logic in that contract.
     /// @param _GI Current GI index.
     function createAuditorsBatches(
         uint _GI
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.LMSclosed) revert TC_LMEvalCannotBeStarted();
+        bytes32 seed = auditSeed[_GI];
+        if (seed == bytes32(0)) revert TC_AuditSeedNotLocked();
 
-        bool success = dinTaskAuditorContract.createAuditorsBatches(_GI);
+        bool success = dinTaskAuditorContract.createAuditorsBatches(_GI, seed);
         if (!success) revert TC_FailedToCreateAuditorsBatches();
 
-        GIstate = GIstates.AuditorsBatchesCreated;
+        _setGIstate(GIstates.AuditorsBatchesCreated);
     }
 
     /// @notice Propagates the test data assignment flag to DINTaskAuditor.
@@ -449,7 +530,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.AuditorsBatchesCreated)
             revert TC_LMEvalCannotBeStarted();
-        GIstate = GIstates.LMSevaluationStarted;
+        _setGIstate(GIstates.LMSevaluationStarted);
     }
 
     /// @notice Closes the commit phase and opens the REVEAL phase (task_210726_6
@@ -462,7 +543,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.LMSevaluationStarted)
             revert TC_RevealCannotBeStarted();
-        GIstate = GIstates.LMSevaluationRevealStarted;
+        _setGIstate(GIstates.LMSevaluationRevealStarted);
     }
 
     /// @notice Closes the LMS evaluation reveal phase and finalises audit
@@ -476,30 +557,44 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_LMEvalCannotBeFinished();
         bool success = dinTaskAuditorContract.finalizeEvaluation(_GI);
         if (!success) revert TC_FailedToFinalizeEvaluation();
-        GIstate = GIstates.LMSevaluationClosed;
+        // Anchor the T1/T2 batch-assignment seed here, at the transition
+        // that gates autoCreateTier1AndTier2 -- same reasoning as
+        // closeLMsubmissions's auditSeedBlock anchor above.
+        aggSeedBlock[_GI] = uint64(block.number) + disputeSeedDelay;
+        _setGIstate(GIstates.LMSevaluationClosed);
     }
 
     /// @notice Partitions active aggregators and approved models into Tier-1 batches
     ///         and creates a single Tier-2 batch from the remaining validators.
     /// @dev Aggregators are filtered to those still Active at call time and shuffled
-    ///      using blockhash-based entropy. Reverts if fewer than T1_AGGREGATORS_PER_BATCH
-    ///      active validators remain, or if fewer than T1_MODELS_PER_BATCH models passed.
+    ///      using the locked aggSeed (issue #156 H-2) -- fixed at
+    ///      closeLMsubmissionsEvaluation, before this function could possibly be
+    ///      called, so the caller (model owner) cannot steer batch assignment by
+    ///      choosing when to call this. Reverts if fewer than
+    ///      T1_AGGREGATORS_PER_BATCH active validators remain, or if fewer than
+    ///      T1_MODELS_PER_BATCH models passed, or if the seed isn't locked yet
+    ///      (call lockAggSeed first).
     /// @param _GI Current GI index.
     function autoCreateTier1AndTier2(
         uint _GI
     ) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.LMSevaluationClosed)
             revert TC_EvalPhaseNotClosed();
+        bytes32 seed = aggSeed[_GI];
+        if (seed == bytes32(0)) revert TC_AggSeedNotLocked();
 
         // Filter the historical registration list down to currently active validators.
         address[] memory valPool = _activeAggregatorPool(_GI);
         uint vLen = valPool.length;
         if (vLen < T1_AGGREGATORS_PER_BATCH) revert TC_NotEnoughValidators();
-        _shuffleAddressArray(valPool);
+        // Domain-separated derived seeds so the address and index shuffles
+        // don't correlate with each other or with DINTaskAuditor's shuffles
+        // (which derive from the independently-locked auditSeed).
+        _shuffleAddressArray(valPool, keccak256(abi.encodePacked(seed, "AGG_ADDR")));
 
         // ▸ 2. Build list of approved model indexes
         uint[] memory modelIdx = _collectApprovedModelIndexes(_GI);
-        _shuffleUintArray(modelIdx);
+        _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AGG_IDX")));
 
         // ▸ 3. Greedily fill Tier-1 batches
         uint vPtr;
@@ -546,27 +641,36 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             emit Tier2BatchAuto(_GI, t2.batchId);
         }
 
-        GIstate = GIstates.T1nT2Bcreated;
+        _setGIstate(GIstates.T1nT2Bcreated);
+    }
+
+    // ──────────── internal helpers ────────────
+
+    /// @dev Assigns the new GI state and emits GIStateChanged.
+    ///      GI is 0 during constructor/setup transitions (ordinals 0–4); expected.
+    function _setGIstate(GIstates newState) internal {
+        GIstate = newState;
+        emit GIStateChanged(GI, uint8(newState));
     }
 
     // ──────────── internal shuffle helpers ────────────
-    function _shuffleAddressArray(address[] memory arr) internal view {
+    function _shuffleAddressArray(address[] memory arr, bytes32 seed) internal pure {
         if (arr.length < 2) return;
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(blockhash(block.number - 1), i, arr.length)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
         }
     }
 
-    function _shuffleUintArray(uint[] memory arr) internal view {
+    function _shuffleUintArray(uint[] memory arr, bytes32 seed) internal pure {
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(block.timestamp, i, arr.length, msg.sender)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
@@ -675,29 +779,89 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     }
 
     /// @notice Transitions GI state to T1AggregationStarted, opening the
-    ///         Tier-1 submission window for assigned aggregators.
+    ///         Tier-1 commit window for assigned aggregators
+    ///         (commitT1Aggregation).
     /// @param _GI Current GI index.
     function startT1Aggregation(
         uint _GI
     ) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.T1nT2Bcreated)
             revert TC_NotReadyForT1Aggregation();
-        GIstate = GIstates.T1AggregationStarted;
+        _setGIstate(GIstates.T1AggregationStarted);
     }
 
-    /// @notice Submits an aggregation result CID for a Tier-1 batch.
-    /// @dev Caller must be an assigned, active aggregator who has not already submitted.
-    ///      Votes are tallied per CID; the majority CID is selected at finalization.
+    /// @notice Phase 1 of commit-then-reveal Tier-1 aggregation: lock in a
+    ///         hidden aggregation CID.
+    /// @dev Caller must be an assigned, active aggregator who has not already
+    ///      committed. `commitHash` must equal keccak256(abi.encode(cid,
+    ///      salt, msg.sender, GI, TierKind.Tier1, batchId)) for the values
+    ///      revealed later -- binding the committer's own address (and GI/
+    ///      tier/batchId) into the hash, unlike PR #63's auditor-side
+    ///      commitHash, closes the "replay a peer's commit hash and reveal
+    ///      their own (cid, salt) under it after they reveal" free-riding
+    ///      path (issue #156 M-1). The contract cannot and does not validate
+    ///      this at commit time -- that's the point.
     /// @param _GI Current GI index.
     /// @param _batchId Tier-1 batch index.
-    /// @param _aggregationCID IPFS CID of the aggregated model weights, encoded as bytes32.
-    function submitT1Aggregation(
+    /// @param commitHash keccak256(abi.encode(cid, salt, msg.sender, GI, TierKind.Tier1, batchId)).
+    function commitT1Aggregation(
         uint _GI,
         uint _batchId,
-        bytes32 _aggregationCID
+        bytes32 commitHash
     ) external onlyCurrentGI(_GI) {
         if (GIstate != GIstates.T1AggregationStarted)
             revert TC_T1AggregationNotStarted();
+        if (_batchId >= tier1Batches[_GI].length) revert TC_InvalidBatch();
+        if (!isTier1Aggregator[_GI][_batchId][msg.sender])
+            revert TC_NotBatchAggregator();
+        if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
+            revert TC_AggregatorNotActive();
+        }
+        if (commitHash == bytes32(0)) revert TC_T1EmptyCommitHash();
+        if (t1Committed[_GI][_batchId][msg.sender])
+            revert TC_T1AlreadyCommitted();
+
+        t1CommitHash[_GI][_batchId][msg.sender] = commitHash;
+        t1Committed[_GI][_batchId][msg.sender] = true;
+
+        emit T1AggregationCommitted(_GI, _batchId, msg.sender, commitHash);
+    }
+
+    /// @notice Closes the T1 commit window and opens the reveal window so
+    ///         assigned aggregators can call revealT1Aggregation.
+    /// @dev Must run strictly after commits close and before any reveal is
+    ///      accepted -- see revealT1Aggregation's GIstate gate.
+    /// @param _GI Current GI index.
+    function startT1AggregationReveal(
+        uint _GI
+    ) external onlyOwner onlyCurrentGI(_GI) {
+        if (GIstate != GIstates.T1AggregationStarted)
+            revert TC_T1RevealCannotBeStarted();
+        _setGIstate(GIstates.T1AggregationRevealStarted);
+    }
+
+    /// @notice Phase 2 of commit-then-reveal: reveal the (cid, salt) behind a
+    ///         prior commitment and have it counted.
+    /// @dev Reverts unless the caller committed for this (GI, batchId) and the
+    ///      revealed values hash to that commitment. Open only while
+    ///      GIstate == T1AggregationRevealStarted, strictly after the commit
+    ///      window has been closed by the model owner. An aggregator who
+    ///      committed but never reveals simply never sets t1Submitted, so
+    ///      they're excluded from finalization and remain slashable via the
+    ///      existing slashAggregators() "no submission" (S2) check -- no
+    ///      special-casing needed for the non-reveal case.
+    /// @param _GI Current GI index.
+    /// @param _batchId Tier-1 batch index.
+    /// @param _aggregationCID IPFS CID of the aggregated model weights, encoded as bytes32.
+    /// @param salt Arbitrary value chosen at commit time to prevent hash pre-image search.
+    function revealT1Aggregation(
+        uint _GI,
+        uint _batchId,
+        bytes32 _aggregationCID,
+        bytes32 salt
+    ) external onlyCurrentGI(_GI) {
+        if (GIstate != GIstates.T1AggregationRevealStarted)
+            revert TC_T1RevealPhaseNotOpen();
         if (_batchId >= tier1Batches[_GI].length) revert TC_InvalidBatch();
 
         // Verify sender is an assigned aggregator
@@ -706,25 +870,33 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TC_AggregatorNotActive();
         }
+        if (!t1Committed[_GI][_batchId][msg.sender]) revert TC_T1NoCommitFound();
         if (t1Submitted[_GI][_batchId][msg.sender])
             revert TC_AlreadySubmitted();
         if (_aggregationCID == bytes32(0)) revert TC_ZeroCID();
 
+        bytes32 expectedHash = keccak256(
+            abi.encode(_aggregationCID, salt, msg.sender, _GI, TierKind.Tier1, _batchId)
+        );
+        if (expectedHash != t1CommitHash[_GI][_batchId][msg.sender])
+            revert TC_T1RevealHashMismatch();
+
         t1Submitted[_GI][_batchId][msg.sender] = true;
         t1SubmissionCID[_GI][_batchId][msg.sender] = _aggregationCID;
+        emit T1AggregationSubmitted(_GI, _batchId, msg.sender, _aggregationCID);
 
         // Increment vote count
         t1Votes[_GI][_batchId][_aggregationCID]++;
     }
 
-    /// @notice Closes the Tier-1 submission window and selects the majority CID
+    /// @notice Closes the Tier-1 reveal window and selects the majority CID
     ///         for every batch.
     /// @dev Iterates all T1 batches; reverts on the first batch that has no submissions.
     /// @param _GI Current GI index.
     function finalizeT1Aggregation(
         uint _GI
     ) external onlyOwner onlyCurrentGI(_GI) {
-        if (GIstate != GIstates.T1AggregationStarted)
+        if (GIstate != GIstates.T1AggregationRevealStarted)
             revert TC_NotReadyToFinalizeT1();
 
         Tier1Batch[] storage batches = tier1Batches[_GI];
@@ -766,34 +938,82 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             b.finalized = true;
             b.finalCID = winningCID;
             tier1FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
+            emit T1BatchFinalized(_GI, b.batchId, winningCID);
         }
 
-        GIstate = GIstates.T1AggregationDone;
+        _setGIstate(GIstates.T1AggregationDone);
     }
 
-    /// @notice Opens the Tier-2 aggregation submission window.
+    /// @notice Opens the Tier-2 aggregation commit window
+    ///         (commitT2Aggregation).
     /// @param _GI Current GI index.
     function startT2Aggregation(
         uint _GI
     ) external onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.T1AggregationDone)
             revert TC_NotReadyForT2Aggregation();
-        GIstate = GIstates.T2AggregationStarted;
+        _setGIstate(GIstates.T2AggregationStarted);
     }
 
-    /// @notice Submits an aggregation result CID for the Tier-2 batch.
-    /// @dev _batchId must be 0. Caller must be an assigned, active aggregator who
-    ///      has not already submitted.
+    /// @notice Phase 1 of commit-then-reveal Tier-2 aggregation: lock in a
+    ///         hidden aggregation CID.
+    /// @dev Same sender-bound commit-hash hardening as commitT1Aggregation
+    ///      (issue #156 M-1); see that function's NatSpec.
     /// @param _GI Current GI index.
     /// @param _batchId Must be 0.
-    /// @param _aggregationCID IPFS CID of the final aggregated model, encoded as bytes32.
-    function submitT2Aggregation(
+    /// @param commitHash keccak256(abi.encode(cid, salt, msg.sender, GI, TierKind.Tier2, batchId)).
+    function commitT2Aggregation(
         uint _GI,
         uint _batchId,
-        bytes32 _aggregationCID
+        bytes32 commitHash
     ) external onlyCurrentGI(_GI) {
         if (GIstate != GIstates.T2AggregationStarted)
             revert TC_T2AggregationNotStarted();
+        if (_batchId != 0) revert TC_OnlyOneTier2Batch();
+        if (!isTier2Aggregator[_GI][_batchId][msg.sender])
+            revert TC_NotBatchAggregator();
+        if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
+            revert TC_AggregatorNotActive();
+        }
+        if (commitHash == bytes32(0)) revert TC_T2EmptyCommitHash();
+        if (t2Committed[_GI][_batchId][msg.sender])
+            revert TC_T2AlreadyCommitted();
+
+        t2CommitHash[_GI][_batchId][msg.sender] = commitHash;
+        t2Committed[_GI][_batchId][msg.sender] = true;
+
+        emit T2AggregationCommitted(_GI, _batchId, msg.sender, commitHash);
+    }
+
+    /// @notice Closes the T2 commit window and opens the reveal window so
+    ///         assigned aggregators can call revealT2Aggregation.
+    /// @param _GI Current GI index.
+    function startT2AggregationReveal(
+        uint _GI
+    ) external onlyOwner onlyCurrentGI(_GI) {
+        if (GIstate != GIstates.T2AggregationStarted)
+            revert TC_T2RevealCannotBeStarted();
+        _setGIstate(GIstates.T2AggregationRevealStarted);
+    }
+
+    /// @notice Phase 2 of commit-then-reveal: reveal the (cid, salt) behind a
+    ///         prior commitment and have it counted.
+    /// @dev _batchId must be 0. Same non-reveal handling as revealT1Aggregation
+    ///      (see its NatSpec) -- a committed-but-never-revealed aggregator
+    ///      simply never sets t2Submitted, and remains slashable via
+    ///      slashAggregators()'s existing "no submission" (S2) check.
+    /// @param _GI Current GI index.
+    /// @param _batchId Must be 0.
+    /// @param _aggregationCID IPFS CID of the final aggregated model, encoded as bytes32.
+    /// @param salt Arbitrary value chosen at commit time to prevent hash pre-image search.
+    function revealT2Aggregation(
+        uint _GI,
+        uint _batchId,
+        bytes32 _aggregationCID,
+        bytes32 salt
+    ) external onlyCurrentGI(_GI) {
+        if (GIstate != GIstates.T2AggregationRevealStarted)
+            revert TC_T2RevealPhaseNotOpen();
         if (_batchId != 0) revert TC_OnlyOneTier2Batch();
 
         if (!isTier2Aggregator[_GI][_batchId][msg.sender])
@@ -801,24 +1021,32 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TC_AggregatorNotActive();
         }
+        if (!t2Committed[_GI][_batchId][msg.sender]) revert TC_T2NoCommitFound();
         if (t2Submitted[_GI][_batchId][msg.sender])
             revert TC_AlreadySubmitted();
         if (_aggregationCID == bytes32(0)) revert TC_ZeroCID();
 
+        bytes32 expectedHash = keccak256(
+            abi.encode(_aggregationCID, salt, msg.sender, _GI, TierKind.Tier2, _batchId)
+        );
+        if (expectedHash != t2CommitHash[_GI][_batchId][msg.sender])
+            revert TC_T2RevealHashMismatch();
+
         t2Submitted[_GI][_batchId][msg.sender] = true;
         t2SubmissionCID[_GI][_batchId][msg.sender] = _aggregationCID;
+        emit T2AggregationSubmitted(_GI, _batchId, msg.sender, _aggregationCID);
 
         // Increment vote count
         t2Votes[_GI][_batchId][_aggregationCID]++;
     }
 
-    /// @notice Closes the Tier-2 submission window and selects the majority CID.
+    /// @notice Closes the Tier-2 reveal window and selects the majority CID.
     /// @dev Reverts if the Tier-2 batch has received no submissions.
     /// @param _GI Current GI index.
     function finalizeT2Aggregation(
         uint _GI
     ) external onlyOwner onlyCurrentGI(_GI) {
-        if (GIstate != GIstates.T2AggregationStarted)
+        if (GIstate != GIstates.T2AggregationRevealStarted)
             revert TC_NotReadyToFinalizeT2();
 
         Tier2Batch[] storage batches = tier2Batches[_GI];
@@ -858,9 +1086,10 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             b.finalized = true;
             b.finalCID = winningCID;
             tier2FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
+            emit T2Finalized(_GI, winningCID);
         }
 
-        GIstate = GIstates.T2AggregationDone;
+        _setGIstate(GIstates.T2AggregationDone);
     }
 
     /// @notice Triggers auditor slashing on the paired DINTaskAuditor contract.
@@ -871,7 +1100,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_NotReadyToSlashAuditors();
         bool success = dinTaskAuditorContract.slashAuditors(_GI);
         if (!success) revert TC_FailedToSlashAuditors();
-        GIstate = GIstates.AuditorsSlashed;
+        _setGIstate(GIstates.AuditorsSlashed);
     }
 
     /// @notice Slashes aggregators in both Tier-1 and Tier-2 batches that failed
@@ -897,12 +1126,16 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 bool submitted = t1Submitted[_GI][b.batchId][aggregator];
                 if (!submitted) {
                     // S2 liveness fault: partial slash + S5/S6 tracking.
-                    uint256 actualSlashed = dinvalidatorStakeContract.slashPartial(
-                        aggregator,
-                        s2Amount,
-                        "AGG_T1_NO_SUBMISSION",
-                        _GI
-                    );
+                    // Skip when rounding reduces s2Amount to 0 — slashPartial
+                    // reverts InvalidSlashAmount on zero, bricking the GI.
+                    uint256 actualSlashed = s2Amount > 0
+                        ? dinvalidatorStakeContract.slashPartial(
+                            aggregator,
+                            s2Amount,
+                            "AGG_T1_NO_SUBMISSION",
+                            _GI
+                        )
+                        : 0;
                     emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T1_NO_SUBMISSION", s2Amount, actualSlashed);
                     // No S6 recordNoParticipation here: slashPartial above already
                     // penalises this missed submission (S2, escalating to S5 on
@@ -933,12 +1166,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 bool submitted = t2Submitted[_GI][b.batchId][aggregator];
                 if (!submitted) {
                     // S2 liveness fault: partial slash + S5/S6 tracking.
-                    uint256 actualSlashed = dinvalidatorStakeContract.slashPartial(
-                        aggregator,
-                        s2Amount,
-                        "AGG_T2_NO_SUBMISSION",
-                        _GI
-                    );
+                    // Skip when rounding reduces s2Amount to 0 (same guard as T1).
+                    uint256 actualSlashed = s2Amount > 0
+                        ? dinvalidatorStakeContract.slashPartial(
+                            aggregator,
+                            s2Amount,
+                            "AGG_T2_NO_SUBMISSION",
+                            _GI
+                        )
+                        : 0;
                     emit AggregatorSlashed(_GI, b.batchId, aggregator, "AGG_T2_NO_SUBMISSION", s2Amount, actualSlashed);
                     // No S6 recordNoParticipation here: same rationale as the T1
                     // branch above (S2/S5 already covers this event; avoids
@@ -958,7 +1194,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             }
         }
 
-        GIstate = GIstates.AggregatorsSlashed;
+        _setGIstate(GIstates.AggregatorsSlashed);
     }
 
     /// @notice Records the Tier-2 aggregation quality score for the current GI.
@@ -1010,7 +1246,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
         dinTaskAuditorContract.settleRewards(_GI, totalAggregatorWeight[_GI]);
 
-        GIstate = GIstates.GIended;
+        _setGIstate(GIstates.GIended);
     }
 
     /// @notice Decrements the concurrent-registration counter on DinValidatorStake
@@ -1047,41 +1283,41 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         dinToken = IERC20(_dinToken);
     }
 
-    /// @notice Sets the three dispute timing/bond parameters.
+    /// @notice Sets the four dispute timing/bond parameters.
     /// @param _disputeBond       Token amount a challenger must post to open a dispute.
     /// @param _disputeWindow     Seconds after batch finalization during which a dispute can be opened.
     /// @param _resolutionWindow  Seconds the fresh subgroup has to recompute after being assigned.
+    /// @param _disputeSeedDelay  Blocks after openDispute before the seed can be locked (1–256,
+    ///                           within the blockhash window).
     function setDisputeParams(
         uint256 _disputeBond,
         uint64 _disputeWindow,
-        uint64 _resolutionWindow
+        uint64 _resolutionWindow,
+        uint64 _disputeSeedDelay
     ) external onlyOwner {
-        if (_disputeBond == 0 || _disputeWindow == 0 || _resolutionWindow == 0)
-            revert TC_InvalidDisputeParams();
+        if (
+            _disputeBond == 0 ||
+            _disputeWindow == 0 ||
+            _resolutionWindow == 0 ||
+            _disputeSeedDelay == 0 ||
+            _disputeSeedDelay > 256
+        ) revert TC_InvalidDisputeParams();
         disputeBond = _disputeBond;
         disputeWindow = _disputeWindow;
         resolutionWindow = _resolutionWindow;
+        disputeSeedDelay = _disputeSeedDelay;
     }
 
     /// @notice Updates the S2 liveness-fault slash fraction.
     /// @dev Only affects AGG_T*_NO_SUBMISSION slashes. BAD_CONSENSUS slashes
     ///      keep the full minStake() amount regardless of this setting.
     ///      Setting to 10000 restores the previous flat-minStake behavior.
-    /// @param bps New fraction in basis points (0–10000).
+    /// @param bps New fraction in basis points (1–10000).
     function setS2SlashFractionBps(uint256 bps) external onlyOwner {
-        if (bps > 10_000) revert TC_InvalidSlashFraction();
+        if (bps == 0 || bps > 10_000) revert TC_InvalidSlashFraction();
         uint256 old = s2SlashFractionBps;
         s2SlashFractionBps = bps;
         emit S2SlashFractionBpsUpdated(old, bps);
-    }
-
-    /// @notice Sets the address forfeited dispute bonds will eventually be forwarded to.
-    /// @dev Storage only -- no forwarding happens yet since DinTreasury doesn't
-    ///      exist on develop. See treasuryAccrued.
-    /// @param _treasuryAddress Address of the future DinTreasury deployment.
-    function setTreasuryAddress(address _treasuryAddress) external onlyOwner {
-        if (_treasuryAddress == address(0)) revert TC_InvalidAddress();
-        treasuryAddress = _treasuryAddress;
     }
 
     /// @notice Sets the minimum gas-cost floor (in gas units) each validator must
@@ -1137,14 +1373,120 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             bond: disputeBond,
             openedAt: uint64(block.timestamp),
             resolutionDeadline: 0,
+            seedBlock: uint64(block.number) + disputeSeedDelay,
             resolved: false,
             upheld: false,
-            finalized: false
+            finalized: false,
+            seed: bytes32(0)
         });
 
         dinToken.safeTransferFrom(msg.sender, address(this), disputeBond);
 
         emit DisputeOpened(_GI, tierKind, batchId, msg.sender, disputeBond);
+    }
+
+    /// @notice Permissionless: locks the entropy seed for an open dispute.
+    /// @dev Anyone can call this once `block.number > d.seedBlock`. The seed is
+    ///      derived from `blockhash(d.seedBlock)`, which nobody can predict when
+    ///      the dispute opens and nobody can choose once the block is mined —
+    ///      so neither the model owner nor the challenger can steer the subgroup.
+    ///
+    ///      256-block edge: if `blockhash(d.seedBlock)` returns 0 (more than 256
+    ///      blocks have elapsed since `seedBlock` was set), the function re-anchors
+    ///      to a fresh future block instead of recording a zero-derived seed. The
+    ///      party who dislikes the eventual draw cannot stop any honest validator
+    ///      from locking the seed first, so re-anchoring is not a free re-roll.
+    function lockDisputeSeed(
+        uint _GI,
+        TierKind tierKind,
+        uint batchId
+    ) external {
+        Dispute storage d = disputes[_GI][tierKind][batchId];
+        if (d.challenger == address(0)) revert TC_DisputeNotOpen();
+        if (d.resolved) revert TC_DisputeAlreadyResolved();
+        if (d.seed != bytes32(0)) revert TC_DisputeSeedAlreadyLocked();
+        if (block.number <= d.seedBlock) revert TC_DisputeSeedBlockNotMined();
+
+        bytes32 bh = blockhash(d.seedBlock);
+        if (bh == bytes32(0)) {
+            // >256 blocks since seedBlock — re-anchor to a fresh future block.
+            d.seedBlock = uint64(block.number) + disputeSeedDelay;
+            emit DisputeSeedReanchored(_GI, tierKind, batchId, d.seedBlock);
+            return;
+        }
+
+        d.seed = keccak256(abi.encodePacked(bh, _GI, uint8(tierKind), batchId));
+        emit DisputeSeedLocked(_GI, tierKind, batchId, d.seed);
+    }
+
+    /// @notice Permissionless: locks the entropy seed for the current GI's
+    ///         Tier-1/Tier-2 batch assignment (issue #156 H-2).
+    /// @dev Same shape as lockDisputeSeed: anyone may call once
+    ///      `block.number > aggSeedBlock[_GI]`; the seed derives from
+    ///      `blockhash(aggSeedBlock[_GI])`, fixed before autoCreateTier1AndTier2
+    ///      could possibly run (anchored in closeLMsubmissionsEvaluation), so
+    ///      the model owner cannot pick a favourable block to call it in.
+    ///      Re-anchors on the same >256-block edge; never locks a zero seed.
+    ///      Trust caveat: as with the dispute seed, this trusts the OP Stack
+    ///      sequencer not to grind `blockhash` -- acceptable for DevNet/
+    ///      testnet, VRF is the mainnet-grade follow-up.
+    function lockAggSeed(uint _GI) external onlyCurrentGI(_GI) {
+        uint64 seedBlock = aggSeedBlock[_GI];
+        if (seedBlock == 0) revert TC_AggSeedNotAnchored();
+        if (aggSeed[_GI] != bytes32(0)) revert TC_AggSeedAlreadyLocked();
+        if (block.number <= seedBlock) revert TC_AggSeedBlockNotMined();
+
+        bytes32 bh = blockhash(seedBlock);
+        if (bh == bytes32(0)) {
+            aggSeedBlock[_GI] = uint64(block.number) + disputeSeedDelay;
+            emit AggSeedReanchored(_GI, aggSeedBlock[_GI]);
+            return;
+        }
+
+        aggSeed[_GI] = keccak256(abi.encodePacked(bh, _GI, "AGG"));
+        emit AggSeedLocked(_GI, aggSeed[_GI]);
+    }
+
+    /// @notice Permissionless: locks the entropy seed for the current GI's
+    ///         auditor batch assignment (issue #156 H-2).
+    /// @dev Mirrors lockAggSeed exactly; anchored in closeLMsubmissions since
+    ///      that's the transition that gates createAuditorsBatches. The
+    ///      locked seed is read by createAuditorsBatches below and passed
+    ///      across the interface to DINTaskAuditor.createAuditorsBatches,
+    ///      which owns the actual shuffle.
+    function lockAuditSeed(uint _GI) external onlyCurrentGI(_GI) {
+        uint64 seedBlock = auditSeedBlock[_GI];
+        if (seedBlock == 0) revert TC_AuditSeedNotAnchored();
+        if (auditSeed[_GI] != bytes32(0)) revert TC_AuditSeedAlreadyLocked();
+        if (block.number <= seedBlock) revert TC_AuditSeedBlockNotMined();
+
+        bytes32 bh = blockhash(seedBlock);
+        if (bh == bytes32(0)) {
+            auditSeedBlock[_GI] = uint64(block.number) + disputeSeedDelay;
+            emit AuditSeedReanchored(_GI, auditSeedBlock[_GI]);
+            return;
+        }
+
+        auditSeed[_GI] = keccak256(abi.encodePacked(bh, _GI, "AUD"));
+        emit AuditSeedLocked(_GI, auditSeed[_GI]);
+    }
+
+    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
+    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
+    ///      the slash-treasury is unset, mirroring DinValidatorStake.slash() behaviour.
+    ///      Also increments `treasuryAccrued` by the full amount for observability.
+    function _burnAndForward(uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 burnAmt = amount / 2;
+        uint256 fwdAmt  = amount - burnAmt;
+        IBurnableDinToken(address(dinToken)).burn(burnAmt);
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, fwdAmt);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(fwdAmt);
+        }
+        treasuryAccrued += amount;
     }
 
     /// @notice Resolves a dispute, either upholding or rejecting it.
@@ -1159,8 +1501,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ///      alternate bounty source (forfeited-stake pool).
     ///      Rejected (frivolous): fully closed immediately — bond is split
     ///      50% burn / 50% treasury per MECHANISM_DESIGN.md §4.
-    ///      treasuryAccrued accumulates the full bond for observability
-    ///      regardless of whether the transfer succeeds.
+    ///      treasuryAccrued accumulates the full bond for observability.
     /// @param _GI GI index the disputed batch belongs to.
     /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
     /// @param batchId Index of the disputed batch within its tier.
@@ -1179,6 +1520,11 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         d.upheld = upheld;
 
         if (upheld) {
+            // Require a locked seed before assigning the fresh subgroup.
+            // lockDisputeSeed must be called first so the subgroup draw
+            // cannot be steered by timing resolveDispute to a favourable block.
+            if (d.seed == bytes32(0)) revert TC_DisputeSeedNotLocked();
+
             // Assign fresh subgroup and start the resolution clock.
             // Bond credit is deferred: the challenger gets it back in
             // settleRecomputation(confirmed=true) or expireDispute(). If the
@@ -1190,7 +1536,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             address[] memory freshSubgroup = _assignFreshSubgroup(
                 _GI,
                 tierKind,
-                batchId
+                batchId,
+                d.seed
             );
             reEvaluationAssignees[_GI][tierKind][batchId] = freshSubgroup;
             emit ReEvaluationAssigned(_GI, tierKind, batchId, freshSubgroup);
@@ -1198,16 +1545,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             // Immediate rejection: dispute is fully closed, no Phase-2 needed.
             d.finalized = true;
 
-            // Frivolous forfeiture: 50% burn / 50% treasury (MECHANISM_DESIGN §4).
-            uint256 burnAmt = d.bond / 2;
-            uint256 treasuryAmt = d.bond - burnAmt;
-            IBurnableDinToken(address(dinToken)).burn(burnAmt);
-            if (treasuryAddress != address(0)) {
-                dinToken.safeTransfer(treasuryAddress, treasuryAmt);
-            } else {
-                IBurnableDinToken(address(dinToken)).burn(treasuryAmt);
-            }
-            treasuryAccrued += d.bond; // cumulative counter for observability
+            // Frivolous forfeiture: 50% burn / 50% platform treasury (MECHANISM_DESIGN §4).
+            _burnAndForward(d.bond);
         }
 
         emit DisputeResolved(_GI, tierKind, batchId, upheld);
@@ -1288,9 +1627,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             }
         } else {
             // Recomputation matched the original CID — dispute was wrong.
-            // Forfeit challenger's bond to treasury.
-            // TODO(task_210726_5): forward to DinTreasury once it exists.
-            treasuryAccrued += d.bond;
+            // Forfeit challenger's bond: 50% burn / 50% platform treasury (MECHANISM_DESIGN §4).
+            _burnAndForward(d.bond);
         }
 
         emit RecomputationSettled(_GI, tierKind, batchId, confirmed);
@@ -1339,42 +1677,42 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
     /// @notice Selects a fresh aggregator subgroup for re-evaluation, excluding
     ///         the accused batch's original aggregators.
-    /// @dev Draws from the same active-aggregator pool autoCreateTier1AndTier2
-    ///      uses, shuffled with the same blockhash-based entropy. Bookkeeping
+    /// @dev Shuffles the GI's full registered pool (push-only, closed before any
+    ///      dispute can open) with the dispute's locked future-block seed, then
+    ///      takes the first T1_AGGREGATORS_PER_BATCH entries that are still
+    ///      active and were not in the accused batch. Shuffling the fixed
+    ///      registered pool rather than the live active pool means the draw is
+    ///      independent of when resolveDispute is called, and an aggregator who
+    ///      exits after the seed is public can only remove itself from the draw,
+    ///      not re-permute everyone else's position. Bookkeeping
     ///      only -- does not re-open the GI state machine to actually re-run
     ///      aggregation against this subgroup; see the scaffold-wide comment
     ///      above the state declarations.
     function _assignFreshSubgroup(
         uint _GI,
         TierKind tierKind,
-        uint batchId
+        uint batchId,
+        bytes32 seed
     ) internal view returns (address[] memory subgroup) {
         address[] memory excluded = tierKind == TierKind.Tier1
             ? tier1Batches[_GI][batchId].aggregators
             : tier2Batches[_GI][batchId].aggregators;
-        address[] memory pool = _activeAggregatorPool(_GI);
+        address[] memory pool = dinAggregators[_GI];
 
-        uint eligibleCount;
-        for (uint i = 0; i < pool.length; i++) {
-            if (!_isInArray(pool[i], excluded)) eligibleCount++;
-        }
-
-        address[] memory eligible = new address[](eligibleCount);
-        uint ptr;
-        for (uint i = 0; i < pool.length; i++) {
-            if (!_isInArray(pool[i], excluded)) {
-                eligible[ptr++] = pool[i];
-            }
-        }
-        if (eligible.length < T1_AGGREGATORS_PER_BATCH) {
-            revert TC_NotEnoughValidators();
-        }
-
-        _shuffleAddressArray(eligible);
+        _shuffleAddressArray(pool, seed);
 
         subgroup = new address[](T1_AGGREGATORS_PER_BATCH);
-        for (uint i = 0; i < T1_AGGREGATORS_PER_BATCH; i++) {
-            subgroup[i] = eligible[i];
+        uint ptr;
+        for (uint i = 0; i < pool.length && ptr < T1_AGGREGATORS_PER_BATCH; i++) {
+            if (
+                !_isInArray(pool[i], excluded) &&
+                dinvalidatorStakeContract.isValidatorActive(pool[i])
+            ) {
+                subgroup[ptr++] = pool[i];
+            }
+        }
+        if (ptr < T1_AGGREGATORS_PER_BATCH) {
+            revert TC_NotEnoughValidators();
         }
     }
 

@@ -21,9 +21,9 @@ INTERIM SCAFFOLDING — this script+import flow is the *rejected* Option A of
 the committed decision record
 Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md,
 kept here only to unblock the harness. The chosen target (its Option C) is
-native web3.py proxy deployment inside `dindao deploy`
+native web3.py proxy deployment inside `dinrep deploy`
 (backlog: Developer/issues/dincli-native-proxy-deployment.md); when that
-lands, restore per-contract `dindao deploy ...` tests here and demote
+lands, restore per-contract `dinrep deploy ...` tests here and demote
 import-deployments to a sync-utility test.
 
 SDK candidates:
@@ -85,9 +85,9 @@ def ensure_artifacts():
 # ---------------------------------------------------------------------------
 
 
-def test_connect_wallet_dindao(run, state):
-    """Switch to the dindao wallet (account 0, DIN-Representative)."""
-    result = run(["system", "connect-wallet", "dindao"])
+def test_connect_wallet_dinrep(run, state):
+    """Switch to the dinrep wallet (account 0, DIN-Representative)."""
+    result = run(["system", "connect-wallet", "dinrep"])
     assert result.returncode == 0
     state["representative_connected"] = True
 
@@ -95,7 +95,7 @@ def test_connect_wallet_dindao(run, state):
 def test_deploy_platform_via_script(state):
     """Deploy the four platform proxies + wiring via the canonical script.
 
-    The deployer is hardhat signer 0 — the same key as the dindao wallet.
+    The deployer is hardhat signer 0 — the same key as the dinrep wallet.
     Which script runs is picked up from PLATFORM_DEPLOY_TOOLCHAIN
     (tests/dincli/constants.py): "foundry" runs `forge script
     DeployPlatform.s.sol`, "hardhat" runs `hardhat run

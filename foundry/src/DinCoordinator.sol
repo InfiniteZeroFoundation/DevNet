@@ -61,6 +61,7 @@ contract DinCoordinator is
     error ZeroValue();
     error FaucetRetired();
     error MintCapExceeded();
+    error ZeroMintAmount();
     error FeeRouterNotSet();
     error UnauthorizedEmissionCaller();
 
@@ -82,11 +83,17 @@ contract DinCoordinator is
     /// @notice Deposits ETH and mints the equivalent amount of DIN tokens to
     ///         the caller at the current exchange rate.
     /// @dev Rate is a fixed-point value scaled by 1e18. Reverts if the faucet
-    ///      has been retired or if minting would exceed the cap (when set).
+    ///      has been retired, if minting would exceed the cap (when set), or
+    ///      if integer division rounds the mint to zero, i.e.
+    ///      `msg.value * dinPerEth < 1e18` (L-2). That is only reachable
+    ///      when `dinPerEth < 1e18` (less than 1 DIN-wei per wei) -- without
+    ///      this check the ETH would be accepted and kept with nothing
+    ///      minted in return.
     function depositAndMint() external payable nonReentrant {
         if (faucetRetired) revert FaucetRetired();
         if (msg.value == 0) revert ZeroValue();
         uint256 mintAmount = (msg.value * dinPerEth) / 1e18;
+        if (mintAmount == 0) revert ZeroMintAmount();
         if (mintCap > 0 && totalMinted + mintAmount > mintCap) revert MintCapExceeded();
         totalMinted += mintAmount;
         dinToken.mint(msg.sender, mintAmount);

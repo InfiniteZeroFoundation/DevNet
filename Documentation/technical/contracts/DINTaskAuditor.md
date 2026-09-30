@@ -1,361 +1,220 @@
 # DINTaskAuditor — Technical Documentation
 
-> **File:** `foundry/src/DINTaskAuditor.sol`
+> **File:** [`foundry/src/DINTaskAuditor.sol`](../../../foundry/src/DINTaskAuditor.sol)
 > **SPDX-License-Identifier:** UNLICENSED
 > **Solidity:** `^0.8.28`
+> **Deployment:** once per model by the model owner, paired with its `DINTaskCoordinator` (plain `Ownable`, **not** upgradeable)
 
 ---
 
 ## 1. Overview
 
-`DINTaskAuditor` is the **evaluation and quality-control contract** for each Global Iteration (GI). Its responsibilities:
+`DINTaskAuditor` is the evaluation, reward and test-data half of a model's task contracts. It handles:
 
-1. **Auditor registration** — Accept active DIN validators as auditors for a GI.
-2. **Local Model Submission (LMS)** — Accept hashed local model submissions from FL clients.
-3. **Audit batch formation** — Randomly assign currently-active auditors to batches of submitted models.
-4. **Test dataset distribution** — Record each batch's test-data CID and each assigned auditor's individually-encrypted decryption key (task_210726_6 §2b).
-5. **Model evaluation** — Commit-then-reveal auditor scoring and eligibility voting (task_210726_6 §2a).
-6. **Evaluation finalization** — Compute final median scores and determine which models are approved for aggregation.
-7. **Auditor slashing** — Penalise auditors who missed a vote (S1), and, once enabled, auditors whose revealed score deviates too far from the model's median (S3).
+- **auditor registration** (active validator, per-model stake floor, concurrent-registration cap, 300-per-GI cap);
+- **local model submissions** from clients (one per client per GI, 10 000 per GI);
+- **audit batch formation** from the coordinator's locked seed, and encrypted **test-data assignment** (per-auditor encrypted keys, content commitment);
+- **commit-then-reveal scoring**: eligibility vote + 0–100 score, median per model, approval against `passScore`;
+- **auditor slashing**: S1 (missed vote, partial) and S3 (score deviation, full, behind a switch that is off by default);
+- the per-GI **reward pool**: funding, settlement at `endGI`, pull-based claims for clients, auditors and aggregators;
+- **test-data disputes**: bonded challenges against the model owner's test data.
 
-The contract is owned by the model owner (OpenZeppelin `Ownable`) and callable by `DINTaskCoordinator` for state-transition operations.
+Phase transitions are driven by the paired [`DINTaskCoordinator`](DINTaskCoordinator.md); this contract reads its `GI()` / `GIstate()` and gates each function on them.
 
 ---
 
 ## 2. Inheritance & Dependencies
 
-| Component | Source | Purpose |
-|-----------|--------|---------|
-| `Ownable` | OpenZeppelin | Owner-restricted functions (test data assignment, S3 threshold/toggle) |
-| `DINShared.sol` | Local | `GIstates` enum, cross-contract interfaces, error declarations |
+| Component | Purpose |
+|-----------|---------|
+| `Ownable` (OpenZeppelin, non-upgradeable) | Model owner: test-data assignment, parameters |
+| `ReentrancyGuardTransient` | Guards `claimRewards` and the dispute functions |
+| `SafeERC20` / `IERC20` | DIN reward pools, dispute bonds |
+| `IBurnableDinToken` (local) | Burns the burn half of forfeited bonds and penalties, and anything that can't be forwarded because no treasury is set |
+| `DINShared.sol` | `GIstates`, `IDinValidatorStake`, `IDINTaskCoordinator`, `TA_*` errors |
 
 ---
 
-## 3. State Variables
+## 3. State
 
-| Variable | Type | Visibility | Description |
-|----------|------|-----------|-------------|
-| `dinvalidatorStakeContract` | `IDinValidatorStake` | `public` | Stake contract for auditor activity checks and slashing; also the source of `minStake()` used as the slash amount |
-| `dintaskcoordinatorContract` | `IDINTaskCoordinator` | `public` | Coordinator for GI/state reads |
-| `totalDepositedRewards` | `uint` | `public` | Accumulated reward deposits (informational only) |
-| `MAX_LM_SUBMISSIONS` | `uint` | *(default, internal)* | Hard cap per GI: `10,000` |
-| `params` | `Params` | `public` | Per-round tunable parameters |
-| `s3DeviationThreshold` | `uint256` | `public` | S3 auditor-deviation threshold, 0–100 scale; default `40` (deliberately wide, not a validated production value — see §6 below) |
-| `s3SlashingEnabled` | `bool` | `public` | Whether S3 deviation actually triggers slashing in `slashAuditors`; default `false` (shadow mode) |
-| `dinAuditors` | `mapping(uint => address[])` | `public` | Registered auditors per GI |
-| `isRegisteredAuditor` | `mapping(uint => mapping(address => bool))` | `public` | Auditor registration membership |
-| `lmSubmissions` | `mapping(uint => LMSubmission[])` | `public` | All submitted local models per GI |
-| `clientHasSubmitted` | `mapping(uint => mapping(address => bool))` | `public` | One-submission-per-client guard |
-| `clientSubmissionIndex` | `mapping(uint => mapping(address => uint))` | `public` | Client address → submission index |
-| `auditBatches` | `mapping(uint256 => AuditBatch[])` | `public` | Formed audit batches per GI |
-| `isBatchAuditor` | `mapping(uint => mapping(uint => mapping(address => bool)))` | `public` | GI → batchId → auditor → assigned |
-| `isBatchModelIndex` | `mapping(uint => mapping(uint => mapping(uint => bool)))` | `public` | GI → batchId → modelIndex → assigned |
-| `auditScores` | 4-level mapping | `public` | GI → batchId → auditor → modelIndex → revealed score |
-| `LMeligibleVote` | 4-level mapping | `public` | GI → batchId → auditor → modelIndex → revealed eligibility vote |
-| `hasAuditedLM` | 4-level mapping | `public` | GI → batchId → auditor → modelIndex → has revealed (single source of truth for quorum/median counting) |
-| `auditScoreCommits` | 4-level mapping | `public` | GI → batchId → auditor → modelIndex → `keccak256(score, vote, salt)` commit hash |
-| `hasCommittedLM` | 4-level mapping | `public` | GI → batchId → auditor → modelIndex → has committed (distinct from `hasAuditedLM` — see §9.1) |
-| `encryptedTestDataKey` | `mapping(uint256 => mapping(uint => mapping(address => bytes)))` | `public` | GI → batchId → auditor → that auditor's individually-encrypted copy of the test-data decryption key |
-| `Is_testdataCIDs_Assigned` | `mapping(uint256 => bool)` | `public` | Whether test datasets are assigned for a GI |
+### 3.1 Wiring
 
-> **Note:** there is no `minStake` state variable on this contract (auditor registration and slashing both go through `dinvalidatorStakeContract` — `isValidatorActive()` for registration/commit/reveal, `minStake()` for the slash amount — not a locally-cached threshold).
+| Variable | Description |
+|----------|-------------|
+| `dinvalidatorStakeContract` | `DinValidatorStake` proxy (constructor) |
+| `dintaskcoordinatorContract` | Paired coordinator (constructor) |
+| `modelId` (`immutable`) | Registry model ID for the stake floor (constructor) |
+| `dinToken` | DIN token (`setDinToken`); required before `depositRewards`, claims or bonded disputes |
 
----
+There is no treasury address on this contract. The treasury share of rewards and the treasury half of forfeitures go to `dinvalidatorStakeContract.slashTreasury()`, the platform treasury configured on `DinValidatorStake`.
 
-## 4. Data Structures
+### 3.2 `Params` (constructor defaults — no setter except `passScore`)
 
-### 4.1 `LMSubmission`
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `auditorsPerBatch` | 3 | Auditors per batch |
+| `modelsPerBatch` | 3 | Target models per batch |
+| `MIN_MODELS_PER_BATCH` | 2 | Smallest allowed final batch |
+| `minEligibilityQuorum` | 2 | Votes needed to decide eligibility, and "yes" votes needed to be eligible |
+| `minScoreQuorum` | 2 | Revealed scores needed to compute a median |
+| `passScore` | 50 | Minimum median for approval; updated via the coordinator's `startGI(gi, score)` |
 
-```solidity
-struct LMSubmission {
-    address client;        // Submitting FL client
-    bytes32 modelCID;      // IPFS CID hash of the local model
-    uint40 submittedAt;    // Block timestamp
-    bool eligible;         // Passed basic conformance check (majority vote)
-    bool evaluated;        // Score quorum reached and finalMedianScore computed
-    bool approved;         // eligible == true AND finalMedianScore >= passScore
-    uint256 finalMedianScore; // 0-100, canonical per-model score for both S3 slashing and the reward basis
-}
-```
+Constants: `MAX_REGISTERED_AUDITORS = 300`; `MAX_LM_SUBMISSIONS = 10000` (a plain storage variable, not `constant`).
 
-### 4.2 `Params` (default values)
+### 3.3 Governable parameters (owner-settable)
 
-| Parameter | Default | Spec Target |
-|-----------|---------|-------------|
-| `auditorsPerBatch` | 3 | 10 |
-| `modelsPerBatch` | 3 | 100 |
-| `minEligibilityQuorum` | 2 | 7 |
-| `minScoreQuorum` | 2 | 7 |
-| `passScore` | 50 | 50 |
-| `MIN_MODELS_PER_BATCH` | 2 | — |
+| Variable | Default | Setter |
+|----------|---------|--------|
+| `rewardSplit` | clients 60% / auditors 20% / aggregators 15% / treasury 5% | `setRewardSplit` (must sum to 10 000 bps) |
+| `s1SlashFractionBps` | 3000 (30%) | `setS1SlashFractionBps` (1 – 10 000) |
+| `s3DeviationThreshold` | 40 (on the 0–100 scale) | `setS3DeviationThreshold` (≤ 100) |
+| `s3SlashingEnabled` | `false` (shadow mode) | `setS3SlashingEnabled` |
+| `disputeBondAmount` | 0 | `setDisputeBondAmount` |
+| `disputeWindowBlocks` | 7200 (~1 day on Optimism) | `setDisputeWindowBlocks` |
+| `disputePenaltyBps` | 2500 (25% of the GI pool) | `setDisputePenaltyBps` (≤ 10 000) |
 
-### 4.3 `AuditBatch`
+The reward split and the S1 fraction are explicitly provisional (MECHANISM_DESIGN §5; issue #155).
 
-```solidity
-struct AuditBatch {
-    uint batchId;           // Sequential batch index within a GI
-    address[] auditors;     // Assigned auditors
-    uint[] modelIndexes;    // Indexes into lmSubmissions[GI]
-    bytes32 testDataCID;    // IPFS CID of test dataset for this batch
-}
-```
+### 3.4 Per-GI data
+
+- **Registration:** `dinAuditors[gi]`, `isRegisteredAuditor[gi][addr]`.
+- **Submissions:** `lmSubmissions[gi]` (`LMSubmission`: client, modelCID, submittedAt, eligible, evaluated, approved, finalMedianScore), `clientHasSubmitted`, `clientSubmissionIndex`.
+- **Batches:** `auditBatches[gi]` (`AuditBatch`: batchId, auditors, modelIndexes, testDataCID), `isBatchAuditor`, `isBatchModelIndex`.
+- **Scoring:** `auditScoreCommits`, `hasCommittedLM`, `auditScores`, `LMeligibleVote`, `hasAuditedLM` (all keyed `[gi][batchId][auditor][modelIndex]`).
+- **Test data:** `encryptedTestDataKey[gi][batchId][auditor]`, `testDataCommitments[gi][batchId]`, `Is_testdataCIDs_Assigned[gi]`, `testDataDisputes[gi][batchId]`.
+- **Rewards:** `giRewardPool[gi]`, `giRewardSnapshot[gi]`, `giTotalApprovedScore[gi]`, `giTotalAuditWeight[gi]`, `auditorGIWeight[gi][addr]`, `rewardClaimed[gi][addr]`, `claimable[addr]`, `treasuryAccrued`.
 
 ---
 
-## 5. Access Control
+## 4. Access Control
 
-```
-Ownable (model owner)
-  ├── assignAuditTestDataset()
-  ├── setS3DeviationThreshold()
-  └── setS3SlashingEnabled()
-
-onlyTaskCoordinator (DINTaskCoordinator only)
-  ├── createAuditorsBatches()
-  ├── setTestDataAssignedFlag()
-  ├── finalizeEvaluation()
-  ├── slashAuditors()
-  └── updatePassScore()
-
-onlyAssignedAuditor + onlyCurrentGI
-  ├── commitAuditScore()
-  └── revealAuditScore()
-
-Permissionless (within GI/state guards)
-  ├── registerDINAuditor()
-  └── submitLocalModel()
-```
+| Caller | Functions |
+|--------|-----------|
+| Paired coordinator (`onlyTaskCoordinator`) | `updatePassScore`, `createAuditorsBatches`, `setTestDataAssignedFlag`, `finalizeEvaluation`, `slashAuditors`, `settleRewards`, `decrementAuditorRegistrations` |
+| `owner()` (model owner) | `assignAuditTestDataset`, `reassignAuditTestDataset`, all setters |
+| Assigned auditor (`onlyAssignedAuditor`) | `commitAuditScore`, `revealAuditScore` |
+| Any active validator | `registerDINAuditor` |
+| Any address | `submitLocalModel`, `depositRewards`, `claimReward`, `claimRewards`, `openTestDataDispute`, `resolveTestDataDispute`, `closeExpiredDispute`, views |
 
 ---
 
-## 6. Auditor Registration
+## 5. Registration & Submissions
 
-```solidity
-function registerDINAuditor(uint _GI) public onlyCurrentGI(_GI)
-```
-
-1. Check `GIstate == DINauditorsRegistrationStarted`.
-2. Check not already registered.
-3. Check `dinvalidatorStakeContract.isValidatorActive(msg.sender)`.
-4. Push to `dinAuditors[_GI]`, set membership flag.
-5. Emit `DINAuditorRegistered`.
+- **`registerDINAuditor(gi)`** — requires the coordinator state `DINauditorsRegistrationStarted`. Checks: not already registered, fewer than 300 registered (`TA_RegistrationCapReached`), `isValidatorActive` (`TA_AuditorNotActive`), stake ≥ the model floor (`TA_StakeBelowModelFloor`), and the concurrent-registration cap (`TA_ConcurrentRegistrationCapReached`). Then calls `incrementActiveRegistration` and emits `DINAuditorRegistered`.
+- **`submitLocalModel(cid, gi)`** — state `LMSstarted`; one submission per address per GI; up to 10 000 per GI. No stake or registration needed.
 
 ---
 
-## 7. Local Model Submission
+## 6. Batches & Test Data
 
-```solidity
-function submitLocalModel(bytes32 _clientModel, uint _GI) public onlyCurrentGI(_GI)
-```
+- **`createAuditorsBatches(gi, seed)`** (from the coordinator, state `LMSclosed`) — `seed` is the coordinator's locked `auditSeed[gi]` (see [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock)). A zero seed reverts with `TA_AuditSeedNotLocked`; the coordinator checks this too, so this is a second guard. The function then:
+  1. filters `dinAuditors[gi]` to auditors still `isValidatorActive` at call time (`TA_NotEnoughAuditors` if fewer than `auditorsPerBatch` remain);
+  2. shuffles the active auditors with `keccak256(seed, "AUD_ADDR")` and the model indexes with `keccak256(seed, "AUD_IDX")` (Fisher-Yates, in memory);
+  3. greedily forms batches of 3 auditors × 3 models (the last batch may take 2). Leftover auditors and models are unused.
 
-**Privacy:** Only the `bytes32` IPFS hash is stored on-chain. Actual weights remain off-chain.
-
-1. Check `GIstate == LMSstarted`.
-2. One-per-client guard (`clientHasSubmitted`).
-3. Enforce `MAX_LM_SUBMISSIONS` cap.
-4. Push `LMSubmission` (all flags false, scores zero).
-5. Record `clientSubmissionIndex`.
+  Emits `AuditorsBatchAuto` per batch and `AuditorsBatchesCreated`. The seed comes from a block hash, so the residual trust assumptions in the coordinator doc apply here as well; one of them is specific to this function: a validator can still change the active pool by unstaking after the seed is locked and before this call.
+- **`assignAuditTestDataset(gi, batchId, testDataCID, encryptedKeys[], commitment)`** (owner) — stores the encrypted test-data CID (`AES-256-GCM(K, rawCID ‖ Sign(ownerSK, rawCID))`) and one encrypted copy of `K` per auditor, in the batch's auditor order. Every auditor must have an X25519 key on `DinValidatorStake`. Also stores `commitment = keccak256(gi, batchId, keccak256(K), keccak256(plaintext))`. Blocked while the batch awaits reassignment.
+- **`setTestDataAssignedFlag(gi, true)`** (from the coordinator, state `AuditorsBatchesCreated`) — one-shot flag. Informational only: nothing checks it before scoring starts.
 
 ---
 
-## 8. Audit Batch Formation
+## 7. Commit-then-Reveal Scoring
 
-### `createAuditorsBatches`
+1. **Commit** (`LMSevaluationStarted`): `commitAuditScore(gi, batchId, modelIndex, commitHash)` with `commitHash = keccak256(abi.encodePacked(score, vote, salt))`. The caller must be an assigned, active auditor; one commit each; a zero hash is rejected.
+2. **Reveal** (`LMSevaluationRevealStarted`): `revealAuditScore(gi, batchId, modelIndex, score, vote, salt)`. Checks the auditor is active, `score ≤ 100`, a commit exists, no prior reveal, and the hash matches. Records the score and vote, sets `hasAuditedLM`, increments `auditorGIWeight` / `giTotalAuditWeight` (the auditor reward basis), and tries to finalize eligibility.
+3. **Eligibility** (`_tryFinalizeEligibility`): once revealed votes ≥ `minEligibilityQuorum`, `eligible = (yesVotes ≥ minEligibilityQuorum)`. With the defaults that means 2 "yes" votes out of 3.
+4. **`finalizeEvaluation(gi)`** (from the coordinator's `closeLMsubmissionsEvaluation`, still in the reveal state): for each batch model with ≥ `minScoreQuorum` revealed scores, `finalMedianScore = median`, `evaluated = true`, `approved = eligible && median ≥ passScore`. The first time a model is approved, its median is added to `giTotalApprovedScore` (the client reward basis). Emits `AuditorScoreDeviation` for every revealing auditor (S3 shadow data). Returns `true` if at least one model reached quorum.
+5. **`approvedModelIndexes(gi)`** feeds the coordinator's T1/T2 batch formation.
 
-Called by `DINTaskCoordinator` after LM submission closes (`GIstate == LMSclosed`).
-
-**Algorithm:**
-
-1. Filter the historical registration list `dinAuditors[_GI]` down to auditors still `isValidatorActive` at call time (`_activeAuditorPool`). Revert (`TA_NotEnoughAuditors`) if fewer than `params.auditorsPerBatch` remain active.
-2. Shuffle the active pool (Fisher-Yates, storage) using `blockhash(block.number - 1)` as entropy.
-3. Build `uint[]` of model indexes `[0..N-1]`. Shuffle (memory) using `block.timestamp + msg.sender`.
-4. Greedy batch formation:
-   ```
-   while vPtr + auditorsPerBatch <= aLen
-         AND (enough models remain for a full or partial-but-minimum batch):
-       Create AuditBatch:
-         auditors = auditorPool[vPtr .. vPtr+auditorsPerBatch-1]
-         modelsToAssign = min(modelsPerBatch, remaining models)
-         modelIndexes = modelIdx[mPtr .. mPtr+modelsToAssign-1]
-       vPtr += auditorsPerBatch
-       mPtr += modelsToAssign
-   ```
-5. Emit `AuditorsBatchesCreated`.
-
-> ⚠️ **PRNG Warning:** `blockhash` and `block.timestamp` are weak on-chain entropy sources, manipulable by block producers. Replace with Chainlink VRF in production.
+An auditor who commits but never reveals is treated as a non-voter: excluded from quorum and median, and slashed as a missed vote (§8).
 
 ---
 
-## 9. Evaluation Mechanism
+## 8. Auditor Slashing — `slashAuditors(gi)`
 
-Auditor scoring is **commit-then-reveal** (task_210726_6 §2a), split across two GI states: `LMSevaluationStarted` (commit phase) and `LMSevaluationRevealStarted` (reveal phase, opened by `DINTaskCoordinator.startLMsubmissionsEvaluationReveal`). This hides each auditor's score/vote from the others until every commit is in, preventing later auditors from anchoring on earlier ones' revealed scores.
+From the coordinator in `T2AggregationDone`. For each batch auditor:
 
-### 9.1 Commit Phase — `commitAuditScore`
+- **S1 — missed vote** on any batch model: `slashPartial(auditor, minStake × s1SlashFractionBps / 10 000, "AUD_NO_VOTE", gi)` (partial, with S5 recidivism escalation).
+- **Otherwise, S3 — deviation**, only when `s3SlashingEnabled`: if any of their scores deviates from that model's median by more than `s3DeviationThreshold`, `slash(auditor, minStake, "AUD_SCORE_DEVIATION")`.
 
-```solidity
-function commitAuditScore(
-    uint256 gi, uint batchId, uint modelIndex, bytes32 commitHash
-) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi)
-```
-
-`commitHash` must equal `keccak256(abi.encodePacked(score, vote, salt))` for the values the auditor intends to reveal later; the contract cannot and does not validate this at commit time.
-
-1. Check `GIstate == LMSevaluationStarted`.
-2. Check `dinvalidatorStakeContract.isValidatorActive(msg.sender)`.
-3. Check `commitHash != bytes32(0)`.
-4. One-commit-per-model guard (`hasCommittedLM`).
-5. Record the commit hash, set `hasCommittedLM`, emit `AuditScoreCommitted`.
-
-### 9.2 Reveal Phase — `revealAuditScore`
-
-```solidity
-function revealAuditScore(
-    uint256 gi, uint batchId, uint modelIndex, uint256 score, bool vote, bytes32 salt
-) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi)
-```
-
-1. Check `GIstate == LMSevaluationRevealStarted`.
-2. Check `dinvalidatorStakeContract.isValidatorActive(msg.sender)`.
-3. Check `score <= 100`.
-4. Check a commit exists (`hasCommittedLM`) and hasn't already been revealed (`hasAuditedLM`).
-5. Recompute `keccak256(abi.encodePacked(score, vote, salt))` and check it matches the stored commit hash.
-6. Record score and eligibility vote, set `hasAuditedLM`, emit `AuditScoreSubmitted` + `EligibilityVoted`.
-7. Call `_tryFinalizeEligibility()` eagerly.
-
-`hasCommittedLM` and `hasAuditedLM` are deliberately distinct: an auditor who commits but never reveals ends up with `hasCommittedLM=true, hasAuditedLM=false`, so they're excluded from quorum/median counting exactly like a non-participant, and remain slashable via `slashAuditors`' "missed vote" check — no special-casing needed for the non-reveal case.
-
-### 9.3 Eligibility Finalization (`_tryFinalizeEligibility`)
-
-Internal; triggered after each reveal.
-
-```
-Count yesVotes and totalVotes for the model across batch auditors (via hasAuditedLM).
-If totalVotes < minEligibilityQuorum → wait.
-majorityEligible = (yesVotes >= minEligibilityQuorum)
-Set submission.eligible = majorityEligible.
-```
-
-### 9.4 Evaluation Finalization
-
-```solidity
-function finalizeEvaluation(uint _GI) public onlyTaskCoordinator returns (bool)
-```
-
-Called by the coordinator to close the reveal phase (`GIstate` must be `LMSevaluationRevealStarted`, else `TA_CannotFinalizeEvaluation`):
-
-```
-For each batch:
-  For each model in batch:
-    Re-attempt eligibility finalization if not yet eligible.
-    Collect scores from auditors who actually revealed (hasAuditedLM).
-    If revealed-vote count >= minScoreQuorum:
-      sub.finalMedianScore = _medianOf(votedScores)   // MEDIAN, not mean — task_210726_6 §1c
-      sub.evaluated = true
-      sub.approved = (sub.eligible AND finalMedianScore >= params.passScore)
-      Emit AuditorScoreDeviation for every revealed voter (S3 shadow mode, §9.5)
-Return true if finalizedCount > 0.
-```
-
-The score is the **median** across the auditor batch, not a mean — a mean lets a single dishonest auditor drag the score arbitrarily far, while a median tolerates fewer than 50% dishonest auditors (BlockFlow Algorithm 1). `_medianOf` sorts in place; even-length batches median as the integer-divided average of the two middle elements.
-
-**Approval condition (both must hold):**
-- `eligible == true` (majority voted conformant)
-- `finalMedianScore >= passScore`
-
-### 9.5 S3 Deviation Tracking (shadow mode)
-
-For every model that reaches score quorum, `finalizeEvaluation` also emits `AuditorScoreDeviation(gi, batchId, modelIndex, auditor, auditorScore, medianScore, deviation, exceedsThreshold)` for each auditor who revealed a score on it, where `deviation = |auditorScore - medianScore|` and `exceedsThreshold = deviation > s3DeviationThreshold`. This is purely observational unless `s3SlashingEnabled` is turned on (see §10) — per `MECHANISM_DESIGN.md` §6, the threshold (default `40`) must be empirically validated against real audit-score variance before it's allowed to cost auditors stake. The owner tunes it via `setS3DeviationThreshold`/`setS3SlashingEnabled`.
-
-### 9.6 `approvedModelIndexes`
-
-Returns compact array of `lmSubmissions[_GI]` indexes where `approved == true`. Used by `DINTaskCoordinator` for T1/T2 batch formation.
+At most one slash per auditor per batch; S1 takes priority. Emits `AuditorSlashed(gi, batchId, auditor, reason, requested, actual)`.
 
 ---
 
-## 10. Auditor Slashing
+## 9. Rewards
 
-```solidity
-function slashAuditors(uint _GI) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool)
-```
+| Step | Function | Notes |
+|------|----------|-------|
+| Fund | `depositRewards(gi, amount)` — anyone | `gi` must be ≥ the current GI and non-zero; pulls DIN. The coordinator refuses to `startGI` an unfunded GI. |
+| Settle | `settleRewards(gi, aggregatorTotalWeight)` — coordinator's `endGI` | Splits `giRewardPool[gi]` by `rewardSplit`. The treasury share (plus rounding dust) is forwarded in full to `slashTreasury()`, or burned if no treasury is set. Stores a snapshot. No participant loops. |
+| Credit | `claimReward(gi)` — each participant, once per GI | Client: `clientPool × finalMedianScore / giTotalApprovedScore` (approved submissions only). Auditor: `auditorPool × auditorGIWeight / giTotalAuditWeight` (one unit per revealed vote). Aggregator: `aggregatorPool × aggregatorWeight / aggregatorTotalWeight` (read from the coordinator). Reverts `TA_NoRewardEarned` if all three are zero. |
+| Withdraw | `claimRewards()` | Pull payment of the accumulated `claimable` balance. |
 
-Called by the coordinator once `GIstate == T2AggregationDone`. For every auditor in every batch:
-
-- **S1 — missed vote:** if the auditor never revealed (`hasAuditedLM == false`) for *any* model assigned to their batch, slash with reason `AUD_NO_VOTE`. Takes priority over S3 — an auditor who missed a vote is not also re-evaluated for S3 in the same batch.
-- **S3 — score deviation:** only checked when `s3SlashingEnabled == true` and the auditor revealed on every model in the batch. If any revealed score deviated from that model's `finalMedianScore` by more than `s3DeviationThreshold`, slash with reason `AUD_SCORE_DEVIATION` (at most once per batch, even if multiple votes deviated).
-
-Slash amount is `dinvalidatorStakeContract.minStake()` at call time for both reasons (see `MECHANISM_DESIGN.md` §9 item 2 on the still-open flat-vs-partial slash-fraction question). Each slashed auditor emits `AuditorSlashed(gi, batchId, auditor, reason, requested, actual)`. Always returns `true`; individual slash failures do not halt the loop.
+`DinEmission.fundGI` funds pools through the same `depositRewards` path, using freshly minted emission DIN.
 
 ---
 
-## 11. Test Data Assignment
+## 10. Test-Data Disputes
 
-```solidity
-function assignAuditTestDataset(
-    uint256 gi, uint256 batchId, bytes32 testDataCID, bytes[] calldata encryptedKeys
-) external onlyOwner onlyCurrentGI(gi)
-```
+Lets a batch auditor challenge the model owner's test data.
 
-Owner-only. Records the test dataset IPFS CID for a batch, and — per task_210726_6 §2b / whitepaper §5.2.3b — each assigned auditor's individually-encrypted copy of the test-data decryption key. `encryptedKeys[i]` must correspond to `auditBatches[gi][batchId].auditors[i]` (same order `createAuditorsBatches` populated them in); reverts with `TA_EncryptedKeyCountMismatch` if the lengths differ. The model owner is responsible for producing `encryptedKeys` off-chain (a symmetric test-data key encrypted to each auditor's public key) — the contract only stores what it's given and cannot validate the encryption itself. Emits `EncryptedTestDataKeysAssigned`.
+| Step | Who | Effect |
+|------|-----|--------|
+| `isEncryptionKeyEmpty(gi, batchId, auditor)` | View | Free check: an auditor who received no key has grounds to dispute |
+| `openTestDataDispute(gi, batchId)` | Anyone | Needs a stored commitment; pulls `disputeBondAmount` DIN (0 by default); window = `disputeWindowBlocks` |
+| `resolveTestDataDispute(gi, batchId, K, plaintextHash)` | **Anyone**, within the window | Recomputes the commitment. **Match →** dispute false: bond forfeited. **Mismatch →** upheld: bond returned; `disputePenaltyBps` of `giRewardPool[gi]` removed as a penalty; batch marked `pendingReassignment` |
+| `closeExpiredDispute(gi, batchId)` | Anyone, after the window | Bond forfeited as above |
+| `reassignAuditTestDataset(…)` | Owner | New CID, keys and commitment for a batch pending reassignment |
 
-**`setTestDataAssignedFlag`** (coordinator only): Sets `Is_testdataCIDs_Assigned[_GI] = true` once all datasets are assigned. One-time per GI.
+Forfeited bonds and penalties are split 50% burned / 50% forwarded to `slashTreasury()`; both halves are burned if no treasury is set. `treasuryAccrued` is a running counter of everything routed out this way (including the burned part). No tokens are held against it.
+
+The dispute is not bound to the caller (anyone can open one), and any caller can trigger the "upheld" branch with a wrong `K` (§13 No. 1).
 
 ---
 
-## 12. Privacy Architecture
+## 11. What Is On-Chain
 
 | Data | On-chain | Off-chain |
 |------|---------|-----------|
 | Model weights | ❌ | ✅ IPFS (`modelCID`) |
-| Test dataset | ❌ | ✅ IPFS (`testDataCID`) |
-| Test-data decryption key (per-auditor) | ✅ (encrypted `bytes`, `encryptedTestDataKey`) | key material itself only ever exists off-chain, decrypted client-side by the auditor |
-| Submission record (client, CID) | ✅ | — |
-| Audit score / eligibility vote before reveal | ❌ (only the commit hash, `auditScoreCommits`) | actual `(score, vote, salt)` known only to the committing auditor |
-| Audit score / eligibility vote after reveal | ✅ | — |
-| Final approval | ✅ | — |
+| Test dataset | ❌ (only the encrypted CID) | ✅ IPFS |
+| Test-data key `K` | Only per-auditor encrypted copies (`encryptedTestDataKey`) | Decrypted client-side by each auditor with their X25519 key |
+| Test-data content | Only the commitment `keccak256(gi, batchId, keccak256(K), keccak256(plaintext))` | — |
+| Score / vote before reveal | Only the commit hash | `(score, vote, salt)` known to the auditor |
+| Score / vote after reveal, final approval, rewards | ✅ | — |
 
 ---
 
-## 13. Events
+## 12. Events
 
-| Event | Emitted When |
-|-------|--------------|
-| `DINAuditorRegistered(GI, auditor)` | Auditor registers |
-| `AuditScoreCommitted(gi, batchId, auditor, modelIndex, commitHash)` | Commit phase: score/vote hash committed |
-| `AuditScoreSubmitted(gi, batchId, auditor, modelIndex, score)` | Reveal phase: score revealed |
-| `EligibilityVoted(gi, batchId, modelIndex, auditor, vote)` | Reveal phase: eligibility vote revealed |
-| `EligibilityFinalized(gi, batchId, modelIndex, eligible, totalVotes)` | Eligibility quorum reached |
-| `EncryptedTestDataKeysAssigned(gi, batchId, testDataCID, auditorCount)` | Test dataset + per-auditor keys assigned to a batch |
-| `AuditorsBatchAuto(GI, batchId)` | Individual batch created |
-| `AuditorsBatchesCreated(GI, batchCount)` | All batches created |
-| `PassScoreUpdated(oldScore, newScore)` | Pass score changed |
-| `S3DeviationThresholdUpdated(oldThreshold, newThreshold)` | S3 threshold changed |
-| `S3SlashingEnabledUpdated(oldValue, newValue)` | S3 shadow mode toggled |
-| `AuditorScoreDeviation(gi, batchId, modelIndex, auditor, auditorScore, medianScore, deviation, exceedsThreshold)` | Emitted for every revealed voter on a finalized model (S3 shadow mode, always emitted regardless of `s3SlashingEnabled`) |
-| `AuditorSlashed(gi, batchId, auditor, reason, requested, actual)` | Auditor slashed (S1 or S3) |
+Registration & data: `DINAuditorRegistered`, `LocalModelSubmitted`, `AuditorsBatchAuto`, `AuditorsBatchesCreated`, `EncryptedTestDataKeysAssigned`, `TestDataCommitmentStored`. Scoring: `AuditScoreCommitted`, `AuditScoreSubmitted`, `EligibilityVoted`, `EligibilityFinalized`, `AuditorScoreDeviation`, `PassScoreUpdated`. Slashing: `AuditorSlashed`. Rewards: `RewardDeposited`, `RewardsSettled`, `RewardsClaimed`, `DinTokenSet`, `RewardSplitUpdated`. Parameters: `S1SlashFractionBpsUpdated`, `S3DeviationThresholdUpdated`, `S3SlashingEnabledUpdated`. Disputes: `TestDataDisputeOpened`, `TestDataDisputeResolvedFalse`, `TestDataDisputeUpheld`, `BatchPendingReassignment`, `DisputeExpired`.
 
 ---
 
-## 14. Security Considerations
+## 13. Review Notes & Open Caveats
 
-| Risk | Mitigation |
-|------|-----------|
-| Weak PRNG for shuffling | Acceptable for devnet; use Chainlink VRF in production |
-| Colluding/copying auditors | Commit-then-reveal (§9.1–9.2) prevents an auditor from anchoring their score on others' already-revealed votes |
-| Sybil auditor registration | Gated by `isValidatorActive` (DinValidatorStake), not a raw stake threshold on this contract |
-| Double voting / double committing | `hasCommittedLM` and `hasAuditedLM` each prevent a repeat |
-| Reveal without a matching commit | `TA_NoCommitFound` / `TA_RevealHashMismatch` reject reveals that don't match a prior commit |
-| Batch flooding | `MAX_LM_SUBMISSIONS` cap at 10,000 |
-| Gas exhaustion in `finalizeEvaluation` / `slashAuditors` | O(batches × models × auditors) — could hit limits at scale |
-| Untuned S3 threshold slashing honest variance | Defaults to shadow mode (`s3SlashingEnabled = false`); must be empirically validated before enabling (`MECHANISM_DESIGN.md` §6) |
-| Model owner supplies invalid/wrong-recipient encrypted test-data keys | Not detectable on-chain — `assignAuditTestDataset` stores whatever `encryptedKeys` it's given; no on-chain dispute mechanism exists yet for this (see `Developer/tasks/task_240826_10.md`) |
+Read alongside the [foundry/src security review](../audits/foundry-src-security-review.md).
+
+- **No. 1 — Test-data disputes can be won by the challenger alone.** `resolveTestDataDispute` is callable by anyone, and any commitment *mismatch* upholds the dispute. A challenger can call it with an arbitrary `K` and win: bond back, the model owner's GI pool cut by `disputePenaltyBps`, and the batch blocked until reassignment. Only the model owner revealing the real `K` should be able to reach the "match" branch, and a mismatch from a non-owner caller should not count as evidence. `disputeBondAmount` defaults to 0, so this costs the challenger nothing and can be repeated after every reassignment. Tracked in issue No. 205.
+- **No. 2 — Commit hashes are not bound to the auditor.** `keccak256(score, vote, salt)` carries no address, GI, batch or model. An auditor in the same batch can copy another's commit hash, wait for their reveal, and replay it. Tracked in issue No. 192. (The aggregation commits on the coordinator do bind `msg.sender`.)
+- **No. 3 — Committed-but-unrevealed is slashed as a liveness miss.** An auditor who commits and then withholds the reveal pays the S1 fraction (`AUD_NO_VOTE`, 30% of `minStake` by default). That is less than the full-`minStake` S3 slash a revealed outlier would pay once `s3SlashingEnabled` is on, so an auditor who sees they will be in the minority can choose not to reveal. Whether this case gets its own reason code and fraction is open in issue No. 201 (Part B).
+- **No. 4 — Unclaimable remainders.** If no model is approved (`giTotalApprovedScore == 0`), or nobody reveals, or no aggregator weight exists, that role's pool share stays in the contract with no reclaim path.
+- **No. 5 — `setTestDataAssignedFlag` gates nothing:** scoring can open before any test data is assigned.
+- **No. 6 — Stale NatSpec and reused errors:** `slashAuditors` says S1 and S3 are both `minStake()` (S1 is now a fraction). Several comments call parameters "DAO-settable"; they are `onlyOwner`, i.e. set by the model owner. `setDisputePenaltyBps` reuses `TA_InvalidDisputeBond`, and `closeExpiredDispute` reuses `TA_DisputeWindowClosed` for "window still open".
+- **No. 7 — `modelId` is fixed at construction**, before the registry assigns it (see [DINTaskCoordinator §10 No. 4](DINTaskCoordinator.md#10-review-notes--open-caveats)).
+- **No. 8 — dincli lags this contract:** `dincli model-owner deploy task-auditor` still calls the older two-argument constructor (no `modelId`).
+- **No. 9 — dincli auditor commit retry can lose the committed salt.** Rerunning `dincli auditor lms-evaluation evaluate --submit` generates a new salt and overwrites the local commit cache even when the on-chain commit already exists. The later reveal then fails the hash check and the auditor is slashed for a missed vote. Tracked in issue No. 202 (Part 1); until it is fixed, don't rerun the command for a GI that already has commits.
 
 ---
 
-## 15. Known Limitations & Future Work
+## 14. Change Log
 
-- Reward distribution to auditors not implemented (`totalDepositedRewards` is tracked but unused).
-- `params` struct is immutable post-deployment except `passScore` (updatable via `updatePassScore`).
-- Models not reaching score quorum are silently left unapproved with no alerting.
-- No mechanism to re-open evaluation if quorum is not reached before `finalizeEvaluation` is called.
-- No on-chain dispute resolution if a model owner distributes an incorrect or wrong-recipient `encryptedTestDataKey` — an auditor who can't decrypt the test data currently has no on-chain recourse. Tracked in `Developer/tasks/task_240826_10.md`.
-- `s3DeviationThreshold`'s default (`40`) is a deliberately wide placeholder, not a tuned production value.
+### P3 (foundry)
+
+- Commit-then-reveal scoring (`commitAuditScore` / `revealAuditScore`), replacing `setAuditScorenEligibility`; median-based scores.
+- Per-GI reward pools with O(1) settlement snapshots and pull-based claims (BL-10), replacing `totalDepositedRewards`.
+- Encrypted per-auditor test-data keys, content commitments, test-data disputes and reassignment.
+- S1 partial slashing via `slashPartial`; S3 deviation slashing behind `s3SlashingEnabled`.
+- Registration caps and floors, the active-registration counter, and the `modelId` constructor argument.
+- Treasury shares and forfeitures forwarded to the platform treasury (`slashTreasury()`), replacing the per-contract treasury address (issue No. 152).
+- `createAuditorsBatches` takes the coordinator's locked audit seed (issue No. 156 H-2, PR No. 191).

@@ -150,6 +150,8 @@ contract GasSimulationTest is Test {
         }
         tc.closeLMsubmissions(gi);
 
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(gi);
         tc.createAuditorsBatches(gi);
         tc.setTestDataAssignedFlag(gi, true);
         tc.startLMsubmissionsEvaluation(gi);
@@ -181,6 +183,8 @@ contract GasSimulationTest is Test {
             }
         }
         tc.closeLMsubmissionsEvaluation(gi);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(gi);
         tc.autoCreateTier1AndTier2(gi);
         tc.startT1Aggregation(gi);
     }
@@ -193,25 +197,54 @@ contract GasSimulationTest is Test {
         _completeEvalAndOpenT1(1);
     }
 
-    /// @dev From T1AggregationStarted: has 2 aggregators per T1 batch submit (quorum met),
-    ///      1 per batch doesn't submit (will be slashed). Runs through to T2AggregationDone.
-    ///      Post-H-1 worst case: minimum quorum (2 of 3) required to reach finalization.
+    /// @dev issue #156 M-1: commits `who` to `cid` for T1 batch `batchId`,
+    ///      immediately (commit window only -- caller opens the reveal
+    ///      window and calls revealT1Aggregation separately).
+    function _commitT1(address who, uint gi, uint batchId, bytes32 cid) internal {
+        bytes32 commitHash = keccak256(
+            abi.encode(cid, TEST_SALT, who, gi, DINTaskCoordinator.TierKind.Tier1, batchId)
+        );
+        vm.prank(who);
+        tc.commitT1Aggregation(gi, batchId, commitHash);
+    }
+
+    function _commitT2(address who, uint gi, uint batchId, bytes32 cid) internal {
+        bytes32 commitHash = keccak256(
+            abi.encode(cid, TEST_SALT, who, gi, DINTaskCoordinator.TierKind.Tier2, batchId)
+        );
+        vm.prank(who);
+        tc.commitT2Aggregation(gi, batchId, commitHash);
+    }
+
+    /// @dev From T1AggregationStarted: has 2 aggregators per T1 batch commit+reveal
+    ///      (quorum met), 1 per batch doesn't (will be slashed). Runs through to
+    ///      T2AggregationDone. Post-H-1 worst case: minimum quorum (2 of 3)
+    ///      required to reach finalization.
     function _runT1T2WorstCase(uint gi) internal {
         bytes32 cid = bytes32("agreed_cid");
         uint t1Cnt = tc.tier1BatchCount(gi);
         for (uint b = 0; b < t1Cnt; b++) {
             (, address[] memory bAggs,,,) = tc.getTier1Batch(gi, b);
-            vm.prank(bAggs[0]); tc.submitT1Aggregation(gi, b, cid);
-            vm.prank(bAggs[1]); tc.submitT1Aggregation(gi, b, cid); // quorum met (2 of 3)
-            // bAggs[2] intentionally does not submit → will be slashed (1 per batch)
+            _commitT1(bAggs[0], gi, b, cid);
+            _commitT1(bAggs[1], gi, b, cid); // quorum met (2 of 3)
+            // bAggs[2] intentionally does not commit → will be slashed (1 per batch)
+        }
+        tc.startT1AggregationReveal(gi);
+        for (uint b = 0; b < t1Cnt; b++) {
+            (, address[] memory bAggs,,,) = tc.getTier1Batch(gi, b);
+            vm.prank(bAggs[0]); tc.revealT1Aggregation(gi, b, cid, TEST_SALT);
+            vm.prank(bAggs[1]); tc.revealT1Aggregation(gi, b, cid, TEST_SALT);
         }
         tc.finalizeT1Aggregation(gi);
 
         tc.startT2Aggregation(gi);
         (, address[] memory t2Aggs,,) = tc.getTier2Batch(gi, 0);
-        vm.prank(t2Aggs[0]); tc.submitT2Aggregation(gi, 0, cid);
-        vm.prank(t2Aggs[1]); tc.submitT2Aggregation(gi, 0, cid); // quorum met (2 of 3)
-        // t2Aggs[2] does not submit → will be slashed
+        _commitT2(t2Aggs[0], gi, 0, cid);
+        _commitT2(t2Aggs[1], gi, 0, cid); // quorum met (2 of 3)
+        // t2Aggs[2] does not commit → will be slashed
+        tc.startT2AggregationReveal(gi);
+        vm.prank(t2Aggs[0]); tc.revealT2Aggregation(gi, 0, cid, TEST_SALT);
+        vm.prank(t2Aggs[1]); tc.revealT2Aggregation(gi, 0, cid, TEST_SALT);
         tc.finalizeT2Aggregation(gi);
         tc.setTier2Score(gi, 85);
     }
@@ -220,34 +253,69 @@ contract GasSimulationTest is Test {
     // SCENARIO 1 — Aggregation submissions
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// @dev Per-aggregator cost of submitting a T1 CID (cold storage paths).
-    function test_gas_s1_submitT1Aggregation_cold() public {
+    // issue #156 M-1: submitT1Aggregation/submitT2Aggregation's single write
+    // split into commitT1Aggregation (writes a hash only, no vote counter
+    // touch) + revealT1Aggregation (the actual CID write + vote-counter
+    // increment -- structurally what the old single-shot submit did). Gas
+    // below is measured for both steps rather than folding commit's cost
+    // into what used to be one call; Developer/design/gas-simulation-
+    // network-fee.md's fee-floor sizing still reflects the pre-split,
+    // single-tx numbers and needs re-measurement against these two-tx
+    // figures separately (out of scope for this PR).
+
+    /// @dev Per-aggregator cost of committing a T1 CID hash (cold storage paths).
+    function test_gas_s1_commitT1Aggregation_cold() public {
         _setupToT1Open(3);
         (, address[] memory bAggs,,,) = tc.getTier1Batch(1, 0);
 
         uint before = gasleft();
-        vm.prank(bAggs[0]); tc.submitT1Aggregation(1, 0, bytes32("cid_a"));
-        console.log("[GAS][S1] submitT1Aggregation (1st call, cold SSTORE):", before - gasleft());
+        _commitT1(bAggs[0], 1, 0, bytes32("cid_a"));
+        console.log("[GAS][S1] commitT1Aggregation (1st call, cold SSTORE):", before - gasleft());
     }
 
-    /// @dev Second aggregator submitting to the same batch — vote counter increment is warm.
-    function test_gas_s1_submitT1Aggregation_warm() public {
+    /// @dev Per-aggregator cost of revealing a T1 CID (cold storage paths).
+    function test_gas_s1_revealT1Aggregation_cold() public {
         _setupToT1Open(3);
         (, address[] memory bAggs,,,) = tc.getTier1Batch(1, 0);
-        vm.prank(bAggs[0]); tc.submitT1Aggregation(1, 0, bytes32("cid_a"));
+        _commitT1(bAggs[0], 1, 0, bytes32("cid_a"));
+        tc.startT1AggregationReveal(1);
 
         uint before = gasleft();
-        vm.prank(bAggs[1]); tc.submitT1Aggregation(1, 0, bytes32("cid_a")); // same CID → warm counter
-        console.log("[GAS][S1] submitT1Aggregation (2nd call, warm vote counter):", before - gasleft());
+        vm.prank(bAggs[0]); tc.revealT1Aggregation(1, 0, bytes32("cid_a"), TEST_SALT);
+        console.log("[GAS][S1] revealT1Aggregation (1st call, cold SSTORE):", before - gasleft());
+    }
+
+    /// @dev Second aggregator revealing to the same batch — vote counter increment is warm.
+    function test_gas_s1_revealT1Aggregation_warm() public {
+        _setupToT1Open(3);
+        (, address[] memory bAggs,,,) = tc.getTier1Batch(1, 0);
+        _commitT1(bAggs[0], 1, 0, bytes32("cid_a"));
+        _commitT1(bAggs[1], 1, 0, bytes32("cid_a"));
+        tc.startT1AggregationReveal(1);
+        vm.prank(bAggs[0]); tc.revealT1Aggregation(1, 0, bytes32("cid_a"), TEST_SALT);
+
+        uint before = gasleft();
+        vm.prank(bAggs[1]); tc.revealT1Aggregation(1, 0, bytes32("cid_a"), TEST_SALT); // same CID → warm counter
+        console.log("[GAS][S1] revealT1Aggregation (2nd call, warm vote counter):", before - gasleft());
+    }
+
+    function _commitRevealT1Batches(uint gi, uint batchCount) internal {
+        for (uint b = 0; b < batchCount; b++) {
+            (, address[] memory a,,,) = tc.getTier1Batch(gi, b);
+            _commitT1(a[0], gi, b, bytes32("cid"));
+            _commitT1(a[1], gi, b, bytes32("cid")); // quorum needs 2
+        }
+        tc.startT1AggregationReveal(gi);
+        for (uint b = 0; b < batchCount; b++) {
+            (, address[] memory a,,,) = tc.getTier1Batch(gi, b);
+            vm.prank(a[0]); tc.revealT1Aggregation(gi, b, bytes32("cid"), TEST_SALT);
+            vm.prank(a[1]); tc.revealT1Aggregation(gi, b, bytes32("cid"), TEST_SALT);
+        }
     }
 
     function test_gas_s1_finalizeT1_3batches() public {
         _setupToT1Open(3);
-        for (uint b = 0; b < 3; b++) {
-            (, address[] memory a,,,) = tc.getTier1Batch(1, b);
-            vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
-            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid")); // quorum needs 2
-        }
+        _commitRevealT1Batches(1, 3);
         uint before = gasleft();
         tc.finalizeT1Aggregation(1);
         console.log("[GAS][S1] finalizeT1Aggregation (3 batches, 3 agg/batch):", before - gasleft());
@@ -255,11 +323,7 @@ contract GasSimulationTest is Test {
 
     function test_gas_s1_finalizeT1_5batches() public {
         _setupToT1Open(5);
-        for (uint b = 0; b < 5; b++) {
-            (, address[] memory a,,,) = tc.getTier1Batch(1, b);
-            vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
-            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid")); // quorum needs 2
-        }
+        _commitRevealT1Batches(1, 5);
         uint before = gasleft();
         tc.finalizeT1Aggregation(1);
         console.log("[GAS][S1] finalizeT1Aggregation (5 batches, 3 agg/batch):", before - gasleft());
@@ -267,32 +331,27 @@ contract GasSimulationTest is Test {
 
     function test_gas_s1_finalizeT1_10batches() public {
         _setupToT1Open(10);
-        for (uint b = 0; b < 10; b++) {
-            (, address[] memory a,,,) = tc.getTier1Batch(1, b);
-            vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
-            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid")); // quorum needs 2
-        }
+        _commitRevealT1Batches(1, 10);
         uint before = gasleft();
         tc.finalizeT1Aggregation(1);
         console.log("[GAS][S1] finalizeT1Aggregation (10 batches, 3 agg/batch):", before - gasleft());
     }
 
-    /// @dev Per-T2-aggregator cost of submitting a T2 CID.
-    function test_gas_s1_submitT2Aggregation() public {
+    /// @dev Per-T2-aggregator cost of revealing a T2 CID.
+    function test_gas_s1_revealT2Aggregation() public {
         _setupToT1Open(3);
         // Complete T1 first — quorum requires 2 of 3 per batch
-        for (uint b = 0; b < tc.tier1BatchCount(1); b++) {
-            (, address[] memory a,,,) = tc.getTier1Batch(1, b);
-            vm.prank(a[0]); tc.submitT1Aggregation(1, b, bytes32("cid"));
-            vm.prank(a[1]); tc.submitT1Aggregation(1, b, bytes32("cid"));
-        }
+        _commitRevealT1Batches(1, tc.tier1BatchCount(1));
         tc.finalizeT1Aggregation(1);
         tc.startT2Aggregation(1);
 
         (, address[] memory t2Aggs,,) = tc.getTier2Batch(1, 0);
+        _commitT2(t2Aggs[0], 1, 0, bytes32("cid_t2"));
+        tc.startT2AggregationReveal(1);
+
         uint before = gasleft();
-        vm.prank(t2Aggs[0]); tc.submitT2Aggregation(1, 0, bytes32("cid_t2"));
-        console.log("[GAS][S1] submitT2Aggregation (cold SSTORE):", before - gasleft());
+        vm.prank(t2Aggs[0]); tc.revealT2Aggregation(1, 0, bytes32("cid_t2"), TEST_SALT);
+        console.log("[GAS][S1] revealT2Aggregation (cold SSTORE):", before - gasleft());
     }
 
     // ─────────────────────────────────────────────────────────────────────────

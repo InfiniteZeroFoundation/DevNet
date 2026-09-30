@@ -321,27 +321,35 @@ dincli model-owner aggregation show-t2-batches 0 --detailed
 dincli task gi show-state 0
 ```
 
-### Step 7: Aggregate your T1 Batch (if state = `T1AggregationStarted`)
+### Step 7: Aggregate your T1 Batch (commit if state = `T1AggregationStarted`, reveal if `T1AggregationRevealStarted`)
 
 ```bash
 # show the aggregator its assigned t1 batches if assigned
 dincli aggregator show-t1-batches 0 --detailed
 
-# aggregate the assigned t1 batches
+# aggregate the assigned t1 batches and commit a hidden hash of the result
 dincli aggregator aggregate-t1 0 --submit
+
+# once the model owner opens the T1 reveal window: reveal your commit
+dincli aggregator reveal-t1 0
 ```
 
 ---
 
-### Step 8: Aggregate your T2 Batch (if state = `T2AggregationStarted`)
+### Step 8: Aggregate your T2 Batch (commit if state = `T2AggregationStarted`, reveal if `T2AggregationRevealStarted`)
 
 ```bash
 # show the aggregator its assigned t2 batches if assigned
 dincli aggregator show-t2-batches 0 --detailed
 
-# aggregate the assigned t2 batches
+# aggregate the assigned t2 batches and commit a hidden hash of the result
 dincli aggregator aggregate-t2 0 --submit
+
+# once the model owner opens the T2 reveal window: reveal your commit
+dincli aggregator reveal-t2 0
 ```
+
+> ⚠️ Aggregation is commit-then-reveal: a commit that is never revealed is slashed like a missed submission. Reveal from the same machine you committed from; the salt is cached locally.
 
 > 💡 T1 and T2 batch assignments depend on the current Global Iteration state and protocol allocation logic. A registered aggregator may not receive a batch in every iteration.
 

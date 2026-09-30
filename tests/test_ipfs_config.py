@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 
 from dincli.cli import utils
+from dincli.sdk import config as sdk_config
+from dincli.sdk import ipfs as sdk_ipfs
 from dincli.services import ipfs
 
 
@@ -12,8 +14,8 @@ def _write_config(config_file: Path, data: dict):
 
 def test_resolve_ipfs_config_defaults_to_env_provider(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
 
     _write_config(config_file, {"ipfs_provider": "ipfs node"})
@@ -23,7 +25,7 @@ def test_resolve_ipfs_config_defaults_to_env_provider(monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "env"
     assert resolved.api_url_add == "http://127.0.0.1:5001/api/v0"
@@ -35,10 +37,10 @@ def test_upload_to_ipfs_uses_env_provider_by_default(monkeypatch, tmp_path):
     payload = tmp_path / "payload.bin"
     payload.write_bytes(b"payload")
 
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(ipfs, "get_cidv1base32_from_cid", lambda cid: f"normalized-{cid}")
+    monkeypatch.setattr(sdk_ipfs, "get_cidv1base32_from_cid", lambda cid: f"normalized-{cid}")
 
     _write_config(config_file, {})
     (tmp_path / ".env").write_text(
@@ -62,9 +64,9 @@ def test_upload_to_ipfs_uses_env_provider_by_default(monkeypatch, tmp_path):
         calls.append(url)
         return DummyResponse()
 
-    monkeypatch.setattr(ipfs.requests, "post", fake_post)
+    monkeypatch.setattr(sdk_ipfs.requests, "post", fake_post)
 
-    cid = ipfs.upload_to_ipfs(payload)
+    cid = sdk_ipfs.upload_to_ipfs(payload)
 
     assert cid == "normalized-cid123"
     assert calls == ["http://127.0.0.1:5001/api/v0/add"]
@@ -89,10 +91,10 @@ def test_custom_provider_delegates_upload_and_retrieve(monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(ipfs, "get_cidv1base32_from_cid", lambda cid: f"normalized-{cid}")
+    monkeypatch.setattr(sdk_ipfs, "get_cidv1base32_from_cid", lambda cid: f"normalized-{cid}")
 
     _write_config(
         config_file,
@@ -102,8 +104,8 @@ def test_custom_provider_delegates_upload_and_retrieve(monkeypatch, tmp_path):
         },
     )
 
-    cid = ipfs.upload_to_ipfs(payload)
-    status = ipfs.retrieve_from_ipfs("abc123", output)
+    cid = sdk_ipfs.upload_to_ipfs(payload)
+    status = sdk_ipfs.retrieve_from_ipfs("abc123", output)
 
     assert cid == "normalized-custom-cid"
     assert status == 204
@@ -112,8 +114,8 @@ def test_custom_provider_delegates_upload_and_retrieve(monkeypatch, tmp_path):
 
 def test_resolve_ipfs_config_returns_filebase_provider(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
 
     _write_config(config_file, {
@@ -121,7 +123,7 @@ def test_resolve_ipfs_config_returns_filebase_provider(monkeypatch, tmp_path):
         "ipfs_api_key_filebase": "fb-test-key",
     })
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "filebase"
     assert resolved.api_key == "fb-test-key"
@@ -129,36 +131,36 @@ def test_resolve_ipfs_config_returns_filebase_provider(monkeypatch, tmp_path):
 
 def test_resolve_ipfs_config_uses_ipfs_provider_env_var(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("IPFS_PROVIDER=filebase\n", encoding="utf-8")
 
     _write_config(config_file, {})
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "filebase"
 
 
 def test_config_provider_wins_over_env_var(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("IPFS_PROVIDER=custom\n", encoding="utf-8")
 
     _write_config(config_file, {"ipfs_provider": "filebase"})
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "filebase"
 
 
 def test_filebase_legacy_flat_api_key_still_resolves(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
 
     _write_config(config_file, {
@@ -166,7 +168,7 @@ def test_filebase_legacy_flat_api_key_still_resolves(monkeypatch, tmp_path):
         "ipfs_api_key": "legacy-flat-key",
     })
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "filebase"
     assert resolved.api_key == "legacy-flat-key"
@@ -174,8 +176,8 @@ def test_filebase_legacy_flat_api_key_still_resolves(monkeypatch, tmp_path):
 
 def test_cross_provider_isolation_filebase_key_not_reused_for_other_provider(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
 
     _write_config(config_file, {
@@ -183,7 +185,7 @@ def test_cross_provider_isolation_filebase_key_not_reused_for_other_provider(mon
         "ipfs_api_key_filebase": "fb-key",
     })
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "custom"
     assert resolved.api_key is None
@@ -191,8 +193,8 @@ def test_cross_provider_isolation_filebase_key_not_reused_for_other_provider(mon
 
 def test_env_provider_unaffected_by_provider_key_config(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(utils, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(utils, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
     monkeypatch.chdir(tmp_path)
 
     _write_config(config_file, {
@@ -206,7 +208,7 @@ def test_env_provider_unaffected_by_provider_key_config(monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
-    resolved = utils.resolve_ipfs_config()
+    resolved = sdk_config.resolve_ipfs_config()
 
     assert resolved.provider == "env"
     assert resolved.api_url_add == "http://127.0.0.1:5001/api/v0"
