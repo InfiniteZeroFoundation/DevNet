@@ -2,20 +2,103 @@
 pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./DINShared.sol";
+
+interface IBurnableDinToken {
+    function burn(uint256 amount) external;
+}
 
 /// @title DIN Task Auditor
 /// @notice Handles auditor registration, local model submission, scoring, eligibility
 ///         determination, and auditor slashing for a single federated-learning model.
 ///         Deployed once per model alongside its paired DINTaskCoordinator.
-contract DINTaskAuditor is Ownable {
+contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
+    using SafeERC20 for IERC20;
+
     IDinValidatorStake public dinvalidatorStakeContract;
 
     IDINTaskCoordinator public dintaskcoordinatorContract;
 
-    uint public totalDepositedRewards = 0;
+    // Per-GI reward pool (task_210726_6 §3) -- replaces the old
+    // totalDepositedRewards running total, which couldn't support the
+    // "funded per-GI, settled per-GI" model MECHANISM_DESIGN §5 describes.
+    mapping(uint256 => uint256) public giRewardPool;
+
+    /// @notice DIN token used for reward deposits and payouts.
+    /// @dev Deploy-time wiring, mirrors DINModelRegistry.setDinToken (task_210726_5).
+    IERC20 public dinToken;
+
+    /// @notice DAO-settable role split for reward distribution, basis points.
+    /// @dev Default is the 60/20/15/5 proposal from MECHANISM_DESIGN §5 --
+    ///      explicitly not final, pending Umer's P3-5.2 simulation.
+    struct RewardSplit {
+        uint16 clientBps;
+        uint16 auditorBps;
+        uint16 aggregatorBps;
+        uint16 treasuryBps;
+    }
+
+    uint256 private constant BPS_DENOMINATOR = 10000;
+
+    RewardSplit public rewardSplit =
+        RewardSplit({
+            clientBps: 6000,
+            auditorBps: 2000,
+            aggregatorBps: 1500,
+            treasuryBps: 500
+        });
+
+    /// @notice Cumulative DIN routed out via burn + platform treasury: each
+    ///         settled reward pool's treasury share plus every forfeited
+    ///         test-data dispute bond / owner penalty (burned half included,
+    ///         and the whole amount when slashTreasury is unset).
+    /// @dev Observability only -- tokens leave the contract immediately
+    ///      (_forwardToTreasury / _burnAndForward); nothing is held against it.
+    uint256 public treasuryAccrued; // cumulative observability counter
+
+    /// @notice Per-address claimable reward balance across all GIs.
+    /// @dev Pull-payment only -- claimReward(gi) credits this per GI,
+    ///      claimRewards() is the only function that ever transfers out of it.
+    mapping(address => uint256) public claimable;
+
+    // ── Claim-pull reward settlement (BL-10) ─────────────────────────────────
+    // settleRewards stores an O(1) snapshot of pool amounts at endGI time.
+    // Per-participant shares are computed lazily in claimReward(gi).
+    // Totals (totalApprovedScore, totalAuditWeight) are tracked incrementally
+    // during the GI so settleRewards itself runs no participant loops.
+
+    /// @notice Per-GI snapshot of pool amounts stored at settleRewards time.
+    struct GIRewardSnapshot {
+        uint256 clientPool;
+        uint256 auditorPool;
+        uint256 aggregatorPool;
+        // Sum of aggregatorWeight over all aggregators for this GI, supplied
+        // by the coordinator at settle time -- the divisor for each
+        // aggregator's weighted share in claimReward (BL-10, #125).
+        uint256 aggregatorTotalWeight;
+        bool settled;
+    }
+    mapping(uint256 => GIRewardSnapshot) public giRewardSnapshot;
+
+    /// @notice Running sum of finalMedianScore for approved==true submissions,
+    ///         incremented in finalizeEvaluation when a model is first approved.
+    mapping(uint256 => uint256) public giTotalApprovedScore;
+
+    /// @notice Running total hasAuditedLM count across all auditors for a GI,
+    ///         incremented in revealAuditScore.
+    mapping(uint256 => uint256) public giTotalAuditWeight;
+
+    /// @notice Per-auditor hasAuditedLM count for a GI, incremented in revealAuditScore.
+    mapping(uint256 => mapping(address => uint256)) public auditorGIWeight;
+
+    /// @notice Whether a participant has already called claimReward for a GI.
+    mapping(uint256 => mapping(address => bool)) public rewardClaimed;
 
     uint MAX_LM_SUBMISSIONS = 10000;
+    uint256 public constant MAX_REGISTERED_AUDITORS = 300;
 
     mapping(uint => address[]) public dinAuditors;
 
@@ -64,11 +147,21 @@ contract DINTaskAuditor is Ownable {
     ///         is allowed to cost auditors stake, per MECHANISM_DESIGN.md §6.
     bool public s3SlashingEnabled = false;
 
+    /// @notice S1 liveness-fault slash fraction in basis points (1–10000).
+    ///         Applied to AUD_NO_VOTE (missed audit vote) slashes only.
+    ///         S3 deviation slashes keep a full minStake() amount regardless.
+    ///         30% default: three consecutive misses ~= full floor stake,
+    ///         severe without expelling a validator for a single liveness fault.
+    ///         Matches the s3DeviationThreshold / setS3DeviationThreshold
+    ///         governance pattern. DAO-settable.
+    uint256 public s1SlashFractionBps = 3000;
+
     event S3DeviationThresholdUpdated(
         uint256 oldThreshold,
         uint256 newThreshold
     );
     event S3SlashingEnabledUpdated(bool oldValue, bool newValue);
+    event S1SlashFractionBpsUpdated(uint256 oldBps, uint256 newBps);
     event AuditorScoreDeviation(
         uint256 indexed gi,
         uint indexed batchId,
@@ -106,6 +199,18 @@ contract DINTaskAuditor is Ownable {
         emit S3SlashingEnabledUpdated(old, enabled);
     }
 
+    /// @notice Updates the S1 liveness-fault slash fraction.
+    /// @dev Only affects AUD_NO_VOTE slashes. S3 deviation slashes keep
+    ///      the full minStake() amount. Setting to 10000 restores the previous
+    ///      flat-minStake behavior.
+    /// @param bps New fraction in basis points (1–10000).
+    function setS1SlashFractionBps(uint256 bps) external onlyOwner {
+        if (bps == 0 || bps > 10_000) revert TA_InvalidSlashFraction();
+        uint256 old = s1SlashFractionBps;
+        s1SlashFractionBps = bps;
+        emit S1SlashFractionBpsUpdated(old, bps);
+    }
+
     mapping(uint => LMSubmission[]) public lmSubmissions;
 
     ///  GI  ➜  submitter  ➜  bool
@@ -116,7 +221,7 @@ contract DINTaskAuditor is Ownable {
         uint batchId;
         address[] auditors;
         uint[] modelIndexes;
-        bytes32 testDataCID; // shared test data for this batch
+        bytes testDataCID; // encryptedCID = AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID))
     }
 
     mapping(uint256 => AuditBatch[]) public auditBatches;
@@ -136,7 +241,48 @@ contract DINTaskAuditor is Ownable {
     mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has voted
         public hasAuditedLM;
 
+    // Commit-then-reveal (task_210726_6 §2a). commitHash = keccak256(abi.encodePacked(score, vote, salt)).
+    // hasCommittedLM is distinct from hasAuditedLM: hasAuditedLM is set only
+    // on a successful reveal and remains the single source of truth for
+    // quorum/median counting, exactly as before -- an auditor who commits
+    // but never reveals has hasCommittedLM=true, hasAuditedLM=false, and is
+    // therefore excluded from quorum/median counting and slashAuditors'
+    // "missed vote" check the same way a total non-participant already was,
+    // with no extra logic needed to avoid "silently corrupting quorum
+    // counting."
+    mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bytes32)))) // GI // batchId // auditor // modelIndex // commitHash
+        public auditScoreCommits;
+
+    mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has committed
+        public hasCommittedLM;
+
     mapping(uint256 => bool) public Is_testdataCIDs_Assigned;
+
+    // §2b: per-validator encrypted test-data key mapping. GI => batchId =>
+    // auditor => that auditor's copy of the test-data decryption key,
+    // encrypted to their public key off-chain. Populated in
+    // assignAuditTestDataset. On-chain plumbing only -- no dincli/Python
+    // decryption change, per the task's explicit scope boundary.
+    mapping(uint256 => mapping(uint => mapping(address => bytes))) // GI // batchId // auditor // encrypted key
+        public encryptedTestDataKey;
+
+    // task_240826_10 §B — test-data dispute resolution.
+    // commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), keccak256(plaintext)))
+    // stored at assignAuditTestDataset time; checked at resolveTestDataDispute.
+    mapping(uint256 => mapping(uint256 => bytes32)) public testDataCommitments;
+
+    struct DisputeRecord {
+        address disputer;
+        uint256 bond;
+        uint256 expiresAtBlock;
+        bool active;
+        bool pendingReassignment;
+    }
+    mapping(uint256 => mapping(uint256 => DisputeRecord)) public testDataDisputes;
+
+    uint256 public disputeBondAmount;           // DIN; 0 at deploy, DAO-settable
+    uint256 public disputeWindowBlocks = 7200;  // ~1 day on Optimism (~2s blocks)
+    uint256 public disputePenaltyBps = 2500;    // 25% of giRewardPool[gi] forfeited on owner loss
 
     modifier onlyAssignedAuditor(
         uint256 gi,
@@ -161,7 +307,21 @@ contract DINTaskAuditor is Ownable {
         _;
     }
 
-    event RewardDeposited(address indexed modelOwner, uint256 amount);
+    event RewardDeposited(
+        uint256 indexed gi,
+        address indexed depositor,
+        uint256 amount
+    );
+    event DinTokenSet(address indexed dinToken);
+    event RewardSplitUpdated(RewardSplit split);
+    event RewardsSettled(
+        uint256 indexed gi,
+        uint256 clientPool,
+        uint256 auditorPool,
+        uint256 aggregatorPool,
+        uint256 treasuryShare
+    );
+    event RewardsClaimed(address indexed claimant, uint256 amount);
 
     event DINAuditorRegistered(uint indexed GI, address indexed auditor);
 
@@ -172,6 +332,27 @@ contract DINTaskAuditor is Ownable {
         uint modelIndex,
         uint256 score
     );
+
+    event AuditScoreCommitted(
+        uint256 indexed gi,
+        uint indexed batchId,
+        address indexed auditor,
+        uint modelIndex,
+        bytes32 commitHash
+    );
+
+    event EncryptedTestDataKeysAssigned(
+        uint256 indexed gi,
+        uint indexed batchId,
+        bytes testDataCID,
+        uint256 auditorCount
+    );
+    event TestDataCommitmentStored(uint256 indexed gi, uint256 indexed batchId, bytes32 commitment);
+    event TestDataDisputeOpened(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bond, uint256 expiresAtBlock);
+    event TestDataDisputeResolvedFalse(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondForfeited);
+    event TestDataDisputeUpheld(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondReturned, uint256 ownerPenalty);
+    event BatchPendingReassignment(uint256 indexed gi, uint256 indexed batchId);
+    event DisputeExpired(uint256 indexed gi, uint256 indexed batchId, uint256 bondForfeited);
 
     event EligibilityVoted(
         uint256 indexed gi,
@@ -200,23 +381,37 @@ contract DINTaskAuditor is Ownable {
         uint256 requested,
         uint256 actual
     );
+    event LocalModelSubmitted(uint indexed GI, uint indexed modelIndex, address indexed client, bytes32 modelCID);
+
+    /// @notice Model registry ID this auditor manages.
+    /// @dev Mirrors DINTaskCoordinator.modelId — used to look up per-model stake floors.
+    uint256 public immutable modelId;
 
     /// @notice Deploys the auditor, wiring it to the validator stake and coordinator contracts.
     /// @dev Batch parameters are set to demo defaults (3 auditors/batch, 3 models/batch,
     ///      quorum of 2, pass score of 50). The model owner can adjust pass score via
-    ///      updatePassScore.
+    ///      updatePassScore. Rejects a zero address for either dependency (L-6):
+    ///      this contract is non-upgradeable, so a bad deploy means a full
+    ///      redeploy, not a fix.
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
+    /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
     constructor(
         address _dinvalidatorStakeContract_address,
-        address _dintaskcoordinator_contract_address
+        address _dintaskcoordinator_contract_address,
+        uint256 modelId_
     ) Ownable(msg.sender) {
+        if (
+            _dinvalidatorStakeContract_address == address(0) ||
+            _dintaskcoordinator_contract_address == address(0)
+        ) revert TA_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
         );
         dintaskcoordinatorContract = IDINTaskCoordinator(
             _dintaskcoordinator_contract_address
         );
+        modelId = modelId_;
 
         params = Params({
             auditorsPerBatch: 3,
@@ -226,6 +421,221 @@ contract DINTaskAuditor is Ownable {
             passScore: 50,
             MIN_MODELS_PER_BATCH: 2
         });
+    }
+
+    /// @notice Wires the DIN token used for reward deposits and payouts.
+    /// @dev onlyOwner, freely re-settable (mirrors DINModelRegistry.setDinToken
+    ///      / the existing setFees-style setters elsewhere in this codebase --
+    ///      no one-shot restriction). Must be called before depositRewards or
+    ///      claimRewards will work; deploy-time wiring, same operational
+    ///      responsibility as DinCoordinator.updateValidatorStakeContract.
+    /// @param dinToken_ Address of the DIN token (DinToken proxy).
+    function setDinToken(address dinToken_) external onlyOwner {
+        if (dinToken_ == address(0)) revert TA_InvalidAddress();
+        dinToken = IERC20(dinToken_);
+        emit DinTokenSet(dinToken_);
+    }
+
+    /// @notice Updates the DAO-settable reward role split.
+    /// @dev Sum of all four fields must equal exactly 10000 bps. These
+    ///      percentages are explicitly not final (task_210726_6 §3) --
+    ///      pending Umer's P3-5.2 simulation at 10-50 validators / 100-500
+    ///      clients per model.
+    /// @param newSplit New RewardSplit; fields must sum to 10000.
+    function setRewardSplit(RewardSplit calldata newSplit) external onlyOwner {
+        uint256 sum = uint256(newSplit.clientBps) +
+            newSplit.auditorBps +
+            newSplit.aggregatorBps +
+            newSplit.treasuryBps;
+        if (sum != BPS_DENOMINATOR) revert TA_InvalidRewardSplit();
+        rewardSplit = newSplit;
+        emit RewardSplitUpdated(newSplit);
+    }
+
+    /// @notice Funds the reward pool for a specific Global Iteration.
+    /// @dev Pulls `amount` DIN from the caller via safeTransferFrom -- caller
+    ///      must have approved this contract first. Anyone may fund any GI's
+    ///      pool (typically the model owner, but not restricted to them --
+    ///      matches the "market-set pool" framing in MECHANISM_DESIGN §5,
+    ///      nothing stops a third party topping up a pool they care about).
+    ///      DINTaskCoordinator._startGI checks giRewardPool(_GI) > 0 as a
+    ///      precondition before that GI can start.
+    ///
+    ///      `gi` must be the current GI or a future one: GI only ever moves
+    ///      forward (DINTaskCoordinator._startGI requires _GI == GI + 1 and
+    ///      never allows re-starting an earlier index), so a deposit tagged
+    ///      with a `gi` that has already passed could never be started,
+    ///      settled, or claimed -- it would just sit in this contract's
+    ///      balance forever with no sweep path. Rejecting that case here is
+    ///      cheap and catches both a mistyped GI number and a genuinely
+    ///      unreachable one.
+    /// @param gi GI index to fund. Must be >= the coordinator's current GI.
+    /// @param amount DIN amount to deposit, in wei (18 decimals).
+    function depositRewards(uint256 gi, uint256 amount) external {
+        if (amount == 0) revert TA_AmountMustBePositive();
+        if (gi == 0 || gi < dintaskcoordinatorContract.GI())
+            revert TA_InvalidRewardGI();
+        dinToken.safeTransferFrom(msg.sender, address(this), amount);
+        giRewardPool[gi] += amount;
+        emit RewardDeposited(gi, msg.sender, amount);
+    }
+
+    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
+    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
+    ///      the slash-treasury is unset. Increments `treasuryAccrued` for observability.
+    function _burnAndForward(uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 burnAmt = amount / 2;
+        uint256 fwdAmt  = amount - burnAmt;
+        IBurnableDinToken(address(dinToken)).burn(burnAmt);
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, fwdAmt);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(fwdAmt);
+        }
+        treasuryAccrued += amount;
+    }
+
+    /// @dev Forwards `amount` in full to the platform slash-treasury.
+    ///      Burns the full amount when the treasury is unset.
+    ///      Used for protocol-fee shares (settleRewards), not forfeitures.
+    ///      Increments `treasuryAccrued` for observability.
+    function _forwardToTreasury(uint256 amount) internal {
+        if (amount == 0) return;
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, amount);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(amount);
+        }
+        treasuryAccrued += amount;
+    }
+
+    /// @notice Stores the per-GI reward pool snapshot at endGI time.
+    /// @dev Restricted to the paired DINTaskCoordinator, called once from
+    ///      endGI() after GIstate reaches AggregatorsSlashed. No participant
+    ///      loops run here — pool totals (giTotalApprovedScore,
+    ///      giTotalAuditWeight, auditorGIWeight) were tracked incrementally
+    ///      during the GI in finalizeEvaluation and revealAuditScore (BL-10).
+    ///      Per-participant shares are computed lazily in claimReward(gi).
+    ///
+    ///      Split basis, per task_210726_6 §3:
+    ///      - Clients: proportional to finalMedianScore among approved==true
+    ///        submissions (computed at claim time via giTotalApprovedScore).
+    ///      - Auditors: proportional to hasAuditedLM vote count stored in
+    ///        auditorGIWeight (computed at claim time via giTotalAuditWeight).
+    ///      - Aggregators: proportional to per-(aggregator, finalized-batch)
+    ///        weight tracked in DINTaskCoordinator.aggregatorWeight; only the
+    ///        scalar total is snapshotted here, each aggregator's own weight
+    ///        is read cross-contract at claim time. An aggregator credited
+    ///        for both a T1 and the T2 batch earns proportionally more,
+    ///        matching the pre-#125 duplicate-array-entry weighting
+    ///        (task_210726_6 §3) that the flat per-address split dropped.
+    ///      - Treasury: remainder (rounding dust absorbed here, same as
+    ///        DinFeeRouter's publicGoods-absorbs-dust pattern).
+    ///
+    ///      This function runs no loops at all (BL-10): the aggregator array
+    ///      it used to iterate is replaced by the coordinator-supplied
+    ///      scalar aggregatorTotalWeight.
+    /// @param gi GI index to settle.
+    /// @param aggregatorTotalWeight Sum of DINTaskCoordinator.aggregatorWeight
+    ///        over every aggregator for this GI -- the divisor for each
+    ///        aggregator's weighted share.
+    function settleRewards(
+        uint256 gi,
+        uint256 aggregatorTotalWeight
+    ) external onlyTaskCoordinator onlyCurrentGI(gi) {
+        uint256 pool = giRewardPool[gi];
+
+        RewardSplit memory split = rewardSplit;
+        uint256 clientPool    = (pool * split.clientBps)      / BPS_DENOMINATOR;
+        uint256 auditorPool   = (pool * split.auditorBps)     / BPS_DENOMINATOR;
+        uint256 aggregatorPool = (pool * split.aggregatorBps) / BPS_DENOMINATOR;
+        uint256 treasuryShare = pool - clientPool - auditorPool - aggregatorPool;
+
+        _forwardToTreasury(treasuryShare);
+
+        giRewardSnapshot[gi] = GIRewardSnapshot({
+            clientPool:            clientPool,
+            auditorPool:           auditorPool,
+            aggregatorPool:        aggregatorPool,
+            aggregatorTotalWeight: aggregatorTotalWeight,
+            settled:               true
+        });
+
+        emit RewardsSettled(gi, clientPool, auditorPool, aggregatorPool, treasuryShare);
+    }
+
+    /// @notice Computes and credits the caller's reward share for a settled GI.
+    /// @dev Per-participant O(1) computation from the snapshot and incremental
+    ///      totals stored during the GI. Credits claimable[msg.sender] — call
+    ///      claimRewards() afterward to transfer. One call per (gi, participant):
+    ///      rewardClaimed[gi][msg.sender] prevents double-crediting.
+    /// @param gi GI index to claim for. Must already be settled via endGI.
+    function claimReward(uint256 gi) external {
+        GIRewardSnapshot storage snap = giRewardSnapshot[gi];
+        if (!snap.settled)                 revert TA_RewardsNotSettled();
+        if (rewardClaimed[gi][msg.sender]) revert TA_RewardAlreadyClaimed();
+        rewardClaimed[gi][msg.sender] = true;
+
+        uint256 amount;
+
+        // Client share: proportional to finalMedianScore among approved submissions.
+        uint256 totalApproved = giTotalApprovedScore[gi];
+        if (clientHasSubmitted[gi][msg.sender] && totalApproved > 0) {
+            LMSubmission storage sub =
+                lmSubmissions[gi][clientSubmissionIndex[gi][msg.sender]];
+            if (sub.approved) {
+                amount += (snap.clientPool * sub.finalMedianScore) / totalApproved;
+            }
+        }
+
+        // Auditor share: proportional to per-auditor weight stored at reveal time.
+        uint256 totalWeight = giTotalAuditWeight[gi];
+        if (totalWeight > 0) {
+            uint256 weight = auditorGIWeight[gi][msg.sender];
+            if (weight > 0) {
+                amount += (snap.auditorPool * weight) / totalWeight;
+            }
+        }
+
+        // Aggregator share: proportional to per-(aggregator, finalized-batch)
+        // weight held in the coordinator. Read cross-contract here (one O(1)
+        // SLOAD via call) rather than snapshotting every aggregator's weight
+        // at settle time, which would reintroduce the settlement loop BL-10
+        // removed. An aggregator in both a T1 and the T2 batch has weight 2
+        // and earns twice a weight-1 aggregator's share -- the flat
+        // per-address split this replaces paid them only once, stranding the
+        // difference.
+        uint256 aggTotalWeight = snap.aggregatorTotalWeight;
+        if (aggTotalWeight > 0) {
+            uint256 aggWeight = dintaskcoordinatorContract.aggregatorWeight(
+                gi,
+                msg.sender
+            );
+            if (aggWeight > 0) {
+                amount += (snap.aggregatorPool * aggWeight) / aggTotalWeight;
+            }
+        }
+
+        if (amount == 0) revert TA_NoRewardEarned();
+        claimable[msg.sender] += amount;
+    }
+
+    /// @notice Claims the caller's full accumulated reward balance.
+    /// @dev Pull-payment pattern: zeroes the balance before transferring
+    ///      (checks-effects-interactions), reverts on a zero balance rather
+    ///      than silently no-op-ing. nonReentrant is defense-in-depth --
+    ///      dinToken is a trusted, protocol-deployed ERC20 with no hooks --
+    ///      but costs nothing here since ReentrancyGuardTransient uses
+    ///      transient storage.
+    function claimRewards() external nonReentrant {
+        uint256 amount = claimable[msg.sender];
+        if (amount == 0) revert TA_NoRewardsToClaim();
+        claimable[msg.sender] = 0;
+        dinToken.safeTransfer(msg.sender, amount);
+        emit RewardsClaimed(msg.sender, amount);
     }
 
     /// @notice Updates the minimum average score a model must achieve to be approved.
@@ -254,15 +664,44 @@ contract DINTaskAuditor is Ownable {
         ) revert TA_AuditorRegistrationNotOpen();
         if (isRegisteredAuditor[_GI][msg.sender])
             revert TA_AuditorAlreadyRegistered();
+        if (dinAuditors[_GI].length >= MAX_REGISTERED_AUDITORS)
+            revert TA_RegistrationCapReached();
 
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TA_AuditorNotActive();
         }
 
+        // Per-model stake floor: enforced when the model owner has set a non-zero bound.
+        uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
+        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
+            revert TA_StakeBelowModelFloor();
+
+        // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
+        uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
+        if (capPerUnit > 0) {
+            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
+                dinvalidatorStakeContract.minStake()) * capPerUnit;
+            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                revert TA_ConcurrentRegistrationCapReached();
+        }
+
         dinAuditors[_GI].push(msg.sender);
         isRegisteredAuditor[_GI][msg.sender] = true;
+        dinvalidatorStakeContract.incrementActiveRegistration(msg.sender);
 
         emit DINAuditorRegistered(_GI, msg.sender);
+    }
+
+    /// @notice Decrements the active-registration counter for every auditor in _GI.
+    /// @dev Called by the paired DINTaskCoordinator's releaseGIRegistrationSlots
+    ///      (not endGI itself, to keep endGI's gas cost O(1) per BL-10), so each
+    ///      auditor's slot is released for future GIs. onlyTaskCoordinator
+    ///      enforces the trust boundary.
+    function decrementAuditorRegistrations(uint256 _GI) external onlyTaskCoordinator {
+        address[] storage auditors = dinAuditors[_GI];
+        for (uint256 i = 0; i < auditors.length; i++) {
+            dinvalidatorStakeContract.decrementActiveRegistration(auditors[i]);
+        }
     }
 
     /// @notice Returns the list of auditors registered for the given GI.
@@ -304,6 +743,7 @@ contract DINTaskAuditor is Ownable {
             })
         );
         clientHasSubmitted[_GI][msg.sender] = true;
+        emit LocalModelSubmitted(_GI, modelIndex, msg.sender, _clientModel);
     }
 
     /// @notice Returns all local model submissions for the given GI.
@@ -322,12 +762,12 @@ contract DINTaskAuditor is Ownable {
     }
 
     // ──────────── internal shuffle helpers ────────────
-    function _shuffleAddressArray(address[] memory arr) internal view {
+    function _shuffleAddressArray(address[] memory arr, bytes32 seed) internal pure {
         if (arr.length < 2) return;
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(blockhash(block.number - 1), i, arr.length)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
@@ -358,11 +798,11 @@ contract DINTaskAuditor is Ownable {
         }
     }
 
-    function _shuffleUintArray(uint[] memory arr) internal view {
+    function _shuffleUintArray(uint[] memory arr, bytes32 seed) internal pure {
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(block.timestamp, i, arr.length, msg.sender)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
@@ -401,23 +841,34 @@ contract DINTaskAuditor is Ownable {
     }
 
     /// @notice Partitions active auditors and submitted models into audit batches.
-    /// @dev Called by the paired DINTaskCoordinator. Auditors are filtered to those
-    ///      still Active at call time, then shuffled with blockhash-based entropy.
-    ///      Returns false is never reached; reverts on any failure condition.
+    /// @dev Called by the paired DINTaskCoordinator, which has already locked
+    ///      and passed in `seed` (issue #156 H-2) -- anchored at
+    ///      DINTaskCoordinator.closeLMsubmissions, before this function could
+    ///      possibly run, so nobody can steer batch assignment by timing the
+    ///      call. Rejects a zero seed independently of the coordinator's own
+    ///      check (defense-in-depth, same principle as the M-3 fix elsewhere
+    ///      in this contract). Returns false is never reached; reverts on any
+    ///      failure condition.
     /// @param _GI Current GI index.
+    /// @param seed Locked, ungrindable seed from DINTaskCoordinator.auditSeed.
     /// @return True on success.
     function createAuditorsBatches(
-        uint _GI
+        uint _GI,
+        bytes32 seed
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
         if (dintaskcoordinatorContract.GIstate() != GIstates.LMSclosed)
             revert TA_CannotCreateAuditorsBatches();
+        if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
         // Filter the historical registration list down to currently active auditors.
         address[] memory auditorPool = _activeAuditorPool(_GI);
         uint aLen = auditorPool.length;
 
         if (aLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
-        _shuffleAddressArray(auditorPool);
+        // Domain-separated derived seeds, same reasoning as the coordinator's
+        // AGG_ADDR/AGG_IDX split -- independent of aggSeed since this derives
+        // from the separately-locked auditSeed.
+        _shuffleAddressArray(auditorPool, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
 
         // ▸ 2. Build list of local model indexes
         LMSubmission[] storage lmlist = lmSubmissions[_GI];
@@ -426,7 +877,7 @@ contract DINTaskAuditor is Ownable {
         for (uint i = 0; i < lmlist.length; i++) {
             modelIdx[i] = i;
         }
-        _shuffleUintArray(modelIdx);
+        _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AUD_IDX")));
 
         // ▸ 3. Create batches, Greedily fill Auditors batches
         uint vPtr;
@@ -481,7 +932,7 @@ contract DINTaskAuditor is Ownable {
     /// @return batchId Canonical batch identifier.
     /// @return auditors Auditors assigned to this batch.
     /// @return modelIndexes Indexes into lmSubmissions[_GI] assigned to this batch.
-    /// @return testDataCID IPFS CID of the test dataset for this batch.
+    /// @return testDataCID AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID)) — decrypt with K to obtain rawCID.
     function getAuditorsBatch(
         uint _GI,
         uint _batchId
@@ -492,7 +943,7 @@ contract DINTaskAuditor is Ownable {
             uint batchId,
             address[] memory auditors,
             uint[] memory modelIndexes,
-            bytes32 testDataCID
+            bytes memory testDataCID
         )
     {
         if (_GI > dintaskcoordinatorContract.GI()) revert TA_WrongGI();
@@ -506,21 +957,48 @@ contract DINTaskAuditor is Ownable {
         );
     }
 
-    /// @notice Records the test dataset CID for a specific audit batch.
+    /// @notice Records the encrypted test dataset CID, per-auditor encrypted keys, and
+    ///         content commitment for a specific audit batch.
     /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked.
+    ///      `encryptedKeys[i]` must correspond to `auditBatches[gi][batchId].auditors[i]`
+    ///      (same order createAuditorsBatches populated them in). Each auditor must have
+    ///      a registered X25519 encryption key on DinValidatorStake before this call.
+    ///      `commitment` = keccak256(abi.encodePacked(gi, batchId, keccak256(K),
+    ///      keccak256(plaintext_test_data))) — computed off-chain by the model owner;
+    ///      round-bound so stale-data reuse produces a different hash even with identical
+    ///      file bytes (task_240826_10 §B).
     /// @param gi Current GI index.
     /// @param batchId Batch index to assign the test dataset to.
-    /// @param testDataCID IPFS CID of the test dataset, encoded as bytes32.
+    /// @param testDataCID AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID)) — ~125 bytes.
+    /// @param encryptedKeys Per-auditor encrypted copies of K, ordered to match auditors[].
+    /// @param commitment Round-and-key-bound content commitment for dispute resolution.
     function assignAuditTestDataset(
         uint256 gi,
         uint256 batchId,
-        bytes32 testDataCID
+        bytes calldata testDataCID,
+        bytes[] calldata encryptedKeys,
+        bytes32 commitment
     ) external onlyOwner onlyCurrentGI(gi) {
         if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
-        if (auditBatches[gi][batchId].batchId != batchId)
-            revert TA_BatchIDMismatch();
+        AuditBatch storage batch = auditBatches[gi][batchId];
+        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+        if (encryptedKeys.length != batch.auditors.length)
+            revert TA_EncryptedKeyCountMismatch();
+        if (testDataDisputes[gi][batchId].pendingReassignment)
+            revert TA_BatchPendingReassignment();
 
-        auditBatches[gi][batchId].testDataCID = testDataCID;
+        batch.testDataCID = testDataCID;
+
+        for (uint256 i = 0; i < encryptedKeys.length; i++) {
+            if (dinvalidatorStakeContract.getEncryptionKey(batch.auditors[i]).length == 0)
+                revert TA_AuditorEncryptionKeyNotRegistered();
+            encryptedTestDataKey[gi][batchId][batch.auditors[i]] = encryptedKeys[i];
+        }
+
+        testDataCommitments[gi][batchId] = commitment;
+
+        emit EncryptedTestDataKeysAssigned(gi, batchId, testDataCID, encryptedKeys.length);
+        emit TestDataCommitmentStored(gi, batchId, commitment);
     }
 
     /// @notice Marks test dataset distribution as complete for the given GI.
@@ -596,38 +1074,100 @@ contract DINTaskAuditor is Ownable {
         );
     }
 
-    /// @notice Submits an audit score and eligibility vote for a specific model.
-    /// @dev Caller must be the assigned auditor for this batch and model index.
-    ///      Each auditor may vote at most once per model. If the eligibility quorum
-    ///      is reached after this vote, eligibility is finalised immediately.
+    /// @notice Phase 1 of commit-then-reveal auditor scoring: lock in a
+    ///         hidden (score, vote) pair.
+    /// @dev Caller must be the assigned auditor for this batch and model
+    ///      index. `commitHash` must equal `keccak256(abi.encodePacked(score,
+    ///      vote, salt))` for the values the auditor intends to reveal later
+    ///      -- the contract cannot and does not validate this at commit time
+    ///      (that's the point; nothing about score/vote is visible yet).
+    ///      Open only while GIstate == LMSevaluationStarted (the commit
+    ///      window); revealing happens in a separate, later-gated phase
+    ///      (LMSevaluationRevealStarted) so no auditor can see another's
+    ///      revealed score before committing their own.
     /// @param gi Current GI index.
     /// @param batchId Batch index containing this model.
     /// @param modelIndex Index into lmSubmissions[gi] for the model being scored.
-    /// @param score Audit score in the range [0, 100].
-    /// @param vote True if the auditor deems the model eligible, false otherwise.
-    function setAuditScorenEligibility(
+    /// @param commitHash keccak256(abi.encodePacked(score, vote, salt)).
+    function commitAuditScore(
+        uint256 gi,
+        uint batchId,
+        uint modelIndex,
+        bytes32 commitHash
+    ) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
+        if (
+            dintaskcoordinatorContract.GIstate() !=
+            GIstates.LMSevaluationStarted
+        ) revert TA_CommitPhaseNotOpen();
+        if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
+            revert TA_AuditorNotActive();
+        }
+        if (commitHash == bytes32(0)) revert TA_EmptyCommitHash();
+        if (hasCommittedLM[gi][batchId][msg.sender][modelIndex])
+            revert TA_AlreadyCommitted();
+
+        auditScoreCommits[gi][batchId][msg.sender][modelIndex] = commitHash;
+        hasCommittedLM[gi][batchId][msg.sender][modelIndex] = true;
+
+        emit AuditScoreCommitted(
+            gi,
+            batchId,
+            msg.sender,
+            modelIndex,
+            commitHash
+        );
+    }
+
+    /// @notice Phase 2 of commit-then-reveal: reveal the (score, vote, salt)
+    ///         behind a prior commitment and have it counted.
+    /// @dev Reverts unless the caller committed in this same (gi, batchId,
+    ///      modelIndex) and the revealed values hash to that commitment.
+    ///      Open only while GIstate == LMSevaluationRevealStarted, strictly
+    ///      after the commit window has been closed by the model owner --
+    ///      see DINTaskCoordinator.startLMsubmissionsEvaluationReveal.
+    ///      An auditor who committed but never reveals simply never sets
+    ///      hasAuditedLM, so they are excluded from quorum/median counting
+    ///      exactly like a non-participant, and remain slashable via the
+    ///      existing slashAuditors() "missed vote" check -- no special-casing
+    ///      needed for the non-reveal case.
+    /// @param gi Current GI index.
+    /// @param batchId Batch index containing this model.
+    /// @param modelIndex Index into lmSubmissions[gi] for the model being scored.
+    /// @param score Audit score in the range [0, 100] -- must match the committed hash.
+    /// @param vote True if the auditor deems the model eligible, false otherwise -- must match the committed hash.
+    /// @param salt Arbitrary value chosen at commit time to prevent hash pre-image search.
+    function revealAuditScore(
         uint256 gi,
         uint batchId,
         uint modelIndex,
         uint256 score,
-        bool vote
-    ) public onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
+        bool vote,
+        bytes32 salt
+    ) external onlyAssignedAuditor(gi, batchId, modelIndex) onlyCurrentGI(gi) {
         if (
             dintaskcoordinatorContract.GIstate() !=
-            GIstates.LMSevaluationStarted
-        ) revert TA_CannotSetAuditScore();
+            GIstates.LMSevaluationRevealStarted
+        ) revert TA_RevealPhaseNotOpen();
         if (!dinvalidatorStakeContract.isValidatorActive(msg.sender)) {
             revert TA_AuditorNotActive();
         }
         if (score > 100) revert TA_ScoreOutOfRange();
+        if (!hasCommittedLM[gi][batchId][msg.sender][modelIndex])
+            revert TA_NoCommitFound();
         if (hasAuditedLM[gi][batchId][msg.sender][modelIndex])
             revert TA_AlreadyVoted();
 
-        auditScores[gi][batchId][msg.sender][modelIndex] = score;
-        // Record the vote
-        LMeligibleVote[gi][batchId][msg.sender][modelIndex] = vote;
+        bytes32 expectedHash = keccak256(abi.encodePacked(score, vote, salt));
+        if (
+            expectedHash !=
+            auditScoreCommits[gi][batchId][msg.sender][modelIndex]
+        ) revert TA_RevealHashMismatch();
 
+        auditScores[gi][batchId][msg.sender][modelIndex] = score;
+        LMeligibleVote[gi][batchId][msg.sender][modelIndex] = vote;
         hasAuditedLM[gi][batchId][msg.sender][modelIndex] = true;
+        auditorGIWeight[gi][msg.sender]++;
+        giTotalAuditWeight[gi]++;
 
         emit AuditScoreSubmitted(gi, batchId, msg.sender, modelIndex, score);
         emit EligibilityVoted(gi, batchId, modelIndex, msg.sender, vote);
@@ -639,7 +1179,8 @@ contract DINTaskAuditor is Ownable {
     /// @notice Computes final median scores and approval status for all submitted models.
     /// @dev Iterates all batches and models; a model is approved if eligible and its
     ///      median score meets or exceeds passScore. Returns true if at least one
-    ///      model was finalised; reverts if GI state is not LMSevaluationStarted.
+    ///      model was finalised; reverts if GI state is not LMSevaluationRevealStarted
+    ///      (i.e. the commit-then-reveal reveal window, task_210726_6 §2a).
     /// @param _GI Current GI index.
     /// @return True if at least one model reached score quorum and was finalised.
     function finalizeEvaluation(
@@ -647,7 +1188,7 @@ contract DINTaskAuditor is Ownable {
     ) public onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
         if (
             dintaskcoordinatorContract.GIstate() !=
-            GIstates.LMSevaluationStarted
+            GIstates.LMSevaluationRevealStarted
         ) revert TA_CannotFinalizeEvaluation();
 
         LMSubmission[] storage submissions = lmSubmissions[_GI];
@@ -709,11 +1250,19 @@ contract DINTaskAuditor is Ownable {
                     // array) when emitting deviations below.
                     uint256 median = _medianOf(votedScores, votes);
 
+                    bool wasEvaluated = sub.evaluated;
                     sub.finalMedianScore = median;
                     sub.evaluated = true;
 
                     // Approval requires (i) eligible == true and (ii) median >= passScore
                     sub.approved = (sub.eligible && median >= params.passScore);
+
+                    // Incremental total for settleRewards O(1) snapshot (BL-10).
+                    // Guard with wasEvaluated so repeated finalizeEvaluation calls
+                    // on the same model don't double-count the score.
+                    if (!wasEvaluated && sub.approved) {
+                        giTotalApprovedScore[_GI] += median;
+                    }
 
                     finalizedCount++;
 
@@ -767,7 +1316,11 @@ contract DINTaskAuditor is Ownable {
     function slashAuditors(
         uint _GI
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
-        uint256 slashAmount = dinvalidatorStakeContract.minStake();
+        if (dintaskcoordinatorContract.GIstate() != GIstates.T2AggregationDone)
+            revert TA_CannotSlashAuditors();
+        uint256 minStakeAmt = dinvalidatorStakeContract.minStake();
+        // S1: partial fraction for liveness fault (missed vote); S3: full minStake.
+        uint256 s1Amount = (minStakeAmt * s1SlashFractionBps) / 10_000;
         uint batchCount = auditBatches[_GI].length;
         LMSubmission[] storage submissions = lmSubmissions[_GI];
 
@@ -803,23 +1356,34 @@ contract DINTaskAuditor is Ownable {
                 }
 
                 if (missedVote) {
-                    uint256 actualSlashed = dinvalidatorStakeContract.slash(
-                        auditor,
-                        slashAmount,
-                        "AUD_NO_VOTE"
-                    );
+                    // S1: partial slash via slashPartial (tracks S5 recidivism).
+                    // Skip when rounding reduces s1Amount to 0 — slashPartial
+                    // reverts InvalidSlashAmount on zero, bricking the GI.
+                    uint256 actualSlashed = s1Amount > 0
+                        ? dinvalidatorStakeContract.slashPartial(
+                            auditor,
+                            s1Amount,
+                            "AUD_NO_VOTE",
+                            _GI
+                        )
+                        : 0;
                     emit AuditorSlashed(
                         _GI,
                         b,
                         auditor,
                         "AUD_NO_VOTE",
-                        slashAmount,
+                        s1Amount,
                         actualSlashed
                     );
+                    // No S6 recordNoParticipation here: slashPartial above already
+                    // penalises this missed vote (S1, escalating to S5 on repeat).
+                    // Also firing S6 on the same event could slash more than
+                    // MIN_STAKE in one event (S1/S5 + S6 stacking).
                 } else if (exceededDeviation) {
+                    // S3: full-severity slash (dishonesty fault, not liveness).
                     uint256 actualSlashed = dinvalidatorStakeContract.slash(
                         auditor,
-                        slashAmount,
+                        minStakeAmt,
                         "AUD_SCORE_DEVIATION"
                     );
                     emit AuditorSlashed(
@@ -827,7 +1391,7 @@ contract DINTaskAuditor is Ownable {
                         b,
                         auditor,
                         "AUD_SCORE_DEVIATION",
-                        slashAmount,
+                        minStakeAmt,
                         actualSlashed
                     );
                 }
@@ -855,5 +1419,170 @@ contract DINTaskAuditor is Ownable {
             if (list[i].approved) out[j++] = i;
         }
         return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test-data dispute resolution (task_240826_10 §B)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// @notice Updates the DIN bond required to open a test-data dispute.
+    function setDisputeBondAmount(uint256 amount) external onlyOwner {
+        disputeBondAmount = amount;
+    }
+
+    /// @notice Updates the dispute challenge window in blocks.
+    function setDisputeWindowBlocks(uint256 blocks) external onlyOwner {
+        disputeWindowBlocks = blocks;
+    }
+
+    /// @notice Updates the penalty fraction (basis points of giRewardPool) charged
+    ///         to the model owner when a dispute is upheld against them.
+    function setDisputePenaltyBps(uint256 bps) external onlyOwner {
+        if (bps > 10000) revert TA_InvalidDisputeBond();
+        disputePenaltyBps = bps;
+    }
+
+    /// @notice Stage 0 — free view check. Returns true if the auditor received no
+    ///         encryption key for this batch (empty bytes). An auditor with an empty key
+    ///         has grounds for a dispute without posting any bond.
+    function isEncryptionKeyEmpty(
+        uint256 gi,
+        uint256 batchId,
+        address auditor
+    ) external view returns (bool) {
+        return encryptedTestDataKey[gi][batchId][auditor].length == 0;
+    }
+
+    /// @notice Opens a test-data dispute for a batch. Requires a DIN bond.
+    ///         The disputer must call resolveTestDataDispute within the challenge
+    ///         window; failure to do so forfeits the bond (closeExpiredDispute).
+    /// @param gi GI index.
+    /// @param batchId Batch to dispute.
+    function openTestDataDispute(
+        uint256 gi,
+        uint256 batchId
+    ) external nonReentrant {
+        if (testDataCommitments[gi][batchId] == bytes32(0)) revert TA_NoCommitmentStored();
+        DisputeRecord storage d = testDataDisputes[gi][batchId];
+        if (d.active) revert TA_DisputeAlreadyActive();
+        if (d.pendingReassignment) revert TA_BatchPendingReassignment();
+
+        if (disputeBondAmount > 0) {
+            dinToken.safeTransferFrom(msg.sender, address(this), disputeBondAmount);
+        }
+
+        uint256 expires = block.number + disputeWindowBlocks;
+        testDataDisputes[gi][batchId] = DisputeRecord({
+            disputer: msg.sender,
+            bond: disputeBondAmount,
+            expiresAtBlock: expires,
+            active: true,
+            pendingReassignment: false
+        });
+
+        emit TestDataDisputeOpened(gi, batchId, msg.sender, disputeBondAmount, expires);
+    }
+
+    /// @notice Resolves an active dispute by revealing K and the actual plaintext hash.
+    ///         Anyone may call this — the disputer is the beneficiary if upheld.
+    ///         Commitment check: keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintextHash))
+    ///         Match  → dispute false → disputer's bond forfeited (50% burn / 50% treasury).
+    ///         Mismatch → dispute upheld → bond returned, owner's giRewardPool[gi] penalised.
+    /// @param gi GI index.
+    /// @param batchId Batch under dispute.
+    /// @param K The raw symmetric key the model owner used to encrypt the test data.
+    /// @param plaintextHash keccak256 of the actual decrypted test-data bytes.
+    function resolveTestDataDispute(
+        uint256 gi,
+        uint256 batchId,
+        bytes calldata K,
+        bytes32 plaintextHash
+    ) external nonReentrant {
+        DisputeRecord storage d = testDataDisputes[gi][batchId];
+        if (!d.active) revert TA_NoActiveDispute();
+        if (block.number > d.expiresAtBlock) revert TA_DisputeWindowClosed();
+
+        bytes32 reconstructed = keccak256(
+            abi.encodePacked(gi, batchId, keccak256(K), plaintextHash)
+        );
+        bool commitmentMatches = (reconstructed == testDataCommitments[gi][batchId]);
+
+        if (commitmentMatches) {
+            // Dispute is false — forfeited bond: 50% burn, 50% platform treasury.
+            uint256 bond = d.bond;
+            d.active = false;
+            _burnAndForward(bond);
+            emit TestDataDisputeResolvedFalse(gi, batchId, d.disputer, bond);
+        } else {
+            // Dispute upheld — return bond, penalise owner's reward pool
+            uint256 bond = d.bond;
+            address disputer = d.disputer;
+            d.active = false;
+            d.pendingReassignment = true;
+
+            if (bond > 0) {
+                dinToken.safeTransfer(disputer, bond);
+            }
+
+            uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
+            if (penalty > 0 && giRewardPool[gi] >= penalty) {
+                giRewardPool[gi] -= penalty;
+                _burnAndForward(penalty);
+            }
+
+            emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
+            emit BatchPendingReassignment(gi, batchId);
+        }
+    }
+
+    /// @notice Closes an expired dispute and forfeits the disputer's bond.
+    ///         Callable by anyone once the challenge window has elapsed without resolution.
+    function closeExpiredDispute(uint256 gi, uint256 batchId) external nonReentrant {
+        DisputeRecord storage d = testDataDisputes[gi][batchId];
+        if (!d.active) revert TA_NoActiveDispute();
+        if (block.number <= d.expiresAtBlock) revert TA_DisputeWindowClosed();
+
+        uint256 bond = d.bond;
+        d.active = false;
+
+        _burnAndForward(bond);
+
+        emit DisputeExpired(gi, batchId, bond);
+    }
+
+    /// @notice Re-assigns test data for a batch after the model owner lost a dispute.
+    ///         Clears the pendingReassignment flag so the batch can proceed.
+    ///         Same validation as assignAuditTestDataset; a fresh K and commitment are required.
+    /// @param gi GI index.
+    /// @param batchId Batch to reassign.
+    /// @param newTestDataCID New AES-256-GCM(K_new, rawCID_new || Sign(ownerSK, rawCID_new)).
+    /// @param newEncryptedKeys New per-auditor encrypted copies of K_new.
+    /// @param newCommitment New keccak256(gi, batchId, keccak256(K_new), keccak256(plaintext_new)).
+    function reassignAuditTestDataset(
+        uint256 gi,
+        uint256 batchId,
+        bytes calldata newTestDataCID,
+        bytes[] calldata newEncryptedKeys,
+        bytes32 newCommitment
+    ) external onlyOwner onlyCurrentGI(gi) {
+        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
+        AuditBatch storage batch = auditBatches[gi][batchId];
+        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+        if (!testDataDisputes[gi][batchId].pendingReassignment) revert TA_NoActiveDispute();
+        if (newEncryptedKeys.length != batch.auditors.length)
+            revert TA_EncryptedKeyCountMismatch();
+
+        testDataDisputes[gi][batchId].pendingReassignment = false;
+
+        batch.testDataCID = newTestDataCID;
+        for (uint256 i = 0; i < newEncryptedKeys.length; i++) {
+            if (dinvalidatorStakeContract.getEncryptionKey(batch.auditors[i]).length == 0)
+                revert TA_AuditorEncryptionKeyNotRegistered();
+            encryptedTestDataKey[gi][batchId][batch.auditors[i]] = newEncryptedKeys[i];
+        }
+        testDataCommitments[gi][batchId] = newCommitment;
+
+        emit EncryptedTestDataKeysAssigned(gi, batchId, newTestDataCID, newEncryptedKeys.length);
+        emit TestDataCommitmentStored(gi, batchId, newCommitment);
     }
 }

@@ -65,7 +65,6 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         uint256 proprietaryUpdateFee
     );
     event FeesWithdrawn(address indexed to, uint256 amount);
-    event DAOAdminUpdated(address indexed oldAdmin, address indexed newAdmin);
 
     struct Model {
         address owner;
@@ -476,22 +475,4 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable {
         emit FeesWithdrawn(to, balance);
     }
 
-    // Backward-compat shims — dincli calls daoAdmin() / setDAOAdmin().
-    // Underlying auth model is OwnableUpgradeable; these are read-through facades.
-
-    /// @notice Returns the current admin address. Delegates to OwnableUpgradeable.owner().
-    /// @dev Compatibility shim preserving the pre-upgrade daoAdmin() ABI surface.
-    /// @return The current owner address.
-    function daoAdmin() external view returns (address) {
-        return owner();
-    }
-
-    /// @notice Transfers ownership and emits DAOAdminUpdated for off-chain indexers.
-    /// @dev Compatibility shim preserving the pre-upgrade setDAOAdmin() ABI surface.
-    /// @param newAdmin Address to transfer ownership to.
-    function setDAOAdmin(address newAdmin) external onlyOwner {
-        address old = owner();
-        transferOwnership(newAdmin);
-        emit DAOAdminUpdated(old, newAdmin);
-    }
 }

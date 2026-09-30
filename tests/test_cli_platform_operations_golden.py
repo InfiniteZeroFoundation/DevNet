@@ -164,6 +164,32 @@ def test_din_info_registry_flag():
     )
 
 
+@pytest.mark.parametrize("key,flag,label", [
+    ("treasury", "--treasury", "Treasury"),
+    ("fee_router", "--fee-router", "Fee Router"),
+    ("emission", "--emission", "Emission"),
+])
+@pytest.mark.parametrize("entry,expected", [({}, "N/A"), ({"value": None}, "None"),
+                                           ({"value": ""}, ""), ({"value": "0x..."}, "0x...")])
+def test_din_info_additional_selector(monkeypatch, key, flag, label, entry, expected):
+    config = {key: entry["value"]} if entry else {}
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: {"local": config})
+    result = _invoke(["system", "din-info", flag])
+    assert result.exit_code == 0, result.output
+    assert result.output == _DIN_INFO_HEADER + f"{label}: {expected}\n"
+
+
+def test_din_info_default_shows_only_configured_optional_addresses(monkeypatch):
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: {
+        "local": {"treasury": "0x...", "fee_router": None, "emission": ""},
+    })
+    result = _invoke(["system", "din-info"])
+    assert result.exit_code == 0, result.output
+    assert result.output == (_DIN_INFO_HEADER + "Coordinator: N/A\nDIN Token: N/A\n"
+                             "Staking Contract: N/A\nRepresentative: N/A\nRegistry: N/A\n"
+                             "Treasury: 0x...\n")
+
+
 # ---------------------------------------------------------------------------
 # read-stake — three call sites sharing read_dintoken_stake(ctx, name=...)
 # ---------------------------------------------------------------------------

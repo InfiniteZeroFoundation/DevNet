@@ -18,7 +18,7 @@ from dincli.sdk.errors import ConfigError, ContractError, DinError, ValidationEr
 from dincli.sdk.manifest import load_din_info
 from dincli.sdk.session import DinSession
 
-_ADDRESS_KEYS = ("coordinator", "token", "stake", "representative", "registry")
+_ADDRESS_KEYS = ("coordinator", "token", "stake", "representative", "registry", "treasury", "fee_router", "emission")
 _STAKE_ABI_NAME = "DinValidatorStake.json"
 
 
@@ -36,7 +36,7 @@ class PlatformAddresses:
     ``StakeInfo`` below keeps the ``"address"`` metadata because its addresses
     come from the session and the chain and are always well-formed.
 
-    ``present`` records which of the five keys existed in ``din_info.json`` at
+    ``present`` records which address keys existed in ``din_info.json`` at
     all, so the CLI can distinguish "key absent" (renders "N/A") from "key
     present and null" (renders "None") the way ``data.get(key, 'N/A')`` does
     today. It is tagged ``{"json": "omit"}`` and never reaches the envelope.
@@ -48,6 +48,9 @@ class PlatformAddresses:
     stake: str | None = None
     representative: str | None = None
     registry: str | None = None
+    treasury: str | None = None
+    fee_router: str | None = None
+    emission: str | None = None
     present: frozenset[str] = field(default_factory=frozenset, metadata={"json": "omit"})
 
 
@@ -156,6 +159,9 @@ def get_platform_addresses(session: DinSession) -> PlatformAddresses:
         stake=entry.get("stake"),
         representative=entry.get("representative"),
         registry=entry.get("registry"),
+        treasury=entry.get("treasury"),
+        fee_router=entry.get("fee_router"),
+        emission=entry.get("emission"),
         present=present,
     )
 

@@ -123,7 +123,7 @@ _DEPLOY_TOOLCHAIN_DIR = {"hardhat": HARDHAT_DIR, "foundry": FOUNDRY_DIR}[PLATFOR
 DEPLOYMENTS_FILE = _DEPLOY_TOOLCHAIN_DIR / "deployments" / "localhost.json"
 
 # Standard dev-mnemonic account 0 (hardhat node and anvil both derive the same
-# address from "test test test ... junk"). Registered as the "dindao" wallet
+# address from "test test test ... junk"). Registered as the "dinrep" wallet
 # by the bootstrap fixture; used as --sender for the foundry script, which
 # broadcasts via --unlocked rather than signing with a local private key.
 HARDHAT_DEV_ACCOUNT_0 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"

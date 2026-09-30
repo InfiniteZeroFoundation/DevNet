@@ -34,6 +34,9 @@ contract DinCoordinator is
     uint256 public totalMinted;
     IDinFeeRouter public feeRouter;
 
+    /// @notice Address of the DinEmission contract authorised to call mintEmission().
+    address public emissionContract;
+
     // Reserved for future state variables at this inheritance level.
     uint256[50] private __gap;
 
@@ -50,13 +53,17 @@ contract DinCoordinator is
     event FaucetRetiredEvent();
     event FeeRouterUpdated(address indexed feeRouter);
     event FeesSweptToRouter(uint256 amount);
+    event EmissionContractUpdated(address indexed emissionContract);
+    event EmissionMinted(address indexed to, uint256 amount);
 
     error InvalidAddress();
     error ValidatorStakeContractNotSet();
     error ZeroValue();
     error FaucetRetired();
     error MintCapExceeded();
+    error ZeroMintAmount();
     error FeeRouterNotSet();
+    error UnauthorizedEmissionCaller();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -76,11 +83,17 @@ contract DinCoordinator is
     /// @notice Deposits ETH and mints the equivalent amount of DIN tokens to
     ///         the caller at the current exchange rate.
     /// @dev Rate is a fixed-point value scaled by 1e18. Reverts if the faucet
-    ///      has been retired or if minting would exceed the cap (when set).
+    ///      has been retired, if minting would exceed the cap (when set), or
+    ///      if integer division rounds the mint to zero, i.e.
+    ///      `msg.value * dinPerEth < 1e18` (L-2). That is only reachable
+    ///      when `dinPerEth < 1e18` (less than 1 DIN-wei per wei) -- without
+    ///      this check the ETH would be accepted and kept with nothing
+    ///      minted in return.
     function depositAndMint() external payable nonReentrant {
         if (faucetRetired) revert FaucetRetired();
         if (msg.value == 0) revert ZeroValue();
         uint256 mintAmount = (msg.value * dinPerEth) / 1e18;
+        if (mintAmount == 0) revert ZeroMintAmount();
         if (mintCap > 0 && totalMinted + mintAmount > mintCap) revert MintCapExceeded();
         totalMinted += mintAmount;
         dinToken.mint(msg.sender, mintAmount);
@@ -159,5 +172,29 @@ contract DinCoordinator is
         if (newRate == 0) revert ZeroValue();
         dinPerEth = newRate;
         emit DinPerEthUpdated(newRate);
+    }
+
+    /// @notice Sets the emission contract authorised to call mintEmission().
+    /// @param emissionContract_ Address of the DinEmission proxy.
+    function setEmissionContract(address emissionContract_) external onlyOwner {
+        if (emissionContract_ == address(0)) revert InvalidAddress();
+        emissionContract = emissionContract_;
+        emit EmissionContractUpdated(emissionContract_);
+    }
+
+    /// @notice Mints DIN for the emission subsidy. Only callable by the authorised
+    ///         emission contract. Respects faucetRetired and mintCap exactly like
+    ///         depositAndMint — emission cannot bypass the supply cap machinery.
+    /// @param to  Recipient of the minted DIN (normally the emission contract itself,
+    ///            which then deposits into the GI reward pool).
+    /// @param amount Token amount in wei (18 decimals).
+    function mintEmission(address to, uint256 amount) external nonReentrant {
+        if (msg.sender != emissionContract) revert UnauthorizedEmissionCaller();
+        if (faucetRetired) revert FaucetRetired();
+        if (amount == 0) revert ZeroValue();
+        if (mintCap > 0 && totalMinted + amount > mintCap) revert MintCapExceeded();
+        totalMinted += amount;
+        dinToken.mint(to, amount);
+        emit EmissionMinted(to, amount);
     }
 }

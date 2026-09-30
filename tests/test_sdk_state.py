@@ -1,4 +1,7 @@
 """Tests for dincli.sdk.state (issue #20 Part A)."""
+import re
+from pathlib import Path
+
 import pytest
 from dincli.sdk.errors import ValidationError
 from dincli.sdk.state import (
@@ -21,6 +24,19 @@ def test_converters_snapshot():
         assert GIstateToDes(i) == stateDescription[i]
         assert GIstatestrToIndex(name) == i
         assert GIstate_to_index[name] == i
+
+
+def test_state_ordinals_match_contract():
+    """Inserted reveal phases must not silently shift SDK/CLI decoding."""
+    contract = (Path(__file__).resolve().parents[1] / "foundry/src/DINShared.sol").read_text()
+    contract = re.sub(r"//[^\n]*|/\*.*?\*/", "", contract, flags=re.S)
+    body = re.search(r"enum\s+GIstates\s*\{([^}]+)\}", contract).group(1)
+    names = [name.strip() for name in body.split(",") if name.strip()]
+    assert states == names
+    assert len(stateDescription) == len(names)
+    for ordinal, name in enumerate(names):
+        assert GIState[name].value == ordinal
+        assert GIstateToStr(ordinal) == name
 
 
 def test_GIstateToStr_out_of_range():

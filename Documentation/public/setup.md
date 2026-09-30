@@ -128,18 +128,23 @@ ETH_PRIVATE_KEY_1 = 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234
 >[!NOTE]
 > Be sure to use your own private keys, as the private keys provided in the example are for demonstration purposes only.
 
-Connect a stored account with:
+> [!IMPORTANT]
+> `register-wallet` is for your own real key material and refuses to run while demo mode
+> is on — disable it first (`dincli system init` already defaults it off, so this is only
+> needed if you turned it on earlier):
+
+```bash
+dincli system configure-demo --mode no
+```
+
+Register a stored account with:
 
 ```bash
 dincli system register-wallet --account 0
 ```
 
-> [!IMPORTANT]
-> To use `dincli` with your own wallet (Non-Demo Mode from .env file), you must first disable demo mode:
-
-```bash
-dincli system configure-demo --mode no
-```
+For local Hardhat testing with a well-known dev key instead of your own `.env` key, see
+`dincli system connect-demo-wallet` in [cli-reference.md](./cli-reference.md#wallet-management).
 
 ---
 

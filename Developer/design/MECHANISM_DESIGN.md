@@ -128,15 +128,22 @@ Each GI's pool is funded from (in priority order):
 
 ### Settlement & claims
 
-- **Settlement cadence:** per-GI, at `endGI`. `endGI` computes each participant's entitlement and credits an on-chain `claimable[address]` balance — **pull-payment claim pattern** (`claimRewards()`), never push transfers in loops (gas + reentrancy).
-- **What's on-chain vs off-chain:** scores land on-chain (auditor submissions, already implemented); the median + proportional split must be computed on-chain at settlement so payouts are verifiable. Heavy scoring math stays off-chain in the Python services; the chain only sees submitted scores.
-- **Unclaimed rewards:** claimable indefinitely; no expiry for 2.0.
+Settlement is **per-GI** and split into two on-chain steps so that neither is a loop over participants (BL-10 / DD-4 — the earlier "`endGI` computes every entitlement in one transaction" design was `O(clients + auditors + aggregators)` in a single call and exceeded the L2 block gas limit at spec scale):
+
+1. **`endGI` → `settleRewards(gi, aggregatorTotalWeight)`** stores an O(1) per-GI snapshot: the client / auditor / aggregator pool amounts (the bps split of the funded pool) plus the aggregator-weight total. The treasury share is the rounding-dust remainder (`pool − clientPool − auditorPool − aggregatorPool`), absorbing the bps-split dust so the four shares sum to exactly the pool. No per-client, per-auditor, or per-aggregator iteration runs here.
+2. **`claimReward(gi)`** — each participant calls this once. It computes only *that caller's* share in O(1): client share from their own `finalMedianScore` over `giTotalApprovedScore`; auditor share from their own `auditorGIWeight` over `giTotalAuditWeight`; aggregator share from their own per-(aggregator, finalized-batch) `aggregatorWeight` over the snapshotted total. It credits `claimable[msg.sender]`.
+3. **`claimRewards()`** is unchanged — the pull-payment withdrawal of a caller's accumulated `claimable` balance across all GIs.
+
+- **Incremental totals:** the denominators `claimReward` divides by are accumulated *during* the GI, on loops that already run for other reasons — `giTotalApprovedScore` in `finalizeEvaluation`, `giTotalAuditWeight` / `auditorGIWeight` in `revealAuditScore`, `aggregatorWeight` / `totalAggregatorWeight` in `finalizeT1Aggregation` / `finalizeT2Aggregation`. `settleRewards` therefore needs no scan to derive them.
+- **Aggregator weighting:** one weight unit per (aggregator, finalized T1/T2 batch) pair — an aggregator credited for both a T1 batch and the T2 batch earns a proportionally larger share, not a flat per-address amount.
+- **What's on-chain vs off-chain:** scores land on-chain (auditor submissions, already implemented); the proportional split is computed on-chain — at claim time, per participant — so payouts are verifiable. Heavy scoring math stays off-chain in the Python services; the chain only sees submitted scores.
+- **Unclaimed rewards:** claimable indefinitely; no expiry for 2.0. A participant who never calls `claimReward(gi)` simply leaves their share unaccrued in the contract — it is not swept or reassigned.
 - **Anti-gaming:** duplicate-update discounting is inherent in BlockFLow sequential fold-in (P3-SCR verifies); score inflation by a single auditor is bounded by the median; a client scoring ≤ pass-score threshold earns nothing, so spam costs compute for zero return.
 
 ### Open decisions
 
 - Exact split percentages (simulate in P3-5.2 at 10–50 validators / 100–500 clients per model).
-- Whether aggregator reward should scale with batch size (recommend yes, linear in models aggregated).
+- Aggregator reward now scales with the **number of finalized T1/T2 batches** an aggregator completed (per-batch weighting, shipped in BL-10). Whether it should *also* scale with batch size (linear in models aggregated within a batch) is still open — fold into the P3-5.2 simulation alongside the split percentages.
 - Denominating pool minimums in DIN vs fiat-oracle terms — recommend plain DIN for 2.0, no oracle dependency.
 
 ---
@@ -203,7 +210,7 @@ Simulate: does the pool + emission produce stable validator income at target / 1
 | **Manifest update fee** | Model owner | `requestManifestUpdate` | ✅ (ETH) | On-chain protocol fee → **DIN** | → treasury |
 | **Per-GI service fee** | Model owner | Precondition of `startGI` | ❌ — this **is** the reward-pool deposit (§5); fee and pool are one flow | Validator network fee → **ETH** (model owners already pay gas in ETH; a DIN requirement adds friction) | → validator pool (95%) + treasury network fee (5%) |
 | **Storage cost line item** | Model owner | Per-GI, alongside service fee | ❌ | Validator network fee → ETH, same reasoning as service fee | Design the routing slot now, keep at 0 until Filecoin migration (RES-1) |
-| **Dispute bond** | Disputing validator | Dispute open | ❌ | Validator network fee → ETH | Returned + bounty if upheld; → treasury if frivolous |
+| **Dispute bond** | Disputing validator | Dispute open | ❌ | Slashing-pattern deposit → **DIN** (not a network fee — see [`slashing-taxonomy.md`](slashing-taxonomy.md), §9 item 7) | Returned + bounty if upheld; 50/50 burn/treasury split if frivolous |
 
 ### Routing contract (P3-5.3)
 
@@ -214,7 +221,7 @@ Single fee-router with DAO-settable split fractions: `modelOwner → {validatorP
 ✅ **Resolved (Abraham, via Slack, 2026-07-21) — a split, not a full DIN migration.** Registration/manifest fees are ETH today; staking/rewards are DIN. The resolved split:
 
 - **On-chain protocol fees** (registration, manifest updates, staking, rewards) → **DIN** — single-asset accounting, reinforces token utility, and `depositAndMint` makes acquisition trivial on devnet.
-- **Validator network fees** (model owner → validator, i.e. the per-GI service fee, storage line item, dispute bond) → **stay in ETH** — model owners already pay gas in ETH; requiring them to also hold DIN just to pay validators adds friction the on-ramp doesn't fully remove. Mirrors how Ethereum uses ETH for gas without forcing a separate token for network usage.
+- **Validator network fees** (model owner → validator, i.e. the per-GI service fee, storage line item) → **stay in ETH** — model owners already pay gas in ETH; requiring them to also hold DIN just to pay validators adds friction the on-ramp doesn't fully remove. Mirrors how Ethereum uses ETH for gas without forcing a separate token for network usage. The dispute bond is *not* in this list — it's the challenger's own slashing-pattern stake (item 1's DIN resolution), not a payment to a validator for a service; see item 7.
 
 Migration: add DIN-denominated params for the protocol-fee lines only, deprecate their ETH variants after one release. The fee router must still handle both assets (DIN for protocol fees, ETH for network fees) — this is accepted complexity now, not deferred.
 
@@ -234,7 +241,7 @@ Decisions that must be made (with owner + roadmap slot) before DevNet 2.0 contra
 4. **Fee denomination** — ✅ **Resolved as a split, not DIN-only as previously recommended here.** On-chain protocol fees (registration, staking, rewards) → DIN. Validator network fees (model owner → validator, i.e. the per-GI service fee) → ETH — model owners already pay gas in ETH, and requiring DIN just to pay validators adds friction the `depositAndMint` on-ramp doesn't fully remove. See the restated denomination decision in §8. Owner: Umer, P3-5.3.
 5. **Emission schedule shape + MAX_SUPPLY** — ✅ **Partially resolved.** Geometric decay per epoch and a GI-lifecycle-tied inflation guard are confirmed. `MAX_SUPPLY` is deliberately left **open/dynamic for now** — no hard cap at freeze time; supply is governed by issuance vs. burn, with a hard cap possible later via governance once the economics are proven. Decay rate/epoch length numbers and the simulation bar (stable validator income at target / 10× / 0.1× participation) are unchanged from §7. Owner: Umer (design), Robbert (contract).
 6. **Per-model stake requirement bounds** — P3-5.1. Owner: Umer.
-7. **Dispute bond size & window length** — P3-4.3. Owner: Umer (design), Robbert (contract).
+7. **Dispute bond size & window length** — ✅ **Denomination resolved: DIN** (slashing-pattern security deposit, not a §8 validator network fee — see [`slashing-taxonomy.md`](slashing-taxonomy.md)). Size & window length still open — P3-4.3. Owner: Umer (design), Robbert (contract).
 8. **`depositAndMint` cap/retirement plan for testnet** — ✅ **Resolved.** Keep active (faucet mode) on DevNet; cap on testnet; retire on mainnet, replaced by either a proper on-ramp/ICO or a validator-airdrop program rewarding testnet participants — both kept open, final distribution model still TBD. Owner: Umer.
 9. **Burn policy** — ✅ **Resolved.** Burn from both on-chain protocol fees *and* validator network fees (dual sources), plus the existing slashed-stake burn share (item 1). Reserve the public-goods routing slot in the fee router now (`{validatorPool, treasury, burn, storage, publicGoods}`) even though it stays unfunded initially — see §8. Owner: Umer, P3-5.3.
 10. **White paper §46 scope items** — ✅ **Resolved.** DPoS delegation stays parked to P5+ (confirms existing default, §3). Encrypted test dataset (paper §5.2.3b) — adopt in 2.0. Test-set resampling (paper §5.2) — adopt in 2.0. Commit-then-reveal between auditors (paper §5.2) — in scope for P3 (§6 scoring hardening). Non-coin-based voting credits (DPPs) — din-dao itself is deferred to post-mainnet (2026-08-04, see [DESIGN_DECISIONS.md DD-1/DD-2](DESIGN_DECISIONS.md#dd-2--dao-voting-power-model-coin-weighted-vs-quadratic-vs-non-coin-based)), so the stance-documentation ask carries over to whenever that design work resumes; P3 still ships `onlyOwner` governance only. Owner: Umer, P3-SCR / P3-DOC7.

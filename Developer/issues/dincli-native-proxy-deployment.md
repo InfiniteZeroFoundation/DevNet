@@ -4,22 +4,28 @@
 
 Implement the chosen architecture of
 [proxy-deployment-architecture.md](../../Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md):
-`dincli dindao deploy ...` performs Transparent-Proxy deployment **natively in
+`dincli dinrep deploy ...` performs Transparent-Proxy deployment **natively in
 web3.py** — no `npx hardhat run` / `forge script` at runtime.
 
-## Interim state (2026-07-15)
+## Interim state
 
-The dincli integration harness (Phase 1, `tests/dincli/test_01_platform.py` on
-the PR 13 lineage) currently uses the **interim script flow**, which is the
-record's *rejected* Option A kept only as test scaffolding:
+The dincli integration harness (Phase 1, `tests/dincli/test_01_platform.py`)
+uses the **interim script flow**, which is the record's *rejected* Option A
+kept as scaffolding until the native deploy lands:
 
-1. `npx hardhat run scripts/deploy-platform.ts --network localhost` (OZ upgrades plugin)
-2. `dincli system import-deployments` maps `hardhat/deployments/<net>.json` → `din_info.json`
+1. `cd foundry && forge script script/DeployPlatform.s.sol --rpc-url <rpc> --broadcast ...`
+   deploys and wires the seven platform proxies
+2. `dincli system import-deployments` (`--foundry` is the default) maps
+   `foundry/deployments/<net>.json` → `din_info.json`
 
-This works and keeps the harness green, but has the known drawbacks (Node as a
-runtime dependency, hardhat env keys instead of the dincli wallet, coupling to
-the deployments file) and dies when `hardhat/` is deleted (Foundry-only
-decision, 2026-07-03).
+The Hardhat script is the secondary path: `npx hardhat run
+scripts/deploy-platform.ts --network <net>`, then `dincli system
+import-deployments --hardhat`.
+
+This works and keeps the harness green, but has the known drawbacks: a
+toolchain (forge, plus Node for the upgrade-safety validation) as a runtime
+dependency, the toolchain's signing setup instead of the dincli wallet, and
+coupling to the deployments file.
 
 ## Work
 
@@ -38,14 +44,15 @@ Supporting pieces (from the record §6):
   `bytecode: {object: "0x…"}` in `get_contract_instance` / deploy path
 - ship/pin the OZ `TransparentUpgradeableProxy` artifact (v5.x) with dincli —
   do not recompile it ad hoc
-- new `dindao deploy din-token` command; existing deploy commands become
-  proxy-aware; write resulting addresses (incl. `proxy_admin`) to `din_info.json`
+- a `dinrep deploy` sub-app with one proxy-aware command per platform contract
+  (the old constructor-based `dinrep deploy din-coordinator/din-validator-stake/din-model-registry`
+  commands were removed because they could not deploy the proxied contracts); write resulting addresses (incl. `proxy_admin`) to `din_info.json`
 - scope: **V1 bootstrap only** — upgrades stay behind the toolchain scripts
 
 ## Acceptance
 
 - Harness Phase 1 replaces the script+import scaffolding with per-contract
-  `dincli dindao deploy ...` tests (restore the original test structure)
+  `dincli dinrep deploy ...` tests (restore the original test structure)
 - `system import-deployments` remains as a secondary sync utility (adopting
   script/upgrade-driven deployments), no longer the canonical bootstrap path
 - No Node/toolchain invocation anywhere in the dincli deploy path

@@ -22,15 +22,35 @@ enum GIstates {
     LMSclosed, // 11
     AuditorsBatchesCreated, // 12
     LMSevaluationStarted, // 13
-    LMSevaluationClosed, // 14
-    T1nT2Bcreated, // 15
-    T1AggregationStarted, // 16
-    T1AggregationDone, // 17
-    T2AggregationStarted, // 18
-    T2AggregationDone, // 19
-    AuditorsSlashed, // 20
-    AggregatorsSlashed, // 21
-    GIended // 22
+    // Reveal phase for commit-then-reveal auditor scoring (task_210726_6 §2a).
+    // Inserted here, immediately after the commit phase, rather than
+    // appended at the end as PR #63's own diff originally did (see git
+    // history) -- deliberate deviation, decided 2026-08-27: this ordinal
+    // position matches the state's actual place in the GI lifecycle.
+    // dincli/cli/utils.py's `states`/`stateDescription` positional mirrors
+    // (indexed by this enum's raw ordinals) have been updated to match,
+    // shifting every subsequent entry by +1; see that file and
+    // Documentation/technical/contracts/DINShared.md §2.1 for the full
+    // 24-member table.
+    LMSevaluationRevealStarted, // 14
+    LMSevaluationClosed, // 15
+    T1nT2Bcreated, // 16
+    T1AggregationStarted, // 17
+    // Reveal phase for commit-then-reveal T1/T2 aggregation submissions
+    // (issue #156 M-1, task_240926_18 Part C). Same 2026-08-27 precedent as
+    // LMSevaluationRevealStarted above: inserted immediately after each
+    // commit phase rather than appended, so dincli/cli/utils.py's `states`/
+    // `stateDescription` mirrors and Documentation/technical/contracts/
+    // DINShared.md §2.1 have been updated to match, shifting every
+    // subsequent entry by +1 (T1) then +1 again (T2).
+    T1AggregationRevealStarted, // 18
+    T1AggregationDone, // 19
+    T2AggregationStarted, // 20
+    T2AggregationRevealStarted, // 21
+    T2AggregationDone, // 22
+    AuditorsSlashed, // 23
+    AggregatorsSlashed, // 24
+    GIended // 25
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,16 +73,58 @@ interface IDinValidatorStake {
     function isSlasherContract(
         address slasherContract
     ) external view returns (bool);
+
+    function getEncryptionKey(address validator) external view returns (bytes memory);
+
+    /// @dev Returns modelMinStakeBounds[modelId].min, the per-model stake floor.
+    function getModelStakeMin(uint256 modelId) external view returns (uint256);
+
+    /// @dev Per-validator active-registration counter, read to enforce the concurrent cap.
+    function activeRegistrationCount(address validator) external view returns (uint256);
+
+    /// @dev Increments activeRegistrationCount[validator]; callable only by registered slashers.
+    function incrementActiveRegistration(address validator) external;
+
+    /// @dev Decrements activeRegistrationCount[validator]; callable only by registered slashers.
+    function decrementActiveRegistration(address validator) external;
+
+    /// @dev Network-wide cap: max concurrent registrations per MIN_STAKE unit of stake.
+    function maxConcurrentRegistrationsPerStakeUnit() external view returns (uint256);
+
+    function slashPartial(
+        address validator,
+        uint256 amount,
+        bytes32 reason,
+        uint256 giIndex
+    ) external returns (uint256);
+
+    function recordNoParticipation(
+        address validator,
+        bytes32 reason
+    ) external returns (uint256);
+
+    /// @dev Returns the platform slash-treasury address set on DinValidatorStake.
+    function slashTreasury() external view returns (address);
 }
 
 interface IDINTaskCoordinator {
     function GI() external view returns (uint256);
 
     function GIstate() external view returns (GIstates);
+
+    /// @dev Per-(aggregator, finalized-batch) settlement weight for a GI,
+    ///      read by DINTaskAuditor.claimReward at claim time (BL-10, #125).
+    function aggregatorWeight(
+        uint256 gi,
+        address aggregator
+    ) external view returns (uint256);
 }
 
 interface IDINTaskAuditor {
-    function createAuditorsBatches(uint _GI) external returns (bool);
+    function createAuditorsBatches(
+        uint _GI,
+        bytes32 seed
+    ) external returns (bool);
 
     function setTestDataAssignedFlag(uint _GI, bool flag) external;
 
@@ -75,7 +137,37 @@ interface IDINTaskAuditor {
     ) external view returns (uint[] memory);
 
     function updatePassScore(uint256 newPassScore) external;
+
+    function giRewardPool(uint256 gi) external view returns (uint256);
+
+    function settleRewards(uint256 gi, uint256 aggregatorTotalWeight) external;
+
+    /// @dev Decrements activeRegistrationCount for every auditor registered in _GI.
+    ///      Called by the coordinator's releaseGIRegistrationSlots (not endGI itself,
+    ///      to keep endGI's gas cost O(1) per BL-10).
+    function decrementAuditorRegistrations(uint256 _GI) external;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — commit-then-reveal auditor scoring (task_210726_6 §2a-2b, DINTaskAuditor)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev GI state does not permit committing an audit score at this time.
+error TA_CommitPhaseNotOpen();
+/// @dev This auditor has already committed a score for this model.
+error TA_AlreadyCommitted();
+/// @dev The commit hash must not be zero.
+error TA_EmptyCommitHash();
+/// @dev GI state does not permit revealing an audit score at this time.
+error TA_RevealPhaseNotOpen();
+/// @dev This auditor has not committed a score for this model.
+error TA_NoCommitFound();
+/// @dev The revealed (score, vote, salt) does not hash to the stored commitment.
+error TA_RevealHashMismatch();
+/// @dev GI state does not permit starting the reveal phase.
+error TC_RevealCannotBeStarted();
+/// @dev The number of encrypted keys supplied does not match the batch's auditor count.
+error TA_EncryptedKeyCountMismatch();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskAuditor
@@ -131,10 +223,31 @@ error TA_AlreadyVoted();
 error TA_CannotFinalizeEvaluation();
 /// @dev Auditor's validator status is not Active.
 error TA_AuditorNotActive();
+/// @dev Maximum auditor registrations for this GI has been reached.
+error TA_RegistrationCapReached();
+/// @dev GI state does not permit slashing auditors at this time.
+error TA_CannotSlashAuditors();
 /// @dev S3 deviation threshold must be in the range [0, 100].
 error TA_InvalidDeviationThreshold();
+error TA_InvalidSlashFraction();
 /// @dev _medianOf requires at least one entry to compute a median over.
 error TA_EmptyScoreSet();
+/// @dev No X25519 encryption key registered for this auditor on DinValidatorStake.
+error TA_AuditorEncryptionKeyNotRegistered();
+/// @dev Test-data commitment has not been stored for this batch.
+error TA_NoCommitmentStored();
+/// @dev A dispute is already active for this batch.
+error TA_DisputeAlreadyActive();
+/// @dev No active dispute exists for this batch.
+error TA_NoActiveDispute();
+/// @dev The dispute challenge window has closed.
+error TA_DisputeWindowClosed();
+/// @dev The attached bond does not meet the required minimum.
+error TA_InsufficientDisputeBond();
+/// @dev Dispute bond amount must be greater than zero.
+error TA_InvalidDisputeBond();
+/// @dev Batch is blocked pending model owner reassignment after a lost dispute.
+error TA_BatchPendingReassignment();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — DINTaskCoordinator
@@ -194,7 +307,8 @@ error TC_BatchNotFound();
 error TC_OnlyOneTier2Batch();
 /// @dev GI state does not permit starting T1 aggregation.
 error TC_NotReadyForT1Aggregation();
-/// @dev T1 aggregation phase has not been started.
+/// @dev T1 aggregation commit phase has not been started (see
+///      commitT1Aggregation, issue #156 M-1).
 error TC_T1AggregationNotStarted();
 /// @dev The batch index or aggregator assignment is invalid.
 error TC_InvalidBatch();
@@ -208,7 +322,8 @@ error TC_NoSubmissions();
 error TC_NotReadyToFinalizeT1();
 /// @dev GI state does not permit starting T2 aggregation.
 error TC_NotReadyForT2Aggregation();
-/// @dev T2 aggregation phase has not been started.
+/// @dev T2 aggregation commit phase has not been started (see
+///      commitT2Aggregation, issue #156 M-1).
 error TC_T2AggregationNotStarted();
 /// @dev The T2 batch has not received its submission yet.
 error TC_NotReadyToFinalizeT2();
@@ -226,3 +341,123 @@ error TC_FailedToFinalizeEvaluation();
 error TC_AggregatorNotActive();
 /// @dev The call to DINTaskAuditor.slashAuditors() returned false.
 error TC_FailedToSlashAuditors();
+/// @dev The upcoming GI's reward pool has not been funded via depositRewards.
+error TC_GIRewardPoolNotFunded();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — rewards (task_210726_6 §3, DINTaskAuditor)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev A required address argument was the zero address.
+error TA_InvalidAddress();
+/// @dev The four RewardSplit fields must sum to exactly 10000 bps.
+error TA_InvalidRewardSplit();
+/// @dev Caller has no claimable reward balance.
+error TA_NoRewardsToClaim();
+/// @dev depositRewards was called for a GI that has already passed and can
+///      never be started (or re-started) again, so the deposit could never
+///      be settled or claimed.
+error TA_InvalidRewardGI();
+/// @dev claimReward was called for a GI whose rewards have not been settled yet.
+error TA_RewardsNotSettled();
+/// @dev Caller already claimed their reward for this GI.
+error TA_RewardAlreadyClaimed();
+/// @dev Caller earned no reward for this GI (not a participant, or scored zero).
+error TA_NoRewardEarned();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — dispute resolution (task_210726_6 §4c, DINTaskCoordinator)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev A required address argument was the zero address.
+error TC_InvalidAddress();
+/// @dev Dispute bond and window must both be greater than zero.
+error TC_InvalidDisputeParams();
+/// @dev The batch being disputed has not been finalized yet.
+error TC_BatchNotFinalized();
+/// @dev The dispute window for this batch has already elapsed.
+error TC_DisputeWindowClosed();
+/// @dev A dispute has already been opened against this batch.
+error TC_DisputeAlreadyOpen();
+/// @dev No dispute exists for this batch.
+error TC_DisputeNotOpen();
+/// @dev This dispute has already been resolved.
+error TC_DisputeAlreadyResolved();
+/// @dev Caller has no claimable dispute-bond balance.
+error TC_NoBondClaimable();
+/// @dev The dispute is not in the awaiting-recomputation phase (fresh subgroup not yet assigned).
+error TC_DisputeNotAwaitingRecomputation();
+/// @dev The resolution window has not yet expired; expireDispute cannot be called yet.
+error TC_ResolutionWindowOpen();
+/// @dev The dispute has already been finalized via settleRecomputation or expireDispute.
+error TC_DisputeAlreadyFinalized();
+/// @dev Aggregation CID cannot be bytes32(0); zero is reserved as the "no submission" sentinel.
+error TC_ZeroCID();
+/// @dev Maximum aggregator registrations for this GI has been reached.
+error TC_RegistrationCapReached();
+/// @dev Fewer aggregators submitted than the required quorum for this batch.
+error TC_InsufficientSubmissions();
+/// @dev Aggregator's stake is below the per-model minimum floor set by the model owner.
+error TC_StakeBelowModelFloor();
+/// @dev Aggregator already holds the maximum concurrent registrations permitted by their stake.
+error TC_ConcurrentRegistrationCapReached();
+/// @dev Auditor's stake is below the per-model minimum floor set by the model owner.
+error TA_StakeBelowModelFloor();
+/// @dev Auditor already holds the maximum concurrent registrations permitted by their stake.
+error TA_ConcurrentRegistrationCapReached();
+error TC_InvalidSlashFraction();
+
+error TC_DisputeSeedNotLocked();
+error TC_DisputeSeedBlockNotMined();
+error TC_DisputeSeedAlreadyLocked();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — ungrindable batch-assignment seed (issue #156 H-2, both tiers,
+// task_240926_18 Part B). Same future-block-seed pattern as the dispute seed
+// above, applied to the two regular batch-creation call sites.
+// ─────────────────────────────────────────────────────────────────────────────
+error TC_AggSeedNotAnchored();
+error TC_AggSeedBlockNotMined();
+error TC_AggSeedAlreadyLocked();
+error TC_AggSeedNotLocked();
+error TC_AuditSeedNotAnchored();
+error TC_AuditSeedBlockNotMined();
+error TC_AuditSeedAlreadyLocked();
+error TC_AuditSeedNotLocked();
+/// @dev Defense-in-depth: DINTaskAuditor independently rejects a zero seed
+///      even though DINTaskCoordinator already checks auditSeed != 0 before
+///      calling in, mirroring the M-3 precedent (no single point of trust).
+error TA_AuditSeedNotLocked();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — commit-then-reveal T1/T2 aggregation (issue #156 M-1,
+// task_240926_18 Part C, DINTaskCoordinator). Mirrors task_210726_6 §2a's
+// auditor-side commit-reveal errors above, with the sender-bound hash
+// hardening described on commitT1Aggregation/commitT2Aggregation's NatSpec.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev GI state does not permit starting the T1 aggregation reveal phase.
+error TC_T1RevealCannotBeStarted();
+/// @dev GI state does not permit revealing a T1 aggregation submission at this time.
+error TC_T1RevealPhaseNotOpen();
+/// @dev This aggregator has already committed a T1 aggregation CID for this batch.
+error TC_T1AlreadyCommitted();
+/// @dev The T1 commit hash must not be zero.
+error TC_T1EmptyCommitHash();
+/// @dev This aggregator has not committed a T1 aggregation CID for this batch.
+error TC_T1NoCommitFound();
+/// @dev The revealed (cid, salt) does not hash to the stored T1 commitment.
+error TC_T1RevealHashMismatch();
+
+/// @dev GI state does not permit starting the T2 aggregation reveal phase.
+error TC_T2RevealCannotBeStarted();
+/// @dev GI state does not permit revealing a T2 aggregation submission at this time.
+error TC_T2RevealPhaseNotOpen();
+/// @dev This aggregator has already committed a T2 aggregation CID for this batch.
+error TC_T2AlreadyCommitted();
+/// @dev The T2 commit hash must not be zero.
+error TC_T2EmptyCommitHash();
+/// @dev This aggregator has not committed a T2 aggregation CID for this batch.
+error TC_T2NoCommitFound();
+/// @dev The revealed (cid, salt) does not hash to the stored T2 commitment.
+error TC_T2RevealHashMismatch();

@@ -55,4 +55,11 @@ contract UpgradeValidationTest is Test {
         Options memory opts;
         Upgrades.validateImplementation("DinFeeRouter.sol:DinFeeRouter", opts);
     }
+
+    /// @dev Validates DinEmission is upgrade-safe (Initializable, OwnableUpgradeable,
+    ///      ReentrancyGuardTransient, __gap reservation).
+    function test_validateImplementation_DinEmission() public {
+        Options memory opts;
+        Upgrades.validateImplementation("DinEmission.sol:DinEmission", opts);
+    }
 }

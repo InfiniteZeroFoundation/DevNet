@@ -130,7 +130,12 @@ class DinContext:
         """Update network selection and invalidate session cache if changed."""
         if network:
             self.network_arg = network
-            self._session = None
+            # Root options select the demo signer before the network. Keep the
+            # selected signer when rebuilding network/web3 state, so the wallet
+            # displayed by the CLI is also the one used by SDK transactions.
+            if self._session is not None:
+                self._session = DinSession(network=network, wallet=self.wallet_name,
+                                           signer=self._session.signer)
         return self
 
     def select_wallet(self, name: Optional[str]):

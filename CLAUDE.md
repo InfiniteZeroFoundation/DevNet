@@ -15,23 +15,25 @@ Docs convention: `Documentation/` describes what exists in the code on `develop`
 ### Python / dincli
 
 ```bash
-pip install -e .              # editable install (repo root, requires Python >=3.9)
+pip install -e .              # editable install (repo root, requires Python >=3.12)
 dincli --help                 # CLI entrypoint (dincli.main:app)
 pytest                        # run all tests
 pytest tests/test_dintoken.py -k test_name   # run a single test
 ```
 
-There is no `[tool.pytest]`/`[tool.ruff]` config committed in `pyproject.toml` — `.pytest_cache`/`.ruff_cache` are local artifacts, not enforced CI config. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
+There is no `[tool.ruff]` config committed in `pyproject.toml` — `.ruff_cache` is a local artifact, not enforced CI config. `[tool.pytest.ini_options]` registers the `integration` marker. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
 
 Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner` rather than hitting a live network (see `tests/test_dintoken.py`, `tests/test_ipfs_config.py`).
 
 ### Solidity
 
 ```bash
-cd foundry && forge build && forge test          # primary: build/test
+cd foundry && npm ci && forge build && forge test # primary: build/test
 forge script script/DeployPlatform.s.sol ...      # primary: deploy (see script/ for deploy/upgrade scripts)
 cd hardhat && npx hardhat compile && npx hardhat test   # secondary/complementary toolchain
 ```
+
+`npm ci` in `foundry/` must run before `forge test`: `Upgrades.validateImplementation` (used by the upgrade-validation tests and `DeployPlatform.s.sol`/`UpgradePlatform.s.sol`) shells out over FFI to `npx @openzeppelin/upgrades-core`, and without `foundry/node_modules` already populated, `forge test`'s parallel test functions race each other fetching the package into the shared npx cache — a source of both flakiness and unnecessary supply-chain exposure from fetching a package at test time. `foundry/package.json` already pins the dependency, so `npm ci` installs from the committed lockfile rather than resolving anything new.
 
 Foundry config: `solc 0.8.28`, `via_ir = true`. Hardhat config: `solc 0.8.28`, `evmVersion: cancun`, local hardhat network forced to `hardfork: cancun` (required for TSTORE/TLOAD support used by the contracts). `hardhat/hardhat.config.ts` loads `../.env` then `../.env.<NETWORK>` (defaults to `local`).
 
@@ -54,7 +56,7 @@ A model's lifecycle runs in **Global Iterations (GI)**: aggregator/auditor regis
 
 ### CLI structure (`dincli/`)
 
-- `main.py` registers one Typer sub-app per role/concern: `system`, `dindao` (DIN-Representative actions), `model-owner`, `aggregator`, `auditor`, `client`, `dintoken`, `task`, `ipfs`. Role-specific submodules for the model-owner workflow live under `cli/modelownerd/` (deploy, gi, lms, lms_evaluation, aggregation, auditor_batches, slash, model, task, setup).
+- `main.py` registers one Typer sub-app per role/concern: `system`, `dinrep` (DIN-Representative actions), `model-owner`, `aggregator`, `auditor`, `client`, `dintoken`, `task`, `ipfs`. Role-specific submodules for the model-owner workflow live under `cli/modelownerd/` (deploy, gi, lms, lms_evaluation, aggregation, auditor_batches, slash, model, task, setup).
 - `cli/context.py` (`DinContext`) is the shared runtime object injected into commands: lazily resolves network/web3/account, fetches deployed platform contracts, resolves *task* contract artifacts (custom ABIs can be supplied via the manifest's `task_contracts` block, falling back to bundled ABIs in `dincli/abis/`), and tracks per-directory IPFS CID caches (`local.json.cid`) so files are only re-fetched when their CID changes.
 - `cli/utils.py` holds config/cache paths (via `platformdirs`: `CONFIG_DIR`/`CACHE_DIR` under `dincli`), account loading/keystore handling, manifest load/cache/key lookup, GI state enum helpers, and tx building.
 - `services/runtime.py` builds a `ServiceRuntimeContext` (network, manifest, manifest_path, model_id/role) that is auto-injected into model-owner-supplied service functions when they declare a `runtime` parameter.

@@ -191,7 +191,7 @@ Example: `tx_reverted` allows `{tx_hash: hex, nonce: int, gi: int, reason: str<=
 
 ### 5a. Reads: compute-and-print → return data (summary vs detail)
 
-**Before** (`dindao.py::list_pending_requests`): loops contracts, `console.print`s each row, returns
+**Before** (`dinrep.py::list_pending_requests`): loops contracts, `console.print`s each row, returns
 nothing; fields by raw tuple index (`req[6]`).
 
 **After** — list endpoints return lightweight *summaries*; single-item lookups return *detail* objects:
@@ -263,11 +263,16 @@ def decode_events(receipt: TxReceiptInfo, contract_event) -> list[dict]:
     (e.g. ModelRegistrationResult.request_id) without exposing raw web3 objects to consumers."""
 ```
 
-Why the richer receipt: deploy flows read `tx_receipt.contractAddress` (`dindao.py`,
-`modelownerd/deploy.py`) → `contract_address`; registry flows decode events via
+Why the richer receipt: task deploy flows read `tx_receipt.contractAddress`
+(`modelownerd/deploy.py`) → `contract_address`; registry flows decode events via
 `contract.events.X().process_receipt(tx_receipt)` (`task.py`) → `decode_events()` over the retained
 `_raw`. The serialized surface (`to_envelope`) omits `_raw`; operations decode events into their own
 typed result dataclasses.
+
+The former platform `dinrep deploy` sub-app was removed in PR #204. Platform deployment
+uses the Foundry/Hardhat script followed by `system import-deployments`; it is not a CLI
+transaction-receipt parity target. Task deployment against Foundry artifacts remains
+limited by the constructor mismatch tracked in BL-27.
 
 Retry safety (§10): on failure the raised `TransactionError.details` carries enough to decide a retry —
 `tx_hash` **if broadcast**, `nonce` if known, and a `broadcast: bool` flag (did we hit the network
