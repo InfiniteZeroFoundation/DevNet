@@ -3,7 +3,7 @@ import time
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import MIN_STAKE, build_and_send_tx, read_after_write
+from dincli.cli.utils import MIN_STAKE, build_and_send_tx, reraise_din_error_cause, read_after_write
 from dincli.sdk.errors import DinError
 from dincli.sdk.operations.platform import get_stake, get_stake_contract_address
 
@@ -142,6 +142,7 @@ def read_dintoken_stake(ctx: typer.Context, name ="Account"):
     try:
         stake_address = get_stake_contract_address(effective_network)
     except DinError as e:
+        reraise_din_error_cause(e)
         console.print(f"[bold red]✗ {e.message}[/bold red]")
         raise typer.Exit(1)
 
@@ -150,6 +151,7 @@ def read_dintoken_stake(ctx: typer.Context, name ="Account"):
     try:
         result = get_stake(ctx.obj.session, address=account.address)
     except DinError as e:
+        reraise_din_error_cause(e)
         console.print(f"[bold red]✗ {e.message}[/bold red]")
         raise typer.Exit(1)
 

@@ -19,7 +19,21 @@ import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates} from "../src/DINShared.sol";
+import {
+    GIstates,
+    TC_ZeroCID,
+    TC_InvalidAddress,
+    TA_InvalidAddress,
+    TC_AggSeedNotAnchored,
+    TC_AggSeedBlockNotMined,
+    TC_AggSeedAlreadyLocked,
+    TC_AggSeedNotLocked,
+    TC_AuditSeedNotAnchored,
+    TC_AuditSeedBlockNotMined,
+    TC_AuditSeedAlreadyLocked,
+    TC_AuditSeedNotLocked,
+    TA_AuditSeedNotLocked
+} from "../src/DINShared.sol";
 
 contract SecurityFindingsTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -40,6 +54,7 @@ contract SecurityFindingsTest is Test {
     DinFeeRouter feeRouter;
 
     address admin = makeAddr("admin");
+    bytes32 constant TEST_SALT = bytes32(uint256(0xC0FFEE));
 
     function _deployPlatform() internal {
         vm.startPrank(admin);
@@ -197,8 +212,8 @@ contract SecurityFindingsTest is Test {
 
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
-        tc = new DINTaskCoordinator(address(stake));
-        ta = new DINTaskAuditor(address(stake), address(tc));
+        tc = new DINTaskCoordinator(address(stake), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1);
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -212,6 +227,16 @@ contract SecurityFindingsTest is Test {
         tc.setDINTaskCoordinatorAsSlasher();
         tc.setDINTaskAuditorAsSlasher();
         tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
+
+        // task_210726_6 §3: _startGI now requires the upcoming GI's reward
+        // pool to be funded first. Minimal funding here since these fixtures
+        // predate the reward engine and aren't testing settlement.
+        ta.setDinToken(address(token));
+        vm.deal(modelOwner, 1 ether);
+        coordinator.depositAndMint{value: 0.001 ether}();
+        token.approve(address(ta), type(uint256).max);
+        ta.depositRewards(1, 1 ether);
+
         tc.startGI(1);
         vm.stopPrank();
     }
@@ -268,22 +293,39 @@ contract SecurityFindingsTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
-        // Both models pass: all 3 auditors vote eligible + score 100 on both models.
+        // Both models pass: all 3 auditors commit-then-reveal eligible +
+        // score 100 on both models (commit-then-reveal per task_210726_6 §2a
+        // replaced the old single-shot setAuditScorenEligibility).
         (, address[] memory batchAuditors, uint[] memory modelIdxs,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.setAuditScorenEligibility(1, 0, modelIdxs[m], 100, true);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 100, true, TEST_SALT);
             }
         }
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(1);
         tc.autoCreateTier1AndTier2(1);
         tc.startT1Aggregation(1);
         vm.stopPrank();
@@ -295,25 +337,22 @@ contract SecurityFindingsTest is Test {
         (, address[] memory t1aggs,,,) = tc.getTier1Batch(1, 0);
         assertEq(t1aggs.length, 3, "sanity: T1 batch should have 3 aggregators");
 
-        // Only ONE of the three assigned aggregators submits, and submits
-        // the zero CID. The other two never submit before the model owner
-        // closes the window (a routine "not everyone responded in time"
-        // scenario, not an edge case).
+        // C-2 regression: bytes32(0) is now rejected at reveal time with TC_ZeroCID
+        // (issue #156 M-1 moved the actual CID write from submit to reveal). Before
+        // the original fix this call succeeded and permanently bricked
+        // finalizeT1Aggregation (TC_NoSubmissions at finalize, GI stuck forever).
+        bytes32 commitHash = keccak256(
+            abi.encode(bytes32(0), TEST_SALT, t1aggs[0], uint(1), DINTaskCoordinator.TierKind.Tier1, uint(0))
+        );
         vm.prank(t1aggs[0]);
-        tc.submitT1Aggregation(1, 0, bytes32(0));
+        tc.commitT1Aggregation(1, 0, commitHash);
 
-        // This is the ONLY submission in the batch, so it is unambiguously
-        // the plurality winner (1 vote > 0). Finalization should therefore
-        // either succeed with finalCID == bytes32(0), or explicitly reject
-        // zero-CID submissions at submit time. Instead:
-        vm.expectRevert(); // TC_NoSubmissions — wrongly conflates "no one voted" with "the winning vote was 0x0"
-        tc.finalizeT1Aggregation(1);
+        vm.prank(modelOwner);
+        tc.startT1AggregationReveal(1);
 
-        // The GI is now stuck: GIstate is still T1AggregationStarted, the
-        // task contracts are not upgradeable, and there is no admin
-        // function to skip/override a single batch. Every subsequent call
-        // to finalizeT1Aggregation reverts the same way, forever.
-        assertEq(uint256(tc.GIstate()), uint256(GIstates.T1AggregationStarted));
+        vm.prank(t1aggs[0]);
+        vm.expectRevert(TC_ZeroCID.selector);
+        tc.revealT1Aggregation(1, 0, bytes32(0), TEST_SALT);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -392,6 +431,8 @@ contract SecurityFindingsTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -399,12 +440,27 @@ contract SecurityFindingsTest is Test {
 
         // Only batch 0 votes -- guarantees finalizeEvaluation() finalizes
         // at least one model (returns true) without every registrant
-        // needing to participate.
+        // needing to participate. Commit-then-reveal (§2a) replaced the old
+        // single-shot setAuditScorenEligibility; leaves GIstate at
+        // LMSevaluationRevealStarted so _finishEvaluationAndAggregation can
+        // measure closeLMsubmissionsEvaluation's gas directly, matching what
+        // this helper returned to callers before commit-reveal existed.
         (, address[] memory batch0Auditors, uint[] memory batch0Models,) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batch0Auditors.length; i++) {
             for (uint m = 0; m < batch0Models.length; m++) {
                 vm.prank(batch0Auditors[i]);
-                ta.setAuditScorenEligibility(1, 0, batch0Models[m], 100, true);
+                ta.commitAuditScore(1, 0, batch0Models[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batch0Auditors.length; i++) {
+            for (uint m = 0; m < batch0Models.length; m++) {
+                vm.prank(batch0Auditors[i]);
+                ta.revealAuditScore(1, 0, batch0Models[m], 100, true, TEST_SALT);
             }
         }
     }
@@ -420,6 +476,9 @@ contract SecurityFindingsTest is Test {
         tc.closeLMsubmissionsEvaluation(1);
         finalizeEvaluationGas = gasBefore - gasleft();
 
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(1);
+
         vm.startPrank(modelOwner);
         tc.autoCreateTier1AndTier2(1);
         tc.startT1Aggregation(1);
@@ -428,8 +487,19 @@ contract SecurityFindingsTest is Test {
         (, address[] memory t1aggs,,,) = tc.getTier1Batch(1, 0);
         bytes32 realCID = bytes32(uint256(0xC1D));
         for (uint i = 0; i < t1aggs.length; i++) {
+            bytes32 commitHash = keccak256(
+                abi.encode(realCID, TEST_SALT, t1aggs[i], uint(1), DINTaskCoordinator.TierKind.Tier1, uint(0))
+            );
             vm.prank(t1aggs[i]);
-            tc.submitT1Aggregation(1, 0, realCID);
+            tc.commitT1Aggregation(1, 0, commitHash);
+        }
+
+        vm.prank(modelOwner);
+        tc.startT1AggregationReveal(1);
+
+        for (uint i = 0; i < t1aggs.length; i++) {
+            vm.prank(t1aggs[i]);
+            tc.revealT1Aggregation(1, 0, realCID, TEST_SALT);
         }
 
         vm.startPrank(modelOwner);
@@ -441,6 +511,7 @@ contract SecurityFindingsTest is Test {
         // trivially. Not the subject of this measurement (H-1's aggregator-
         // side loops scale with *aggregator* count, held fixed here at the
         // minimum needed to reach slashAuditors()).
+        tc.startT2AggregationReveal(1);
         tc.finalizeT2Aggregation(1);
         vm.stopPrank();
     }
@@ -537,5 +608,477 @@ contract SecurityFindingsTest is Test {
         // the point of this test, this assertion just guards against the
         // measurement accidentally becoming a no-op.
         assertGt(gasLarge, gasSmall * 2, "finalizeEvaluation should scale well above linearly with batch count");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // L-6: zero-address dependencies rejected at construction / one-shot setup
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_DINTaskCoordinator_constructor_rejectsZeroStakeAddress() public {
+        vm.expectRevert(TC_InvalidAddress.selector);
+        new DINTaskCoordinator(address(0), 1);
+    }
+
+    function test_DINTaskAuditor_constructor_rejectsZeroStakeAddress() public {
+        _deployPlatform();
+        DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        vm.expectRevert(TA_InvalidAddress.selector);
+        new DINTaskAuditor(address(0), address(tcLocal), 1);
+    }
+
+    function test_DINTaskAuditor_constructor_rejectsZeroCoordinatorAddress() public {
+        _deployPlatform();
+        vm.expectRevert(TA_InvalidAddress.selector);
+        new DINTaskAuditor(address(stake), address(0), 1);
+    }
+
+    function test_setDINTaskAuditorContract_rejectsZeroAddress() public {
+        _deployPlatform();
+        DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        vm.expectRevert(TC_InvalidAddress.selector);
+        tcLocal.setDINTaskAuditorContract(address(0));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #156 H-2: ungrindable batch-assignment seed (task_240926_18 Part B).
+    // Same future-block-seed pattern as lockDisputeSeed (BL-11, task_16
+    // Part A), applied to the two regular batch-creation calls. Mirrors
+    // DisputeResolution.t.sol's test_lockDisputeSeed_* coverage.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Registers 3 auditors + 3 clients, closes LMS, and locks the
+    ///      audit seed -- stops right before createAuditorsBatches so its
+    ///      timing independence can be tested.
+    function _runToAuditSeedLocked() internal {
+        _deployPlatform();
+        _deployTaskPair();
+
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        address auditor3 = makeAddr("hAuditor3");
+        _fundAndStake(auditor3);
+        _fundAndStake(agg1);
+        _fundAndStake(agg2);
+        _fundAndStake(agg3);
+
+        vm.startPrank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        vm.stopPrank();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+        vm.prank(agg2);
+        tc.registerDINaggregator(1);
+        vm.prank(agg3);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(100)), 1);
+        vm.prank(client2);
+        ta.submitLocalModel(bytes32(uint256(200)), 1);
+        vm.prank(client3);
+        ta.submitLocalModel(bytes32(uint256(300)), 1);
+
+        vm.prank(modelOwner);
+        tc.closeLMsubmissions(1);
+
+        vm.roll(block.number + tc.disputeSeedDelay() + 1);
+        tc.lockAuditSeed(1);
+    }
+
+    function test_createAuditorsBatches_timingIndependent() public {
+        _runToAuditSeedLocked();
+
+        uint256 snap = vm.snapshotState();
+
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        (, address[] memory baseline, , ) = ta.getAuditorsBatch(1, 0);
+
+        for (uint k = 1; k <= 5; k++) {
+            vm.revertToState(snap);
+            vm.roll(block.number + k * 37);
+            vm.prank(modelOwner);
+            tc.createAuditorsBatches(1);
+            (, address[] memory batchK, , ) = ta.getAuditorsBatch(1, 0);
+            assertEq(
+                keccak256(abi.encode(batchK)),
+                keccak256(abi.encode(baseline)),
+                "auditor batch 0 must not depend on when createAuditorsBatches is called"
+            );
+        }
+    }
+
+    function test_createAuditorsBatches_revertsIfSeedNotLocked() public {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        address auditor3 = makeAddr("gAuditor3");
+        _fundAndStake(auditor3);
+
+        vm.startPrank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(1)), 1);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        vm.expectRevert(TC_AuditSeedNotLocked.selector);
+        tc.createAuditorsBatches(1);
+        vm.stopPrank();
+    }
+
+    /// @dev DINTaskAuditor's own defense-in-depth check (mirrors the M-3
+    ///      precedent): even if DINTaskCoordinator's gate were bypassed,
+    ///      DINTaskAuditor independently rejects a zero seed. Pranks as
+    ///      the coordinator itself, the only address createAuditorsBatches
+    ///      accepts calls from, to reach the check directly.
+    function test_DINTaskAuditor_createAuditorsBatches_rejectsZeroSeedIndependently() public {
+        _runToAuditSeedLocked(); // GIstate reaches LMSclosed with a real seed available, but we bypass it below
+        vm.prank(address(tc));
+        vm.expectRevert(TA_AuditSeedNotLocked.selector);
+        ta.createAuditorsBatches(1, bytes32(0));
+    }
+
+    function test_lockAuditSeed_revertsIfNotAnchored() public {
+        _deployPlatform();
+        _deployTaskPair();
+        vm.expectRevert(TC_AuditSeedNotAnchored.selector);
+        tc.lockAuditSeed(1);
+    }
+
+    function test_lockAuditSeed_revertsBeforeSeedBlock() public {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        address auditor3 = makeAddr("bAuditor3");
+        _fundAndStake(auditor3);
+
+        vm.startPrank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(1)), 1);
+        vm.prank(modelOwner);
+        tc.closeLMsubmissions(1); // anchors auditSeedBlock in the future
+
+        vm.expectRevert(TC_AuditSeedBlockNotMined.selector);
+        tc.lockAuditSeed(1);
+    }
+
+    function test_lockAuditSeed_revertsIfAlreadyLocked() public {
+        _runToAuditSeedLocked();
+        vm.expectRevert(TC_AuditSeedAlreadyLocked.selector);
+        tc.lockAuditSeed(1);
+    }
+
+    function test_lockAuditSeed_permissionless() public {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        address auditor3 = makeAddr("pAuditor3");
+        _fundAndStake(auditor3);
+
+        vm.startPrank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(1)), 1);
+        vm.prank(modelOwner);
+        tc.closeLMsubmissions(1);
+
+        uint64 seedBlock = tc.auditSeedBlock(1);
+        vm.roll(uint256(seedBlock) + 1);
+
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        tc.lockAuditSeed(1); // must not revert
+
+        assertTrue(tc.auditSeed(1) != bytes32(0), "seed must be set after permissionless lock");
+    }
+
+    function test_lockAuditSeed_reanchorsAfter256Blocks() public {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        address auditor3 = makeAddr("rAuditor3");
+        _fundAndStake(auditor3);
+
+        vm.startPrank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(1)), 1);
+        vm.prank(modelOwner);
+        tc.closeLMsubmissions(1);
+
+        uint64 seedBlock0 = tc.auditSeedBlock(1);
+        vm.roll(uint256(seedBlock0) + 300); // > 256 blocks past seedBlock0
+
+        tc.lockAuditSeed(1);
+        assertEq(tc.auditSeed(1), bytes32(0), "seed must stay zero on re-anchor");
+        assertGt(tc.auditSeedBlock(1), seedBlock0, "seedBlock must re-anchor forward");
+
+        uint64 seedBlock1 = tc.auditSeedBlock(1);
+        vm.roll(uint256(seedBlock1) + 1);
+        tc.lockAuditSeed(1);
+        assertTrue(tc.auditSeed(1) != bytes32(0), "seed must lock after re-anchor once mined");
+    }
+
+    // ── same coverage for the T1/T2 aggregation seed ────────────────────
+
+    /// @dev Continues from _runToAuditSeedLocked through evaluation to
+    ///      LMSevaluationClosed with aggSeed locked -- stops right before
+    ///      autoCreateTier1AndTier2 so its timing independence can be tested.
+    function _runToAggSeedLocked() internal {
+        _runToAuditSeedLocked();
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        vm.startPrank(modelOwner);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 80, true, TEST_SALT);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1);
+        tc.lockAggSeed(1);
+    }
+
+    function test_autoCreateTier1AndTier2_timingIndependent() public {
+        _runToAggSeedLocked();
+
+        uint256 snap = vm.snapshotState();
+
+        vm.prank(modelOwner);
+        tc.autoCreateTier1AndTier2(1);
+        (, address[] memory baseline, , , ) = tc.getTier1Batch(1, 0);
+
+        for (uint k = 1; k <= 5; k++) {
+            vm.revertToState(snap);
+            vm.roll(block.number + k * 41);
+            vm.prank(modelOwner);
+            tc.autoCreateTier1AndTier2(1);
+            (, address[] memory batchK, , , ) = tc.getTier1Batch(1, 0);
+            assertEq(
+                keccak256(abi.encode(batchK)),
+                keccak256(abi.encode(baseline)),
+                "T1 batch 0 must not depend on when autoCreateTier1AndTier2 is called"
+            );
+        }
+    }
+
+    function test_autoCreateTier1AndTier2_revertsIfSeedNotLocked() public {
+        _runToAuditSeedLocked();
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        vm.startPrank(modelOwner);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 80, true, TEST_SALT);
+            }
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        vm.expectRevert(TC_AggSeedNotLocked.selector);
+        tc.autoCreateTier1AndTier2(1);
+        vm.stopPrank();
+    }
+
+    function test_lockAggSeed_revertsIfNotAnchored() public {
+        _deployPlatform();
+        _deployTaskPair();
+        vm.expectRevert(TC_AggSeedNotAnchored.selector);
+        tc.lockAggSeed(1);
+    }
+
+    function test_lockAggSeed_revertsIfAlreadyLocked() public {
+        _runToAggSeedLocked();
+        vm.expectRevert(TC_AggSeedAlreadyLocked.selector);
+        tc.lockAggSeed(1);
+    }
+
+    function test_lockAggSeed_permissionless() public {
+        _runToAuditSeedLocked();
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        vm.startPrank(modelOwner);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 80, true, TEST_SALT);
+            }
+        }
+        vm.prank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+
+        uint64 seedBlock = tc.aggSeedBlock(1);
+        vm.roll(uint256(seedBlock) + 1);
+
+        address stranger = makeAddr("stranger2");
+        vm.prank(stranger);
+        tc.lockAggSeed(1); // must not revert
+
+        assertTrue(tc.aggSeed(1) != bytes32(0), "seed must be set after permissionless lock");
+    }
+
+    function test_lockAggSeed_reanchorsAfter256Blocks() public {
+        _runToAuditSeedLocked();
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        vm.startPrank(modelOwner);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 80, true, TEST_SALT);
+            }
+        }
+        vm.prank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+
+        uint64 seedBlock0 = tc.aggSeedBlock(1);
+        vm.roll(uint256(seedBlock0) + 300);
+
+        tc.lockAggSeed(1);
+        assertEq(tc.aggSeed(1), bytes32(0), "seed must stay zero on re-anchor");
+        assertGt(tc.aggSeedBlock(1), seedBlock0, "seedBlock must re-anchor forward");
+
+        uint64 seedBlock1 = tc.aggSeedBlock(1);
+        vm.roll(uint256(seedBlock1) + 1);
+        tc.lockAggSeed(1);
+        assertTrue(tc.aggSeed(1) != bytes32(0), "seed must lock after re-anchor once mined");
     }
 }

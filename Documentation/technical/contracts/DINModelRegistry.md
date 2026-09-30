@@ -1,6 +1,6 @@
 # DINModelRegistry — Technical Documentation
 
-> **File:** `hardhat/contracts/DINModelRegistry.sol`
+> **File:** [`foundry/src/DINModelRegistry.sol`](../../../foundry/src/DINModelRegistry.sol)
 > **Version:** v2 — Request / Approval Based (upgradeable)
 > **SPDX-License-Identifier:** MIT
 > **Solidity:** `^0.8.28`
@@ -10,22 +10,33 @@
 
 ## 1. Overview
 
-`DINModelRegistry` is the **governed admission gateway** for AI models in the Decentralised Intelligence Network. It evolved from a simple storage contract into a DAO-controlled registry where every model and every manifest change must pass an explicit approval step before taking effect.
+`DINModelRegistry` is the **governed admission gateway** for AI models in the Decentralised Intelligence Network. It evolved from a simple storage contract into a registry controlled by the DIN-Representative (the contract owner) where every model and every manifest change must pass an explicit approval step before taking effect.
 
-The admin role is the OpenZeppelin `OwnableUpgradeable` owner, set to the deployer in `initialize`. The pre-proxy `daoAdmin` ABI surface is preserved through two compatibility shims (`daoAdmin()` view and `setDAOAdmin()`) so existing dincli tooling keeps working — see [§14](#14-dao-admin--compatibility-shims).
+The admin role is the OpenZeppelin `OwnableUpgradeable` owner (the DIN-Representative), set to the deployer in `initialize`. Admin transfer is plain `transferOwnership` — see [§14](#14-admin-transfer).
 
 Core capabilities:
 
-- **Two-phase model registration** — submit a request, DAO approves or rejects.
+- **Two-phase model registration** — submit a request, the DIN-Representative approves or rejects.
 - **Two-phase manifest updates** — same request/approval flow.
-- **Kill switch** — DAO can instantly disable any model.
-- **Dynamic fee governance** — all four fee parameters are DAO-adjustable.
-- **Transferable DAO admin** — the owner role can be handed to a multisig or timelock (`setDAOAdmin` / `transferOwnership`).
+- **Kill switch** — the DIN-Representative can instantly disable any model.
+- **Dynamic fee governance** — all four fee parameters are adjustable by the DIN-Representative. Requests keep exactly the required fee; any overpayment is refunded to the caller.
+- **Fee routing** — accumulated ETH fees are swept to `DinFeeRouter` (`sweepFeesToRouter`), which splits them across validator pool / treasury / storage / public goods.
+- **Transferable admin** — the owner role can be handed to a multisig or timelock (`transferOwnership`).
 - **Upgradeable** — logic can be replaced behind the proxy while all requests, models, and fees persist (see [§8](#8-initialization-ownership--upgradeability)).
 
 ---
 
-## 2. Inline Interfaces
+## 2. Inheritance & Inline Interfaces
+
+```solidity
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+contract DINModelRegistry is Initializable, OwnableUpgradeable, ReentrancyGuardTransient { ... }
+```
+
+`ReentrancyGuardTransient` provides the `nonReentrant` modifier used on the two fee-refunding request functions (§9.1, §10.1). It keeps its lock in transient storage (EIP-1153, `TSTORE`/`TLOAD`), so it adds no storage slots to the proxy layout.
 
 ```solidity
 interface IDinValidatorStake {
@@ -35,9 +46,13 @@ interface IDinValidatorStake {
 interface IOwnable {
     function owner() external view returns (address);
 }
+
+interface IDinFeeRouter {
+    function routeFeeETH(address payer) external payable;
+}
 ```
 
-Used during registration request validation and approval-time revalidation.
+`IDinValidatorStake` and `IOwnable` are used during registration request validation and approval-time revalidation; `IDinFeeRouter` by `sweepFeesToRouter`.
 
 ---
 
@@ -56,9 +71,10 @@ Used during registration request validation and approval-time revalidation.
 | `modelDisabled` | `mapping(uint256 => bool)` | `public` | Kill-switch flag per model ID. |
 | `_modelIdByTaskCoordinator` | `mapping(address => uint256)` | `private` | Maps TaskCoordinator → `modelId + 1` (0 = unregistered). |
 | `_modelIdByTaskAuditor` | `mapping(address => uint256)` | `private` | Maps TaskAuditor → `modelId + 1` (0 = unregistered). |
+| `feeRouter` | `IDinFeeRouter` | `public` | Destination for `sweepFeesToRouter`. Set via `setFeeRouter` (the deploy script wires it). |
 | `__gap` | `uint256[50]` | `private` | Reserved storage slots for future state variables (proxy layout safety). |
 
-> The pre-proxy `daoAdmin` storage variable is gone; the admin is now the `OwnableUpgradeable` owner (stored in OZ's namespaced ERC-7201 storage). `daoAdmin()` remains callable as a view shim returning `owner()`.
+> The pre-proxy `daoAdmin` storage variable is gone; the admin is now the `OwnableUpgradeable` owner (stored in OZ's namespaced ERC-7201 storage).
 
 ---
 
@@ -86,7 +102,7 @@ struct ModelRequest {
     bytes32 manifestCID;
     address taskCoordinator;
     address taskAuditor;
-    uint256 feePaid;
+    uint256 feePaid;  // the required fee at request time, not msg.value (overpayment is refunded)
     bool processed;   // true after approve or reject
     bool approved;    // true only if approved
     uint256 createdAt;
@@ -100,7 +116,7 @@ struct ManifestUpdateRequest {
     uint256 modelId;
     bytes32 newManifestCID;
     address requester;
-    uint256 feePaid;
+    uint256 feePaid;  // the required fee at request time, not msg.value (overpayment is refunded)
     bool processed;
     bool approved;
 }
@@ -117,20 +133,21 @@ struct ManifestUpdateRequest {
 | `InvalidRequestId()` | Request ID is out of bounds |
 | `AlreadyProcessed()` | Request has already been approved or rejected |
 | `InsufficientFee()` | `msg.value` is below the required fee |
+| `RefundFailed()` | Refunding the overpayment (`msg.value - requiredFee`) to `msg.sender` failed — e.g. a contract caller that rejects ETH |
 | `TaskCoordinatorEqualsTaskAuditor()` | `taskCoordinator == taskAuditor` |
 | `NotOwnerOfTaskCoordinator()` | Requester does not own the coordinator contract |
 | `NotOwnerOfTaskAuditor()` | Requester does not own the auditor contract |
 | `ModelIsDisabled(uint256 modelId)` | Model is currently disabled |
 | `TaskCoordinatorAlreadyRegistered()` | Coordinator is already linked to another approved model |
 | `TaskAuditorAlreadyRegistered()` | Auditor is already linked to another approved model |
-| `ZeroAddress()` | `address(0)` passed where a valid address is required (used in `initialize`) |
+| `ZeroAddress()` | `address(0)` passed to `initialize` or `setFeeRouter` |
 | `CoordinatorNoLongerSlasher()` | Coordinator is not a registered slasher — checked at request time **and** re-checked at approval |
 | `AuditorNoLongerSlasher()` | Auditor is not a registered slasher — checked at request time **and** re-checked at approval |
 | `CoordinatorOwnershipChanged()` | Coordinator ownership changed between request and approval |
 | `AuditorOwnershipChanged()` | Auditor ownership changed between request and approval |
-| `TransferFailed()` | Low-level ETH transfer in `withdrawFees()` reverted |
+| `FeeRouterNotSet()` | `sweepFeesToRouter()` called before `setFeeRouter()` |
 
-Admin-gating reverts now surface as OpenZeppelin's `OwnableUnauthorizedAccount(address)` rather than the removed `NotDINDAOAdmin()`.
+Admin-gating reverts surface as OpenZeppelin's `OwnableUnauthorizedAccount(address)` (the pre-proxy `NotDINDAOAdmin()` error is gone).
 
 ---
 
@@ -168,13 +185,10 @@ Admin-gating reverts now surface as OpenZeppelin's `OwnableUnauthorizedAccount(a
 | `OpenSourceUpdateFeeUpdated` | `uint256 newFee` | `setOpenSourceUpdateFee()` |
 | `ProprietaryUpdateFeeUpdated` | `uint256 newFee` | `setProprietaryUpdateFee()` |
 | `FeesUpdated` | `uint256 openSourceFee`, `uint256 proprietaryFee`, `uint256 openSourceUpdateFee`, `uint256 proprietaryUpdateFee` | `setFees()` — atomic update |
-| `FeesWithdrawn` | `address indexed to`, `uint256 amount` | `withdrawFees()` |
+| `FeeRouterUpdated` | `address indexed feeRouter` | `setFeeRouter()` |
+| `FeesSweptToRouter` | `uint256 amount` | `sweepFeesToRouter()` forwarded a non-zero balance |
 
-### DAO Administration
-
-| Event | Parameters | Emitted When |
-|-------|-----------|--------------|
-| `DAOAdminUpdated` | `address indexed oldAdmin`, `address indexed newAdmin` | `setDAOAdmin()` shim — **not** emitted if ownership is transferred via `transferOwnership()` directly (OZ emits only `OwnershipTransferred`) |
+Ownership changes emit only OpenZeppelin's `OwnershipTransferred(previousOwner, newOwner)`.
 
 ---
 
@@ -193,14 +207,15 @@ owner() — OwnableUpgradeable; set to the account that ran initialize (DIN-Repr
   ├── setOpenSourceUpdateFee()
   ├── setProprietaryUpdateFee()
   ├── setFees()
-  ├── withdrawFees()
-  └── setDAOAdmin()          ← shim over transferOwnership()
+  ├── setFeeRouter()
+  ├── sweepFeesToRouter()
+  └── transferOwnership()    ← inherited from OwnableUpgradeable
 
 Model Owner (per-model — onlyModelOwner + notDisabled modifiers)
-  └── requestManifestUpdate()   ← blocked if model is disabled
+  └── requestManifestUpdate()   ← blocked if model is disabled; nonReentrant
 
 Any address (permissionless, fee-gated)
-  └── requestModelRegistration()
+  └── requestModelRegistration()   ← nonReentrant
 
 ProxyAdmin (proxy level, owned by deployer)
   └── can upgrade the implementation (see §8)
@@ -229,28 +244,27 @@ function initialize(address dinValidatorStake_) external initializer
 
 ### 8.2 Deployment position and wiring
 
-From `hardhat/scripts/deploy-platform.ts`, the registry is deployed **last** (step 6) because `initialize` needs the `DinValidatorStake` proxy address:
+From [`foundry/script/DeployPlatform.s.sol`](../../../foundry/script/DeployPlatform.s.sol) (see [DeployPlatform](foundry/script/DeployPlatform.md)), the registry comes after `DinValidatorStake`, because `initialize` needs the stake proxy address, and is then wired into the fee router:
 
 ```
-1. DinToken proxy            initialize()
-2. DinCoordinator proxy      initialize(dinToken)
-3. dinToken.setCoordinator(dinCoordinator)
-4. DinValidatorStake proxy   initialize(dinToken, dinCoordinator)
-5. dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
-6. DINModelRegistry proxy    initialize(dinValidatorStake)     ← this contract
+7.  DinValidatorStake proxy   initialize(dinToken, dinCoordinator)
+8.  dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
+10. DINModelRegistry proxy    initialize(dinValidatorStake)       ← this contract
+11. dinFeeRouter.addFeeSource(dinModelRegistry)                   ← lets sweepFeesToRouter through
+12. dinModelRegistry.setFeeRouter(dinFeeRouter)
 ```
 
-The registry needs no post-deploy wiring of its own. Note that a model registration can only succeed after its task contracts have been authorised as slashers (`DinCoordinator.addSlasherContract`), which requires steps 4–5 to be complete.
+A model registration can only succeed after its task contracts have been authorised as slashers (`DinCoordinator.addSlasherContract`), which requires steps 7–8.
 
 ### 8.3 Ownership planes and upgrade mechanics
 
 | Plane | Who | Controls |
 |-------|-----|----------|
-| Contract owner (`owner()`) | `initialize` caller (DIN-Representative) | All approval, kill-switch, fee, and withdrawal functions |
-| Proxy admin (`ProxyAdmin` contract) | Deployed by the OZ upgrades plugin, owned by the deployer | Swapping the implementation |
+| Contract owner (`owner()`) | `initialize` caller (DIN-Representative) | All approval, kill-switch, fee, and fee-routing functions |
+| Proxy admin (`ProxyAdmin` contract) | One per proxy (OZ v5), created at proxy deployment and owned by the deployer | Swapping the implementation |
 
-- **Upgrade path:** `CONTRACT=DINModelRegistry npx hardhat run scripts/upgrade-platform.ts --network <network>` (reads/writes `hardhat/deployments/<network>.json`).
-- **Storage-layout safety:** state may only be appended; the `__gap` array reserves 50 slots. `hardhat/test/DINModelRegistry.upgrade.test.ts` validates the upgrade with `upgrades.validateUpgrade` and asserts models, requests, and fees survive.
+- **Upgrade path:** `cd foundry && CONTRACT=DINModelRegistry forge script script/UpgradePlatform.s.sol --rpc-url <rpc> --broadcast ...` (reads the proxy address from `foundry/deployments/<network>.json`; see [`foundry/script/UpgradePlatform.s.sol`](../../../foundry/script/UpgradePlatform.s.sol) and [UpgradePlatform](foundry/script/UpgradePlatform.md)).
+- **Storage-layout safety:** state may only be appended; the `__gap` array reserves 50 slots. [`foundry/test/UpgradeValidation.t.sol`](../../../foundry/test/UpgradeValidation.t.sol) runs `Upgrades.validateImplementation`, and `DINModelRegistryUpgradeTest` in [`foundry/test/DeployPlatform.t.sol`](../../../foundry/test/DeployPlatform.t.sol) upgrades to [`foundry/src/upgrade/DINModelRegistryV2.sol`](../../../foundry/src/upgrade/DINModelRegistryV2.sol) and checks fees, models and pending requests survive.
 - **Trust implication:** the registry's guarantees (approval gating, fee levels, kill-switch state) hold only as long as the ProxyAdmin owner is honest.
 
 ---
@@ -265,7 +279,7 @@ function requestModelRegistration(
     address taskCoordinator,
     address taskAuditor,
     bool isOpenSource
-) external payable returns (uint256 requestId)
+) external payable nonReentrant returns (uint256 requestId)
 ```
 
 **Validation (sequential):**
@@ -276,10 +290,11 @@ function requestModelRegistration(
 4. **Distinctness:** `taskCoordinator != taskAuditor` — revert `TaskCoordinatorEqualsTaskAuditor`.
 5. **Ownership — Coordinator:** `IOwnable(taskCoordinator).owner() == msg.sender` — revert `NotOwnerOfTaskCoordinator`.
 6. **Ownership — Auditor:** same for `taskAuditor` — revert `NotOwnerOfTaskAuditor`.
-7. **Write:** Push `ModelRequest` to `modelRequests[]`. `requestId = modelRequests.length` (before push).
+7. **Write:** Push `ModelRequest` to `modelRequests[]` with `feePaid = requiredFee`. `requestId = modelRequests.length` (before push).
 8. **Emit** `ModelRegistrationRequested`.
+9. **Refund:** if `msg.value > requiredFee`, send the overpayment back to `msg.sender` with a low-level `call` — revert `RefundFailed` if it fails. This runs last (checks-effects-interactions) and the function is `nonReentrant`.
 
-> **Note:** The fee is held in the contract regardless of whether the request is approved or rejected.
+> **Note:** The required fee is held in the contract regardless of whether the request is approved or rejected.
 
 ---
 
@@ -325,13 +340,14 @@ Marks the request as processed and rejected. Fee is retained. Emits `ModelReject
 function requestManifestUpdate(
     uint256 modelId,
     bytes32 newManifestCID
-) external payable onlyModelOwner(modelId) notDisabled(modelId) returns (uint256 requestId)
+) external payable nonReentrant onlyModelOwner(modelId) notDisabled(modelId) returns (uint256 requestId)
 ```
 
 - **`onlyModelOwner`** — caller must be the model's registered owner.
 - **`notDisabled`** — reverts `ModelIsDisabled(modelId)` if the model is currently disabled.
-- Fee: `openSourceUpdateFee` or `proprietaryUpdateFee` based on `models[modelId].isOpenSource`.
-- Pushes a `ManifestUpdateRequest`. Emits `ManifestUpdateRequested`.
+- Fee: `openSourceUpdateFee` or `proprietaryUpdateFee` based on `models[modelId].isOpenSource` — revert `InsufficientFee` if `msg.value` is below it.
+- Pushes a `ManifestUpdateRequest` with `feePaid = requiredFee`. Emits `ManifestUpdateRequested`.
+- Refunds any overpayment to `msg.sender` last, exactly as in §9.1 (`RefundFailed` on failure; `nonReentrant`).
 
 ### 10.2 `approveManifestUpdate`
 
@@ -357,16 +373,17 @@ function enableModel(uint256 modelId)  external onlyOwner
 ```
 
 - Sets / clears `modelDisabled[modelId]`.
-- `modelDisabled` is `public` — downstream contracts (`TaskCoordinator`, `TaskAuditor`) can read it directly: `modelRegistry.modelDisabled(modelId)`.
+- `modelDisabled` is `public`, so downstream contracts *could* read it (`modelRegistry.modelDisabled(modelId)`), but today neither `DINTaskCoordinator` nor `DINTaskAuditor` does.
 - Emits `ModelDisabled` / `ModelEnabled`.
 - **Disabled ≠ Deleted.** History, ownership, and manifest are preserved for auditability.
 
-| Scenario | Protection |
-|----------|-----------|
-| Malicious manifest discovered | Disable instantly |
-| Compromised model owner key | Cut off model from participating |
-| Buggy coordinator/auditor logic | Pause safely without redeployment |
-| Ongoing attack | Stop further participation |
+What disabling actually does today:
+
+| Effect | Enforced? |
+|--------|-----------|
+| Blocks `requestManifestUpdate` (`notDisabled` modifier) | ✅ |
+| Blocks `approveManifestUpdate` for that model | ✅ |
+| Stops GIs, LM submissions, aggregation, audits or slashing in the task contracts | ❌ — not checked by `DINTaskCoordinator` / `DINTaskAuditor` (§19 No. 6) |
 
 ---
 
@@ -379,12 +396,12 @@ function enableModel(uint256 modelId)  external onlyOwner
 | `openSourceUpdateFee` | `0.0000001 ETH` | Open-source manifest update requests |
 | `proprietaryUpdateFee` | `0.000001 ETH` | Proprietary manifest update requests |
 
-Fees accumulate in the contract balance. Only `owner()` can withdraw via `withdrawFees()`.
+Each request keeps exactly its required fee (any overpayment is refunded — §9.1, §10.1). Fees accumulate in the contract balance and leave only through `sweepFeesToRouter()`.
 
 **Individual setters** — for single-fee adjustments:
 `setOpenSourceFee`, `setProprietaryFee`, `setOpenSourceUpdateFee`, `setProprietaryUpdateFee`
 
-**Combined setter** — for atomic governance proposals:
+**Combined setter** — for atomic updates:
 ```solidity
 function setFees(
     uint256 _openSourceFee,
@@ -395,25 +412,24 @@ function setFees(
 ```
 Emits `FeesUpdated` with all four values as a state snapshot.
 
-### `withdrawFees`
+### `setFeeRouter` / `sweepFeesToRouter`
 
 ```solidity
-function withdrawFees(address payable to) external onlyOwner {
+function setFeeRouter(address feeRouter_) external onlyOwner   // ZeroAddress on 0; emits FeeRouterUpdated
+
+function sweepFeesToRouter() external onlyOwner {
+    if (address(feeRouter) == address(0)) revert FeeRouterNotSet();
     uint256 balance = address(this).balance;
-    (bool success, ) = to.call{value: balance}("");
-    if (!success) revert TransferFailed();
-    emit FeesWithdrawn(to, balance);
+    if (balance == 0) return;
+    feeRouter.routeFeeETH{value: balance}(address(this));
+    emit FeesSweptToRouter(balance);
 }
 ```
 
-Transfers the full contract balance to `to` using a **low-level `call`** instead of the previous `to.transfer(balance)`.
-
-> **Why not `transfer`? The 2300 gas stipend limitation.** Solidity's `transfer` (and `send`) forward a fixed stipend of **2300 gas** to the recipient. That is only enough for a recipient whose `receive`/`fallback` does nothing beyond logging — an EOA, essentially. It breaks legitimate recipients:
->
-> - **Smart-contract wallets and multisigs** (e.g. Gnosis Safe) execute code on ETH receipt and need more than 2300 gas, so `transfer` to them reverts. Since the DAO admin is expected to migrate to a multisig, `transfer` would have made fee withdrawal to that multisig impossible.
-> - **Future-proofing:** the 2300 figure assumes today's opcode gas costs. Repricings (e.g. EIP-1884 raising `SLOAD`) have historically broken contracts that relied on the stipend, which is why `transfer`/`send` are no longer recommended.
->
-> `call{value: ...}("")` forwards all remaining gas and returns a success flag, which the contract checks explicitly (revert `TransferFailed`). Forwarding all gas means the recipient could re-enter, but the function is `onlyOwner`, sends to an owner-chosen address, and performs no state accounting that re-entry could corrupt (the balance is read fresh each call), so no re-entrancy guard is needed here.
+- Fees accrue per request with no router call, and are batched through the sweep so the router's external-call cost is paid once for many registrations/updates.
+- `DinFeeRouter.routeFeeETH` is `onlyFeeSource`, so the registry must be on the router's allowlist (`addFeeSource`, done by the deploy script). The router splits ETH by its `ethSplit` (default 95% validator pool / 5% treasury; ETH is never burned).
+- There is no direct withdrawal to an arbitrary address. dincli: `dinrep registry sweep-fees`, which checks ownership, that the router is set, and that the registry is a router fee source, then previews the split and asks before sending. The router is wired only by the deploy script; dincli has no command to change it.
+- No re-entrancy guard on the sweep: the function is `onlyOwner`, sends to the owner-configured router, and keeps no accounting that re-entry could corrupt (the balance is read fresh).
 
 ---
 
@@ -423,6 +439,8 @@ Transfers the full contract balance to `to` using a **low-level `call`** instead
 |----------|-----------|---------|-------------|
 | `getModel` | `uint256 modelId` | `owner, isOpenSource, manifestCID, createdAt, taskCoordinator, taskAuditor` | Full approved model record |
 | `totalModels` | — | `uint256` | Total number of approved models |
+| `totalModelRequests` | — | `uint256` | Length of `modelRequests` (all registration requests) |
+| `totalManifestRequests` | — | `uint256` | Length of `manifestRequests` |
 | `getModelIdByTaskCoordinator` | `address taskCoordinator` | `(bool exists, uint256 modelId)` | Reverse lookup: coordinator → model |
 | `getModelIdByTaskAuditor` | `address taskAuditor` | `(bool exists, uint256 modelId)` | Reverse lookup: auditor → model |
 
@@ -430,27 +448,9 @@ Transfers the full contract balance to `to` using a **low-level `call`** instead
 
 ---
 
-## 14. DAO Admin & Compatibility Shims
+## 14. Admin Transfer
 
-The underlying auth model is `OwnableUpgradeable`. Two shims preserve the pre-proxy `daoAdmin` ABI surface that dincli calls:
-
-```solidity
-function daoAdmin() external view returns (address) {
-    return owner();
-}
-
-function setDAOAdmin(address newAdmin) external onlyOwner {
-    address old = owner();
-    transferOwnership(newAdmin);
-    emit DAOAdminUpdated(old, newAdmin);
-}
-```
-
-- `daoAdmin()` is a read-through facade over `owner()`.
-- `setDAOAdmin` delegates to OZ's single-step `transferOwnership` and additionally emits `DAOAdminUpdated` for existing indexers. The zero-address check is now enforced by OZ (`OwnableInvalidOwner`) rather than the local `ZeroAddress` error.
-- This remains the migration path to a multisig or on-chain timelock without redeploying the registry.
-
-> **Indexer caveat:** the inherited `transferOwnership()` and `renounceOwnership()` are also externally callable. Transferring ownership through them emits only OZ's `OwnershipTransferred`, **not** `DAOAdminUpdated` — off-chain services should index both events (or prefer `OwnershipTransferred`, which is emitted on every path).
+The auth model is plain `OwnableUpgradeable`: admin transfer goes through the inherited `transferOwnership(newOwner)` (single-step; zero address rejected with `OwnableInvalidOwner`), which emits `OwnershipTransferred`. `renounceOwnership()` is also inherited and callable — see §19 No. 2. There are no `daoAdmin()` / `setDAOAdmin()` compatibility shims.
 
 ---
 
@@ -460,12 +460,11 @@ function setDAOAdmin(address newAdmin) external onlyOwner {
 DINModelRegistry
   ├── reads → DinValidatorStake.isSlasherContract()   [at request and approval]
   ├── reads → taskCoordinator.owner()                  [IOwnable, at request and approval]
-  └── reads → taskAuditor.owner()                      [IOwnable, at request and approval]
-
-Downstream (reads DINModelRegistry)
-  ├── TaskCoordinator → modelRegistry.modelDisabled(modelId)
-  └── TaskAuditor     → modelRegistry.modelDisabled(modelId)
+  ├── reads → taskAuditor.owner()                      [IOwnable, at request and approval]
+  └── calls → DinFeeRouter.routeFeeETH{value}(this)    [sweepFeesToRouter]
 ```
+
+No contract currently reads `modelDisabled`: `DINTaskCoordinator` and `DINTaskAuditor` do not check it, so the kill switch only blocks manifest updates in the registry itself (see §19 No. 6).
 
 ---
 
@@ -477,12 +476,14 @@ Downstream (reads DINModelRegistry)
 | Ownership transferred between request and approval | `IOwnable.owner()` revalidated inside `approveModel()` |
 | Slasher status revoked between request and approval | `isSlasherContract()` revalidated inside `approveModel()` |
 | Coordinator / auditor reused across models | `_modelIdByTaskCoordinator` / `_modelIdByTaskAuditor` uniqueness enforced at approval |
-| Silent manifest change by model owner | Manifest updates require DAO approval |
+| Silent manifest change by model owner | Manifest updates require DIN-Representative approval |
 | Malicious approved model | Kill switch (`disableModel`) provides instant remediation |
 | Disabled model manifest still approved | `approveManifestUpdate` checks `modelDisabled` before writing |
 | Fee spam on registration | Fee required at request time; retained on rejection |
-| DAO admin key compromise | `setDAOAdmin` / `transferOwnership` enables migration to multisig / timelock |
-| Fee withdrawal to a contract recipient reverting | Low-level `call` (no 2300 gas stipend limit) with explicit `TransferFailed` check — see §12 |
+| Overpayment kept by the registry | Anything above the required fee is refunded in the same call; `feePaid` records only the required fee |
+| Re-entrancy through the refund call | The refund is the last step (checks-effects-interactions) and both request functions are `nonReentrant` (`ReentrancyGuardTransient`) |
+| Admin key compromise | `transferOwnership` enables migration to multisig / timelock |
+| Fees diverted | ETH leaves only via `sweepFeesToRouter` to the owner-configured router; no arbitrary-recipient withdrawal |
 | Re-initialization / implementation hijack | `initializer` modifier + `_disableInitializers()` in the constructor |
 | Malicious upgrade | Governed by ProxyAdmin ownership; no timelock — see §8.3 |
 
@@ -492,21 +493,32 @@ Downstream (reads DINModelRegistry)
 
 - `taskCoordinator` and `taskAuditor` addresses are permanent after approval — no mechanism to update them.
 - Pending requests never expire — a stale request remains approvable indefinitely (a `uint256 expiresAt` field could address this).
-- Single DAO admin — no multi-sig quorum or on-chain voting yet (use `setDAOAdmin` to migrate).
-- `withdrawFees` has no zero-address check on `to` — ETH sent to `address(0)` would be burned (pre-existing behavior, unchanged by the proxy conversion).
+- Single admin key (the DIN-Representative) — no multi-sig quorum or on-chain voting yet (migrate via `transferOwnership`).
+- The kill switch (`modelDisabled`) is not enforced by the task contracts (see §19 No. 6).
 
 ---
 
 ## 18. Change Log
 
+### PR No. 176 L-3 — overpayment refund (foundry)
+
+- `requestModelRegistration` and `requestManifestUpdate` refund any `msg.value` above the required fee to the caller, and `feePaid` now records the required fee instead of `msg.value` (`354bd9a`, `9bc63c5`).
+- New `RefundFailed()` error for a failed refund.
+- Now also inherits `ReentrancyGuardTransient`; both request functions are `nonReentrant`. The guard uses transient storage, so the proxy storage layout is unchanged.
+
+### P3 — fee routing (foundry)
+
+- **Removed** `withdrawFees(address)`, `FeesWithdrawn` and `TransferFailed`; added `feeRouter`, `setFeeRouter`, `sweepFeesToRouter`, `FeeRouterNotSet`, `FeeRouterUpdated`, `FeesSweptToRouter`.
+- The `daoAdmin()` / `setDAOAdmin()` compatibility shims and `DAOAdminUpdated` are gone; admin transfer is `transferOwnership` only.
+
 ### 2026-07 — Upgradeable conversion (PR 13)
 
 - Converted to a Transparent Proxy: now inherits `Initializable` + `OwnableUpgradeable`; `constructor(_dinValidatorStake)` replaced by `_disableInitializers()` constructor plus `initialize(dinValidatorStake_)`.
 - Pragma bumped `^0.8.20` → `^0.8.28`.
-- **Admin model:** `daoAdmin` storage variable, `onlyDAOAdmin` modifier, and `NotDINDAOAdmin` error removed; all admin functions now use OZ `onlyOwner`. Backward-compat shims `daoAdmin()` (view → `owner()`) and `setDAOAdmin()` (→ `transferOwnership` + `DAOAdminUpdated`) preserve the old ABI surface for dincli.
+- **Admin model:** `daoAdmin` storage variable, `onlyDAOAdmin` modifier, and `NotDINDAOAdmin` error removed; all admin functions now use OZ `onlyOwner`. Backward-compat shims `daoAdmin()` (view → `owner()`) and `setDAOAdmin()` (→ `transferOwnership` + `DAOAdminUpdated`) preserve the old ABI surface (used by dincli's `set-dao-admin` until PR No. 183 removed that command).
 - `initialize` gained a zero-address check on the stake address (the old constructor had none); default fees moved from inline initializers into `initialize` (values unchanged).
 - `requestModelRegistration`: `require(..., "Invalid Coordinator"/"Invalid Auditor")` string reverts replaced with the custom errors `CoordinatorNoLongerSlasher` / `AuditorNoLongerSlasher` (now used at request time and approval time).
-- `withdrawFees`: `to.transfer(balance)` replaced with low-level `call` + new `TransferFailed` error, removing the 2300 gas stipend limitation (see §12).
+- `withdrawFees`: `to.transfer(balance)` replaced with low-level `call` + new `TransferFailed` error, removing the 2300 gas stipend limitation (later superseded by `sweepFeesToRouter`, see the P3 entry above).
 - Added `uint256[50] __gap` storage reserve.
 - Unchanged: all structs, events, the request/approve/reject flows (including approval-time revalidation and the `modelId + 1` mapping trick), views, kill switch, and fee-setter logic.
 
@@ -516,8 +528,8 @@ Downstream (reads DINModelRegistry)
 
 Observations from the PR 13 review worth tracking:
 
-- **No. 1 — Event gap on direct ownership transfer:** `transferOwnership` / `renounceOwnership` bypass `setDAOAdmin`, so a handover through them emits no `DAOAdminUpdated`. Indexers must also watch `OwnershipTransferred` (see §14).
-- **No. 2 — `renounceOwnership` bricks governance:** renouncing leaves the registry with no admin — approvals, kill switch, fee changes, and `withdrawFees` become permanently unusable. Funds already in the contract would be stranded.
-- **No. 3 — Single-step ownership transfer:** `setDAOAdmin` uses OZ's one-step `transferOwnership`; a typoed address is unrecoverable. `Ownable2StepUpgradeable` would make handover safer.
+- **No. 2 — `renounceOwnership` bricks governance:** renouncing leaves the registry with no admin — approvals, kill switch, fee changes, and `sweepFeesToRouter` become permanently unusable. Fees already in the contract would be stranded.
+- **No. 3 — Single-step ownership transfer:** `transferOwnership` is one-step; a typoed address is unrecoverable. `Ownable2StepUpgradeable` would make handover safer.
 - **No. 4 — Repurposed error names:** `CoordinatorNoLongerSlasher` / `AuditorNoLongerSlasher` now also fire on first-time request validation, where "no longer" is a misnomer. Selector-stable but slightly misleading in traces.
 - **No. 5 — Admin revert selector changed:** unauthorized admin calls revert with `OwnableUnauthorizedAccount` instead of `NotDINDAOAdmin` — anything decoding revert reasons (tests, dincli error handling) must use the new selector.
+- **No. 6 — Kill switch is not enforced downstream:** neither `DINTaskCoordinator` nor `DINTaskAuditor` reads `modelDisabled`, so disabling a model does not stop its GIs, submissions, or slashing — it only blocks manifest-update requests/approvals in the registry.

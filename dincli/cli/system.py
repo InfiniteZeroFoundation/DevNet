@@ -30,7 +30,7 @@ from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
                               validate_account_name, wallet_path_for_name,
                               atomic_write_wallet, resolve_wallet_path,
                               list_accounts, get_active_account_name, load_account,
-                              _extract_keystore, ensure_wallets_dir)
+                              _extract_keystore, reraise_din_error_cause)
 
 from dincli.services import bridge as bridge_service
 from dincli.sdk.errors import DinError
@@ -74,7 +74,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet", "bridge-eth"]:
+    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "connect-demo-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet", "bridge-eth"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -204,12 +204,11 @@ def get_config_dir():
 
 @app.command("init")
 def initialize():
-    """Initialize DIN CLI by creating config/cache directories and an empty config file."""
+    """Initialize DIN CLI by creating config/cache directories and a config file with demo mode off."""
     initialize_directories()
     if not CONFIG_FILE.exists():
-        # Write an empty JSON object (valid JSON)
-        CONFIG_FILE.write_text("{}\n", encoding="utf-8")
-        Console().print(f"[green]✅ Created empty config file at: {CONFIG_FILE}[/green]")
+        CONFIG_FILE.write_text(json.dumps({"demo_mode": False}, indent=4) + "\n", encoding="utf-8")
+        Console().print(f"[green]✅ Created config file (demo mode off) at: {CONFIG_FILE}[/green]")
  
 @app.command("configure-network")
 def configure_network(ctx: typer.Context):
@@ -251,11 +250,43 @@ def configure_network(ctx: typer.Context):
 # when a command actually needs to sign — see utils.load_account().
 
 
-def _connect_registered_wallet(console, name: str) -> str:
+def _refuse_real_wallet_in_demo_lane(console, resolved: str) -> None:
+    """Refuse connect-demo-wallet on a real (encrypted) wallet, pointing at connect-wallet."""
+    console.print(
+        f"[red]❌ '{resolved}' is not a demo wallet — connect-demo-wallet only "
+        f"connects wallets created via `connect-demo-wallet`.[/red]"
+    )
+    console.print(f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {resolved}")
+    raise typer.Exit(1)
+
+
+def _is_existing_real_wallet(name: str) -> bool:
+    """True if `name` resolves to an existing, readable wallet file that is not demo-format.
+
+    Invalid names, missing files and unreadable files return False so the caller's
+    normal error path reports them.
+    """
+    try:
+        wallet_path, exists = resolve_wallet_path(validate_account_name(name))
+        if not exists:
+            return False
+        with open(wallet_path) as f:
+            return json.load(f).get("demo_mode") is not True
+    except (ValueError, OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
+def _connect_registered_wallet(console, name: str, require_demo: Optional[bool] = None) -> str:
     """Persist `name` as the active wallet (config "wallet_name").
 
     Pure pointer flip: requires the wallet file to already exist, never writes
     key material, never prompts for a secret. Returns the validated name.
+
+    require_demo, when not None, restricts which lane `name` must belong to:
+    True requires the plaintext demo format (connect-demo-wallet), False
+    requires the encrypted real-wallet format (connect-wallet) — refusing on a
+    mismatch keeps demo and real accounts from ever being activated through
+    the wrong command. None (the default) applies no restriction.
     """
     try:
         resolved = validate_account_name(name)
@@ -265,26 +296,45 @@ def _connect_registered_wallet(console, name: str) -> str:
 
     wallet_path, exists = resolve_wallet_path(resolved)
     if not exists:
-        console.print(
-            f"[red]❌ Wallet '{resolved}' not found. "
-            f"Run `dincli system register-wallet --name {resolved}` first.[/red]"
-        )
+        if require_demo is True:
+            console.print(
+                f"[red]❌ Demo wallet '{resolved}' not found. "
+                f"Run `dincli system connect-demo-wallet {resolved} --account N` first.[/red]"
+            )
+        else:
+            console.print(
+                f"[red]❌ Wallet '{resolved}' not found. "
+                f"Run `dincli system register-wallet --name {resolved}` first.[/red]"
+            )
         registered = [e["name"] for e in list_accounts(resolved)]
         if registered:
             console.print(f"[yellow]Registered wallets:[/yellow] {', '.join(registered)}")
         raise typer.Exit(1)
 
+    # Read once — used for both the demo-lane check below and the address
+    # display at the end (present in demo, wrapper, and legacy-keystore
+    # formats; fall back gracefully if unreadable).
+    try:
+        with open(wallet_path) as f:
+            wallet_data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        wallet_data = {}
+    address = wallet_data.get("address", "unknown")
+    is_demo = wallet_data.get("demo_mode") is True
+
+    if require_demo is True and not is_demo:
+        _refuse_real_wallet_in_demo_lane(console, resolved)
+    if require_demo is False and is_demo:
+        console.print(
+            f"[red]❌ '{resolved}' is a demo wallet — connect-wallet refuses to activate it, "
+            f"to keep demo accounts out of the real-account path.[/red]"
+        )
+        console.print(f"[yellow]Did you mean:[/yellow] dincli system connect-demo-wallet {resolved}")
+        raise typer.Exit(1)
+
     config = load_config()
     config["wallet_name"] = resolved
     save_config(config)
-
-    # Show the address without decrypting (present in demo, wrapper, and
-    # legacy-keystore formats; fall back gracefully if unreadable).
-    try:
-        with open(wallet_path) as f:
-            address = json.load(f).get("address", "unknown")
-    except (json.JSONDecodeError, OSError):
-        address = "unknown"
 
     console.print(f"[green]✅ Active wallet set to '{resolved}'[/green] ({address})")
     console.print("[dim]`dincli --wallet <name>` or DIN_WALLET_NAME still override this per invocation.[/dim]")
@@ -305,7 +355,7 @@ def connect_wallet(ctx: typer.Context,
 
     Active-wallet resolution priority (first hit wins):
 
-    
+    \b
       1. dincli --wallet <name>   global flag, this invocation only
       2. DIN_WALLET_NAME          environment variable
       3. config "wallet_name"     <- what this command sets
@@ -313,10 +363,13 @@ def connect_wallet(ctx: typer.Context,
 
     The wallet must already be registered:
 
-    
+    \b
       dincli system register-wallet --name validator --keystore ks.json
       dincli system connect-wallet validator     # switch to it
       dincli system connect-wallet               # switch back to 'default'
+
+    Real accounts only — refuses to activate a demo wallet (one created via
+    `connect-demo-wallet`). Use `connect-demo-wallet` for those instead.
     """
     # Direct callers (e.g. tests) may omit the argument; Typer then passes an
     # ArgumentInfo object — normalize to the CLI default.
@@ -339,7 +392,110 @@ def connect_wallet(ctx: typer.Context,
         )
         raise typer.Exit(1)
 
-    resolved = _connect_registered_wallet(ctx.obj.console, name)
+    resolved = _connect_registered_wallet(ctx.obj.console, name, require_demo=False)
+    # Keep the in-process context consistent for the rest of this invocation.
+    ctx.obj.select_wallet(resolved)
+
+
+@app.command("connect-demo-wallet")
+def connect_demo_wallet(ctx: typer.Context,
+    name: str = typer.Argument("demo-default", help="Demo wallet name to connect (default: 'demo-default')"),
+    account: Optional[int] = typer.Option(None, "--account", "-a", help="Hardhat dev account index — (re)creates `name` from this index before connecting"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt when overwriting an existing named demo wallet"),
+):
+    """
+    Connect a well-known Hardhat dev account for local testing only.
+
+    With --account, this is a one-shot: no separate step needed. There is no
+    `register-demo-wallet` — this command both creates and connects.
+
+    \b
+      dincli system connect-demo-wallet --account 0        # create+connect 'demo-default' from index 0
+      dincli system connect-demo-wallet bob --account 1     # create+connect as 'bob'
+      dincli system connect-demo-wallet bob                 # reconnect an already-connected demo wallet by name
+
+    Requires demo mode on (`dincli system configure-demo --mode yes`). Stores the
+    key in PLAINTEXT — these keys are publicly derivable, never fund this address
+    on a real network. For your own wallet, use `register-wallet` + `connect-wallet`
+    instead.
+    """
+    console = ctx.obj.console
+    yes = yes if isinstance(yes, bool) else False
+
+    if not isinstance(name, str):
+        name = "demo-default"
+    if not isinstance(account, int):
+        account = None
+
+    # Reconnecting by name to a real (encrypted) wallet: refuse with the specific
+    # "not a demo wallet" message before the demo-mode check. Turning demo mode
+    # on would not make this command accept it, so "Demo mode is off" misleads.
+    if account is None and _is_existing_real_wallet(name):
+        _refuse_real_wallet_in_demo_lane(console, validate_account_name(name))
+
+    if not get_config("demo_mode"):
+        console.print(
+            "[red]❌ Demo mode is off — connect-demo-wallet only works with demo "
+            "mode on.[/red]"
+        )
+        console.print(
+            "[yellow]Run `dincli system configure-demo --mode yes` first, or use "
+            "`dincli system register-wallet` / `connect-wallet` to connect your own key.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    # Guard against the same `--wallet X` trap connect-wallet guards against.
+    override = ctx.obj.wallet_name
+    if override and override != name:
+        console.print(
+            f"[red]❌ `--wallet {override}` overrides the active wallet for this "
+            f"invocation only — it does not choose the wallet to connect.[/red]"
+        )
+        console.print(
+            f"[yellow]Did you mean:[/yellow] dincli system connect-demo-wallet {override}"
+        )
+        raise typer.Exit(1)
+
+    if account is not None:
+        # One-shot: (re)create `name` from the given dev-account index, then connect it.
+        try:
+            resolved_name = validate_account_name(name)
+        except ValueError as e:
+            console.print(f"[red]❌ {e}[/red]")
+            raise typer.Exit(1)
+
+        target_path = wallet_path_for_name(resolved_name)
+        if target_path.exists() and not yes:
+            console.print(f"[yellow]A wallet named '{resolved_name}' already exists at {target_path}.[/yellow]")
+            if not typer.confirm("Overwrite it?"):
+                console.print("[yellow]Aborted. Existing wallet left unchanged.[/yellow]")
+                raise typer.Exit(0)
+
+        console.print(f"[green] ⚙️  Connecting demo wallet...[/green]")
+        console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
+
+        try:
+            privatekey = get_demo_private_key(account)
+        except (FileNotFoundError, IndexError) as e:
+            console.print(f"[red]❌ {e}[/red]")
+            raise typer.Exit(1)
+
+        acct = Account.from_key(privatekey)
+        wallet_data = {
+            "address": acct.address,
+            "private_key": privatekey,  # ⚠️ PLAINTEXT — ONLY FOR MOCK!
+            "demo_mode": True
+        }
+        atomic_write_wallet(target_path, wallet_data)
+        console.print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
+        console.print(f"[yellow]Address:[/yellow] {acct.address}")
+        console.print(f"[cyan]Wallet File:[/cyan] {target_path}")
+
+        resolved = _connect_registered_wallet(console, resolved_name, require_demo=True)
+    else:
+        # Pure pointer-flip to an already-connected demo wallet.
+        resolved = _connect_registered_wallet(console, name, require_demo=True)
+
     # Keep the in-process context consistent for the rest of this invocation.
     ctx.obj.select_wallet(resolved)
 
@@ -349,7 +505,7 @@ def set_wallet(ctx: typer.Context, name: str = typer.Argument(..., help="Wallet 
     """(Deprecated) Alias of `connect-wallet`."""
     console = ctx.obj.console
     console.print("[yellow]`set-wallet` is deprecated — use `dincli system connect-wallet <name>`.[/yellow]")
-    _connect_registered_wallet(console, name)
+    _connect_registered_wallet(console, name, require_demo=False)
 
 @app.command("configure-demo")
 def configure_demo(ctx: typer.Context,
@@ -407,21 +563,21 @@ def register_wallet(ctx: typer.Context,
     The key comes from exactly ONE of the following sources — passing more
     than one is an error, passing none falls through to the hidden prompt:
 
-    
+    \b
       --keystore FILE   import a standard Ethereum JSON keystore
-      --account N       dev-account index: in demo mode reads the bundled
-                        Hardhat dev keys, otherwise reads ETH_PRIVATE_KEY_<N>
-                        from the environment/.env
+      --account N       dev-account index: reads ETH_PRIVATE_KEY_<N> from the
+                        environment/.env
       --key-file FILE   read the raw private key (0x...) from a file
       PRIVATEKEY        positional argument (insecure: shell history/logs)
       (none)            interactive hidden prompt  <- recommended
 
-    
-    Storage (at <CONFIG_DIR>/wallets/wallet_<name>.json):
-      demo mode ON   -> plaintext JSON — local Hardhat testing ONLY
-      demo mode OFF  -> encrypted keystore; the encryption password comes
-                        from DIN_WALLET_PASSWORD if set, else a create/confirm
-                        prompt
+    Real accounts only — refuses to run while demo mode is on. For local
+    Hardhat testing, use `dincli system connect-demo-wallet` instead.
+
+    \b
+    Storage (at <CONFIG_DIR>/wallets/wallet_<name>.json): always an encrypted
+    keystore; the encryption password comes from DIN_WALLET_PASSWORD if set,
+    else a create/confirm prompt.
 
     Registering does NOT switch the active wallet — pass --connect, or run
     `dincli system connect-wallet <name>` afterwards. (--name defaults to
@@ -432,7 +588,7 @@ def register_wallet(ctx: typer.Context,
     An existing wallet with the same name is only overwritten after
     confirmation (skip with --yes).
 
-    
+    \b
     Examples:
       dincli system register-wallet                          # prompt, save as 'default'
       dincli system register-wallet --keystore ks.json --name validator
@@ -441,6 +597,18 @@ def register_wallet(ctx: typer.Context,
     """
 
     console = ctx.obj.console
+
+    if get_config("demo_mode"):
+        console.print(
+            "[red]❌ Demo mode is on — register-wallet refuses to run, to avoid ever "
+            "touching a real key while demo mode is active.[/red]"
+        )
+        console.print(
+            "[yellow]Run `dincli system configure-demo --mode no` first, or use "
+            "`dincli system connect-demo-wallet` for local Hardhat testing.[/yellow]"
+        )
+        raise typer.Exit(1)
+
     # Direct callers (e.g. tests) may omit --yes/--connect; Typer then passes an
     # OptionInfo object (truthy), which would silently bypass the overwrite guard
     # below (or trigger an unwanted connect). Normalize to real bools so the
@@ -468,7 +636,6 @@ def register_wallet(ctx: typer.Context,
         console.print(f"[red]❌ Please specify only one of: {', '.join(provided_methods)}.[/red]")
         raise typer.Exit(1)
 
-    demo_mode = get_config("demo_mode")
     source = "created"
 
     # --- keystore import: non-secret validation only ---
@@ -520,45 +687,32 @@ def register_wallet(ctx: typer.Context,
         acct = Account.from_key(decrypted_key)
         address = acct.address
 
-    elif account is not None and demo_mode:
-        # Load from demo accounts
-        try:
-            privatekey = get_demo_private_key(account)
-        except (FileNotFoundError, IndexError) as e:
-            console.print(f"[red]❌ {e}[/red]")
-            raise typer.Exit(1)
-    elif account is not None and not demo_mode:
+    elif account is not None:
         privatekey = get_env_key("ETH_PRIVATE_KEY_"+str(account))
         if privatekey is None:
             raise typer.Exit(1)
-            
+
     elif key_file is not None:
         # Load from file
-        key_file = key_file.expanduser() 
+        key_file = key_file.expanduser()
         if not key_file.exists():
             console.print(f"[red]❌ Key file not found: {key_file}[/red]")
             raise typer.Exit(1)
         try:
             with open(key_file, 'r') as f:
                 privatekey = f.read().strip()
-            config = load_config()
-            demo_mode = config.get("demo_mode", False)
         except Exception as e:
             console.print(f"[red]❌ Failed to read key file: {e}[/red]")
             raise typer.Exit(1)
-            
+
     elif privatekey is not None:
         # Explicit argument
         console.print("[yellow]⚠️  Warning: Providing private key as argument is insecure (saved in shell history). Use interactive mode or --key-file instead.[/yellow]")
-        config = load_config()
-        demo_mode = config.get("demo_mode", False)
-        
+
     else:
         # Interactive prompt
         console.print("[cyan]Enter your Ethereum private key (input will be hidden):[/cyan]")
         privatekey = getpass("Private Key: ").strip()
-        config = load_config()
-        demo_mode = config.get("demo_mode", False)
 
     # For non-keystore paths: validate key format and derive address
     if keystore is None:
@@ -574,54 +728,35 @@ def register_wallet(ctx: typer.Context,
         address = acct.address
 
 
-    if demo_mode  and keystore is None:
-        # Save plaintext private key (for Hardhat/local testing ONLY)
-        wallet_data = {
-            "address": address,
-            "private_key": privatekey,  # ⚠️ PLAINTEXT — ONLY FOR MOCK!
-            "demo_mode": True
-        }
-
-        ensure_wallets_dir()
-        wallet_path = wallet_path_for_name(resolved_name)
-
-        with open(wallet_path, "w") as f:
-            json.dump(wallet_data, f, indent=4)
-        console.print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
-        console.print(f"[yellow]Address:[/yellow] {address}")
-        console.print(f"[cyan]Wallet File:[/cyan] {wallet_path}")
-        
+    if keystore is not None:
+        ks_payload = inner_keystore
     else:
+        # is_new_wallet=True: never reuse a stale in-memory-cached password when
+        # creating/overwriting a wallet; force the create/confirm flow (env var
+        # DIN_WALLET_PASSWORD is still honored for automation).
+        password = _get_password(resolved_name, False, is_new_wallet=True)
+        if password == "":
+            password = getpass("Create wallet password: ")
+            confirm = getpass("Confirm password: ")
+            if password != confirm:
+                console.print("[red]Passwords do not match![/red]")
+                raise typer.Exit()
+        ks_payload = Account.encrypt(privatekey, password)
 
-        if keystore is not None:
-            ks_payload = inner_keystore
-        else:
-            # is_new_wallet=True: never reuse a stale in-memory-cached password when
-            # creating/overwriting a wallet; force the create/confirm flow (env var
-            # DIN_WALLET_PASSWORD is still honored for automation).
-            password = _get_password(resolved_name, False, is_new_wallet=True)
-            if password == "":
-                password = getpass("Create wallet password: ")
-                confirm = getpass("Confirm password: ")
-                if password != confirm:
-                    console.print("[red]Passwords do not match![/red]")
-                    raise typer.Exit()
-            ks_payload = Account.encrypt(privatekey, password)
+    wrapper = {
+        "version": 1,
+        "address": address,
+        "keystore": ks_payload,
+        "source": source,
+        "name": resolved_name,
+    }
 
-        wrapper = {
-            "version": 1,
-            "address": address,
-            "keystore": ks_payload,
-            "source": source,
-            "name": resolved_name,
-        }
+    wallet_path = wallet_path_for_name(resolved_name)
+    atomic_write_wallet(wallet_path, wrapper)
 
-        wallet_path = wallet_path_for_name(resolved_name)
-        atomic_write_wallet(wallet_path, wrapper)
-
-        console.print(f"[green]Wallet {resolved_name} registered successfully![/green]")
-        console.print(f"[green]Wallet Account Address:[/green] {address}")
-        console.print(f"[green]Encrypted keystore saved at:[/green] {wallet_path}")
+    console.print(f"[green]Wallet {resolved_name} registered successfully![/green]")
+    console.print(f"[green]Wallet Account Address:[/green] {address}")
+    console.print(f"[green]Encrypted keystore saved at:[/green] {wallet_path}")
 
     # Registration never switches the active wallet implicitly — only via
     # --connect (see the wallet-model comment above for the resolution order).
@@ -813,15 +948,19 @@ def din_info(ctx: typer.Context,
     stake: bool = typer.Option(False, "--stake", help="Show staking contract"),
     representative: bool = typer.Option(False, "--representative", help="Show representative logic"),
     registry: bool = typer.Option(False, "--registry", help="Show registry contract"),
-    
+    treasury: bool = typer.Option(False, "--treasury", help="Show treasury contract"),
+    fee_router: bool = typer.Option(False, "--fee-router", help="Show fee router contract"),
+    emission: bool = typer.Option(False, "--emission", help="Show emission contract"),
+
 ):
-    
+
     # Resolve effective network
     effective_network, _, _, console = ctx.obj.get_en_w3_account_console()
 
     try:
         addresses = get_platform_addresses(ctx.obj.session)
     except DinError as e:
+        reraise_din_error_cause(e)
         console.print(f"[red]{e.message}[/red]")
         raise typer.Exit(1)
 
@@ -847,44 +986,50 @@ def din_info(ctx: typer.Context,
         console.print(f"[magenta]Representative:[/magenta] {render('representative', addresses.representative)}")
     if registry:
         console.print(f"[magenta]Registry:[/magenta] {render('registry', addresses.registry)}")
+    if treasury:
+        console.print(f"[blue]Treasury:[/blue] {render('treasury', addresses.treasury)}")
+    if fee_router:
+        console.print(f"[blue]Fee Router:[/blue] {render('fee_router', addresses.fee_router)}")
+    if emission:
+        console.print(f"[blue]Emission:[/blue] {render('emission', addresses.emission)}")
 
-    if not any([coordinator, token, stake, representative, registry]):
+    if not any([coordinator, token, stake, representative, registry, treasury, fee_router, emission]):
         console.print(f"[cyan]Coordinator:[/cyan] {render('coordinator', addresses.coordinator)}")
         console.print(f"[green]DIN Token:[/green] {render('token', addresses.token)}")
         console.print(f"[yellow]Staking Contract:[/yellow] {render('stake', addresses.stake)}")
         console.print(f"[magenta]Representative:[/magenta] {render('representative', addresses.representative)}")
         console.print(f"[magenta]Registry:[/magenta] {render('registry', addresses.registry)}")
+        if addresses.treasury:
+            console.print(f"[blue]Treasury:[/blue] {addresses.treasury}")
+        if addresses.fee_router:
+            console.print(f"[blue]Fee Router:[/blue] {addresses.fee_router}")
+        if addresses.emission:
+            console.print(f"[blue]Emission:[/blue] {addresses.emission}")
 
 
 # ---------------------------------------------------------------------------
 # Platform deployments import
 # ---------------------------------------------------------------------------
-# The platform contracts (DinToken, DinCoordinator, DinValidatorStake,
-# DINModelRegistry) are transparent proxies (PR 13). INTERIM bootstrap flow:
-# proxy deployment + initialize + wiring is done by the toolchain script,
-# which runs through the OpenZeppelin upgrades plugin:
+# The platform contracts (DinTreasury, DinToken, DinCoordinator,
+# DinValidatorStake, DINModelRegistry, DinFeeRouter, DinEmission) are
+# transparent proxies. INTERIM bootstrap flow: proxy deployment + initialize +
+# wiring is done by a toolchain script running the OpenZeppelin upgrades
+# validation:
 #
-#     cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>
+#     cd foundry && forge script script/DeployPlatform.s.sol --rpc-url <rpc> --broadcast ...   # primary
+#     cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>              # secondary
 #
-# That script records the proxy addresses in hardhat/deployments/<net>.json;
-# `dincli system import-deployments` maps that file into din_info.json so all
-# dincli commands resolve the deployed platform.
+# Each script records the proxy addresses in <toolchain>/deployments/<net>.json
+# (same schema); `dincli system import-deployments` maps that file into
+# din_info.json so all dincli commands resolve the deployed platform.
 #
 # NOTE — this is not the target architecture. The decision record
 # Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md
-# chose native web3.py proxy deployment inside `dindao deploy` (its Option C;
+# chose native web3.py proxy deployment inside `dinrep deploy` (its Option C;
 # backlog: Developer/issues/dincli-native-proxy-deployment.md). Once that
 # lands, this command demotes to a secondary sync utility for script-driven
-# deployments/upgrades and for adopting already-deployed networks.
-#
-# Foundry migration note: foundry/ carries the same contracts but has no
-# deploy scripts yet. Whatever produces the addresses next (forge script for
-# upgrades, native dincli deploys for bootstrap), keep this command as the
-# single import interface — either have the forge script write the same
-# deployments/<network>.json shape (preferred, trivial with vm.writeJson), or
-# extend _DEPLOYMENTS_TO_DIN_INFO parsing with a reader for foundry's
-# broadcast/<Script>.s.sol/<chainid>/run-latest.json. Only the producer of the
-# addresses changes; din_info.json stays the contract with the rest of dincli.
+# deployments/upgrades and for adopting already-deployed networks. Either way
+# din_info.json stays the contract with the rest of dincli.
 
 # dincli network name → deploy-toolchain network name (standalone `npx hardhat
 # node` / anvil are both "localhost"); networks not listed map to themselves.
@@ -899,10 +1044,16 @@ _DEPLOYMENTS_TO_DIN_INFO = {
     "dinToken": "token",
     "dinValidatorStake": "stake",
     "dinModelRegistry": "registry",
+    "dinTreasury": "treasury",
+    "dinFeeRouter": "fee_router",
+    "dinEmission": "emission",
     "proxyAdminToken": "proxy_admin_token",
     "proxyAdminCoordinator": "proxy_admin_coordinator",
     "proxyAdminStake": "proxy_admin_stake",
     "proxyAdminRegistry": "proxy_admin_registry",
+    "proxyAdminTreasury": "proxy_admin_treasury",
+    "proxyAdminFeeRouter": "proxy_admin_fee_router",
+    "proxyAdminEmission": "proxy_admin_emission",
 }
 _REQUIRED_DEPLOYMENT_KEYS = ("dinToken", "dinCoordinator", "dinValidatorStake", "dinModelRegistry")
 
@@ -935,13 +1086,19 @@ def import_deployments(ctx: typer.Context,
       cd hardhat && npx hardhat run scripts/deploy-platform.ts --network localhost
       dincli system import-deployments --hardhat
 
-    Both flows write the same address schema; this command reads either.
+    Foundry writes 14 keys (7 contracts + 7 proxy admins, including
+    dinTreasury and dinFeeRouter added in PR #51 and dinEmission added in
+    PR #148); hardhat still writes the four-contract shape — both
+    toolchains use per-contract proxyAdmin keys, but hardhat predates both
+    of those additions and carries no treasury, fee-router, or emission
+    entries (consistent with hardhat being the secondary toolchain).
     Pass --file to supply an explicit path. --foundry, --hardhat, and --file
     are all mutually exclusive with each other.
 
     Only the platform address keys of the active network's din_info entry are
-    updated (coordinator, token, stake, registry, proxy_admin_*); everything
-    else (representative, explorer, default CIDs, ...) is preserved.
+    updated (coordinator, token, stake, registry, treasury, fee_router,
+    emission, proxy_admin_*); everything else (representative, explorer,
+    default CIDs, ...) is preserved.
     """
     console = ctx.obj.console
     effective_network = ctx.obj.network
@@ -996,11 +1153,20 @@ def import_deployments(ctx: typer.Context,
     console.print(f"[green]DIN Token:[/green] {entry.get('token')}")
     console.print(f"[yellow]Staking Contract:[/yellow] {entry.get('stake')}")
     console.print(f"[magenta]Registry:[/magenta] {entry.get('registry')}")
+    if entry.get("treasury"):
+        console.print(f"[blue]Treasury:[/blue] {entry.get('treasury')}")
+    if entry.get("fee_router"):
+        console.print(f"[blue]Fee Router:[/blue] {entry.get('fee_router')}")
+    if entry.get("emission"):
+        console.print(f"[blue]Emission:[/blue] {entry.get('emission')}")
     for _label, _key in [
         ("Proxy Admin (token)", "proxy_admin_token"),
         ("Proxy Admin (coordinator)", "proxy_admin_coordinator"),
         ("Proxy Admin (stake)", "proxy_admin_stake"),
         ("Proxy Admin (registry)", "proxy_admin_registry"),
+        ("Proxy Admin (treasury)", "proxy_admin_treasury"),
+        ("Proxy Admin (fee router)", "proxy_admin_fee_router"),
+        ("Proxy Admin (emission)", "proxy_admin_emission"),
     ]:
         if entry.get(_key):
             console.print(f"[magenta]{_label}:[/magenta] {entry[_key]}")
@@ -1364,12 +1530,13 @@ def dump_abi(
     """
     Extract ABI (and optionally bytecode) from a contract artifact and save it 
     in Hardhat-compatible format to dincli/abis/.
-    
+
     Example:
-      dincli dindao dump-abi --artifact "hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json" --bytecode
+      dincli system dump-abi --official --artifact "foundry/out/DinCoordinator.sol/DinCoordinator.json" --bytecode
     """
 
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    # File-only operation: no network, web3 or wallet needed.
+    console = ctx.obj.console
     
     artifact = Path(artifact_path)
     if not artifact.exists():

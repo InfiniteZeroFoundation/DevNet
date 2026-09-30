@@ -40,6 +40,9 @@ contract DinValidatorStake is
     error InvalidMinStake();
     error InvalidUnbondingPeriod();
     error InvalidStakeBounds();
+    error InvalidEncryptionKey();
+    error InvalidS5Params();
+    error InvalidS6Params();
 
     IERC20 public DIN_TOKEN;
     address public DIN_COORDINATOR;
@@ -93,16 +96,79 @@ contract DinValidatorStake is
     event ValidatorReactivated(address indexed validator);
     event MinStakeUpdated(uint256 newMinStake);
     event UnbondingPeriodUpdated(uint64 newPeriod);
-    event ModelStakeBoundsUpdated(uint256 indexed modelId, uint256 min, uint256 max);
+    event ModelStakeBoundsUpdated(
+        uint256 indexed modelId,
+        uint256 min,
+        uint256 max
+    );
     event MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256 value);
     event SlashTreasuryUpdated(address indexed treasury);
+    event EncryptionKeyRegistered(address indexed validator, bytes pubkey);
 
     mapping(address => ValidatorInfo) public validators;
 
-    struct ModelStakeBounds { uint256 min; uint256 max; }
+    struct ModelStakeBounds {
+        uint256 min;
+        uint256 max;
+    }
     mapping(uint256 => ModelStakeBounds) public modelMinStakeBounds;
     uint256 public maxConcurrentRegistrationsPerStakeUnit;
     address public slashTreasury;
+    mapping(address => bytes) public encryptionKeys;
+
+    /// @notice Number of active GI registrations held by each validator across
+    ///         all task contracts. Incremented by task contracts (as slashers)
+    ///         at registration time, decremented at endGI time. Used to enforce
+    ///         maxConcurrentRegistrationsPerStakeUnit when non-zero.
+    mapping(address => uint256) public activeRegistrationCount;
+
+    event ActiveRegistrationIncremented(address indexed validator);
+    event ActiveRegistrationDecremented(address indexed validator);
+
+    // ── S5 — Recidivism counter ────────────────────────────────────────────
+    /// @notice Rolling GI window for recidivism detection. DAO-settable.
+    uint256 public s5RecidivismWindow;
+    /// @notice Number of partial slashes within the window that triggers
+    ///         escalation to a full MIN_STAKE slash + jail.
+    uint256 public s5RecidivismThreshold;
+    /// @notice Jail duration (seconds) applied on S5 escalation.
+    uint256 public s5JailDuration;
+    /// @dev Per-validator, per-calling-slasher-contract ordered list of GI
+    ///      indices at which a partial slash was recorded. Entries older than
+    ///      s5RecidivismWindow GIs are trimmed. Namespaced by msg.sender (the
+    ///      calling task contract) rather than by validator alone: giIndex is
+    ///      a per-model counter, so a validator active in multiple models
+    ///      would otherwise push non-monotonic values into a single shared
+    ///      ring and underflow the ascending-order trim in
+    ///      _trimAndRecordPartialSlash. Each calling model's GI sequence is
+    ///      independently monotonic, so keying by [validator][msg.sender]
+    ///      keeps the ascending-order assumption safe.
+    mapping(address => mapping(address => uint256[])) private _partialSlashGIs;
+
+    event S5RecidivismParamsUpdated(uint256 window, uint256 threshold, uint256 jailDuration);
+    event ValidatorEscalatedS5(
+        address indexed validator,
+        uint256 slashedAmount,
+        uint256 giIndex,
+        address indexed slasher
+    );
+
+    // ── S6 — Registration-without-capacity counter ─────────────────────────
+    /// @notice Number of no-participation GIs that triggers an escalating
+    ///         partial slash. DAO-settable.
+    uint256 public s6NoParticipationThreshold;
+    /// @notice Per-validator count of GIs where the validator registered but
+    ///         never submitted anything (reported by slasher contracts).
+    mapping(address => uint256) public s6NoParticipationCount;
+
+    event S6ParamsUpdated(uint256 threshold);
+    event S6NoParticipationRecorded(
+        address indexed validator,
+        uint256 count,
+        bytes32 reason,
+        address indexed slasher
+    );
+    event S6PartialSlashFired(address indexed validator, uint256 slashedAmount, address indexed slasher);
 
     // Reserved for future state variables at this inheritance level.
     uint256[50] private __gap;
@@ -127,6 +193,10 @@ contract DinValidatorStake is
         DIN_COORDINATOR = dinCoordinator;
         MIN_STAKE = 10 * 1e18;
         UNBONDING_PERIOD = 7 days;
+        s5RecidivismWindow = 5;
+        s5RecidivismThreshold = 3;
+        s5JailDuration = 7 days;
+        s6NoParticipationThreshold = 3;
     }
 
     modifier onlyDinCoordinator() {
@@ -149,9 +219,9 @@ contract DinValidatorStake is
             revert ValidatorIsBlacklisted();
         }
 
-        DIN_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
         validator.activeStake += amount;
         _syncValidatorStatus(validator);
+        DIN_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
 
         emit ValidatorStaked(msg.sender, amount);
     }
@@ -185,11 +255,14 @@ contract DinValidatorStake is
         emit SlasherContractRemoved(slasherContract);
     }
 
-    /// @notice Slashes a validator's stake by the requested amount. . 50% of the slashed amount is burned;
+    /// @notice Slashes a validator's stake by the requested amount. 50% of the slashed amount is burned;
     ///         50% is sent to slashTreasury (if set) or also burned as a fallback.
     /// @dev Active stake is consumed first; any remainder is taken from pending
     ///      withdrawals. If total slashable stake is less than amount, the actual
     ///      slashed amount is capped and returned rather than reverting.
+    ///      Use slashPartial() for S1/S2 liveness faults — it applies the S5
+    ///      recidivism counter and supports S6 tracking. This function is for
+    ///      full-severity faults (bad consensus, S3 deviation).
     /// @param validator Address of the validator to slash.
     /// @param amount Maximum token amount to slash.
     /// @param reason Arbitrary identifier for the slash event, emitted on-chain.
@@ -201,41 +274,83 @@ contract DinValidatorStake is
     ) external onlySlasherContract nonReentrant returns (uint256) {
         if (validator == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidSlashAmount();
+        return _applySlash(validator, amount, reason);
+    }
 
-        ValidatorInfo storage v = validators[validator];
-        uint256 actualAmount = amount;
-        uint256 slashableStake = v.activeStake + v.pendingWithdrawals;
-        if (slashableStake < actualAmount) {
-            actualAmount = slashableStake;
+    /// @notice Partial-severity slash for S1/S2 liveness faults, with S5
+    ///         recidivism tracking. Applies a fraction of MIN_STAKE rather than
+    ///         the full amount. If the validator's partial-slash count within
+    ///         s5RecidivismWindow GIs (tracked per calling slasher contract,
+    ///         see _partialSlashGIs) reaches s5RecidivismThreshold, the slash
+    ///         is automatically escalated to MIN_STAKE and the validator is jailed.
+    /// @param validator Address of the validator to slash.
+    /// @param amount Partial slash amount (computed by the calling task contract
+    ///        as a fraction of minStake). Ignored on S5 escalation — full MIN_STAKE
+    ///        is used instead.
+    /// @param reason Reason code emitted on-chain (e.g. "AUD_NO_VOTE").
+    /// @param giIndex Current GI index (in the calling task contract's own GI
+    ///        sequence), used for the rolling recidivism window.
+    /// @return The actual amount slashed.
+    function slashPartial(
+        address validator,
+        uint256 amount,
+        bytes32 reason,
+        uint256 giIndex
+    ) external onlySlasherContract nonReentrant returns (uint256) {
+        if (validator == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidSlashAmount();
+
+        // Record this partial slash and trim entries outside the window.
+        // Namespaced by msg.sender (the calling task contract) — see
+        // _partialSlashGIs and _trimAndRecordPartialSlash for why.
+        _trimAndRecordPartialSlash(validator, giIndex);
+
+        // Count entries now in the window (includes the one just added).
+        uint256 countInWindow = _partialSlashGIs[validator][msg.sender].length;
+
+        if (countInWindow >= s5RecidivismThreshold) {
+            // Escalate: full MIN_STAKE slash + jail.
+            uint256 escalatedAmount = _applySlash(validator, MIN_STAKE, "S5_RECIDIVISM");
+            _jailInternal(validator, uint64(s5JailDuration), "S5_RECIDIVISM");
+            emit ValidatorEscalatedS5(validator, escalatedAmount, giIndex, msg.sender);
+            // Clear this caller's ring so its next GI starts a fresh window after jail exit.
+            delete _partialSlashGIs[validator][msg.sender];
+            return escalatedAmount;
         }
 
-        if (actualAmount == 0) {
+        return _applySlash(validator, amount, reason);
+    }
+
+    /// @notice Records one no-participation event for a validator (S6 counter).
+    ///         Called by task contracts during the slashing phase for validators
+    ///         who registered for a GI but submitted nothing.
+    ///         When the count reaches s6NoParticipationThreshold, fires an
+    ///         escalating partial slash: 10% × (count − threshold + 1) of
+    ///         MIN_STAKE, capped at MIN_STAKE.
+    /// @param validator Address of the validator.
+    /// @param reason Reason code (e.g. "S6_NO_PARTICIPATION").
+    /// @return The actual slash amount fired (0 if below threshold).
+    function recordNoParticipation(
+        address validator,
+        bytes32 reason
+    ) external onlySlasherContract nonReentrant returns (uint256) {
+        if (validator == address(0)) revert InvalidAddress();
+        s6NoParticipationCount[validator]++;
+        uint256 count = s6NoParticipationCount[validator];
+        emit S6NoParticipationRecorded(validator, count, reason, msg.sender);
+
+        if (count < s6NoParticipationThreshold) {
             return 0;
         }
 
-        uint256 activeStake = v.activeStake;
-        if (activeStake >= actualAmount) {
-            v.activeStake = activeStake - actualAmount;
-        } else {
-            v.activeStake = 0;
-            v.pendingWithdrawals -= (actualAmount - activeStake);
-            if (v.pendingWithdrawals == 0) {
-                v.withdrawAvailableAt = 0;
-            }
-        }
-        _syncValidatorStatus(v);
+        // Escalating partial slash: 10% per breach over threshold, capped at 100%.
+        uint256 breaches = count - s6NoParticipationThreshold + 1;
+        uint256 slashAmount = (MIN_STAKE * breaches) / 10;
+        if (slashAmount > MIN_STAKE) slashAmount = MIN_STAKE;
 
-         uint256 burnAmount = actualAmount / 2;
-        uint256 treasuryAmount = actualAmount - burnAmount;
-        IBurnableToken(address(DIN_TOKEN)).burn(burnAmount);
-        if (slashTreasury != address(0)) {
-            DIN_TOKEN.safeTransfer(slashTreasury, treasuryAmount);
-        } else {
-            IBurnableToken(address(DIN_TOKEN)).burn(treasuryAmount);
-        }
-
-        emit ValidatorSlashed(validator, actualAmount, reason, msg.sender);
-        return actualAmount;
+        uint256 actual = _applySlash(validator, slashAmount, "S6_NO_PARTICIPATION");
+        emit S6PartialSlashFired(validator, actual, msg.sender);
+        return actual;
     }
 
     /// @notice Moves stake into a pending withdrawal subject to the unbonding period.
@@ -317,13 +432,13 @@ contract DinValidatorStake is
         emit ValidatorUnblacklisted(validator);
     }
 
-/// @notice Updates the network-wide minimum stake floor required to become an active validator.
+    /// @notice Updates the network-wide minimum stake floor required to become an active validator.
     function setMinStake(uint256 newMinStake) external onlyOwner {
         if (newMinStake == 0) revert InvalidMinStake();
         MIN_STAKE = newMinStake;
         emit MinStakeUpdated(newMinStake);
     }
-    
+
     /// @notice Updates the unbonding period applied to new unstake requests.
     /// @dev Does not retroactively affect in-flight withdrawals whose withdrawAvailableAt
     ///      was already computed at the time unstake() was called.
@@ -333,18 +448,45 @@ contract DinValidatorStake is
         emit UnbondingPeriodUpdated(newPeriod);
     }
 
-    
     /// @notice Stores per-model stake bounds (not yet enforced — follow-up task).
-    function setModelStakeBounds(uint256 modelId, uint256 min, uint256 max) external onlyOwner {
+    function setModelStakeBounds(
+        uint256 modelId,
+        uint256 min,
+        uint256 max
+    ) external onlyOwner {
         if (min > max) revert InvalidStakeBounds();
         modelMinStakeBounds[modelId] = ModelStakeBounds(min, max);
         emit ModelStakeBoundsUpdated(modelId, min, max);
     }
 
     /// @notice Stores the concurrent-registration cap per stake unit (not yet enforced).
-    function setMaxConcurrentRegistrationsPerStakeUnit(uint256 value) external onlyOwner {
+    function setMaxConcurrentRegistrationsPerStakeUnit(
+        uint256 value
+    ) external onlyOwner {
         maxConcurrentRegistrationsPerStakeUnit = value;
         emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
+    }
+
+    /// @notice Returns the per-model minimum stake floor set by the model owner.
+    /// @param modelId Model registry ID to query.
+    function getModelStakeMin(uint256 modelId) external view returns (uint256) {
+        return modelMinStakeBounds[modelId].min;
+    }
+
+    /// @notice Increments the active-registration counter for a validator.
+    /// @dev Called by registered task contracts at aggregator/auditor registration time.
+    function incrementActiveRegistration(address validator) external onlySlasherContract {
+        activeRegistrationCount[validator]++;
+        emit ActiveRegistrationIncremented(validator);
+    }
+
+    /// @notice Decrements the active-registration counter for a validator.
+    /// @dev Called by registered task contracts at endGI time. Saturates at zero.
+    function decrementActiveRegistration(address validator) external onlySlasherContract {
+        if (activeRegistrationCount[validator] > 0) {
+            activeRegistrationCount[validator]--;
+        }
+        emit ActiveRegistrationDecremented(validator);
     }
 
     /// @notice Sets the treasury address that receives 50% of every slashed amount.
@@ -352,6 +494,14 @@ contract DinValidatorStake is
         if (treasury_ == address(0)) revert InvalidAddress();
         slashTreasury = treasury_;
         emit SlashTreasuryUpdated(treasury_);
+    }
+
+    /// @notice Registers a 32-byte X25519 public key for encrypted test-data key delivery.
+    /// @param pubkey Raw 32-byte X25519 public key.
+    function registerEncryptionKey(bytes calldata pubkey) external {
+        if (pubkey.length != 32) revert InvalidEncryptionKey();
+        encryptionKeys[msg.sender] = pubkey;
+        emit EncryptionKeyRegistered(msg.sender, pubkey);
     }
 
     /// @notice Jails a validator for the given duration preventing GI registration. Callable only by a registered
@@ -363,12 +513,7 @@ contract DinValidatorStake is
     ) external onlySlasherContract {
         if (validator == address(0)) revert InvalidAddress();
         if (duration == 0) revert InvalidJailDuration();
-        ValidatorInfo storage v = validators[validator];
-        if (v.status == ValidatorStatus.Blacklisted) revert ValidatorIsBlacklisted();
-        uint64 newJailedUntil = uint64(block.timestamp) + duration;
-        if (newJailedUntil > v.jailedUntil) v.jailedUntil = newJailedUntil;
-        v.status = ValidatorStatus.Jailed;
-        emit ValidatorJailed(validator, v.jailedUntil, reason, msg.sender);
+        _jailInternal(validator, duration, reason);
     }
 
     /// @notice Allows a jailed validator to exit jail once the period has expired
@@ -379,7 +524,7 @@ contract DinValidatorStake is
         if (block.timestamp < v.jailedUntil) revert JailPeriodNotExpired();
         if (v.activeStake < MIN_STAKE) revert StakeBelowFloor();
         v.jailedUntil = 0;
-        
+
         _syncValidatorStatus(v);
         emit ValidatorReactivated(msg.sender);
     }
@@ -421,6 +566,143 @@ contract DinValidatorStake is
         address slasherContract
     ) public view returns (bool) {
         return slasherContracts[slasherContract];
+    }
+
+    /// @notice Returns the registered X25519 public key for a validator, or empty bytes if none.
+    /// @param validator Address to query.
+    /// @return The registered 32-byte X25519 public key, or empty bytes.
+    function getEncryptionKey(address validator) public view returns (bytes memory) {
+        return encryptionKeys[validator];
+    }
+
+    /// @notice Updates the S5 recidivism window, threshold, and jail duration.
+    /// @param window Number of GIs to look back. Must be > 0.
+    /// @param threshold Number of partial slashes within the window that
+    ///        triggers escalation. Must be > 0 and <= window.
+    /// @param jailDuration Jail duration in seconds applied on escalation.
+    function setS5RecidivismParams(
+        uint256 window,
+        uint256 threshold,
+        uint256 jailDuration
+    ) external onlyOwner {
+        if (window == 0 || threshold == 0 || threshold > window || jailDuration == 0)
+            revert InvalidS5Params();
+        s5RecidivismWindow = window;
+        s5RecidivismThreshold = threshold;
+        s5JailDuration = jailDuration;
+        emit S5RecidivismParamsUpdated(window, threshold, jailDuration);
+    }
+
+    /// @notice Updates the S6 no-participation threshold.
+    /// @param threshold Number of no-show GIs before an escalating slash fires.
+    function setS6NoParticipationThreshold(uint256 threshold) external onlyOwner {
+        if (threshold == 0) revert InvalidS6Params();
+        s6NoParticipationThreshold = threshold;
+        emit S6ParamsUpdated(threshold);
+    }
+
+    /// @notice Returns the partial-slash GI ring for a validator, as tracked by
+    ///         a specific calling slasher contract (for testing/inspection).
+    /// @param validator Validator address to query.
+    /// @param slasherContract The task contract whose ring to read (rings are
+    ///        namespaced per caller — see _partialSlashGIs).
+    function getPartialSlashGIs(
+        address validator,
+        address slasherContract
+    ) external view returns (uint256[] memory) {
+        return _partialSlashGIs[validator][slasherContract];
+    }
+
+    // ─── Internal helpers ─────────────────────────────────────────────────
+
+    function _applySlash(
+        address validator,
+        uint256 amount,
+        bytes32 reason
+    ) internal returns (uint256) {
+        ValidatorInfo storage v = validators[validator];
+        uint256 actualAmount = amount;
+        uint256 slashableStake = v.activeStake + v.pendingWithdrawals;
+        if (slashableStake < actualAmount) {
+            actualAmount = slashableStake;
+        }
+        if (actualAmount == 0) {
+            return 0;
+        }
+
+        uint256 activeStake = v.activeStake;
+        if (activeStake >= actualAmount) {
+            v.activeStake = activeStake - actualAmount;
+        } else {
+            v.activeStake = 0;
+            v.pendingWithdrawals -= (actualAmount - activeStake);
+            if (v.pendingWithdrawals == 0) {
+                v.withdrawAvailableAt = 0;
+            }
+        }
+        _syncValidatorStatus(v);
+
+        uint256 burnAmount = actualAmount / 2;
+        uint256 treasuryAmount = actualAmount - burnAmount;
+        IBurnableToken(address(DIN_TOKEN)).burn(burnAmount);
+        if (slashTreasury != address(0)) {
+            DIN_TOKEN.safeTransfer(slashTreasury, treasuryAmount);
+        } else {
+            IBurnableToken(address(DIN_TOKEN)).burn(treasuryAmount);
+        }
+
+        emit ValidatorSlashed(validator, actualAmount, reason, msg.sender);
+        return actualAmount;
+    }
+
+    function _jailInternal(
+        address validator,
+        uint64 duration,
+        bytes32 reason
+    ) internal {
+        ValidatorInfo storage v = validators[validator];
+        if (v.status == ValidatorStatus.Blacklisted)
+            revert ValidatorIsBlacklisted();
+        uint64 newJailedUntil = uint64(block.timestamp) + duration;
+        if (newJailedUntil > v.jailedUntil) v.jailedUntil = newJailedUntil;
+        v.status = ValidatorStatus.Jailed;
+        emit ValidatorJailed(validator, v.jailedUntil, reason, msg.sender);
+    }
+
+    /// @dev Appends giIndex to the calling slasher contract's partial-slash
+    ///      ring for this validator, and removes any entries that fall
+    ///      outside the current s5RecidivismWindow. Entries are kept in
+    ///      ascending GI order (callers pass their own current GI). The ring
+    ///      is namespaced by msg.sender specifically so this ascending-order
+    ///      assumption holds: each task contract's GI sequence is independently
+    ///      monotonic, even though different models' GI counters interleave
+    ///      arbitrarily relative to each other.
+    function _trimAndRecordPartialSlash(address validator, uint256 giIndex) internal {
+        uint256[] storage ring = _partialSlashGIs[validator][msg.sender];
+        ring.push(giIndex);
+
+        uint256 window = s5RecidivismWindow;
+        // Trim entries from the front that are outside the window.
+        // giIndex >= window is safe: entries where giIndex - ring[i] >= window are expired.
+        uint256 removeCount = 0;
+        uint256 len = ring.length;
+        for (uint256 i = 0; i < len - 1; i++) {
+            // ring is in ascending order; once an entry is in-window, all later are too.
+            if (giIndex - ring[i] >= window) {
+                removeCount++;
+            } else {
+                break;
+            }
+        }
+        if (removeCount > 0) {
+            uint256 newLen = len - removeCount;
+            for (uint256 i = 0; i < newLen; i++) {
+                ring[i] = ring[i + removeCount];
+            }
+            for (uint256 i = 0; i < removeCount; i++) {
+                ring.pop();
+            }
+        }
     }
 
     function _syncValidatorStatus(ValidatorInfo storage validator) internal {

@@ -59,6 +59,14 @@ dincli auditor register <model_id> [--gi <gi_index>]
 
 Once the Model Owner creates Auditor Batches and assigns you to one, you can view and evaluate your assigned models.
 
+### Lock the Batch-Assignment Seed (optional, recommended)
+
+```bash
+dincli auditor lock-seed <model_id> [--gi <gi_index>]
+```
+
+Between `closeLMsubmissions` and batch creation, the auditor batch assignment is drawn from a seed anchored to a future block. Anyone can lock it once that block is mined. If only the Model Owner locks it, they can decline to lock a draw they dislike and wait ~256 blocks for a fresh one, so locking it yourself as soon as it is available removes that option. The command waits for the seed block, then locks (or skips if someone already has). `lms-evaluation show-batch` does the same automatically when run before batches exist. Only valid while the GI is in `LMSclosed`.
+
 ### Show Your Assigned Batch
 
 ```bash

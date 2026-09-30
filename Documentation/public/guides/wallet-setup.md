@@ -108,6 +108,12 @@ dincli system connect-wallet validator
 keystore at `~/.config/dincli/wallets/wallet_validator.json` — your raw private key is
 **never written to disk in plaintext**.
 
+> [!NOTE]
+> `register-wallet` only ever handles real key material and refuses to run if demo mode
+> is on (`dincli system configure-demo --mode no` first). The separate `connect-demo-wallet`
+> command is the only one that can touch a well-known Hardhat dev key — never used for a
+> real wallet like this one.
+
 **Password handling:**
 - You are prompted for your passphrase **each command** (`dincli` does not cache passwords
   across invocations).

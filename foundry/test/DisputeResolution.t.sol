@@ -1,0 +1,1197 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests for the dispute-resolution scaffold (task_210726_6 Part 4c, issue #38,
+// S4: invalid aggregation via recomputation). Covers bond custody, the dispute
+// window, upheld-vs-rejected settlement, fresh-subgroup reassignment (with
+// exclusion of the accused batch's original aggregators), and pull-payment
+// bond claims.
+// Run: forge test --match-contract DisputeResolutionTest -vv
+// ─────────────────────────────────────────────────────────────────────────────
+
+import {Test} from "forge-std/Test.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+
+import {DinToken} from "../src/DinToken.sol";
+import {DinCoordinator} from "../src/DinCoordinator.sol";
+import {DinValidatorStake} from "../src/DinValidatorStake.sol";
+import {DINModelRegistry} from "../src/DINModelRegistry.sol";
+import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
+import "../src/DINShared.sol" as Shared;
+
+// Pull the custom errors into scope so vm.expectRevert(Error.selector) compiles.
+error TC_DisputeNotAwaitingRecomputation();
+error TC_ResolutionWindowOpen();
+error TC_DisputeAlreadyFinalized();
+
+contract DisputeResolutionTest is Test {
+    DinToken tokenImpl;
+    DinCoordinator coordinatorImpl;
+    DinValidatorStake stakeImpl;
+    DINModelRegistry registryImpl;
+
+    DinToken token;
+    DinCoordinator coordinator;
+    DinValidatorStake stake;
+    DINModelRegistry registry;
+
+    DINTaskCoordinator tc;
+    DINTaskAuditor ta;
+
+    address admin = makeAddr("admin");
+    address modelOwner = makeAddr("modelOwner");
+    address challenger = makeAddr("challenger");
+
+    address auditor1 = makeAddr("auditor1");
+    address auditor2 = makeAddr("auditor2");
+    address auditor3 = makeAddr("auditor3");
+    address client1 = makeAddr("client1");
+    address client2 = makeAddr("client2");
+    address client3 = makeAddr("client3");
+
+    bytes32 constant WINNING_CID = bytes32(uint256(0xC1D));
+
+    // Commit-then-reveal (task_210726_6 §2a, PR #63) replaced the old
+    // single-shot setAuditScorenEligibility this file was written against.
+    // Fixed salt is fine here -- these tests don't exercise salt secrecy,
+    // only driving the GI far enough to reach T1 finalization.
+    bytes32 constant TEST_SALT = bytes32(uint256(0xC0FFEE));
+
+    function _deployPlatform() internal {
+        vm.startPrank(admin);
+
+        tokenImpl = new DinToken();
+        TransparentUpgradeableProxy tokenProxy = new TransparentUpgradeableProxy(
+            address(tokenImpl),
+            admin,
+            abi.encodeCall(DinToken.initialize, ())
+        );
+        token = DinToken(address(tokenProxy));
+
+        coordinatorImpl = new DinCoordinator();
+        TransparentUpgradeableProxy coordinatorProxy = new TransparentUpgradeableProxy(
+            address(coordinatorImpl),
+            admin,
+            abi.encodeCall(DinCoordinator.initialize, (address(token)))
+        );
+        coordinator = DinCoordinator(address(coordinatorProxy));
+
+        token.setCoordinator(address(coordinator));
+
+        stakeImpl = new DinValidatorStake();
+        TransparentUpgradeableProxy stakeProxy = new TransparentUpgradeableProxy(
+            address(stakeImpl),
+            admin,
+            abi.encodeCall(
+                DinValidatorStake.initialize,
+                (address(token), address(coordinator))
+            )
+        );
+        stake = DinValidatorStake(address(stakeProxy));
+
+        coordinator.updateValidatorStakeContract(address(stake));
+
+        registryImpl = new DINModelRegistry();
+        TransparentUpgradeableProxy registryProxy = new TransparentUpgradeableProxy(
+            address(registryImpl),
+            admin,
+            abi.encodeCall(DINModelRegistry.initialize, (address(stake)))
+        );
+        registry = DINModelRegistry(address(registryProxy));
+
+        vm.stopPrank();
+    }
+
+    function _fundAndStake(address who) internal {
+        vm.deal(who, 1 ether);
+        vm.prank(who);
+        coordinator.depositAndMint{value: 0.001 ether}();
+        vm.startPrank(who);
+        token.approve(address(stake), type(uint256).max);
+        stake.stake(10 ether); // MIN_STAKE
+        vm.stopPrank();
+    }
+
+    function _fundDinBalance(address who, uint256 dinAmount) internal {
+        uint256 ethNeeded = (dinAmount * 1e18) / (1_000_000 * 1e18) + 1;
+        vm.deal(who, ethNeeded + 1 ether);
+        vm.prank(who);
+        coordinator.depositAndMint{value: ethNeeded}();
+        vm.startPrank(who);
+        token.approve(address(tc), type(uint256).max);
+        token.approve(address(ta), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    function _deployTaskPair() internal {
+        vm.startPrank(modelOwner);
+        tc = new DINTaskCoordinator(address(stake), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        tc.setDINTaskAuditorContract(address(ta));
+        vm.stopPrank();
+
+        vm.startPrank(admin);
+        coordinator.addSlasherContract(address(tc));
+        coordinator.addSlasherContract(address(ta));
+        vm.stopPrank();
+
+        vm.startPrank(modelOwner);
+        tc.setDINTaskCoordinatorAsSlasher();
+        tc.setDINTaskAuditorAsSlasher();
+        tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
+        tc.setDinToken(address(token));
+        ta.setDinToken(address(token));
+        vm.stopPrank();
+
+        // task_210726_6 §3: startGI reverts with TC_GIRewardPoolNotFunded
+        // unless DINTaskAuditor.depositRewards(_GI, ...) has already been
+        // called for that GI -- same sequence AuditorCommitReveal.t.sol and
+        // ScoringValidation.t.sol use.
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
+        tc.startGI(1);
+        vm.stopPrank();
+    }
+
+    /// @dev Registers `numAggregators` aggregators (>= 3), runs a full GI
+    ///      through T1 finalization with all assigned T1 aggregators voting
+    ///      the same CID, and returns with GIstate == T1AggregationDone.
+    ///      Registering more than 3 aggregators leaves an excludable pool for
+    ///      the fresh-subgroup tests.
+
+    /// @dev issue #156 H-2: rolls past disputeSeedDelay and locks the
+    ///      auditor-batch seed for `gi`. Small helper (not inlined at each
+    ///      call site) to keep the fixture functions below reasonably sized.
+    function _lockAuditSeedNow(uint gi) internal {
+        vm.roll(block.number + tc.disputeSeedDelay() + 1);
+        tc.lockAuditSeed(gi);
+    }
+
+    /// @dev Same as _lockAuditSeedNow, for the T1/T2 aggregation seed.
+    function _lockAggSeedNow(uint gi) internal {
+        vm.roll(block.number + tc.disputeSeedDelay() + 1);
+        tc.lockAggSeed(gi);
+    }
+
+    /// @dev Shared setup for _runToT1Finalized/_runToT1FinalizedWithDissent
+    ///      below -- both drove an identical path (deploy, register, LMS,
+    ///      evaluation commit/reveal, T1 commit window open) up to the point
+    ///      where they diverge on which CID(s) the T1 aggregators reveal.
+    ///      Factored out rather than duplicated in both, which is what
+    ///      caused a solc via_ir ICE ("Tag too large for reserved space")
+    ///      once this file's total complexity grew past its previous
+    ///      threshold (same class of fix as _lockAuditSeedNow/
+    ///      _lockAggSeedNow/_commitAndRevealT1 above, just one level up).
+    function _setupToT1AggregationStarted(
+        uint256 numAggregators,
+        string memory aggPrefix
+    ) internal returns (address[] memory aggs) {
+        _deployPlatform();
+        _deployTaskPair();
+
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        _fundAndStake(auditor3);
+
+        aggs = new address[](numAggregators);
+        for (uint i = 0; i < numAggregators; i++) {
+            aggs[i] = makeAddr(string(abi.encodePacked(aggPrefix, i)));
+            _fundAndStake(aggs[i]);
+        }
+
+        vm.prank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        for (uint i = 0; i < numAggregators; i++) {
+            vm.prank(aggs[i]);
+            tc.registerDINaggregator(1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(auditor1);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor2);
+        ta.registerDINAuditor(1);
+        vm.prank(auditor3);
+        ta.registerDINAuditor(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        vm.prank(client1);
+        ta.submitLocalModel(bytes32(uint256(100)), 1);
+        vm.prank(client2);
+        ta.submitLocalModel(bytes32(uint256(200)), 1);
+        vm.prank(client3);
+        ta.submitLocalModel(bytes32(uint256(300)), 1);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        _lockAuditSeedNow(1); // issue #156 H-2
+        tc.createAuditorsBatches(1);
+        tc.setTestDataAssignedFlag(1, true);
+        tc.startLMsubmissionsEvaluation(1);
+        vm.stopPrank();
+
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta
+            .getAuditorsBatch(1, 0);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                bytes32 commitHash = keccak256(
+                    abi.encodePacked(uint256(100), true, TEST_SALT)
+                );
+                vm.prank(batchAuditors[i]);
+                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(1);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                vm.prank(batchAuditors[i]);
+                ta.revealAuditScore(1, 0, modelIdxs[m], 100, true, TEST_SALT);
+            }
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        _lockAggSeedNow(1); // issue #156 H-2
+        tc.autoCreateTier1AndTier2(1);
+        tc.startT1Aggregation(1);
+        vm.stopPrank();
+    }
+
+    function _runToT1Finalized(uint256 numAggregators) internal {
+        _setupToT1AggregationStarted(numAggregators, "agg");
+
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+        _commitAndRevealT1(t1aggs, 1, 0, WINNING_CID);
+
+        vm.prank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+    }
+
+    /// @dev issue #156 M-1: commits each of `aggs` to `cid` for T1 batch
+    ///      `batchId`, opens the reveal window, then reveals every commit.
+    ///      Small helper (not inlined at each call site) so fixtures like
+    ///      _runToT1Finalized below stay small -- the same reasoning as
+    ///      _lockAuditSeedNow/_lockAggSeedNow just above avoided a solc
+    ///      via_ir ICE in this file previously.
+    function _commitAndRevealT1(
+        address[] memory aggs,
+        uint gi,
+        uint batchId,
+        bytes32 cid
+    ) internal {
+        for (uint i = 0; i < aggs.length; i++) {
+            bytes32 commitHash = keccak256(
+                abi.encode(cid, TEST_SALT, aggs[i], gi, DINTaskCoordinator.TierKind.Tier1, batchId)
+            );
+            vm.prank(aggs[i]);
+            tc.commitT1Aggregation(gi, batchId, commitHash);
+        }
+
+        vm.prank(modelOwner);
+        tc.startT1AggregationReveal(gi);
+
+        for (uint i = 0; i < aggs.length; i++) {
+            vm.prank(aggs[i]);
+            tc.revealT1Aggregation(gi, batchId, cid, TEST_SALT);
+        }
+    }
+
+    /// @dev Same as `_commitAndRevealT1`, but each aggregator can reveal a
+    ///      different CID (per-aggregator dissent) -- `cids[i]` must line up
+    ///      with `aggs[i]`.
+    function _commitAndRevealT1Dissenting(
+        address[] memory aggs,
+        uint gi,
+        uint batchId,
+        bytes32[] memory cids
+    ) internal {
+        for (uint i = 0; i < aggs.length; i++) {
+            bytes32 commitHash = keccak256(
+                abi.encode(cids[i], TEST_SALT, aggs[i], gi, DINTaskCoordinator.TierKind.Tier1, batchId)
+            );
+            vm.prank(aggs[i]);
+            tc.commitT1Aggregation(gi, batchId, commitHash);
+        }
+
+        vm.prank(modelOwner);
+        tc.startT1AggregationReveal(gi);
+
+        for (uint i = 0; i < aggs.length; i++) {
+            vm.prank(aggs[i]);
+            tc.revealT1Aggregation(gi, batchId, cids[i], TEST_SALT);
+        }
+    }
+
+    /// @dev Same as `_runToT1Finalized`, except one of the disputed batch's
+    ///      3 assigned aggregators submits a different CID than the other
+    ///      two. The majority CID (WINNING_CID, 2 votes) still finalizes the
+    ///      batch, but this leaves an honest dissenter in `b.aggregators`
+    ///      whose own submission never matched `finalCID` -- the scenario
+    ///      `test_settleRecomputation_confirmed_onlyMatchingSubmittersSlashed`
+    ///      exercises. Returns the dissenter's address.
+    function _runToT1FinalizedWithDissent(
+        uint256 numAggregators
+    ) internal returns (address dissenter) {
+        _setupToT1AggregationStarted(numAggregators, "dissentAgg");
+
+        // 2 of the 3 assigned aggregators vote WINNING_CID; the 3rd (the
+        // dissenter) votes a different CID. WINNING_CID still wins 2-1.
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+        dissenter = t1aggs[2];
+        bytes32[] memory cids = new bytes32[](t1aggs.length);
+        for (uint i = 0; i < t1aggs.length; i++) {
+            cids[i] = t1aggs[i] == dissenter
+                ? bytes32(uint256(0xBAD))
+                : WINNING_CID;
+        }
+        _commitAndRevealT1Dissenting(t1aggs, 1, 0, cids);
+
+        vm.prank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Setters
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_setDinToken_onlyOwner() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.prank(challenger);
+        vm.expectRevert();
+        tc.setDinToken(address(token));
+    }
+
+    function test_setDinToken_rejectsZeroAddress() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.prank(modelOwner);
+        vm.expectRevert(); // TC_InvalidAddress
+        tc.setDinToken(address(0));
+    }
+
+    function test_setDisputeParams_onlyOwner() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.prank(challenger);
+        vm.expectRevert();
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 7);
+    }
+
+    function test_setDisputeParams_rejectsZeroValues() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.startPrank(modelOwner);
+        vm.expectRevert(); // TC_InvalidDisputeParams
+        tc.setDisputeParams(0, 2 days, 3 days, 7);
+
+        vm.expectRevert(); // TC_InvalidDisputeParams
+        tc.setDisputeParams(50 ether, 0, 3 days, 7);
+
+        vm.expectRevert(); // TC_InvalidDisputeParams
+        tc.setDisputeParams(50 ether, 2 days, 0, 7);
+
+        vm.expectRevert(); // TC_InvalidDisputeParams — zero delay
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 0);
+        vm.stopPrank();
+    }
+
+    function test_setDisputeParams_rejectsSeedDelayAboveBlockhashWindow() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.startPrank(modelOwner);
+        vm.expectRevert(Shared.TC_InvalidDisputeParams.selector);
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 257);
+
+        // Previously overflowed openDispute's `block.number + disputeSeedDelay`.
+        vm.expectRevert(Shared.TC_InvalidDisputeParams.selector);
+        tc.setDisputeParams(50 ether, 2 days, 3 days, type(uint64).max);
+
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 256);
+        vm.stopPrank();
+        assertEq(tc.disputeSeedDelay(), 256);
+    }
+
+    function test_setDisputeParams_updatesValues() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.prank(modelOwner);
+        tc.setDisputeParams(50 ether, 2 days, 3 days, 10);
+
+        assertEq(tc.disputeBond(), 50 ether);
+        assertEq(tc.disputeWindow(), 2 days);
+        assertEq(tc.resolutionWindow(), 3 days);
+        assertEq(tc.disputeSeedDelay(), 10);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // openDispute
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_openDispute_happyPath_pullsBondAndRecordsChallenger() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        uint256 balanceBefore = token.balanceOf(challenger);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        (
+            address disputeChallenger,
+            uint256 bond,
+            uint64 openedAt,
+            uint64 resolutionDeadline,
+            uint64 seedBlock,
+            bool resolved,
+            bool upheld,
+            bool finalized,
+            bytes32 seed
+        ) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        assertEq(disputeChallenger, challenger);
+        assertEq(bond, tc.disputeBond());
+        assertEq(openedAt, block.timestamp);
+        assertEq(resolutionDeadline, 0);
+        assertEq(seedBlock, block.number + tc.disputeSeedDelay());
+        assertFalse(resolved);
+        assertFalse(upheld);
+        assertFalse(finalized);
+        assertEq(seed, bytes32(0));
+        assertEq(token.balanceOf(challenger), balanceBefore - tc.disputeBond());
+        assertEq(token.balanceOf(address(tc)), tc.disputeBond());
+    }
+
+    function test_openDispute_revertsIfBatchNotFinalized() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        vm.expectRevert(); // TC_InvalidBatch: no batch 1 exists
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 1);
+    }
+
+    function test_openDispute_revertsAfterWindowCloses() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.warp(block.timestamp + tc.disputeWindow() + 1);
+
+        vm.prank(challenger);
+        vm.expectRevert(); // TC_DisputeWindowClosed
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function test_openDispute_revertsIfAlreadyOpen() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        address secondChallenger = makeAddr("secondChallenger");
+        _fundAndStake(secondChallenger);
+        _fundDinBalance(secondChallenger, 1_000 ether);
+
+        vm.prank(secondChallenger);
+        vm.expectRevert(); // TC_DisputeAlreadyOpen
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function test_openDispute_revertsIfCallerNotActiveValidator() public {
+        _runToT1Finalized(3);
+        _fundDinBalance(challenger, 1_000 ether); // funded but never staked
+
+        vm.prank(challenger);
+        vm.expectRevert(); // TC_AggregatorNotActive
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // resolveDispute
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_resolveDispute_upheld_assignsFreshSubgroupAndSetsDeadline()
+        public
+    {
+        _runToT1Finalized(6); // 3 in the disputed batch, 3 excludable
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        uint64 before = uint64(block.timestamp);
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Bond is NOT claimable yet — deferred to settleRecomputation / expireDispute.
+        assertEq(tc.disputeBondClaimable(challenger), 0);
+
+        // Resolution deadline was set.
+        (,,, uint64 deadline,,,,,) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        assertEq(deadline, before + tc.resolutionWindow());
+
+        // Fresh subgroup excludes the accused batch.
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+        for (uint i = 0; i < originalAggs.length; i++) {
+            assertFalse(
+                _addrInArray(originalAggs[i], _freshSubgroupOf(1, 0)),
+                "fresh subgroup must exclude the accused batch's aggregators"
+            );
+        }
+        assertEq(_freshSubgroupOf(1, 0).length, 3);
+    }
+
+    function test_resolveDispute_upheld_revertsIfNotEnoughEligibleAggregators()
+        public
+    {
+        _runToT1Finalized(3); // exactly the accused batch, nobody left to reassign
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(); // TC_NotEnoughValidators
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+    }
+
+    function test_resolveDispute_rejected_forfeitsBondToTreasuryAccrued() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        assertEq(tc.treasuryAccrued(), tc.disputeBond());
+        assertEq(tc.disputeBondClaimable(challenger), 0);
+    }
+
+    function test_resolveDispute_onlyOwner() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(challenger);
+        vm.expectRevert();
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+    }
+
+    function test_resolveDispute_cannotResolveTwice() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.startPrank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.expectRevert(); // TC_DisputeAlreadyResolved
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+        vm.stopPrank();
+    }
+
+    function test_resolveDispute_revertsIfNoDisputeOpen() public {
+        _runToT1Finalized(3);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(); // TC_DisputeNotOpen
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // claimDisputeBond
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_claimDisputeBond_transfersAndZeroesBalance() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        uint256 balanceAfterOpen = token.balanceOf(challenger);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Settle with confirmed=true so bond becomes claimable.
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.prank(challenger);
+        tc.claimDisputeBond();
+
+        assertEq(token.balanceOf(challenger), balanceAfterOpen + tc.disputeBond());
+        assertEq(tc.disputeBondClaimable(challenger), 0);
+    }
+
+    function test_claimDisputeBond_zeroBalanceReverts() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        vm.prank(challenger);
+        vm.expectRevert(); // TC_NoBondClaimable
+        tc.claimDisputeBond();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // settleRecomputation
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_settleRecomputation_confirmed_returnsBondAndSlashesOriginals() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+        uint256[] memory stakesBefore = new uint256[](originalAggs.length);
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (stakesBefore[i], , , , ) = stake.validators(originalAggs[i]);
+        }
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Bond claimable after confirmed settlement.
+        assertEq(tc.disputeBondClaimable(challenger), tc.disputeBond());
+
+        // Original aggregators slashed (stake reduced).
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (uint256 stakeAfter, , , , ) = stake.validators(originalAggs[i]);
+            assertLt(stakeAfter, stakesBefore[i], "original agg should be slashed");
+        }
+    }
+
+    /// @dev Regression for the blanket-slash defect found in review: a
+    ///      dissenting aggregator who submitted a *different* CID than the
+    ///      disputed majority must not be slashed when settleRecomputation
+    ///      confirms the majority was wrong -- only the matching submitters
+    ///      (who actually produced the bad CID) are at fault.
+    function test_settleRecomputation_confirmed_onlyMatchingSubmittersSlashed()
+        public
+    {
+        address dissenter = _runToT1FinalizedWithDissent(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+        uint256[] memory stakesBefore = new uint256[](originalAggs.length);
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (stakesBefore[i], , , , ) = stake.validators(originalAggs[i]);
+        }
+        (uint256 dissenterStakeBefore, , , , ) = stake.validators(dissenter);
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // The two aggregators who actually submitted the disputed (winning)
+        // CID are slashed; the dissenter, who submitted something else, is not.
+        for (uint i = 0; i < originalAggs.length; i++) {
+            (uint256 stakeAfter, , , , ) = stake.validators(originalAggs[i]);
+            if (originalAggs[i] == dissenter) {
+                assertEq(
+                    stakeAfter,
+                    stakesBefore[i],
+                    "dissenter must not be slashed for S4_INVALID_AGGREGATION"
+                );
+            } else {
+                assertLt(
+                    stakeAfter,
+                    stakesBefore[i],
+                    "matching submitter should be slashed"
+                );
+            }
+        }
+        (uint256 dissenterStakeAfter, , , , ) = stake.validators(dissenter);
+        assertEq(dissenterStakeAfter, dissenterStakeBefore);
+    }
+
+    function test_settleRecomputation_notConfirmed_forfeitsBond() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        uint256 treasuryBefore = tc.treasuryAccrued();
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        assertEq(tc.disputeBondClaimable(challenger), 0);
+        assertEq(tc.treasuryAccrued(), treasuryBefore + tc.disputeBond());
+    }
+
+    function test_settleRecomputation_requiresAwaitingRecomputation_reverts() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        // No dispute opened — settleRecomputation should revert.
+        vm.prank(modelOwner);
+        vm.expectRevert(TC_DisputeNotAwaitingRecomputation.selector);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Dispute opened but immediately rejected (upheld=false) — also not awaiting.
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(TC_DisputeNotAwaitingRecomputation.selector);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+    }
+
+    function test_settleRecomputation_cannotSettleTwice() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.startPrank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.expectRevert(TC_DisputeAlreadyFinalized.selector);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+        vm.stopPrank();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // expireDispute
+    // ─────────────────────────────────────────────────────────────────────
+
+    function test_expireDispute_afterDeadline_returnsBondAndSlashesFreshSubgroup()
+        public
+    {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        address[] memory freshSubgroup = _freshSubgroupOf(1, 0);
+        uint256[] memory freshStakesBefore = new uint256[](freshSubgroup.length);
+        for (uint i = 0; i < freshSubgroup.length; i++) {
+            (freshStakesBefore[i], , , , ) = stake.validators(freshSubgroup[i]);
+        }
+
+        // Advance past the resolution window.
+        vm.warp(block.timestamp + tc.resolutionWindow() + 1);
+
+        tc.expireDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // Challenger bond returned.
+        assertEq(tc.disputeBondClaimable(challenger), tc.disputeBond());
+
+        // Fresh subgroup slashed for timeout.
+        for (uint i = 0; i < freshSubgroup.length; i++) {
+            (uint256 stakeAfter, , , , ) = stake.validators(freshSubgroup[i]);
+            assertLt(stakeAfter, freshStakesBefore[i], "fresh subgroup should be slashed");
+        }
+    }
+
+    function test_expireDispute_beforeDeadline_reverts() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        // Still within the resolution window.
+        vm.expectRevert(TC_ResolutionWindowOpen.selector);
+        tc.expireDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function test_expireDispute_cannotExpireIfAlreadySettled() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.prank(modelOwner);
+        tc.settleRecomputation(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        vm.warp(block.timestamp + tc.resolutionWindow() + 1);
+
+        vm.expectRevert(TC_DisputeAlreadyFinalized.selector);
+        tc.expireDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // lockDisputeSeed (Part A — BL-11)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Timing independence: once the seed is locked, resolving the same
+    /// dispute at different blocks/timestamps yields the same subgroup.
+    /// Snapshot/revert lets us re-resolve the identical dispute at 20 offsets;
+    /// with the pre-fix `blockhash(block.number - 1)` seed this fails.
+    function test_lockDisputeSeed_subgroupIndependentOfResolveTiming() public {
+        _openAndLockDispute(9);
+
+        uint256 snap = vm.snapshotState();
+        address[] memory baseline = _resolveUpheldAndGetSubgroup();
+
+        for (uint k = 1; k <= 20; k++) {
+            vm.revertToState(snap);
+            vm.roll(block.number + k * 37);
+            vm.warp(block.timestamp + k * 101);
+            assertTrue(
+                _sameAddrs(baseline, _resolveUpheldAndGetSubgroup()),
+                "subgroup must not depend on resolve block/timestamp"
+            );
+        }
+    }
+
+    /// Residual No. 3: an eligible aggregator who was NOT drawn cannot re-roll
+    /// the draw by exiting after the seed is public. The draw walks the fixed
+    /// registered pool in shuffled order, so leaving only removes oneself.
+    function test_resolveDispute_nonDrawnAggregatorExitDoesNotChangeSubgroup()
+        public
+    {
+        _openAndLockDispute(9);
+
+        uint256 snap = vm.snapshotState();
+        address[] memory baseline = _resolveUpheldAndGetSubgroup();
+        (, address[] memory originalAggs, , , ) = tc.getTier1Batch(1, 0);
+
+        uint tried;
+        for (uint i = 0; i < 9; i++) {
+            address agg = makeAddr(string(abi.encodePacked("agg", i)));
+            if (_addrInArray(agg, originalAggs) || _addrInArray(agg, baseline)) {
+                continue;
+            }
+            vm.revertToState(snap);
+            vm.prank(agg);
+            stake.unstake(1);
+            assertFalse(stake.isValidatorActive(agg));
+            assertTrue(
+                _sameAddrs(baseline, _resolveUpheldAndGetSubgroup()),
+                "non-drawn aggregator exit must not change the subgroup"
+            );
+            tried++;
+        }
+        assertEq(tried, 3, "expected 3 eligible non-drawn aggregators");
+    }
+
+    /// A drawn aggregator who exits before resolve is replaced, and the other
+    /// drawn members keep their seats.
+    function test_resolveDispute_drawnAggregatorExitOnlyReplacesSelf() public {
+        _openAndLockDispute(9);
+
+        uint256 snap = vm.snapshotState();
+        address[] memory baseline = _resolveUpheldAndGetSubgroup();
+
+        vm.revertToState(snap);
+        vm.prank(baseline[0]);
+        stake.unstake(1);
+        address[] memory afterExit = _resolveUpheldAndGetSubgroup();
+
+        assertFalse(_addrInArray(baseline[0], afterExit));
+        assertTrue(_addrInArray(baseline[1], afterExit));
+        assertTrue(_addrInArray(baseline[2], afterExit));
+    }
+
+    /// lockDisputeSeed reverts before seedBlock is mined.
+    function test_lockDisputeSeed_revertsBeforeSeedBlock() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // seedBlock = block.number + disputeSeedDelay, so we're still before it.
+        vm.expectRevert(); // TC_DisputeSeedBlockNotMined
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    /// lockDisputeSeed reverts if the seed is already locked.
+    function test_lockDisputeSeed_revertsIfAlreadyLocked() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.expectRevert(); // TC_DisputeSeedAlreadyLocked
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    /// lockDisputeSeed reverts when no dispute is open.
+    function test_lockDisputeSeed_revertsIfNoDispute() public {
+        _runToT1Finalized(3);
+
+        vm.expectRevert(); // TC_DisputeNotOpen
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    /// lockDisputeSeed reverts after the dispute has already been resolved.
+    function test_lockDisputeSeed_revertsIfAlreadyResolved() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false); // rejected path, no seed needed
+
+        vm.expectRevert(); // TC_DisputeAlreadyResolved
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    /// A non-owner, non-challenger address can lock the seed — permissionless.
+    function test_lockDisputeSeed_permissionless() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        (,,,, uint64 seedBlock,,,,) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        vm.roll(uint256(seedBlock) + 1);
+
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0); // must not revert
+
+        (,,,,,,,, bytes32 seed) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        assertTrue(seed != bytes32(0), "seed must be set after permissionless lock");
+    }
+
+    /// resolveDispute(upheld=true) reverts if the seed has not been locked yet.
+    function test_resolveDispute_upheld_revertsIfSeedNotLocked() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(); // TC_DisputeSeedNotLocked
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+    }
+
+    /// resolveDispute(upheld=false) succeeds without a locked seed.
+    function test_resolveDispute_rejected_succeedsWithoutSeed() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // Do NOT lock the seed — rejected path must not require it.
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        (,,,,,, , bool finalized,) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        assertTrue(finalized, "rejected dispute must be immediately finalized");
+    }
+
+    /// >256-block re-anchor: rolling far past seedBlock re-anchors to a new
+    /// future block rather than storing a zero-derived seed.
+    function test_lockDisputeSeed_reanchorsAfter256Blocks() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        (,,,, uint64 seedBlock0,,,,) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // Roll >256 blocks past seedBlock0 so blockhash returns 0.
+        vm.roll(uint256(seedBlock0) + 300);
+
+        // First lock call: should re-anchor (not store a seed).
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        (,,,, uint64 seedBlock1,,,, bytes32 seedAfterReanchor) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        assertEq(seedAfterReanchor, bytes32(0), "seed must still be zero after re-anchor");
+        assertGt(seedBlock1, seedBlock0, "seedBlock must have advanced");
+
+        // Now roll past the new seedBlock1 and lock for real.
+        vm.roll(uint256(seedBlock1) + 1);
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        (,,,,,,,, bytes32 seedFinal) = tc.disputes(1, DINTaskCoordinator.TierKind.Tier1, 0);
+        assertTrue(seedFinal != bytes32(0), "seed must be non-zero after real lock");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // helpers
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Rolls past the dispute's seedBlock and locks the seed permissionlessly.
+    ///      Call this before resolveDispute(upheld=true) in every test that exercises
+    ///      the upheld path — the contract now requires a locked seed before it will
+    ///      assign a fresh subgroup.
+    function _openAndLockDispute(uint256 numAggregators) internal {
+        _runToT1Finalized(numAggregators);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function _resolveUpheldAndGetSubgroup() internal returns (address[] memory) {
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+        return _freshSubgroupOf(1, 0);
+    }
+
+    function _sameAddrs(
+        address[] memory a,
+        address[] memory b
+    ) internal pure returns (bool) {
+        if (a.length != b.length) return false;
+        for (uint i = 0; i < a.length; i++) {
+            if (a[i] != b[i]) return false;
+        }
+        return true;
+    }
+
+    function _lockSeed(
+        uint _GI,
+        DINTaskCoordinator.TierKind tierKind,
+        uint batchId
+    ) internal {
+        (,,,, uint64 seedBlock,,,,) = tc.disputes(_GI, tierKind, batchId);
+        vm.roll(uint256(seedBlock) + 1);
+        tc.lockDisputeSeed(_GI, tierKind, batchId);
+    }
+
+    function _freshSubgroupOf(
+        uint _GI,
+        uint batchId
+    ) internal view returns (address[] memory) {
+        // reEvaluationAssignees is a public mapping of dynamic arrays --
+        // Solidity's auto-getter needs an index, so read length via a manual
+        // loop bound instead: T1_AGGREGATORS_PER_BATCH is always the size
+        // when the resolve call succeeded, so just probe indexes until revert.
+        address[] memory out = new address[](3);
+        for (uint i = 0; i < 3; i++) {
+            out[i] = tc.reEvaluationAssignees(
+                _GI,
+                DINTaskCoordinator.TierKind.Tier1,
+                batchId,
+                i
+            );
+        }
+        return out;
+    }
+
+    function _addrInArray(
+        address needle,
+        address[] memory haystack
+    ) internal pure returns (bool) {
+        for (uint i = 0; i < haystack.length; i++) {
+            if (haystack[i] == needle) return true;
+        }
+        return false;
+    }
+}

@@ -1,5 +1,7 @@
 # Starter Task: Differential Privacy & Responsible AI Review
 
+**Completed:** [PR #89](https://github.com/InfiniteZeroFoundation/DevNet/pull/89) delivered this review — findings F1–F8 plus answers to the questions below, independently re-verified against `develop`. It now lives at [`Documentation/technical/audits/dp-mechanism-review.md`](../../Documentation/technical/audits/dp-mechanism-review.md) (findings against existing code belong in `Documentation/technical/`, not here — see the "Deliverable" note below, fixed for future contributors). This task file stays as the record of what was asked.
+
 **Difficulty:** Beginner (review/analysis, not implementation)
 **Area:** Privacy-Preserving Federated Learning / AI Governance
 **Best fit for:** contributors with an AI governance, policy, or responsible-AI background who also have a CS/engineering foundation — this task is scoped as a structured review, not a coding task, so it's a good entry point before taking on implementation work.
@@ -41,7 +43,7 @@ You do not need to read the Solidity contracts or `dincli` CLI internals to do t
 
 ## Deliverable
 
-A short written review (markdown, doesn't need to be long) covering the questions above, submitted as a PR adding a `REVIEW.md` (or similar) under `Developer/issues/`, or as comments on the tracking issue if one exists on GitHub. Code changes are not expected for this task — the goal is to produce a governance-grade assessment the engineering team can act on.
+A short written review (markdown, doesn't need to be long) covering the questions above, submitted as a PR adding a findings doc under `Documentation/technical/audits/` (this reviews code that exists on `develop` today, so it belongs there per [`Developer/README.md`](../README.md)'s placement rules — not `Developer/issues/`, despite this task file living here), or as comments on the tracking issue if one exists on GitHub. Code changes are not expected for this task — the goal is to produce a governance-grade assessment the engineering team can act on.
 
 ## How To Contribute
 

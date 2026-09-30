@@ -1,15 +1,23 @@
 # dincli Integration Test Guide
 
 This guide explains how to run the `tests/dincli/` integration test harness
-against a local Hardhat node, and documents the architecture of the harness
-itself.
+against a local chain, and documents the architecture of the harness itself.
+
+The chain backend and platform deploy script are chosen by
+`PLATFORM_DEPLOY_TOOLCHAIN` (`tests/dincli/constants.py`): **`foundry`
+(default)** runs Anvil (`foundry/anvil.sh`) and `foundry/script/DeployPlatform.s.sol`;
+`hardhat` runs a Hardhat node and `hardhat/scripts/deploy-platform.ts`. Both use
+chain ID 1337 on `http://127.0.0.1:8545`.
+
+> [!WARNING]
+> `foundry/anvil.sh` starts Anvil with `--code-size-limit 4294967295`, so the local chain accepts contracts above the 24,576-byte EIP-170 limit. `DINTaskCoordinator` is currently over that limit (issue #201), so a green local run does not show that a contract can be deployed to a real chain.
 
 ---
 
 ## Quick start
 
-The harness is self-contained. All prerequisites (contract compilation, Hardhat
-node, IPFS daemon) are managed automatically by the conftest. The only manual
+The harness is self-contained. All prerequisites (contract compilation, the
+local chain node, IPFS daemon) are managed automatically by the conftest. The only manual
 requirement is Docker — it must be running before Phase 4 client training begins.
 
 ```bash
@@ -27,8 +35,11 @@ python -m pytest tests/dincli/test_01_platform.py \
 ```
 
 That's it. The conftest will:
-- Compile all Solidity contracts via `npx hardhat compile`
-- Kill any existing Hardhat node and start a fresh one (clean EVM state)
+- Compile contracts: `npx hardhat compile` always (the task-contract deploy and
+  `dump-abi` tests still use Hardhat artifacts), plus `forge build` for the
+  default `foundry` toolchain
+- Kill any existing chain node and start a fresh one (clean EVM state): Anvil
+  for `foundry`, a Hardhat node for `hardhat`
 - Start the IPFS daemon if it is not already running
 - Restore `dincli/config/din_info.json` to its committed state after the run
 
@@ -42,11 +53,13 @@ that isolates dependencies and coordinates services.
 ### Managed services (`managed_services` fixture)
 
 Before any test runs, the fixture does the following:
-1. **Solidity compilation** — runs `npx hardhat compile` inside
-   `/path/to/devnet/hardhat` to generate fresh contract ABIs.
-2. **Fresh Hardhat node** — kills any active node process on port `8545` and
-   launches a clean local node (`npx hardhat node`) with the customized
-   account count.
+1. **Solidity compilation** — runs `npx hardhat compile` in `hardhat/` (the
+   task-contract deploys and `dump-abi` tests use Hardhat artifacts), and
+   `forge build` in `foundry/` when the toolchain is `foundry` (the platform is
+   deployed from `foundry/out/` via `DeployPlatform.s.sol`).
+2. **Fresh chain node** — kills any running node and launches a clean one on
+   port `8545`: `foundry/anvil.sh` (70 accounts, chain ID 1337) for `foundry`,
+   or `npx hardhat node` for `hardhat`.
 3. **IPFS daemon** — checks if the IPFS API (`http://127.0.0.1:5001`) is
    running, starting it (`ipfs daemon`) if not. If it was already running
    externally, it is left running at teardown.
@@ -118,11 +131,13 @@ between them automatically per command — no manual activation needed:
 `TORCHENV_PYTHON` / `PYDIN_PYTHON` are defined in `tests/dincli/constants.py`.
 If you see torch import errors in Phase 4, confirm those paths are correct.
 
-### Hardhat accounts
+### Chain accounts
 
-The GI harness uses accounts 0–22 and 50–58 (59 accounts total). Hardhat's
-default is 20 accounts. `hardhat.config.ts` must have `accounts.count` set to
-at least 60. If you see an "account index out of range" error:
+The GI harness uses accounts 0–22 and 50–58 (59 accounts total).
+`foundry/anvil.sh` already starts Anvil with `--accounts 70`. For the
+`hardhat` toolchain, Hardhat's default is 20 accounts, so `hardhat.config.ts`
+must set `accounts.count` to at least 60. If you see an "account index out of
+range" error there:
 
 ```ts
 // hardhat/hardhat.config.ts
@@ -315,7 +330,9 @@ All output is written to `~/tempdir/dincli/`:
 |------|----------|
 | `results/last_run.txt` | Full pytest output of the most recent run |
 | `results/hardhat_compile.log` | `npx hardhat compile` output |
-| `results/hardhat_node.log` | Hardhat node stdout/stderr |
+| `results/forge_build.log` | `forge build` output (`foundry` toolchain) |
+| `results/anvil_node.log` | Anvil stdout/stderr (`foundry` toolchain) |
+| `results/hardhat_node.log` | Hardhat node stdout/stderr (`hardhat` toolchain) |
 | `results/ipfs_daemon.log` | IPFS daemon stdout/stderr (if started by conftest) |
 | `config/` | Isolated dincli config for the test session |
 | `cache/` | Isolated dincli cache for the test session |
@@ -327,8 +344,8 @@ All output is written to `~/tempdir/dincli/`:
 **Docker not running** — Phase 4 client training uses containerised execution.
 Start Docker before running the suite.
 
-**Hardhat node failed to start** — check
-`~/tempdir/dincli/results/hardhat_node.log`.
+**Chain node failed to start** — check
+`~/tempdir/dincli/results/anvil_node.log` (default) or `hardhat_node.log`.
 
 **IPFS not responding** — check
 `~/tempdir/dincli/results/ipfs_daemon.log`.

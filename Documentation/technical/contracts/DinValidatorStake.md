@@ -1,615 +1,329 @@
 # DinValidatorStake — Technical Documentation
 
-Technical documentation for [`hardhat/contracts/DinValidatorStake.sol`](../../../hardhat/contracts/DinValidatorStake.sol).
+> **File:** [`foundry/src/DinValidatorStake.sol`](../../../foundry/src/DinValidatorStake.sol)
+> **SPDX-License-Identifier:** MIT
+> **Solidity:** `^0.8.28`
+> **Deployment:** once per network behind an OpenZeppelin Transparent Proxy
 
-## Overview
+---
 
-`DinValidatorStake` is the staking ledger for DIN validators. It holds DIN tokens inside the contract, tracks each validator's staking lifecycle, exposes whether a validator is currently active, and lets authorized slasher contracts reduce stake.
+## 1. Overview
 
-It is deployed once per network behind an OpenZeppelin **Transparent Proxy** and configured via `initialize(dinToken, dinCoordinator)` rather than a constructor (see [Initialization](#initialization) and [Ownership and upgradeability](#ownership-and-upgradeability)).
+`DinValidatorStake` is the staking ledger and validator-lifecycle contract for DIN validators (auditors and aggregators). It:
 
-It is responsible for:
+- holds validators' DIN and tracks each validator's lifecycle status (`None` / `Active` / `Exiting` / `Jailed` / `Blacklisted`);
+- enforces an unbonding delay during which unstaked DIN **stays slashable**;
+- lets authorised slasher contracts (each model's `DINTaskCoordinator` / `DINTaskAuditor`) slash, with three flavours: full-severity `slash`, partial `slashPartial` with **S5 recidivism** escalation, and the **S6 no-participation** counter;
+- splits every slashed amount **50% burned / 50% to `slashTreasury`** (`DinTreasury`), or burns that half too if no treasury is set;
+- supports **jailing** (automatic on S5 escalation) and self-service `reactivate()` after the jail period;
+- stores governable parameters (`MIN_STAKE`, `UNBONDING_PERIOD`, per-model stake floors, concurrent-registration cap, S5/S6 parameters) that the task contracts read at registration and slashing time;
+- keeps validators' X25519 encryption keys for encrypted test-data delivery, and a per-validator active-registration counter.
 
-- accepting validator stake in DIN tokens;
-- tracking validator lifecycle status;
-- enforcing delayed withdrawals through an unbonding period;
-- keeping unbonding funds slashable until they are actually claimed;
-- allowing authorized slasher contracts to penalize validators;
-- allowing the contract owner to blacklist and unblacklist validators;
-- exposing validator eligibility to other protocol contracts.
+Its central safety property: a validator cannot misbehave and then withdraw before the penalty lands, because exits are delayed and still slashable.
 
-The contract manages two balances per validator:
+---
 
-- `activeStake`: stake currently counted toward validator participation.
-- `pendingWithdrawals`: stake that has been unstaked but is still locked until the unbonding period ends.
-
-Pending withdrawals remain slashable until they are claimed.
-
-## Inheritance and dependencies
-
-### Inheritance
+## 2. Inheritance & Dependencies
 
 | Component | Source | Purpose |
 |-----------|--------|---------|
-| `Initializable` | OpenZeppelin (upgradeable) | Initializer guard for the proxy pattern |
-| `OwnableUpgradeable` | OpenZeppelin (upgradeable) | DAO admin ownership; owner set in `initialize` |
-| `ReentrancyGuardTransient` | OpenZeppelin (L2-optimised) | Re-entrancy protection on ERC-20 flows |
+| `Initializable` | OpenZeppelin (upgradeable) | Initializer guard |
+| `OwnableUpgradeable` | OpenZeppelin (upgradeable) | Owner = DIN-Representative (parameters, blacklist, slash treasury) |
+| `ReentrancyGuardTransient` | OpenZeppelin | Re-entrancy lock (transient storage, no slots used) |
+| `IERC20` + `SafeERC20` | OpenZeppelin | Stake custody and transfers |
+| `IBurnableToken` (local interface) | Local | `DinToken.burn` for the burned half of each slash |
 
-`ReentrancyGuardTransient` is the plain (non-upgradeable) OpenZeppelin contract, which is safe behind a proxy because it is stateless: the lock lives in EIP-1153 transient storage and occupies no storage slots.
+---
 
-### Dependencies
+## 3. State Variables
 
-| Component | Source | Purpose |
-|-----------|--------|---------|
-| `IERC20` | OpenZeppelin | Token interface |
-| `SafeERC20` | OpenZeppelin | Safe ERC-20 transfers (handles non-standard return values) |
+### 3.1 Platform references
 
+| Variable | Type | Description |
+|----------|------|-------------|
+| `DIN_TOKEN` | `IERC20` | Stake token (`DinToken` proxy). Set once in `initialize`; SCREAMING_CASE kept from the pre-proxy `immutable` version. |
+| `DIN_COORDINATOR` | `address` | Only address allowed to manage the slasher registry (`DinCoordinator` proxy). Set once in `initialize`. |
+| `slashTreasury` | `address` | Receives 50% of every slash; if unset, that half is burned too. Set via `setSlashTreasury` (the deploy script wires `DinTreasury`). The task contracts read the same address for their own treasury flows: the reward-pool treasury share and the treasury half of forfeited dispute bonds and penalties. |
 
-## Core Design
+### 3.2 Governable parameters (owner-settable)
 
-### Main Rules
+| Variable | Default (set in `initialize`) | Setter | Meaning |
+|----------|------------------------------|--------|---------|
+| `MIN_STAKE` | `10 × 10¹⁸` (10 DIN) | `setMinStake` (non-zero) | Minimum per `stake()` call; `Active` requires `activeStake ≥ MIN_STAKE`; unit for S5/S6 slash sizes |
+| `UNBONDING_PERIOD` | `7 days` | `setUnbondingPeriod` (non-zero) | Delay between `unstake` and `claimUnstaked`; not retroactive |
+| `modelMinStakeBounds[modelId]` | unset (`{0,0}`) | `setModelStakeBounds(modelId, min, max)` (`min ≤ max`) | Per-model stake floor; `min` is enforced by the task contracts at registration when non-zero (`max` is stored but unused) |
+| `maxConcurrentRegistrationsPerStakeUnit` | `0` (off) | `setMaxConcurrentRegistrationsPerStakeUnit` | When non-zero, task contracts cap a validator's concurrent GI registrations at `(stake / MIN_STAKE) × value` |
+| `s5RecidivismWindow` | `5` GIs | `setS5RecidivismParams` | Rolling window for counting partial slashes |
+| `s5RecidivismThreshold` | `3` | `setS5RecidivismParams` (`0 < threshold ≤ window`) | Partial slashes within the window that trigger escalation |
+| `s5JailDuration` | `7 days` | `setS5RecidivismParams` (non-zero) | Jail length applied on escalation |
+| `s6NoParticipationThreshold` | `3` | `setS6NoParticipationThreshold` (non-zero) | No-participation count at which S6 slashing starts |
 
-- A validator is only eligible for new work when its status is `Active`.
-- A validator with a pending withdrawal is `Exiting`, even if its remaining active stake is still large.
-- `pendingWithdrawals` remain slashable until claimed.
-- Blacklisted validators cannot stake, start exits, or claim exits.
-- Slashing is capped by the validator’s total slashable funds inside the contract.
+`MIN_STAKE` (10 DIN) is one of the testnet values still to be decided (issue #155). `DeployPlatform.s.sol` can override `MIN_STAKE` and the S5/S6 parameters at deploy time from environment variables (`MIN_STAKE`, `S5_RECIDIVISM_WINDOW`, `S5_RECIDIVISM_THRESHOLD`, `S5_JAIL_DURATION`, `S6_NO_PARTICIPATION_THRESHOLD`).
 
+### 3.3 Per-validator state
 
+| Variable | Type | Description |
+|----------|------|-------------|
+| `validators` | `mapping(address => ValidatorInfo)` | Lifecycle record (§4) |
+| `slasherContracts` | `mapping(address => bool)` | Authorised slashers |
+| `encryptionKeys` | `mapping(address => bytes)` | Registered 32-byte X25519 public keys |
+| `activeRegistrationCount` | `mapping(address => uint256)` | Open GI registrations across all task contracts |
+| `s6NoParticipationCount` | `mapping(address => uint256)` | Lifetime no-participation count (never decays) |
+| `_partialSlashGIs` | `mapping(address => mapping(address => uint256[]))` (private) | Partial-slash GI indices per validator **per calling slasher contract** (S5 ring) |
+| `__gap` | `uint256[50]` | Reserved slots |
 
-### Initialization
+Slot order is in [storage_layout.md](../storage_layout.md#dinvalidatorstake).
 
-```solidity
-constructor()
-```
+---
 
-The constructor only calls `_disableInitializers()`. It runs on the raw implementation contract (never through the proxy) and permanently locks it: calling `initialize` directly on the implementation reverts with `InvalidInitialization`. All real state lives in the proxy.
-
-```solidity
-function initialize(address dinToken, address dinCoordinator) external initializer
-```
-
-Initialization rules:
-
-- Runs exactly once per proxy, atomically with proxy deployment (the deploy script encodes the call into the proxy's constructor data).
-- `dinToken` must not be `address(0)`.
-- `dinCoordinator` must not be `address(0)`.
-- `__Ownable_init(msg.sender)` — the deployer becomes `owner()` (blacklist administration).
-- `DIN_TOKEN` is stored as an ERC-20 reference and `DIN_COORDINATOR` as the access-control address. Both are regular storage variables set once here (`immutable` is not usable behind a proxy); the SCREAMING_CASE names are retained from the pre-proxy version.
-
-Unlike `DinToken` and `DinCoordinator`, this contract receives **both** of its dependencies at initialization and needs no further wiring of its own. The one remaining step is on the coordinator's side: `DinCoordinator.updateValidatorStakeContract(thisProxy)` must be called so slasher management can reach this contract.
-
-### Constants and storage
-
-#### Constants
-
-| Name | Value | Meaning |
-|---|---:|---|
-| `MIN_STAKE` | `10 * 1e18` | Minimum amount accepted by each `stake()` call |
-| `UNBONDING_PERIOD` | `7 days` | Delay between `unstake()` and `claimUnstaked()` |
-
-`MIN_STAKE` is enforced per `stake(amount)` call, not on the validator's total post-stake balance.
-
-#### Platform addresses
-
-| Name | Meaning |
-|---|---|
-| `DIN_TOKEN` | ERC-20 token accepted as stake (the `DinToken` proxy) |
-| `DIN_COORDINATOR` | Only address allowed to manage slasher contracts (the `DinCoordinator` proxy) |
-
-Both are set once in `initialize` and have no setter — they are fixed for the life of the proxy short of an implementation upgrade.
-
-#### Storage reserve
+## 4. Validator Record & Status
 
 ```solidity
-uint256[50] private __gap;
-```
+enum ValidatorStatus { None, Active, Exiting, Jailed, Blacklisted }
 
-Fifty storage slots reserved after the declared state so future implementation versions can append variables without corrupting the proxy storage layout.
-
-### Slasher registry
-
-```solidity
-mapping(address => bool) public slasherContracts;
-```
-
-Only addresses marked `true` can call `slash()`.
-
-### Validator status
-
-```solidity
-enum ValidatorStatus {
-    None,
-    Active,
-    Exiting,
-    Jailed,
-    Blacklisted
-}
-```
-
-| Status | Meaning in the current contract |
-|---|---|
-| `None` | No active stake and no pending withdrawal |
-| `Active` | Validator has no pending withdrawal and `activeStake >= MIN_STAKE` |
-| `Exiting` | Validator has a pending withdrawal, or has some active stake but less than `MIN_STAKE` |
-| `Jailed` | Reserved in storage and sync logic, but no public function currently places a validator into jail |
-| `Blacklisted` | Owner-blocked state that disables stake, unstake, and withdrawal claim |
-
-### Validator record
-
-```solidity
 struct ValidatorInfo {
-    uint256 activeStake;
-    uint256 pendingWithdrawals;
-    uint64 withdrawAvailableAt;
-    uint64 jailedUntil;
+    uint256 activeStake;          // backing current activity
+    uint256 pendingWithdrawals;   // unbonding, still slashable
+    uint64  withdrawAvailableAt;  // earliest claimUnstaked time
+    uint64  jailedUntil;          // jail deadline
     ValidatorStatus status;
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `activeStake` | Stake currently backing validator activity |
-| `pendingWithdrawals` | Unbonding stake still held by the contract |
-| `withdrawAvailableAt` | Earliest timestamp when `claimUnstaked()` can succeed |
-| `jailedUntil` | Timestamp checked by `_syncValidatorStatus()` if status is `Jailed` |
-| `status` | Current lifecycle state |
+| Status | Meaning |
+|--------|---------|
+| `None` | No active stake, no pending withdrawal |
+| `Active` | No pending withdrawal and `activeStake ≥ MIN_STAKE` — the only status eligible for new work (`isValidatorActive`) |
+| `Exiting` | Has a pending withdrawal, or `0 < activeStake < MIN_STAKE` |
+| `Jailed` | Set by `_jailInternal` (S5 escalation or `jailValidator`); persists while `jailedUntil > now` |
+| `Blacklisted` | Owner-imposed; blocks `stake`, `unstake`, `claimUnstaked` and jailing |
 
-### Public mapping
+### Status synchronization (`_syncValidatorStatus`)
 
-```solidity
-mapping(address => ValidatorInfo) public validators;
-```
+Run after every stake/unstake/claim/slash/unblacklist/reactivate:
 
-Each validator address maps to its full staking record.
+1. `Blacklisted` → unchanged.
+2. `Jailed` with `jailedUntil > now` → unchanged.
+3. `pendingWithdrawals > 0` → `Exiting`.
+4. else `activeStake ≥ MIN_STAKE` → `Active`.
+5. else `activeStake > 0` → `Exiting`.
+6. else → `None`.
 
-## Access control
+Once a jail has expired, *any* call that syncs status (e.g. `stake`) recomputes the status from rules 3–6, so `reactivate()` is not the only way out of `Jailed` (see §14 No. 3).
+
+---
+
+## 5. Access Control
 
 | Function group | Allowed caller |
-|---|---|
-| `stake`, `unstake`, `claimUnstaked` | Any address acting on its own validator record |
-| `blacklistValidator`, `unblacklistValidator` | `owner()` |
-| `addSlasherContract`, `removeSlasherContract` | `DIN_COORDINATOR` only |
-| `slash` | Registered slasher contracts only |
+|----------------|----------------|
+| `stake`, `unstake`, `claimUnstaked`, `reactivate`, `registerEncryptionKey` | Any address, acting on its own record |
+| `addSlasherContract`, `removeSlasherContract` | `DIN_COORDINATOR` only (`NotDINCoordinator`) |
+| `slash`, `slashPartial`, `recordNoParticipation`, `jailValidator`, `incrementActiveRegistration`, `decrementActiveRegistration` | Registered slasher contracts only (`NotSlasherContract`) |
+| `blacklistValidator`, `unblacklistValidator`, `setMinStake`, `setUnbondingPeriod`, `setModelStakeBounds`, `setMaxConcurrentRegistrationsPerStakeUnit`, `setSlashTreasury`, `setS5RecidivismParams`, `setS6NoParticipationThreshold` | `owner()` (DIN-Representative) |
 
-The contract uses two modifiers:
+---
 
-- `onlyDinCoordinator`: reverts with `NotDINCoordinator()` unless `msg.sender == DIN_COORDINATOR`.
-- `onlySlasherContract`: reverts with `NotSlasherContract()` unless `slasherContracts[msg.sender]` is `true`.
-
-`owner()` comes from `OwnableUpgradeable` and is set to the account that ran `initialize` (the deployer / DAO representative); it is transferable via `transferOwnership`.
-
-## Ownership and upgradeability
-
-Three privilege planes coexist:
-
-| Plane | Who | Controls |
-|---|---|---|
-| Contract owner (`owner()`) | `initialize` caller (deployer / DAO representative) | `blacklistValidator`, `unblacklistValidator` |
-| `DIN_COORDINATOR` | `DinCoordinator` proxy | Slasher registry (`addSlasherContract` / `removeSlasherContract`) |
-| Proxy admin (`ProxyAdmin` contract) | Deployed by the OZ upgrades plugin, owned by the deployer | Swapping the implementation behind the proxy |
-
-Upgrade mechanics:
-
-- **Proxy kind:** OpenZeppelin Transparent Proxy. The proxy address — where all staked DIN and validator records live — is permanent; upgrades replace only the code.
-- **Upgrade path:** `CONTRACT=DinValidatorStake npx hardhat run scripts/upgrade-platform.ts --network <network>`, which loads the proxy address from `hardhat/deployments/<network>.json` and records the new implementation address there.
-- **Storage-layout safety:** state may only be appended; the `__gap` array reserves headroom. `hardhat/test/DinValidatorStake.upgrade.test.ts` runs `upgrades.validateUpgrade` against a V2 fixture (`hardhat/contracts/upgrade/DinValidatorStakeV2.sol`) and asserts that stakes, pending withdrawals, statuses, the slasher registry, and access control all survive an upgrade.
-- **Trust implication:** every invariant in this document (unbonding delay, slashing caps, blacklist behavior) holds only as long as the ProxyAdmin owner is honest — an upgrade can rewrite any of it while keeping custody of all staked funds.
-
-### Deployment position and wiring
-
-From `hardhat/scripts/deploy-platform.ts`, this contract is deployed **third**, because `initialize` needs both earlier proxies:
-
-```
-1. DinToken proxy            initialize()
-2. DinCoordinator proxy      initialize(dinToken)
-3. dinToken.setCoordinator(dinCoordinator)
-4. DinValidatorStake proxy   initialize(dinToken, dinCoordinator)     ← this contract
-5. dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
-6. DINModelRegistry proxy    initialize(dinValidatorStake)
-```
-
-Until step 5, `DinCoordinator.addSlasherContract` / `removeSlasherContract` revert with `ValidatorStakeContractNotSet()`, so no slasher can be registered here. Staking itself (`stake`) works as soon as step 4 completes, provided validators hold DIN (which requires step 3).
-
-## Events
-
-| Event | Emitted when |
-|---|---|
-| `ValidatorStaked` | stake is added |
-| `ValidatorSlashed` | a slash succeeds for a non-zero amount |
-| `ValidatorUnstakeRequested` | an unstake request starts the unbonding period |
-| `ValidatorWithdrawalClaimed` | pending stake is claimed after unbonding |
-| `ValidatorBlacklisted` | owner blacklists a validator |
-| `ValidatorUnblacklisted` | owner unblacklists a validator |
-| `SlasherContractAdded` | coordinator authorizes a slasher |
-| `SlasherContractRemoved` | coordinator removes a slasher |
-
-## Custom errors
-
-The contract uses custom errors instead of revert strings:
-
-- `NotDINCoordinator`
-- `ValidatorIsBlacklisted`
-- `ValidatorNotBlacklisted`
-- `InvalidAddress`
-- `NotSlasherContract`
-- `AmountLessThanMinStake`
-- `NotEnoughStake`
-- `SlasherContractAlreadyAdded`
-- `SlasherContractNotAdded`
-- `InvalidSlashAmount`
-- `InvalidUnstakeAmount`
-- `PendingWithdrawalExists`
-- `NoPendingWithdrawal`
-- `WithdrawalNotReady`
-
-## Functional behavior
+## 6. Staking Lifecycle
 
 ### `stake(uint256 amount)`
-
-Adds DIN stake for `msg.sender`.
-
-Behavior:
-
-- Reverts with `AmountLessThanMinStake()` if `amount < MIN_STAKE`.
-- Reverts with `ValidatorIsBlacklisted()` if the validator is blacklisted.
-- Transfers `amount` DIN from the caller to the contract.
-- Increases `validators[msg.sender].activeStake`.
-- Calls `_syncValidatorStatus(...)`.
-- Emits `ValidatorStaked(msg.sender, amount)`.
-
-Notes:
-
-- Every deposit must be at least `MIN_STAKE`, even if the validator already has stake.
-- A validator with enough active stake and no pending withdrawal becomes `Active`.
+Reverts `AmountLessThanMinStake` if `amount < MIN_STAKE` (per call, not on the total) and `ValidatorIsBlacklisted` if blacklisted. Adds to `activeStake`, syncs status, pulls DIN via `safeTransferFrom` (validator must `approve` first), emits `ValidatorStaked`.
 
 ### `unstake(uint256 amount)`
-
-Starts an unbonding withdrawal for `msg.sender`.
-
-Behavior:
-
-- Reverts with `ValidatorIsBlacklisted()` if blacklisted.
-- Reverts with `InvalidUnstakeAmount()` if `amount == 0`.
-- Reverts with `PendingWithdrawalExists()` if there is already a pending withdrawal.
-- Reverts with `NotEnoughStake()` if `activeStake < amount`.
-- Decreases `activeStake` by `amount`.
-- Sets `pendingWithdrawals = amount`.
-- Sets `withdrawAvailableAt = uint64(block.timestamp + UNBONDING_PERIOD)`.
-- Calls `_syncValidatorStatus(...)`.
-- Emits `ValidatorUnstakeRequested`.
-
-Notes:
-
-- Only one pending withdrawal can exist per validator at a time.
-- No tokens leave the contract during `unstake()`.
-- If the remaining `activeStake` falls below `MIN_STAKE`, the validator becomes `Exiting`.
+Reverts if blacklisted, `amount == 0` (`InvalidUnstakeAmount`), a withdrawal is already pending (`PendingWithdrawalExists` — only one at a time), or `activeStake < amount` (`NotEnoughStake`). Moves `amount` to `pendingWithdrawals`, sets `withdrawAvailableAt = now + UNBONDING_PERIOD`, syncs (→ `Exiting`), emits `ValidatorUnstakeRequested`.
 
 ### `claimUnstaked()`
+Reverts if blacklisted, nothing pending (`NoPendingWithdrawal`), or before `withdrawAvailableAt` (`WithdrawalNotReady`). Pays out whatever remains pending (after any slashing), clears the withdrawal, syncs, emits `ValidatorWithdrawalClaimed`.
 
-Claims matured pending withdrawals for `msg.sender`.
-
-Behavior:
-
-- Reverts with `ValidatorIsBlacklisted()` if blacklisted.
-- Reverts with `NoPendingWithdrawal()` if `pendingWithdrawals == 0`.
-- Reverts with `WithdrawalNotReady()` if `block.timestamp < withdrawAvailableAt`.
-- Copies the pending amount to a local variable.
-- Clears `pendingWithdrawals` and `withdrawAvailableAt`.
-- Calls `_syncValidatorStatus(...)`.
-- Transfers the pending DIN amount to the caller.
-- Emits `ValidatorWithdrawalClaimed`.
-
-Notes:
-
-- This is the only function that releases unstaked funds from the contract.
-- Once claimed, those tokens are no longer slashable by this contract.
-
-### `slash(address validator, uint256 amount, bytes32 reason)`
-
-Reduces a validator's slashable stake. Callable only by an authorized slasher contract.
-
-Behavior:
-
-- Reverts with `InvalidAddress()` if `validator == address(0)`.
-- Reverts with `InvalidSlashAmount()` if `amount == 0`.
-- Reads the validator's total slashable stake as `activeStake + pendingWithdrawals`.
-- Caps the slash to the validator's available slashable amount.
-- Returns `0` immediately if nothing is slashable.
-- Deducts from `activeStake` first.
-- If needed, deducts the remainder from `pendingWithdrawals`.
-- Sets `withdrawAvailableAt = 0` if pending withdrawals are fully consumed.
-- Calls `_syncValidatorStatus(...)`.
-- Emits `ValidatorSlashed`.
-- Returns the actual slashed amount.
-
-Notes:
-
-- Slashing does not transfer, burn, or redistribute tokens in this contract.
-- Slashed value remains held by the contract unless another mechanism is added elsewhere.
-
-### `addSlasherContract(address slasherContract)`
-
-Authorizes a slasher contract. Callable only by `DIN_COORDINATOR`.
-
-Behavior:
-
-- Reverts with `InvalidAddress()` if `slasherContract == address(0)`.
-- Reverts with `SlasherContractAlreadyAdded()` if already authorized.
-- Sets `slasherContracts[slasherContract] = true`.
-- Emits `SlasherContractAdded`.
-
-### `removeSlasherContract(address slasherContract)`
-
-Removes slasher authorization. Callable only by `DIN_COORDINATOR`.
-
-Behavior:
-
-- Reverts with `InvalidAddress()` if `slasherContract == address(0)`.
-- Reverts with `SlasherContractNotAdded()` if not currently authorized.
-- Sets `slasherContracts[slasherContract] = false`.
-- Emits `SlasherContractRemoved`.
-
-### `blacklistValidator(address validator)`
-
-Owner-only emergency block on a validator.
-
-Behavior:
-
-- Reverts with `InvalidAddress()` if `validator == address(0)`.
-- Sets `validators[validator].status = ValidatorStatus.Blacklisted`.
-- Emits `ValidatorBlacklisted`.
-
-Effects:
-
-- The validator cannot call `stake()`, `unstake()`, or `claimUnstaked()`.
-- Existing funds remain in the contract.
-- Slashing still works because `slash()` does not check the validator's status.
-
-### `unblacklistValidator(address validator)`
-
-Removes blacklist status and restores the validator to the state implied by current balances and jail timing.
-
-Behavior:
-
-- Reverts with `InvalidAddress()` if `validator == address(0)`.
-- Reverts with `ValidatorNotBlacklisted()` if current status is not `Blacklisted`.
-- If `jailedUntil > block.timestamp`, sets status to `Jailed`.
-- Otherwise sets status to `None`.
-- Calls `_syncValidatorStatus(...)`.
-- Emits `ValidatorUnblacklisted`.
-
-Result:
-
-- If jail is still active, the validator stays `Jailed`.
-- Otherwise status recalculates to `Active`, `Exiting`, or `None` based on stake and pending withdrawals.
-
-## View functions
-
-### `minStake()`
-
-Returns `MIN_STAKE`.
-
-### `isValidatorActive(address validator)`
-
-- Returns `true` only if `validators[validator].status == ValidatorStatus.Active`.
-
-- Other contracts should treat `isValidatorActive(address)` as the canonical eligibility check.
-
-### `getStake(address validator)`
-
-Returns `validators[validator].activeStake`.
-
-This does not include `pendingWithdrawals`.
-
-### `slashableStakeOf(address validator)`
-
-Returns:
-
-```solidity
-validators[validator].activeStake + validators[validator].pendingWithdrawals
-```
-
-### `isSlasherContract(address slasherContract)`
-
-Returns whether the address is currently authorized to call `slash()`.
-
-## Status synchronization
-
-The contract derives validator state through the internal function:
-
-```solidity
-function _syncValidatorStatus(ValidatorInfo storage validator) internal
-```
-
-Priority order:
-
-1. If status is `Blacklisted`, leave it unchanged.
-2. If status is `Jailed` and `jailedUntil > block.timestamp`, leave it unchanged.
-3. If `pendingWithdrawals > 0`, set status to `Exiting`.
-4. Else if `activeStake >= MIN_STAKE`, set status to `Active`.
-5. Else if `activeStake > 0`, set status to `Exiting`.
-6. Else set status to `None`.
-
-This means:
-
-- A validator with any pending withdrawal is never `Active`.
-- A validator with positive stake below `MIN_STAKE` is `Exiting`, not `None`.
-- `Jailed` currently persists only if some external path has already set that status and the jail time is still active.
-
-## Practical implications
-
-- Validators must approve the DIN token before calling `stake()`.
-- Partial exits are supported, but only one unbonding withdrawal can be pending at once.
-- A validator can remain funded while no longer active if it falls below `MIN_STAKE`.
-- Slashing applies to both active stake and unclaimed pending withdrawals.
-- The contract currently has no public jail entrypoint and no mechanism that disposes of slashed tokens.
-
-## Workflow
-
-This section shows the normal validator workflow from staking to exit.
-
-### Validator Onboarding Workflow
-
-1. Validator obtains DIN.
-2. Validator approves `DinValidatorStake` to spend DIN.
-3. Validator calls `stake(amount)`.
-4. Contract transfers DIN in and updates `activeStake`.
-5. If stake is at least `MIN_STAKE`, status becomes `Active`.
-6. Other DIN contracts query `isValidatorActive()` before allowing validator participation.
-
-### Validator Exit Workflow
-
-1. Validator calls `unstake(amount)`.
-2. Contract moves `amount` from `activeStake` to `pendingWithdrawals`.
-3. Contract sets `withdrawAvailableAt`.
-4. Validator status becomes `Exiting`.
-5. Validator is no longer eligible for new work.
-6. During the unbonding period, slasher contracts may still slash the pending amount.
-7. After the unbonding period, validator calls `claimUnstaked()`.
-8. Contract transfers the remaining pending amount to the validator.
-9. Status becomes `Active`, `Exiting`, or `None` depending on remaining stake.
-
-
-
-## Scenarios
-
-These examples show how the lifecycle behaves in practice.
-
-### Scenario 1: Normal Validator Entry
-
-- Validator stakes `20 DIN`.
-- `activeStake = 20 DIN`
-- `pendingWithdrawals = 0`
-- status becomes `Active`
-
-Result: validator is eligible for new work.
-
-### Scenario 2: Partial Exit with Remaining Active Stake
-
-- Validator starts with `30 DIN`.
-- Validator calls `unstake(10 DIN)`.
-- `activeStake = 20 DIN`
-- `pendingWithdrawals = 10 DIN`
-- status becomes `Exiting`
-
-Result: even though `activeStake` is still above `MIN_STAKE`, the validator is not active because an exit is in progress.
-
-### Scenario 3: Full Exit
-
-- Validator starts with `20 DIN`.
-- Validator calls `unstake(20 DIN)`.
-- `activeStake = 0`
-- `pendingWithdrawals = 20 DIN`
-- status becomes `Exiting`
-- after 7 days, validator calls `claimUnstaked()`
-- pending amount is transferred out
-- status becomes `None`
-
-Result: validator fully exits only after the unbonding period.
-
-### Scenario 4: Slashed During Unbonding
-
-- Validator starts with `20 DIN`.
-- Validator calls `unstake(10 DIN)`.
-- now `activeStake = 10 DIN`, `pendingWithdrawals = 10 DIN`
-- slasher contract later calls `slash(..., 15 DIN, reason)`
-
-Slash behavior:
-- first `10 DIN` is removed from `activeStake`
-- remaining `5 DIN` is removed from `pendingWithdrawals`
-
-Final state:
-- `activeStake = 0`
-- `pendingWithdrawals = 5 DIN`
-- status remains `Exiting`
-
-Result: validator cannot escape penalties by exiting first.
-
-### Scenario 5: Claim After Partial Slash
-
-- Continuing Scenario 4
-- validator waits until `withdrawAvailableAt`
-- validator calls `claimUnstaked()`
-- only the remaining `5 DIN` is paid out
-
-Result: the validator receives whatever remains after slashing, not the original requested exit amount.
-
-### Scenario 6: Blacklisted Validator
-
-- Stake contract owner blacklists validator
-- validator attempts `stake()`
-- validator attempts `unstake()`
-- validator attempts `claimUnstaked()`
-
-Result: those actions revert. Funds remain trapped unless governance introduces a separate recovery path in future logic.
-
-### Scenario 7: Validator Falls Below Minimum Stake Due to Slashing
-
-- Validator starts with `12 DIN`
-- Slasher removes `3 DIN`
-- `activeStake = 9 DIN`
-- status becomes `Exiting`
-
-Result: validator is no longer eligible for new work because active stake fell below `MIN_STAKE`.
-
+### `reactivate()`
+For a `Jailed` validator: reverts `NotJailed`, `JailPeriodNotExpired`, or `StakeBelowFloor` (`activeStake < MIN_STAKE`). Clears `jailedUntil`, syncs status, emits `ValidatorReactivated`.
 
 ---
 
-## Contract Interactions
+## 7. Slashing
 
-### With `DINTaskCoordinator` and `DINTaskAuditor`
+### 7.1 Common mechanics (`_applySlash`)
 
-These contracts should:
-- check `isValidatorActive()` before assigning or accepting validator work;
-- use `minStake()` as the single source of stake threshold truth;
-- call `slash()` only if they are registered as slasher contracts.
+- The slash is **capped** at `activeStake + pendingWithdrawals`; a zero result returns `0` without an event.
+- Active stake is consumed first, then pending withdrawals (clearing `withdrawAvailableAt` if the withdrawal is wiped out).
+- **Distribution:** `burn = amount / 2` is burned via `DinToken.burn`; the rest goes to `slashTreasury` via `safeTransfer`, or is also burned if `slashTreasury` is unset.
+- Emits `ValidatorSlashed(validator, actualAmount, reason, slasher)` and returns the actual amount.
 
-### With `DINCoordinator`
+### 7.2 `slash(validator, amount, reason)` — full severity
 
-`DINCoordinator` is the administrative control point for:
-- adding slashers;
-- removing slashers.
+For faults like bad consensus or S3 score deviation. Reverts on zero address / zero amount (`InvalidSlashAmount`); otherwise `_applySlash`.
 
-### With Frontends and Off-Chain Services
+### 7.3 `slashPartial(validator, amount, reason, giIndex)` — S1/S2 with S5 recidivism
 
-Off-chain systems should distinguish:
-- active stake: `getStake()`;
-- total slashable stake: `slashableStakeOf()`;
-- validator eligibility: `isValidatorActive()`;
-- exit maturity: `validators[addr].withdrawAvailableAt`.
+Used by the task contracts for liveness faults (auditor didn't reveal a vote — S1; aggregator didn't reveal a CID — S2). `amount` is computed by the caller as a fraction of the global `MIN_STAKE`: `minStake() × s1SlashFractionBps / 10 000` (auditor) or `× s2SlashFractionBps` (aggregator), with the fractions set per model on the task contracts.
 
-### With Governance
+1. Appends `giIndex` to `_partialSlashGIs[validator][msg.sender]` and trims entries with `giIndex − entry ≥ s5RecidivismWindow`.
+2. If the ring length reaches `s5RecidivismThreshold` → **S5 escalation**: slash a full `MIN_STAKE` (reason `S5_RECIDIVISM`), jail for `s5JailDuration`, emit `ValidatorEscalatedS5`, and clear this caller's ring.
+3. Otherwise slash `amount` with the given reason.
 
-DinValidatorStake owner
-  ├── calls   → DinValidatorStake.blacklistValidator()
-  └── calls   → DinValidatorStake.unblacklistValidator()
+The ring is namespaced by the **calling task contract** because `giIndex` is a per-model counter: keying by validator alone would interleave different models' GI sequences and break the ascending-order trim. The consequence is that recidivism is counted **per model**, not across models.
 
-  ---
+### 7.4 `recordNoParticipation(validator, reason)` — S6
 
-## Summary
+Increments `s6NoParticipationCount[validator]` and emits `S6NoParticipationRecorded`. Below `s6NoParticipationThreshold` it returns `0`. At or above it, it slashes `MIN_STAKE × (count − threshold + 1) / 10`, capped at `MIN_STAKE` (10% more per breach), and emits `S6PartialSlashFired`. The count never resets.
 
-`DinValidatorStake` is not just a token vault. It is a validator lifecycle contract.
+> No contract in `foundry/src` currently calls `recordNoParticipation` — the task contracts deliberately skip it where `slashPartial` already applies ("No S6 recordNoParticipation here…"), so S6 is implemented but not wired (§14 No. 1).
 
-Its main production-grade property is that exits are delayed and still slashable. That design closes the most dangerous staking failure mode: a validator doing work, misbehaving, and withdrawing before penalties can be enforced.
+### 7.5 Jailing — `jailValidator(validator, duration, reason)`
+
+Slasher-only. Reverts on zero address or zero duration (`InvalidJailDuration`); jailing a blacklisted validator reverts `ValidatorIsBlacklisted`. Extends (never shortens) `jailedUntil`, sets `Jailed`, emits `ValidatorJailed`. No task contract calls it today; jails come from S5 escalation.
 
 ---
 
-## Change Log
+## 8. Registration Support for Task Contracts
+
+- **Per-model floor:** at aggregator/auditor registration the task contracts revert `TC_/TA_StakeBelowModelFloor` if `getModelStakeMin(modelId) > 0` and `getStake(validator)` is below it.
+- **Concurrency cap:** when `maxConcurrentRegistrationsPerStakeUnit > 0`, they revert `TC_/TA_ConcurrentRegistrationCapReached` if `activeRegistrationCount ≥ (getStake / minStake) × cap`.
+- **Counter:** `incrementActiveRegistration` on registration, `decrementActiveRegistration` at GI end (saturates at zero); both emit an event.
+- **Encryption keys:** `registerEncryptionKey(bytes pubkey)` stores a 32-byte X25519 key (`InvalidEncryptionKey` otherwise). `DINTaskAuditor` requires every auditor in a batch to have one before assigning encrypted test-data keys.
+
+---
+
+## 9. Blacklisting
+
+- `blacklistValidator(v)` sets `Blacklisted` unconditionally (even for addresses with no record).
+- `unblacklistValidator(v)` reverts `ValidatorNotBlacklisted` if not blacklisted; restores `Jailed` if the jail is still running, otherwise `None`, then syncs.
+- While blacklisted, `stake` / `unstake` / `claimUnstaked` revert, so funds are frozen — but the validator can still be slashed.
+
+---
+
+## 10. Views
+
+| Function | Returns |
+|----------|---------|
+| `minStake()` | `MIN_STAKE` |
+| `isValidatorActive(v)` | `status == Active` |
+| `getStake(v)` | `activeStake` |
+| `slashableStakeOf(v)` | `activeStake + pendingWithdrawals` |
+| `isSlasherContract(a)` | slasher flag |
+| `getEncryptionKey(v)` | registered key or empty bytes |
+| `getModelStakeMin(modelId)` | `modelMinStakeBounds[modelId].min` |
+| `getPartialSlashGIs(v, slasher)` | the S5 ring for that validator/caller pair |
+
+Plus the public getters for all state in §3.
+
+---
+
+## 11. Workflows & Scenarios
+
+Worked examples with the defaults from §3.2 (`MIN_STAKE` = 10 DIN, `UNBONDING_PERIOD` = 7 days, S1/S2 fraction 30%, S5 window 5 / threshold 3 / jail 7 days). Every slashed amount is split as in §7.1: half burned, half to `slashTreasury` (or also burned if it is unset).
+
+### 11.1 Onboarding
+
+1. The validator obtains DIN (e.g. `DinCoordinator.depositAndMint()`) and approves `DinValidatorStake` to spend it.
+2. `stake(amount)`: `amount` must be at least `MIN_STAKE` **per call**. The contract pulls the DIN and adds it to `activeStake`.
+3. With `activeStake ≥ MIN_STAKE` and nothing pending, the status becomes `Active`.
+4. The task contracts check `isValidatorActive()` (plus any per-model floor and concurrency cap, §8) before accepting a registration.
+
+### 11.2 Exit
+
+1. `unstake(amount)` moves `amount` from `activeStake` to `pendingWithdrawals` and sets `withdrawAvailableAt = now + UNBONDING_PERIOD`. Only one withdrawal can be pending at a time.
+2. The status becomes `Exiting`, so the validator gets no new work. The pending amount **stays slashable**.
+3. After `withdrawAvailableAt`, `claimUnstaked()` pays out whatever is still pending.
+4. The status is then recomputed: `Active`, `Exiting` or `None`, depending on the remaining `activeStake`.
+
+### Scenario 1: Normal entry
+
+Stake `20 DIN` → `activeStake = 20`, `pendingWithdrawals = 0`, status `Active`. The validator is eligible for new work.
+
+### Scenario 2: Partial exit with stake left over
+
+Start with `30 DIN`, then `unstake(10)` → `activeStake = 20`, `pendingWithdrawals = 10`, status `Exiting`. The validator is **not** active even though `activeStake ≥ MIN_STAKE`, because an exit is in progress. After `claimUnstaked()` the pending 10 DIN is paid out and the status returns to `Active`.
+
+### Scenario 3: Full exit
+
+Start with `20 DIN`, then `unstake(20)` → `activeStake = 0`, `pendingWithdrawals = 20`, status `Exiting`. After `UNBONDING_PERIOD`, `claimUnstaked()` pays out 20 DIN and the status becomes `None`.
+
+### Scenario 4: Slashed during unbonding
+
+Start with `20 DIN`, then `unstake(10)` → `activeStake = 10`, `pendingWithdrawals = 10`. A slasher then calls `slash(v, 15 DIN, reason)`:
+- 10 DIN comes from `activeStake`, then 5 DIN from `pendingWithdrawals`;
+- 7.5 DIN is burned and 7.5 DIN goes to `slashTreasury`;
+- final state: `activeStake = 0`, `pendingWithdrawals = 5`, status `Exiting`.
+
+Exiting first does not escape the penalty. If the slash had exceeded the 20 DIN slashable balance, it would have been capped at 20 rather than reverting.
+
+### Scenario 5: Claim after a partial slash
+
+Continuing Scenario 4: once `withdrawAvailableAt` passes, `claimUnstaked()` pays out only the remaining **5 DIN**, not the 10 DIN originally requested.
+
+### Scenario 6: Blacklisted validator
+
+After the owner calls `blacklistValidator(v)`, `stake`, `unstake` and `claimUnstaked` all revert with `ValidatorIsBlacklisted`, so the funds are frozen. The validator **can still be slashed**. An S5 escalation against them reverts the whole slash, though (§14 No. 2). The only way out is `unblacklistValidator(v)`, which restores `Jailed` if a jail is still running and otherwise recomputes the status.
+
+### Scenario 7: Slashed below the minimum
+
+Start with `12 DIN`; a 3 DIN slash leaves `activeStake = 9`, so the status becomes `Exiting` (below `MIN_STAKE`) and the validator gets no new work. The minimum applies per call, so `stake(1)` reverts with `AmountLessThanMinStake`. Getting back to `Active` takes `stake(10)` or more.
+
+### Scenario 8: S5 escalation and jail
+
+A validator with `20 DIN` misses a reveal on the same model in three consecutive GIs (1, 2, 3). Each miss arrives as `slashPartial` from that model's task contract:
+- **GIs 1 and 2:** each slashes `10 × 30% = 3 DIN` (1.5 burned, 1.5 to the treasury), leaving `activeStake = 14`. That contract's ring for the validator is now `[1, 2]`.
+- **GI 3:** the ring becomes `[1, 2, 3]`, reaching the threshold of 3 within the window of 5, so the call **escalates**. It slashes a full `MIN_STAKE` (10 DIN, reason `S5_RECIDIVISM`) instead of 3 DIN, jails the validator for 7 days, emits `ValidatorEscalatedS5` and clears the ring. The result is `activeStake = 4`, status `Jailed`.
+- **After the jail:** `reactivate()` reverts with `StakeBelowFloor` (4 < 10). The validator has to `stake(10)` first. Once the jail has expired, that `stake` call already recomputes the status to `Active`, so `reactivate()` is never needed (§14 No. 3).
+
+The ring is kept per calling task contract, so the same three misses spread across three different models would not escalate (§14 No. 5).
+
+---
+
+## 12. Events & Errors
+
+**Events:** `ValidatorStaked`, `ValidatorUnstakeRequested`, `ValidatorWithdrawalClaimed`, `ValidatorSlashed`, `ValidatorJailed`, `ValidatorReactivated`, `ValidatorEscalatedS5`, `S6NoParticipationRecorded`, `S6PartialSlashFired`, `ValidatorBlacklisted`, `ValidatorUnblacklisted`, `SlasherContractAdded`, `SlasherContractRemoved`, `ActiveRegistrationIncremented`, `ActiveRegistrationDecremented`, `EncryptionKeyRegistered`, `MinStakeUpdated`, `UnbondingPeriodUpdated`, `ModelStakeBoundsUpdated`, `MaxConcurrentRegistrationsPerStakeUnitUpdated`, `SlashTreasuryUpdated`, `S5RecidivismParamsUpdated`, `S6ParamsUpdated`.
+
+**Errors:** `NotDINCoordinator`, `NotSlasherContract`, `InvalidAddress`, `ValidatorIsBlacklisted`, `ValidatorNotBlacklisted`, `AmountLessThanMinStake`, `NotEnoughStake`, `InvalidUnstakeAmount`, `PendingWithdrawalExists`, `NoPendingWithdrawal`, `WithdrawalNotReady`, `InvalidSlashAmount`, `SlasherContractAlreadyAdded`, `SlasherContractNotAdded`, `InvalidJailDuration`, `NotJailed`, `JailPeriodNotExpired`, `StakeBelowFloor`, `InvalidMinStake`, `InvalidUnbondingPeriod`, `InvalidStakeBounds`, `InvalidEncryptionKey`, `InvalidS5Params`, `InvalidS6Params`.
+
+---
+
+## 13. Deployment, Ownership & Upgradeability
+
+From `foundry/script/DeployPlatform.s.sol` (see [DeployPlatform](foundry/script/DeployPlatform.md)):
+
+```
+7.  DinValidatorStake proxy   initialize(dinToken, dinCoordinator)   ← this contract
+8.  dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
+9.  dinValidatorStake.setSlashTreasury(dinTreasury)
+10. DINModelRegistry proxy    initialize(dinValidatorStake)
+```
+
+Until step 8, slasher management through the coordinator reverts `ValidatorStakeContractNotSet`. Until step 9, both halves of every slash are burned.
+
+| Plane | Who | Controls |
+|-------|-----|----------|
+| `owner()` | DIN-Representative (`initialize` caller) | Parameters, blacklist, slash treasury |
+| `DIN_COORDINATOR` | `DinCoordinator` proxy | Slasher registry |
+| Slasher contracts | Each model's task contracts | Slashing, jailing, S6, registration counters |
+| ProxyAdmin | One per proxy, owned by the deployer | Implementation upgrades |
+
+- **Upgrade path:** `cd foundry && CONTRACT=DinValidatorStake forge script script/UpgradePlatform.s.sol ...` (see [UpgradePlatform](foundry/script/UpgradePlatform.md)); `foundry/test/UpgradeValidation.t.sol` runs `Upgrades.validateImplementation` on the implementation, and `DinValidatorStakeUpgradeTest` in `foundry/test/DeployPlatform.t.sol` upgrades to `foundry/src/upgrade/DinValidatorStakeV2.sol` and checks stakes and access control survive.
+- **Trust implication:** this contract custodies all staked DIN; the ProxyAdmin owner can replace every rule here without moving the balance.
+
+---
+
+## 14. Review Notes & Open Caveats
+
+- **No. 1 — S6 is not wired:** `recordNoParticipation` exists and is tested, but no task contract calls it, so the S6 counter never moves in practice.
+- **No. 2 — S5 escalation on a blacklisted validator reverts the whole slash:** escalation calls `_jailInternal`, which reverts `ValidatorIsBlacklisted`. A task contract's slashing loop hitting a blacklisted repeat offender would revert, not just skip that validator.
+- **No. 3 — Jail exit does not require `reactivate()`:** after `jailedUntil` passes, any status-syncing call (e.g. `stake`) recomputes the status, bypassing `reactivate()`'s `StakeBelowFloor` check (the later sync still requires `≥ MIN_STAKE` for `Active`).
+- **No. 4 — Stale NatSpec:** `setModelStakeBounds` / `setMaxConcurrentRegistrationsPerStakeUnit` say "not yet enforced", but the task contracts enforce both (§8). `getModelStakeMin` says "set by the model owner", but the setter is `onlyOwner` (DIN-Representative). `modelMinStakeBounds[].max` is never read.
+- **No. 5 — Recidivism is per model:** the S5 ring is keyed by calling contract, so a validator faulting across many models never escalates unless it hits the threshold within one model.
+- **No. 6 — Blacklisted funds are frozen:** blacklisted validators cannot unstake or claim; there is no recovery path other than unblacklisting.
+- **No. 7 — Custody meets upgradeability:** see §13.
+
+---
+
+## 15. Change Log
+
+### P3 — slashing, jailing, parameters (foundry)
+
+- Slashed DIN is now disposed of: 50% burned, 50% to `slashTreasury` (`setSlashTreasury`), or also burned if no treasury is set.
+- Added `slashPartial` with S5 recidivism escalation (per-caller ring), `recordNoParticipation` (S6), `jailValidator` / `reactivate`.
+- `MIN_STAKE` and `UNBONDING_PERIOD` became owner-settable storage; added per-model stake bounds, the concurrent-registration cap, the active-registration counter, and X25519 encryption-key registration.
 
 ### 2026-07 — Upgradeable conversion (PR 13)
 
-- Converted to a Transparent Proxy: `Ownable` → `Initializable` + `OwnableUpgradeable`; pragma bumped `^0.8.20` → `^0.8.28`.
-- `constructor(dinToken, dinCoordinator)` replaced by a `_disableInitializers()` constructor plus `initialize(dinToken, dinCoordinator)` with the identical zero-address checks; `owner()` is set to the `initialize` caller.
-- `DIN_TOKEN` and `DIN_COORDINATOR` lost `immutable` — now regular storage variables set once in `initialize` (names kept in SCREAMING_CASE).
-- Added `uint256[50] __gap` storage reserve.
-- **Zero logic changes:** all errors, events, constants, the `ValidatorStatus`/`ValidatorInfo` types, both modifiers, and every function body (`stake`, `unstake`, `claimUnstaked`, `slash`, slasher registry, blacklisting, views, `_syncValidatorStatus`) are unchanged.
-
----
-
-## Review Notes & Open Caveats
-
-- **No. 1 — Custody meets upgradeability:** this contract holds all staked DIN, and the ProxyAdmin owner can replace its logic (unbonding delay, slash caps, withdrawal rules) without touching the balance. The staking guarantees are only as strong as the upgrade keys — see [Ownership and upgradeability](#ownership-and-upgradeability).
-- **No. 2 — SCREAMING_CASE without `immutable`:** `DIN_TOKEN` / `DIN_COORDINATOR` read as constants but are now plain storage; a future refactor touching them should not assume compile-time immutability.
-- **No. 3 — Stateless re-entrancy guard is intentional:** the non-upgradeable `ReentrancyGuardTransient` is kept deliberately — it stores its lock in EIP-1153 transient storage and does not affect the proxy storage layout.
-- **No. 4 — Pre-existing gaps unchanged by the conversion:** no public jail entrypoint, slashed tokens accumulate in the contract with no burn/redistribution, and blacklisted validators' funds remain trapped pending a governance recovery path.
+- Converted to a Transparent Proxy (`Initializable` + `OwnableUpgradeable`, `_disableInitializers()` constructor, `initialize(dinToken, dinCoordinator)`); `DIN_TOKEN` / `DIN_COORDINATOR` lost `immutable`; added `__gap`.

@@ -59,9 +59,51 @@ from dincli.sdk.wallet import (  # moved to SDK — re-exported for CLI compatib
     KeystoreSigner,
     PrivateKeySigner,
 )
-from dincli.sdk.errors import ChainIdMismatchError, SignerUnavailable, WalletError  # noqa: F401 — re-exported for CLI/test compatibility
+from dincli.sdk.errors import ChainIdMismatchError, DinError, SignerUnavailable, WalletError  # noqa: F401 — re-exported for CLI/test compatibility
 
 MIN_STAKE = 10*10**18
+
+
+def reraise_din_error_cause(error: DinError) -> None:
+    """Compatibility adapter for `din-info`/`read-stake` (task_110926_14/15
+    review finding 5, `Plans/task-14-15-remediation-plan.md` §7 fallback
+    route).
+
+    Pre-refactor, `get_deployed_din_stake_contract()` and direct contract
+    calls let the underlying exception (contract construction, `getStake()`,
+    file/JSON errors reading din_info.json) propagate unhandled: no extra
+    printed line, and the original exception type reached the CLI's caller
+    (`Plans/task-14-15-review-evidence/cli-before.json`). The SDK's
+    operations layer (`dincli.sdk.operations.platform`) now wraps those into
+    typed `DinError` subclasses — task 15's taxonomy requirement — chaining
+    `raise ... from e`. That means `error.__cause__` IS the original
+    exception object for every one of those cases, still holding its own
+    traceback, so re-raising it here exactly reproduces the old observable
+    behavior: nothing extra printed on the way out, original exception type
+    seen by `CliRunner`/callers.
+
+    Some `DinError`s the SDK raises with NO wrapped cause at all — chiefly a
+    missing/malformed network entry or malformed root in din_info.json
+    (`ConfigError` raised directly in `_load_din_info_entry()`/
+    `get_stake_contract_address()`), and an invalid explicit `--address`
+    (`ValidationError` in `get_stake()`). Pre-refactor, the network cases
+    were a bare `KeyError`/`TypeError` from unchecked dict indexing — not an
+    `Exception` instance the old code ever constructed or could hand back —
+    and the address case did not exist as a validated path at all. There is
+    no real prior exception object to re-raise for these, and fabricating
+    one (e.g. a synthetic `KeyError`) would assert a traceback path that
+    never executed, which is worse than an honestly-labeled behavior change.
+    This is the one declared, accepted exception (see
+    `test_din_info_missing_network_fails_clean_not_with_a_traceback` in
+    `tests/test_cli_platform_operations_golden.py`): for those cases this
+    function returns normally, and the caller keeps its own existing
+    "print message, exit 1" handling exactly as before this adapter existed
+    — deliberately not centralized here, since `din-info` and `read-stake`
+    use slightly different message styles pre-dating this adapter and
+    neither is being changed as part of this fix.
+    """
+    if error.__cause__ is not None:
+        raise error.__cause__
 
 
 class ReadResult(NamedTuple):
@@ -433,6 +475,122 @@ def build_and_send_tx(
     console.print(f"[bold green] ✓ {success_msg}[/bold green]")
     return info._raw  # unchanged return contract (D5)
     
+def ensure_batch_seed_locked(
+    ctx,
+    task_coordinator_contract,
+    gi: int,
+    seed_getter: str,
+    seed_block_getter: str,
+    lock_fn: str,
+    label: str,
+    poll_interval: float = 2.0,
+):
+    """issue #156 H-2: autoCreateTier1AndTier2 / createAuditorsBatches both
+    require their batch-assignment seed to already be locked -- an
+    ungrindable value anchored to a future block at the preceding GIstate
+    transition (closeLMsubmissionsEvaluation / closeLMsubmissions). Waits
+    for that block to be mined, then locks the seed. The lock is
+    permissionless: if someone else locks it first (or the seed block
+    re-anchors while we're waiting, e.g. because we were offline past the
+    256-block window), this just skips or re-polls rather than erroring.
+
+    seed_getter / seed_block_getter / lock_fn are the DINTaskCoordinator
+    function names for either seed pair -- aggSeed/aggSeedBlock/lockAggSeed
+    (T1/T2 batches) or auditSeed/auditSeedBlock/lockAuditSeed (auditor
+    batches). Same helper, different seed pair per caller.
+    """
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    def _current_seed():
+        return getattr(task_coordinator_contract.functions, seed_getter)(gi).call()
+
+    if _current_seed() != b"\x00" * 32:
+        console.print(f"[dim]{label} seed already locked for GI {gi}[/dim]")
+        return
+
+    seed_block = getattr(task_coordinator_contract.functions, seed_block_getter)(gi).call()
+    console.print(
+        f"[cyan]Waiting for block {seed_block} to lock the {label} seed "
+        f"(current: {w3.eth.block_number})...[/cyan]"
+    )
+    while w3.eth.block_number <= seed_block:
+        time.sleep(poll_interval)
+
+    # A re-anchor (>256 blocks passed while we waited) or someone else's
+    # lock may have happened -- re-check rather than assume.
+    if _current_seed() != b"\x00" * 32:
+        console.print(f"[dim]{label} seed was locked by someone else while waiting[/dim]")
+        return
+
+    # exit_on_failure=False: if someone else locks between our re-check
+    # above and this tx landing, this call reverts with
+    # TC_...SeedAlreadyLocked -- exiting on that would abort the whole
+    # create command even though the seed is now locked and create would
+    # succeed (PR #191 review, finding No. 5). Re-check below covers it.
+    build_and_send_tx(
+        ctx,
+        getattr(task_coordinator_contract.functions, lock_fn)(gi),
+        f"Locking {label} seed",
+        f"{label.capitalize()} seed locked",
+        f"Failed to lock {label} seed",
+        exit_on_failure=False,
+    )
+
+    if _current_seed() != b"\x00" * 32:
+        return
+
+    # Seed is still unset. The only recoverable case is a re-anchor: the lock
+    # call moved the seed block forward (>256 blocks elapsed since the last
+    # anchor) instead of setting the seed -- recurse to wait for the new
+    # block. Any other outcome (no gas funds, RPC down, a non-race revert)
+    # would fail the same way again immediately, since the seed block is
+    # already mined, so exit rather than retry (PR #191 review, No. 6).
+    new_seed_block = getattr(task_coordinator_contract.functions, seed_block_getter)(gi).call()
+    if new_seed_block != seed_block:
+        ensure_batch_seed_locked(
+            ctx, task_coordinator_contract, gi,
+            seed_getter, seed_block_getter, lock_fn, label, poll_interval,
+        )
+        return
+
+    console.print(
+        f"[bold red]{label.capitalize()} seed for GI {gi} is still unlocked after "
+        f"the lock attempt (seed block {seed_block} unchanged); not retrying.[/bold red]"
+    )
+    raise typer.Exit(1)
+
+
+# Per batch-seed pair: (seed getter, seed-block getter, lock fn, label, the
+# GIstate in which the seed is anchored but batches aren't created yet).
+BATCH_SEED_PAIRS = {
+    "agg": ("aggSeed", "aggSeedBlock", "lockAggSeed", "T1/T2 batch", "LMSevaluationClosed"),
+    "audit": ("auditSeed", "auditSeedBlock", "lockAuditSeed", "auditor-batch", "LMSclosed"),
+}
+
+
+def lock_batch_seed_if_pending(ctx, task_coordinator_contract, gi: int, curr_gi: int, curr_GIstate: int, kind: str) -> bool:
+    """Validator-side lock for a batch-assignment seed (BL-26).
+
+    The seed's blockhash is public as soon as the seed block is mined, so if
+    only the model owner ever locks it, they can decline to lock a draw they
+    dislike and wait out the ~256-block window for a re-anchor (a fresh
+    draw). Aggregators/auditors call this from their own commands so the
+    first validator online after the seed block locks it instead.
+
+    No-op (returns False) unless `gi` is the current GI and the GI is in the
+    state where the seed is anchored but batches aren't created yet;
+    otherwise waits for the seed block and locks (returns True).
+    """
+    seed_getter, seed_block_getter, lock_fn, label, pending_state = BATCH_SEED_PAIRS[kind]
+    if gi != curr_gi or GIstateToStr(curr_GIstate) != pending_state:
+        return False
+    ensure_batch_seed_locked(
+        ctx, task_coordinator_contract, gi,
+        seed_getter, seed_block_getter, lock_fn, label,
+    )
+    return True
+
+
 def print_tx_info(tx_hash, network=None, print_url = True):
     #ensure tx_hash is hex string
     if isinstance(tx_hash, bytes):

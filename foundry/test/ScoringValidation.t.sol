@@ -41,6 +41,12 @@ contract ScoringValidationTest is Test {
     address client1 = makeAddr("client1");
     address client2 = makeAddr("client2");
 
+    // Commit-then-reveal (task_210726_6 §2a, PR #63) replaced the old
+    // single-shot setAuditScorenEligibility this file was written against.
+    // Fixed salt is fine here -- these tests don't exercise salt secrecy,
+    // only the median/deviation math downstream of a successful reveal.
+    bytes32 constant TEST_SALT = bytes32(uint256(0xC0FFEE));
+
     function _deployPlatform() internal {
         vm.startPrank(admin);
 
@@ -96,10 +102,23 @@ contract ScoringValidationTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev Mints `dinAmount` DIN to `who` via the real ETH->DIN exchange
+    ///      (not a test-only mint) and approves `ta` to pull it, so
+    ///      depositRewards exercises the real safeTransferFrom path.
+    function _fundDinBalance(address who, uint256 dinAmount) internal {
+        // dinPerEth defaults to 1_000_000 * 1e18 -- back-solve the ETH needed.
+        uint256 ethNeeded = (dinAmount * 1e18) / (1_000_000 * 1e18) + 1;
+        vm.deal(who, ethNeeded + 1 ether);
+        vm.prank(who);
+        coordinator.depositAndMint{value: ethNeeded}();
+        vm.prank(who);
+        token.approve(address(ta), type(uint256).max);
+    }
+
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
-        tc = new DINTaskCoordinator(address(stake));
-        ta = new DINTaskAuditor(address(stake), address(tc));
+        tc = new DINTaskCoordinator(address(stake), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1);
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -112,6 +131,11 @@ contract ScoringValidationTest is Test {
         tc.setDINTaskCoordinatorAsSlasher();
         tc.setDINTaskAuditorAsSlasher();
         tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
+        ta.setDinToken(address(token));
+        vm.stopPrank();
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
         tc.startGI(1);
         vm.stopPrank();
     }
@@ -157,10 +181,44 @@ contract ScoringValidationTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
+    }
+
+    function _commitScore(
+        uint256 gi,
+        uint batchId,
+        uint modelIndex,
+        address auditor,
+        uint256 score,
+        bool vote
+    ) internal {
+        bytes32 commitHash = keccak256(
+            abi.encodePacked(score, vote, TEST_SALT)
+        );
+        vm.prank(auditor);
+        ta.commitAuditScore(gi, batchId, modelIndex, commitHash);
+    }
+
+    function _revealScore(
+        uint256 gi,
+        uint batchId,
+        uint modelIndex,
+        address auditor,
+        uint256 score,
+        bool vote
+    ) internal {
+        vm.prank(auditor);
+        ta.revealAuditScore(gi, batchId, modelIndex, score, vote, TEST_SALT);
+    }
+
+    function _startReveal(uint256 gi) internal {
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluationReveal(gi);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -181,12 +239,15 @@ contract ScoringValidationTest is Test {
 
         // One dishonest auditor submits a wildly inflated score. Mean of
         // [20, 25, 100] = 48 (rounds down); median = 25.
-        vm.prank(batchAuditors[0]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 20, true);
-        vm.prank(batchAuditors[1]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 25, true);
-        vm.prank(batchAuditors[2]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 100, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[0], 20, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[1], 25, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[2], 100, true);
+
+        _startReveal(1);
+
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[0], 20, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[1], 25, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[2], 100, true);
 
         vm.prank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
@@ -211,12 +272,15 @@ contract ScoringValidationTest is Test {
         // to try to unfairly fail a good model. [10, 90, 95]: mean = 65,
         // median = 90. A malicious minority shouldn't be able to sink an
         // honest majority's score either.
-        vm.prank(batchAuditors[0]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 10, true);
-        vm.prank(batchAuditors[1]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 90, true);
-        vm.prank(batchAuditors[2]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 95, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[0], 10, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[1], 90, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[2], 95, true);
+
+        _startReveal(1);
+
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[0], 10, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[1], 90, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[2], 95, true);
 
         vm.prank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
@@ -241,11 +305,14 @@ contract ScoringValidationTest is Test {
 
         // Only 2 of 3 auditors vote -- minScoreQuorum=2 is met, and this
         // exercises the even-length branch of _medianOf: (30+70)/2 = 50.
-        vm.prank(batchAuditors[0]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 30, true);
-        vm.prank(batchAuditors[1]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 70, true);
-        // batchAuditors[2] never votes.
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[0], 30, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[1], 70, true);
+        // batchAuditors[2] never commits or votes.
+
+        _startReveal(1);
+
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[0], 30, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[1], 70, true);
 
         vm.prank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
@@ -260,8 +327,9 @@ contract ScoringValidationTest is Test {
         (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
 
         // Only 1 vote -- below minScoreQuorum=2, must not finalize at all.
-        vm.prank(batchAuditors[0]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 90, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[0], 90, true);
+        _startReveal(1);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[0], 90, true);
 
         vm.prank(modelOwner);
         vm.expectRevert(); // TC_FailedToFinalizeEvaluation -- finalizedCount stays 0
@@ -315,12 +383,15 @@ contract ScoringValidationTest is Test {
         vm.prank(modelOwner);
         ta.setS3DeviationThreshold(1);
 
-        vm.prank(batchAuditors[0]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 20, true);
-        vm.prank(batchAuditors[1]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 25, true);
-        vm.prank(batchAuditors[2]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 100, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[0], 20, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[1], 25, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[2], 100, true);
+
+        _startReveal(1);
+
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[0], 20, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[1], 25, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[2], 100, true);
 
         // AuditorScoreDeviation is only emitted inside finalizeEvaluation
         // (called by closeLMsubmissionsEvaluation), not at submission time --
@@ -345,12 +416,15 @@ contract ScoringValidationTest is Test {
 
         // Wide threshold: default (40) should NOT flag a [45,50,55] spread
         // (max deviation from median 50 is 5).
-        vm.prank(batchAuditors[0]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 45, true);
-        vm.prank(batchAuditors[1]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 50, true);
-        vm.prank(batchAuditors[2]);
-        ta.setAuditScorenEligibility(1, 0, modelIdxs[0], 55, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[0], 45, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[1], 50, true);
+        _commitScore(1, 0, modelIdxs[0], batchAuditors[2], 55, true);
+
+        _startReveal(1);
+
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[0], 45, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[1], 50, true);
+        _revealScore(1, 0, modelIdxs[0], batchAuditors[2], 55, true);
 
         vm.prank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);

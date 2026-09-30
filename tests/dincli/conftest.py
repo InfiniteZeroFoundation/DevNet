@@ -479,7 +479,7 @@ def run(din_env, workdir):
 def bootstrap(managed_services, din_info_backup, run):
     """
     Configure demo mode and local network, and register the named role
-    wallets (account 0 = dindao / DIN-Representative, account 1 = modelowner).
+    wallets (account 0 = dinrep / DIN-Representative, account 1 = modelowner).
     Tests switch between them with `system connect-wallet <name>`; dynamic
     per-account roles in test_04 self-register via
     `register-wallet --account N --name acctN --yes --connect`.
@@ -489,7 +489,7 @@ def bootstrap(managed_services, din_info_backup, run):
     run(["system", "init"])
     run(["system", "configure-demo"])
     run(["system", "configure-network", "--network", "local"])
-    run(["system", "register-wallet", "--account", "0", "--name", "dindao", "--yes"])
+    run(["system", "register-wallet", "--account", "0", "--name", "dinrep", "--yes"])
     run(["system", "register-wallet", "--account", "1", "--name", "modelowner", "--yes"])
 
 
@@ -503,3 +503,19 @@ def pytest_configure(config):
         "markers",
         "integration: marks tests that require a live Hardhat node, IPFS daemon, and Docker",
     )
+
+
+# Every test in this directory needs a live chain, an IPFS daemon and Docker.
+# Marking happens here rather than per-file so a new module cannot silently
+# opt out and get itself run in CI. The path test is essential, not cosmetic:
+# this hook receives every collected item in the session, not just ours, so
+# without it the whole suite is marked integration and CI passes running
+# nothing. See plan 2.6.
+_INTEGRATION_DIR = Path(__file__).parent
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        path = Path(str(item.fspath))
+        if path == _INTEGRATION_DIR or _INTEGRATION_DIR in path.parents:
+            item.add_marker(pytest.mark.integration)

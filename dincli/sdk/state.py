@@ -1,8 +1,8 @@
 """GI-state enums, converters, and validation predicates.
 
 Moved from ``dincli.cli.utils`` (issue #20). Pure module — no ``typer``,
-``rich``, or ``dincli.cli.*`` imports. The converters are verbatim copies of the
-originals; their behavior must be byte-identical to the utils.py versions.
+``rich``, or ``dincli.cli.*`` imports. State ordinals mirror the current Solidity GIstates enum; the CLI re-exports
+these converters so SDK and CLI callers interpret the same lifecycle.
 """
 from __future__ import annotations
 
@@ -25,11 +25,14 @@ stateDescription = [
     "LM submissions closed",
     "Auditors batches created",
     "LM submissions evaluation started",
+    "LM submissions evaluation reveal started",
     "LM submissions evaluation closed",
     "T1nT2B created",
     "T1B aggregation started",
+    "T1B aggregation reveal started",
     "T1B aggregation done",
     "T2B aggregation started",
+    "T2B aggregation reveal started",
     "T2B aggregation done",
     "Auditors slashed",
     "Validators slashed",
@@ -51,11 +54,14 @@ states = [
     "LMSclosed",
     "AuditorsBatchesCreated",
     "LMSevaluationStarted",
+    "LMSevaluationRevealStarted",
     "LMSevaluationClosed",
     "T1nT2Bcreated",
     "T1AggregationStarted",
+    "T1AggregationRevealStarted",
     "T1AggregationDone",
     "T2AggregationStarted",
+    "T2AggregationRevealStarted",
     "T2AggregationDone",
     "AuditorsSlashed",
     "AggregatorsSlashed",

@@ -1,13 +1,17 @@
+import json
+import secrets
 from pathlib import Path
 import time
 from typing import Optional
 import typer
 from rich.table import Table
 from web3 import Web3
+from eth_abi import encode as abi_encode
 from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, require_custom_manifest_service)
+                               get_manifest_key, lock_batch_seed_if_pending,
+                               require_custom_manifest_service)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -24,6 +28,49 @@ app = typer.Typer(help="Commands for Aggregators in DIN.")
 
 dintoken_app = typer.Typer(help="Commands for DIN Token in DIN.")
 app.add_typer(dintoken_app, name="dintoken")
+
+# DINTaskCoordinator.TierKind ordinals (Tier1=0, Tier2=1) -- must match the
+# Solidity enum exactly, since it's ABI-encoded into the commit hash.
+TIER1 = 0
+TIER2 = 1
+
+
+# Local persistence for the commit-then-reveal T1/T2 aggregation flow
+# (issue #156 M-1): the (cid, salt) committed at commit time must be
+# reproduced exactly at reveal time, so it's cached to disk between the two
+# commands rather than recomputed -- recomputing would also require
+# re-running the aggregation worker a second time. Mirrors auditor.py's
+# commit-store pattern for the auditor-side commit-reveal flow.
+def _agg_commit_store_path(model_base_dir: Path, tier: int, gi: int, batch_id: int) -> Path:
+    tier_name = "t1" if tier == TIER1 else "t2"
+    return model_base_dir / "aggregations" / "commits" / f"{tier_name}_gi_{gi}_batch_{batch_id}.json"
+
+
+def _save_agg_commit(model_base_dir: Path, tier: int, gi: int, batch_id: int, cid_bytes32: bytes, salt: bytes) -> None:
+    path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"cid": cid_bytes32.hex(), "salt": salt.hex()}, f)
+
+
+def _load_agg_commit(model_base_dir: Path, tier: int, gi: int, batch_id: int) -> Optional[dict]:
+    path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id)
+    if not path.exists():
+        return None
+    with open(path) as f:
+        data = json.load(f)
+    return {"cid": bytes.fromhex(data["cid"]), "salt": bytes.fromhex(data["salt"])}
+
+
+def _agg_commit_hash(cid_bytes32: bytes, salt: bytes, sender: str, gi: int, tier: int, batch_id: int) -> bytes:
+    """keccak256(abi.encode(cid, salt, msg.sender, GI, tierKind, batchId)) --
+    must match DINTaskCoordinator.commitT1Aggregation/commitT2Aggregation's
+    NatSpec exactly, including plain (non-packed) ABI encoding."""
+    encoded = abi_encode(
+        ["bytes32", "bytes32", "address", "uint256", "uint8", "uint256"],
+        [cid_bytes32, salt, Web3.to_checksum_address(sender), gi, tier, batch_id],
+    )
+    return Web3.keccak(encoded)
 
 
 @dintoken_app.command(help="Buy DINTokens where amount is ETH to exchange for DINTokens")
@@ -100,6 +147,24 @@ def register(
     
   
    
+@app.command("lock-seed", help="Lock the T1/T2 batch-assignment seed for the current GI (permissionless)")
+def lock_seed(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract, True, False, True)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationClosed", "Can not lock the T1/T2 batch seed at this time")
+
+    lock_batch_seed_if_pending(ctx, taskCoordinator_contract, ref_gi, curr_GI, GIstate, "agg")
+
+
 @app.command("show-t1-batches", help="Show T1 batches")    
 def show_t1_batches(
     ctx: typer.Context,
@@ -114,6 +179,9 @@ def show_t1_batches(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
 
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+    # BL-26: batches not created yet -- lock the seed now so the model owner
+    # can't decline to lock it and wait out the window for a re-roll.
+    lock_batch_seed_if_pending(ctx, taskCoordinator_contract, ref_gi, curr_GI, GIstate, "agg")
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI,GIstate, "T1nT2Bcreated", "Can not show T1 batches at this time")
 
     console.print(f"Showing T1 batches for GI {ref_gi} for aggregator {account.address}")
@@ -167,6 +235,9 @@ def show_t2_batches(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract, True, False, True)
 
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+    # BL-26: batches not created yet -- lock the seed now so the model owner
+    # can't decline to lock it and wait out the window for a re-roll.
+    lock_batch_seed_if_pending(ctx, taskCoordinator_contract, ref_gi, curr_GI, GIstate, "agg")
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI,GIstate, "T1nT2Bcreated", "Can not show T2 batches at this time")
 
     # Assuming 1 T2 batch for now as per reference code
@@ -243,7 +314,14 @@ def aggregate_t1(
         if account.address not in val:
             continue
 
-        found_batch = True   
+        found_batch = True
+
+        # A retry must never replace the salt behind an existing on-chain
+        # commitment -- the reveal would then fail TC_T1RevealHashMismatch and
+        # the aggregator be S2-slashed. Skip before re-aggregating.
+        if submit and taskCoordinator_contract.functions.t1Committed(curr_GI, bid, account.address).call():
+            console.print(f"[yellow]T1 batch {bid} already committed by {account.address}; skipping (reveal with `dincli aggregator reveal-t1`).[/yellow]")
+            continue
 
         model_cids = []
         for j in range(len(idxs)):
@@ -335,22 +413,77 @@ def aggregate_t1(
         if submit:
             try:
                 aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
+                salt = secrets.token_bytes(32)
+                commit_hash = _agg_commit_hash(aggregated_cid_bytes32, salt, account.address, curr_GI, TIER1, bid)
                 time.sleep(2)
 
+                # Cache before sending: build_and_send_tx returns None both on a
+                # revert and when the receipt wait fails for a tx that may still
+                # mine, so saving only on a receipt could strand a real commit
+                # without its preimage. A failed attempt leaves a stale cache
+                # that the next retry replaces (the batch isn't committed yet).
+                _save_agg_commit(model_base_dir, TIER1, curr_GI, bid, aggregated_cid_bytes32, salt)
                 build_and_send_tx(
                     ctx,
-                    taskCoordinator_contract.functions.submitT1Aggregation(curr_GI, bid, aggregated_cid_bytes32),
-                    f"Submitting T1 aggregation CID for T1 batch {bid} with aggregated CID {aggregated_cid}",
-                    "Aggregation CID submitted.",
-                    "Could not submit aggregation CID.",
+                    taskCoordinator_contract.functions.commitT1Aggregation(curr_GI, bid, commit_hash),
+                    f"Committing T1 aggregation CID for T1 batch {bid}",
+                    f"T1 aggregation committed for batch {bid}! Reveal after the model owner opens the reveal window (`dincli aggregator reveal-t1`).",
+                    "Could not commit aggregation CID.",
                     exit_on_failure=False
                 )
             except Exception as e:
-                console.print(f"[bold red]✗ Could not submit aggregation CID. Error: {e}[/bold red]")
+                console.print(f"[bold red]✗ Could not commit aggregation CID. Error: {e}[/bold red]")
                 raise typer.Exit(1)
 
     if not found_batch:
         console.print(f"[yellow]No T1 batches found for aggregator {account.address}[/yellow]")
+
+
+@app.command("reveal-t1", help="Reveal a previously committed T1 aggregation CID")
+def reveal_t1(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    batch_id: int = typer.Option(None, "--batch", help="Batch ID"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationRevealStarted", "Can not reveal T1 aggregation at this time")
+
+    model_base_dir = ctx.obj.get_model_base_dir(model_id)
+    t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call()
+
+    found_any = False
+    for bid in range(t1_batches_count):
+        if batch_id is not None and bid != batch_id:
+            continue
+
+        commit = _load_agg_commit(model_base_dir, TIER1, curr_GI, bid)
+        if commit is None:
+            continue
+
+        found_any = True
+        console.print(f"[bold green]Revealing T1 aggregation for batch {bid}[/bold green]")
+
+        try:
+            build_and_send_tx(
+                ctx,
+                taskCoordinator_contract.functions.revealT1Aggregation(curr_GI, bid, commit["cid"], commit["salt"]),
+                f"Revealing T1 aggregation for batch {bid}",
+                f"T1 aggregation revealed for batch {bid}!",
+                f"T1 aggregation reveal failed for batch {bid}!",
+                exit_on_failure=False
+            )
+        except Exception as e:
+            console.print(f"[bold red]✗ Error revealing T1 aggregation for batch {bid}: {e}[/bold red]")
+
+    if not found_any:
+        console.print("[yellow]No local T1 commits found to reveal.[/yellow]")
 
     
 @app.command("aggregate-t2", help="Aggregate T2 batches")
@@ -394,9 +527,16 @@ def aggregate_t2(
         if account.address not in aggregators:
             continue
         
+        # Same retry guard as aggregate-t1: never replace the salt behind an
+        # existing on-chain commitment.
+        if submit and taskCoordinator_contract.functions.t2Committed(curr_GI, i, account.address).call():
+            found_batch = True
+            console.print(f"[yellow]T2 batch {i} already committed by {account.address}; skipping (reveal with `dincli aggregator reveal-t2`).[/yellow]")
+            continue
+
         console.print(f"Aggregating T2 batch {bid} for aggregator {account.address}")
-        
-        found_batch = True      
+
+        found_batch = True
 
         model_cids = []
 
@@ -488,18 +628,59 @@ def aggregate_t2(
         if submit:
             try:
                 aggregated_cid_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(aggregated_cid))
+                salt = secrets.token_bytes(32)
+                commit_hash = _agg_commit_hash(aggregated_cid_bytes32, salt, account.address, curr_GI, TIER2, i)
 
+                # Cache before sending -- see aggregate-t1.
+                _save_agg_commit(model_base_dir, TIER2, curr_GI, i, aggregated_cid_bytes32, salt)
                 build_and_send_tx(
                     ctx,
-                    taskCoordinator_contract.functions.submitT2Aggregation(curr_GI, i, aggregated_cid_bytes32),
-                    f"Submitting T2 aggregation CID for T2 batch {bid} with aggregated CID {aggregated_cid}",
-                    "Aggregation CID submitted.",
-                    "Could not submit aggregation CID.",
+                    taskCoordinator_contract.functions.commitT2Aggregation(curr_GI, i, commit_hash),
+                    f"Committing T2 aggregation CID for T2 batch {bid}",
+                    f"T2 aggregation committed for batch {bid}! Reveal after the model owner opens the reveal window (`dincli aggregator reveal-t2`).",
+                    "Could not commit aggregation CID.",
                     exit_on_failure=False
                 )
             except Exception as e:
-                console.print(f"[bold red]✗ Could not submit aggregation CID. Error: {e}[/bold red]")
+                console.print(f"[bold red]✗ Could not commit aggregation CID. Error: {e}[/bold red]")
                 raise typer.Exit(1)
 
     if not found_batch:
         console.print(f"[yellow]No T2 batches found for aggregator {account.address} in GI {curr_GI}[/yellow]")
+
+
+@app.command("reveal-t2", help="Reveal a previously committed T2 aggregation CID")
+def reveal_t2(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationRevealStarted", "Can not reveal T2 aggregation at this time")
+
+    model_base_dir = ctx.obj.get_model_base_dir(model_id)
+
+    commit = _load_agg_commit(model_base_dir, TIER2, curr_GI, 0)
+    if commit is None:
+        console.print("[yellow]No local T2 commit found to reveal.[/yellow]")
+        return
+
+    console.print("[bold green]Revealing T2 aggregation[/bold green]")
+
+    try:
+        build_and_send_tx(
+            ctx,
+            taskCoordinator_contract.functions.revealT2Aggregation(curr_GI, 0, commit["cid"], commit["salt"]),
+            "Revealing T2 aggregation",
+            "T2 aggregation revealed!",
+            "T2 aggregation reveal failed!",
+            exit_on_failure=False
+        )
+    except Exception as e:
+        console.print(f"[bold red]✗ Error revealing T2 aggregation: {e}[/bold red]")

@@ -1,13 +1,22 @@
-from pathlib import Path
+import json
+import secrets
 import time
+from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.table import Table
+from web3 import Web3
+from nacl.public import Box, PrivateKey, PublicKey
+import nacl.encoding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from eth_account.messages import encode_defunct
+from eth_account import Account
 from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, require_custom_manifest_service)
+from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
+                               get_manifest_key, lock_batch_seed_if_pending,
+                               require_custom_manifest_service)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -18,6 +27,47 @@ from dincli.cli.worker import (
     write_worker_job,
 )
 from dincli.services.cid_utils import get_cid_from_bytes32
+from dincli.services.ipfs import retrieve_from_ipfs
+
+def _load_auditor_x25519_key() -> PrivateKey:
+    key_path = Path(CONFIG_DIR) / "auditor_x25519.key"
+    if not key_path.exists():
+        raise FileNotFoundError(
+            f"Auditor X25519 private key not found at {key_path}. "
+            "Generate one and register its public key on-chain first: "
+            "dincli auditor register-encryption-key"
+        )
+    return PrivateKey(bytes.fromhex(key_path.read_text().strip()))
+
+
+def _decrypt_aes_gcm(ciphertext: bytes, K: bytes) -> bytes:
+    return AESGCM(K).decrypt(ciphertext[:12], ciphertext[12:], None)
+
+
+# Local persistence for the commit-then-reveal auditor scoring flow
+# (task_210726_6 §2a): the (score, vote, salt) triple committed at commit
+# time must be reproduced exactly at reveal time, so it's cached to disk
+# between the two commands rather than recomputed (recomputing would also
+# require re-running the scoring worker a second time).
+def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Path:
+    return model_base_dir / "audits" / "commits" / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
+
+
+def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes) -> None:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"score": score, "vote": vote, "salt": salt.hex()}, f)
+
+
+def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Optional[dict]:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+    if not path.exists():
+        return None
+    with open(path) as f:
+        data = json.load(f)
+    data["salt"] = bytes.fromhex(data["salt"])
+    return data
 
 app = typer.Typer(help="Commands for Auditors in DIN.")
 
@@ -101,6 +151,24 @@ def register(
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
                 raise typer.Exit()
 
+@app.command("lock-seed", help="Lock the auditor batch-assignment seed for the current GI (permissionless)")
+def lock_seed(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract, True, False, True)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSclosed", "Can not lock the auditor batch seed at this time")
+
+    lock_batch_seed_if_pending(ctx, task_coordinator_contract, ref_gi, curr_GI, curr_GIstate, "audit")
+
+
 @lms_evaluation_app.command("show-batch", help="Show LMS evaluation batch")
 def show_batch(
     ctx: typer.Context, 
@@ -115,6 +183,10 @@ def show_batch(
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+
+    # BL-26: batches not created yet -- lock the seed now so the model owner
+    # can't decline to lock it and wait out the window for a re-roll.
+    lock_batch_seed_if_pending(ctx, task_coordinator_contract, ref_gi, curr_GI, curr_GIstate, "audit")
 
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI, curr_GIstate, "AuditorsBatchesCreated", "Can not show auditor batch at this time")
 
@@ -331,8 +403,7 @@ def evaluate_lms(
         audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
         auditors_in_batch = audit_batch[1]
         model_indexes = audit_batch[2]
-        testDataCID_raw = audit_batch[3]
-        testDataCID = get_cid_from_bytes32(testDataCID_raw.hex()) if testDataCID_raw and testDataCID_raw != bytes(32) else None
+        encrypted_cid_blob = bytes(audit_batch[3])  # AES-GCM(K, rawCID||sig) — decrypted below
 
         if account.address not in auditors_in_batch:
             # If user specifically requested this batch, warn them
@@ -368,14 +439,42 @@ def evaluate_lms(
             # before the worker container can import it.
             ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
 
-            # dincli fetches every IPFS-addressed input on the host; the
-            # container only ever sees already-materialized local files at the
-            # exact paths Score_model_by_auditor derives internally.
-            ctx.obj.ensure_file_exists(
-                model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt",
-                testDataCID,
-                "auditor test data",
-            )
+            # Recover K and rawCID via decrypt chain:
+            #   Box(auditor_privkey, owner_pubkey).decrypt(encryptedKey) → K
+            #   AES-GCM-decrypt(encryptedCID, K) → rawCID_bytes (32) || sig (65)
+            #   verify eth_sign(ownerSK, rawCID_bytes) → confirms owner
+            #   fetch ciphertext IPFS(rawCID) → AES-GCM-decrypt(K) → plaintext .pt
+            raw_cid = None
+            try:
+                auditor_privkey = _load_auditor_x25519_key()
+                owner_pubkey = PublicKey(bytes.fromhex(
+                    get_manifest_key(effective_network, "owner_encryption_pubkey", model_id)
+                ))
+                encrypted_key_blob = bytes(task_auditor_contract.functions.encryptedTestDataKey(
+                    curr_GI, batch_id, account.address).call())
+                K = Box(auditor_privkey, owner_pubkey).decrypt(encrypted_key_blob)
+
+                payload = _decrypt_aes_gcm(encrypted_cid_blob, K)
+                raw_cid_bytes, sig = payload[:32], payload[32:]
+
+                owner_addr = task_coordinator_contract.functions.owner().call()
+                if Account.recover_message(encode_defunct(raw_cid_bytes), signature=sig).lower() != owner_addr.lower():
+                    console.print(f"[bold red]✗ Batch {batch_id}: owner signature on rawCID invalid — skipping.[/bold red]")
+                    continue
+
+                raw_cid = get_cid_from_bytes32("0x" + raw_cid_bytes.hex())
+
+                pt_path = model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt"
+                if not pt_path.exists():
+                    enc_path = pt_path.with_suffix(".pt.enc")
+                    pt_path.parent.mkdir(parents=True, exist_ok=True)
+                    retrieve_from_ipfs(raw_cid, enc_path)
+                    pt_path.write_bytes(_decrypt_aes_gcm(enc_path.read_bytes(), K))
+                    console.print(f"[dim]Decrypted test data for batch {batch_id}[/dim]")
+            except Exception as e:
+                console.print(f"[bold red]✗ Batch {batch_id}: failed to decrypt test data: {e}[/bold red]")
+                continue
+
             ctx.obj.ensure_file_exists(
                 model_base_dir / "models" / "auditor" / f"lm_{curr_GI}_{model_index}.pth",
                 lm_cid,
@@ -394,7 +493,7 @@ def evaluate_lms(
                     "role": "auditor",
                     "service_path": manifest["path"],
                     "function_name": "Score_model_by_auditor",
-                    "args": [curr_GI, genesis_model_cid, batch_id, model_index, account.address, testDataCID, lm_cid, "/din/model"],
+                    "args": [curr_GI, genesis_model_cid, batch_id, model_index, account.address, raw_cid, lm_cid, "/din/model"],
                 },
             )
 
@@ -429,18 +528,96 @@ def evaluate_lms(
             console.print(f"Eligible: {eligible}")
 
             if submit:
+                score_int = int(score)
+                vote_bool = bool(eligible)
+                salt = secrets.token_bytes(32)
+                commit_hash = Web3.solidity_keccak(
+                    ["uint256", "bool", "bytes32"], [score_int, vote_bool, salt]
+                )
+
                 try:
                     time.sleep(0.5)
                     build_and_send_tx(
                         ctx,
-                        task_auditor_contract.functions.setAuditScorenEligibility(curr_GI, batch_id, model_index, int(score), bool(eligible)),
-                        f"Submitting audit score and eligibility for LM {model_index} from batch {batch_id}",
-                        f"Audit score and eligibility submitted successfully for LM {model_index} from batch {batch_id}!",
-                        f"Audit score and eligibility submission failed for LM {model_index} from batch {batch_id}!",
+                        task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
+                        f"Committing audit score for LM {model_index} from batch {batch_id}",
+                        f"Audit score committed for LM {model_index} from batch {batch_id}! Reveal after the model owner opens the reveal window.",
+                        f"Audit score commit failed for LM {model_index} from batch {batch_id}!",
                         exit_on_failure=False
                     )
+                    # Only cache locally once the commit tx is known to have
+                    # been attempted -- reveal is a no-op without this file.
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                 except Exception as e:
-                    console.print(f"[bold red]✗ Error submitting  Audit score and eligibility for LM {model_index} from batch {batch_id}: {e}[/bold red]")
+                    console.print(f"[bold red]✗ Error committing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
 
     if not found_any:
         console.print("[yellow]No matching assigned auditor batches found.[/yellow]")
+
+
+@lms_evaluation_app.command("reveal")
+def reveal_lms(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model index"),
+    lmi: int = typer.Option(None, "--lmi", help="LM index"),
+    batch: int = typer.Option(None, "--batch", help="Batch index"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Reveal audit scores previously committed via `evaluate --submit`."""
+
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract, task_auditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+
+    curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+
+    ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationRevealStarted", "Can not reveal audit scores at this time")
+
+    audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(curr_GI).call()
+    model_base_dir = ctx.obj.get_model_base_dir(model_id)
+
+    found_any = False
+
+    for batch_id in range(audtor_batch_count):
+        if batch is not None and batch != batch_id:
+            continue
+
+        audit_batch = task_auditor_contract.functions.getAuditorsBatch(curr_GI, batch_id).call()
+        auditors_in_batch = audit_batch[1]
+        model_indexes = audit_batch[2]
+
+        if account.address not in auditors_in_batch:
+            if batch is not None and batch == batch_id:
+                console.print(f"[bold red]✗ You are not assigned to batch {batch_id}![/bold red]")
+            continue
+
+        for model_index in model_indexes:
+            if lmi is not None and lmi != model_index:
+                continue
+
+            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index)
+            if commit is None:
+                console.print(f"[yellow]No local commit found for LM {model_index} from batch {batch_id} -- skipping.[/yellow]")
+                continue
+
+            found_any = True
+            console.print(f"[bold green]Revealing audit score for LM {model_index} from batch {batch_id}[/bold green]")
+
+            try:
+                build_and_send_tx(
+                    ctx,
+                    task_auditor_contract.functions.revealAuditScore(
+                        curr_GI, batch_id, model_index, commit["score"], commit["vote"], commit["salt"]
+                    ),
+                    f"Revealing audit score for LM {model_index} from batch {batch_id}",
+                    f"Audit score revealed for LM {model_index} from batch {batch_id}!",
+                    f"Audit score reveal failed for LM {model_index} from batch {batch_id}!",
+                    exit_on_failure=False
+                )
+            except Exception as e:
+                console.print(f"[bold red]✗ Error revealing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
+
+    if not found_any:
+        console.print("[yellow]No local commits found to reveal.[/yellow]")

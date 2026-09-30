@@ -2,8 +2,8 @@ from pathlib import Path
 import typer
 from rich.table import Table
 
-from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, get_manifest_key,
-                               require_custom_manifest_service)
+from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, ensure_batch_seed_locked,
+                               get_manifest_key, require_custom_manifest_service)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 aggregation_app = typer.Typer(help="Aggregation commands")
@@ -27,7 +27,16 @@ def create_tier1_tier2_batches(
 
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationClosed","Can not create Tier 1 & Tier 2 batches at this time.")
-    
+
+    # issue #156 H-2: autoCreateTier1AndTier2 now requires an ungrindable,
+    # future-block-anchored seed to already be locked. Lock it here (or
+    # skip if someone else already has) before attempting the real call.
+    ensure_batch_seed_locked(
+        ctx, task_coordinator_Contract, ref_gi,
+        seed_getter="aggSeed", seed_block_getter="aggSeedBlock",
+        lock_fn="lockAggSeed", label="T1/T2 batch",
+    )
+
     console.print(f"[bold green]Creating Tier 1 & Tier 2 batches[/bold green]")
     
     try:
@@ -181,6 +190,39 @@ def start_t1_aggregation(
         console.print(f"[red]Error: Tier 1 Aggregation started transaction failed[/red] {e}")
         raise typer.Exit(1)
 
+@t1_app.command("start-reveal")
+def start_t1_aggregation_reveal(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Close the T1 commit window and open the reveal window (commit-then-reveal aggregation, issue #156 M-1)."""
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_Contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationStarted", "Can not start Tier 1 aggregation reveal at this time.")
+
+    console.print(f"[bold green]Starting Tier 1 Aggregation reveal window[/bold green]")
+
+    try:
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.startT1AggregationReveal(ref_gi),
+            "Starting Tier 1 Aggregation reveal",
+            "Tier 1 Aggregation reveal started",
+            "Tier 1 Aggregation reveal start transaction failed",
+            exit_on_failure=False
+        )
+        console.print(f"[dim]Tx hash: {tx_receipt.transactionHash.hex()}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Error: Tier 1 Aggregation reveal start transaction failed[/red] {e}")
+        raise typer.Exit(1)
+
+
 @t1_app.command("close")
 def close_t1_aggregation(
     ctx: typer.Context,
@@ -194,7 +236,7 @@ def close_t1_aggregation(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
     
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationStarted","Can not close Tier 1 aggregation at this time.")
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationRevealStarted","Can not close Tier 1 aggregation at this time.")
     
     console.print(f"[bold green]Finalizing Tier 1 Aggregation[/bold green]")
 
@@ -243,6 +285,39 @@ def start_t2_aggregation(
         raise typer.Exit(1)
 
 
+@t2_app.command("start-reveal")
+def start_t2_aggregation_reveal(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Close the T2 commit window and open the reveal window (commit-then-reveal aggregation, issue #156 M-1)."""
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_Contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationStarted", "Can not start Tier 2 aggregation reveal at this time.")
+
+    console.print(f"[bold green]Starting Tier 2 Aggregation reveal window[/bold green]")
+
+    try:
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.startT2AggregationReveal(ref_gi),
+            "Starting Tier 2 Aggregation reveal",
+            "Tier 2 Aggregation reveal started",
+            "Tier 2 Aggregation reveal start transaction failed",
+            exit_on_failure=False
+        )
+        console.print(f"[dim]Tx hash: {tx_receipt.transactionHash.hex()}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Error: Tier 2 Aggregation reveal start transaction failed[/red] {e}")
+        raise typer.Exit(1)
+
+
 @t2_app.command("close")
 def close_t2_aggregation(
     ctx: typer.Context,
@@ -263,7 +338,7 @@ def close_t2_aggregation(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
 
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationStarted", "Can not close Tier 2 aggregation at this time.")
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationRevealStarted", "Can not close Tier 2 aggregation at this time.")
 
     console.print(f"[bold green]Finalizing Tier 2 Aggregation[/bold green]")
     try:

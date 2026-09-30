@@ -70,6 +70,19 @@ def test_get_platform_addresses_envelope_round_trip():
     json.dumps(envelope)
 
 
+@pytest.mark.parametrize("key", ["treasury", "fee_router", "emission"])
+@pytest.mark.parametrize("value", [None, "", "0x...", VALID_ADDRESS])
+def test_additional_platform_addresses_preserve_config_and_serialize(monkeypatch, key, value):
+    monkeypatch.setattr(platform_ops, "load_din_info", lambda: {"local": {key: value}})
+    result = ops.get_platform_addresses(FakeSession())
+    assert key in result.present
+    assert getattr(result, key) == value
+    assert to_envelope(result)["data"][key] == value
+    for absent in {"treasury", "fee_router", "emission"} - {key}:
+        assert absent not in result.present
+        assert getattr(result, absent) is None
+
+
 def test_every_shipped_network_envelopes_without_raising():
     """Regression guard for §3.2: mainnet's "0x..." placeholders must not
     make to_checksum_address raise, because PlatformAddresses carries no
