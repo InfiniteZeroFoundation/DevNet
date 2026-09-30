@@ -60,8 +60,8 @@ def patch_context(monkeypatch, *, l1_w3, l2_w3, account):
     """Point the context's account/w3 loads and the L1 connect at mocks."""
     # develop's context calls load_account(name=...) (context.py:79), so the
     # patch must accept the keyword — main's zero-arg lambda does not.
-    monkeypatch.setattr("dincli.cli.context.load_account", lambda name=None: account)
-    monkeypatch.setattr("dincli.cli.context.get_w3", lambda network: l2_w3)
+    monkeypatch.setattr("dincli.cli.signer.load_account_noninteractive", lambda name="default": account)
+    monkeypatch.setattr("dincli.sdk.web3.get_w3", lambda network: l2_w3)
     monkeypatch.setattr("dincli.services.bridge.connect_l1_rpc", lambda url: l1_w3)
 
 
@@ -87,8 +87,8 @@ def fail_if_called(name):
 
 def test_wrong_network_zero_rpc(monkeypatch):
     """Wrong network is refused before any RPC — the §3.1 skip-list fix."""
-    monkeypatch.setattr("dincli.cli.context.load_account", fail_if_called("load_account"))
-    monkeypatch.setattr("dincli.cli.context.get_w3", fail_if_called("get_w3"))
+    monkeypatch.setattr("dincli.cli.signer.load_account_noninteractive", fail_if_called("load_account_noninteractive"))
+    monkeypatch.setattr("dincli.sdk.web3.get_w3", fail_if_called("get_w3"))
     monkeypatch.setattr(
         "dincli.services.bridge.connect_l1_rpc", fail_if_called("connect_l1_rpc")
     )
@@ -781,8 +781,8 @@ def test_send_eth_still_reaches_own_callback(monkeypatch):
     l2_w3 = make_w3(11155420)
     l2_w3.provider.endpoint_uri = "http://127.0.0.1:8545"
     l2_w3.to_checksum_address.side_effect = ValueError("not an address")
-    monkeypatch.setattr("dincli.cli.context.load_account", lambda name=None: account)
-    monkeypatch.setattr("dincli.cli.context.get_w3", lambda network: l2_w3)
+    monkeypatch.setattr("dincli.cli.signer.load_account_noninteractive", lambda name="default": account)
+    monkeypatch.setattr("dincli.sdk.web3.get_w3", lambda network: l2_w3)
 
     result = runner.invoke(
         app,

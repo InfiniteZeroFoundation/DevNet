@@ -16,3 +16,7 @@ node_modules
 # Hardhat Ignition default folder for deployments against a local node
 ignition/deployments/chain-31337
 
+
+# Local deployment addresses (regenerated on every local deploy). Public-network
+# files (e.g. deployments/sepolia_op_devnet.json) are committed as the record.
+deployments/localhost.json

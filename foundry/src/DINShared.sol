@@ -36,12 +36,21 @@ enum GIstates {
     LMSevaluationClosed, // 15
     T1nT2Bcreated, // 16
     T1AggregationStarted, // 17
-    T1AggregationDone, // 18
-    T2AggregationStarted, // 19
-    T2AggregationDone, // 20
-    AuditorsSlashed, // 21
-    AggregatorsSlashed, // 22
-    GIended // 23
+    // Reveal phase for commit-then-reveal T1/T2 aggregation submissions
+    // (issue #156 M-1, task_240926_18 Part C). Same 2026-08-27 precedent as
+    // LMSevaluationRevealStarted above: inserted immediately after each
+    // commit phase rather than appended, so dincli/cli/utils.py's `states`/
+    // `stateDescription` mirrors and Documentation/technical/contracts/
+    // DINShared.md §2.1 have been updated to match, shifting every
+    // subsequent entry by +1 (T1) then +1 again (T2).
+    T1AggregationRevealStarted, // 18
+    T1AggregationDone, // 19
+    T2AggregationStarted, // 20
+    T2AggregationRevealStarted, // 21
+    T2AggregationDone, // 22
+    AuditorsSlashed, // 23
+    AggregatorsSlashed, // 24
+    GIended // 25
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +102,9 @@ interface IDinValidatorStake {
         address validator,
         bytes32 reason
     ) external returns (uint256);
+
+    /// @dev Returns the platform slash-treasury address set on DinValidatorStake.
+    function slashTreasury() external view returns (address);
 }
 
 interface IDINTaskCoordinator {
@@ -109,7 +121,10 @@ interface IDINTaskCoordinator {
 }
 
 interface IDINTaskAuditor {
-    function createAuditorsBatches(uint _GI) external returns (bool);
+    function createAuditorsBatches(
+        uint _GI,
+        bytes32 seed
+    ) external returns (bool);
 
     function setTestDataAssignedFlag(uint _GI, bool flag) external;
 
@@ -292,7 +307,8 @@ error TC_BatchNotFound();
 error TC_OnlyOneTier2Batch();
 /// @dev GI state does not permit starting T1 aggregation.
 error TC_NotReadyForT1Aggregation();
-/// @dev T1 aggregation phase has not been started.
+/// @dev T1 aggregation commit phase has not been started (see
+///      commitT1Aggregation, issue #156 M-1).
 error TC_T1AggregationNotStarted();
 /// @dev The batch index or aggregator assignment is invalid.
 error TC_InvalidBatch();
@@ -306,7 +322,8 @@ error TC_NoSubmissions();
 error TC_NotReadyToFinalizeT1();
 /// @dev GI state does not permit starting T2 aggregation.
 error TC_NotReadyForT2Aggregation();
-/// @dev T2 aggregation phase has not been started.
+/// @dev T2 aggregation commit phase has not been started (see
+///      commitT2Aggregation, issue #156 M-1).
 error TC_T2AggregationNotStarted();
 /// @dev The T2 batch has not received its submission yet.
 error TC_NotReadyToFinalizeT2();
@@ -389,3 +406,58 @@ error TA_StakeBelowModelFloor();
 /// @dev Auditor already holds the maximum concurrent registrations permitted by their stake.
 error TA_ConcurrentRegistrationCapReached();
 error TC_InvalidSlashFraction();
+
+error TC_DisputeSeedNotLocked();
+error TC_DisputeSeedBlockNotMined();
+error TC_DisputeSeedAlreadyLocked();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — ungrindable batch-assignment seed (issue #156 H-2, both tiers,
+// task_240926_18 Part B). Same future-block-seed pattern as the dispute seed
+// above, applied to the two regular batch-creation call sites.
+// ─────────────────────────────────────────────────────────────────────────────
+error TC_AggSeedNotAnchored();
+error TC_AggSeedBlockNotMined();
+error TC_AggSeedAlreadyLocked();
+error TC_AggSeedNotLocked();
+error TC_AuditSeedNotAnchored();
+error TC_AuditSeedBlockNotMined();
+error TC_AuditSeedAlreadyLocked();
+error TC_AuditSeedNotLocked();
+/// @dev Defense-in-depth: DINTaskAuditor independently rejects a zero seed
+///      even though DINTaskCoordinator already checks auditSeed != 0 before
+///      calling in, mirroring the M-3 precedent (no single point of trust).
+error TA_AuditSeedNotLocked();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom errors — commit-then-reveal T1/T2 aggregation (issue #156 M-1,
+// task_240926_18 Part C, DINTaskCoordinator). Mirrors task_210726_6 §2a's
+// auditor-side commit-reveal errors above, with the sender-bound hash
+// hardening described on commitT1Aggregation/commitT2Aggregation's NatSpec.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev GI state does not permit starting the T1 aggregation reveal phase.
+error TC_T1RevealCannotBeStarted();
+/// @dev GI state does not permit revealing a T1 aggregation submission at this time.
+error TC_T1RevealPhaseNotOpen();
+/// @dev This aggregator has already committed a T1 aggregation CID for this batch.
+error TC_T1AlreadyCommitted();
+/// @dev The T1 commit hash must not be zero.
+error TC_T1EmptyCommitHash();
+/// @dev This aggregator has not committed a T1 aggregation CID for this batch.
+error TC_T1NoCommitFound();
+/// @dev The revealed (cid, salt) does not hash to the stored T1 commitment.
+error TC_T1RevealHashMismatch();
+
+/// @dev GI state does not permit starting the T2 aggregation reveal phase.
+error TC_T2RevealCannotBeStarted();
+/// @dev GI state does not permit revealing a T2 aggregation submission at this time.
+error TC_T2RevealPhaseNotOpen();
+/// @dev This aggregator has already committed a T2 aggregation CID for this batch.
+error TC_T2AlreadyCommitted();
+/// @dev The T2 commit hash must not be zero.
+error TC_T2EmptyCommitHash();
+/// @dev This aggregator has not committed a T2 aggregation CID for this batch.
+error TC_T2NoCommitFound();
+/// @dev The revealed (cid, salt) does not hash to the stored T2 commitment.
+error TC_T2RevealHashMismatch();

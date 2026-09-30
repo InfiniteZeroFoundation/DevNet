@@ -59,7 +59,10 @@ if [ $ALL = 1 ] || grep -qE '^(foundry|hardhat|\.github)/' <<<"$CHANGED"; then
   source ~/.nvm/nvm.sh >/dev/null
   step "solidity: submodules" git submodule update --init --recursive -q
   step "solidity: foundry npm ci" bash -c "cd foundry && npm ci --silent"
-  step "solidity: forge build (real via_ir profile, as CI)" bash -c "cd foundry && forge build"
+  # forge clean first: the worktree is reused, and stale build-info from an
+  # earlier commit's build makes the OZ upgrade-validation FFI tests fail with
+  # "Found multiple contracts with name ..." (CI builds from a fresh checkout).
+  step "solidity: forge build (real via_ir profile, as CI)" bash -c "cd foundry && forge clean && forge build"
   step "solidity: forge test" bash -c "cd foundry && forge test"
   step "solidity: hardhat npm ci" bash -c "cd hardhat && npm ci --silent"
   step "solidity: hardhat compile" bash -c "cd hardhat && npx hardhat compile"

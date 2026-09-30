@@ -1,4 +1,10 @@
-"""Tests for RPC chain-id validation on develop (PR B)."""
+"""Tests for RPC chain-id validation on develop (PR B).
+
+Retargeted for the SDK extraction (issue #20): get_w3 lives in
+dincli.sdk.web3, raises SDK DinError subclasses (NetworkError /
+ChainIdMismatchError) with a stable ``.code`` rather than builtin
+``ConnectionError`` — see §4.5/§6 of the develop-sync plan.
+"""
 import io
 import json
 import sys
@@ -9,7 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dincli.cli.utils import ChainIdMismatchError, get_w3, load_din_info
+from dincli.sdk.errors import ChainIdMismatchError, NetworkError, RPC_UNREACHABLE
+from dincli.sdk.manifest import load_din_info
+from dincli.sdk.web3 import get_w3
 
 SENTINEL = "SECRET123"
 NETWORK = "sepolia_op_devnet"
@@ -74,8 +82,8 @@ def _invoke_group_with(error):
 class TestStage0:
     """Resolution failures must stay distinguishable from connection failures."""
 
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_unresolvable_rpc_url_propagates_its_own_error(
         self, mock_web3_cls, mock_load_info
     ):
@@ -90,7 +98,7 @@ class TestStage0:
             "Could not resolve 'rpc_url' for network 'sepolia_op_devnet'.\n"
             "-> Checked .env for 'SEPOLIA_OP_DEVNET_RPC_URL'"
         )
-        with patch("dincli.cli.utils.resolve_network_value", side_effect=guidance):
+        with patch("dincli.sdk.web3.resolve_network_value", side_effect=guidance):
             with pytest.raises(KeyError) as exc_info:
                 get_w3(NETWORK)
 
@@ -98,41 +106,42 @@ class TestStage0:
         # Never reached the transport: nothing was constructed or dialled.
         mock_web3_cls.assert_not_called()
 
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_resolution_error_is_not_masked_as_connection_error(
         self, mock_web3_cls, mock_load_info
     ):
-        with patch("dincli.cli.utils.resolve_network_value", side_effect=KeyError("no rpc_url")):
+        with patch("dincli.sdk.web3.resolve_network_value", side_effect=KeyError("no rpc_url")):
             with pytest.raises(Exception) as exc_info:
                 get_w3(NETWORK)
 
-        assert not isinstance(exc_info.value, ConnectionError)
+        assert not isinstance(exc_info.value, NetworkError)
 
 
 class TestStage1:
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
-    def test_unreachable_raises_connection_error_without_url_or_provider_text(
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
+    def test_unreachable_raises_network_error_without_url_or_provider_text(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
         mock_web3 = _FakeWeb3(connected=False)
         mock_web3_cls.return_value = mock_web3
         mock_load_info.return_value = {NETWORK: {"chain_id": VALID_CHAIN_ID}}
 
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(NetworkError) as exc_info:
             get_w3(NETWORK)
 
+        assert exc_info.value.code == RPC_UNREACHABLE
         msg = str(exc_info.value)
         assert NETWORK in msg
         assert "Could not connect to the configured Ethereum node" in msg
         assert SENTINEL not in msg
         assert "endpoint did not respond" not in msg
 
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_leaking_provider_exception_is_scrubbed(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
@@ -141,7 +150,7 @@ class TestStage1:
         )
         mock_load_info.return_value = {NETWORK: {"chain_id": VALID_CHAIN_ID}}
 
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(NetworkError) as exc_info:
             get_w3(NETWORK)
 
         exc = exc_info.value
@@ -150,9 +159,9 @@ class TestStage1:
         assert exc.__cause__ is None
         assert exc.__suppress_context__ is True
 
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_plain_connection_failure_has_no_cause(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
@@ -160,7 +169,7 @@ class TestStage1:
         mock_web3_cls.return_value = mock_web3
         mock_load_info.return_value = {NETWORK: {"chain_id": VALID_CHAIN_ID}}
 
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(NetworkError) as exc_info:
             get_w3(NETWORK)
 
         exc = exc_info.value
@@ -173,27 +182,28 @@ class TestStage1:
 # ---------------------------------------------------------------------------
 
 class TestStage2:
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
-    def test_chain_id_read_failure_raises_stage2_connection_error(
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
+    def test_chain_id_read_failure_raises_stage2_network_error(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
         mock_web3 = _FakeWeb3(chain_id_raises=Exception("RPC timeout"))
         mock_web3_cls.return_value = mock_web3
         mock_load_info.return_value = {NETWORK: {"chain_id": VALID_CHAIN_ID}}
 
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(NetworkError) as exc_info:
             get_w3(NETWORK)
 
+        assert exc_info.value.code == RPC_UNREACHABLE
         msg = str(exc_info.value)
         assert "Connected to the RPC for network" in msg
         assert "could not read its chain id" in msg
         assert not isinstance(exc_info.value, ChainIdMismatchError)
 
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_leaking_chain_id_exception_is_scrubbed(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
@@ -203,7 +213,7 @@ class TestStage2:
         mock_web3_cls.return_value = mock_web3
         mock_load_info.return_value = {NETWORK: {"chain_id": VALID_CHAIN_ID}}
 
-        with pytest.raises(ConnectionError) as exc_info:
+        with pytest.raises(NetworkError) as exc_info:
             get_w3(NETWORK)
 
         exc = exc_info.value
@@ -218,9 +228,9 @@ class TestStage2:
 # ---------------------------------------------------------------------------
 
 class TestStage3:
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_match_returns_web3(self, mock_web3_cls, mock_load_info, mock_resolve):
         mock_web3 = _FakeWeb3(chain_id=VALID_CHAIN_ID)
         mock_web3_cls.return_value = mock_web3
@@ -231,9 +241,9 @@ class TestStage3:
         assert result is mock_web3
         assert mock_web3.eth.chain_id_calls == 1
 
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_mismatch_raises_chain_error_naming_both_ids(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
@@ -244,6 +254,12 @@ class TestStage3:
         with pytest.raises(ChainIdMismatchError) as exc_info:
             get_w3(NETWORK)
 
+        assert exc_info.value.code == "chain_id_mismatch"
+        assert exc_info.value.details == {
+            "network": NETWORK,
+            "expected_chain_id": VALID_CHAIN_ID,
+            "actual_chain_id": WRONG_CHAIN_ID,
+        }
         msg = str(exc_info.value)
         assert NETWORK in msg
         assert str(WRONG_CHAIN_ID) in msg
@@ -256,9 +272,9 @@ class TestStage3:
 # ---------------------------------------------------------------------------
 
 class TestSkip:
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_absent_chain_id_never_reads_eth_chain_id(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
@@ -271,9 +287,9 @@ class TestSkip:
         assert result is mock_web3
         assert mock_web3.eth.chain_id_calls == 0
 
-    @patch("dincli.cli.utils.resolve_network_value", return_value=SENTINEL)
-    @patch("dincli.cli.utils.load_din_info")
-    @patch("dincli.cli.utils.Web3")
+    @patch("dincli.sdk.web3.resolve_network_value", return_value=SENTINEL)
+    @patch("dincli.sdk.web3.load_din_info")
+    @patch("dincli.sdk.web3.Web3")
     def test_absent_network_resolves_without_raising(
         self, mock_web3_cls, mock_load_info, mock_resolve
     ):
@@ -323,10 +339,11 @@ class TestCLIBoundary:
         assert "File " not in captured
         assert captured.strip().count("\n") == 0
 
-    def test_invoke_renders_connection_error_as_one_red_line(self):
-        error = ConnectionError(
+    def test_invoke_renders_network_error_as_one_red_line(self):
+        error = NetworkError(
             f"Connected to the RPC for network '{NETWORK}', "
-            "but could not read its chain id"
+            "but could not read its chain id",
+            code=RPC_UNREACHABLE,
         )
         code, captured = _invoke_group_with(error)
 
@@ -335,6 +352,37 @@ class TestCLIBoundary:
         assert "Traceback" not in captured
         assert "File " not in captured
         assert captured.strip().count("\n") == 0
+
+    def test_invoke_still_catches_builtin_connection_error(self):
+        """ConnectionError stays in the boundary tuple for compatibility (§6):
+        a raw-socket ConnectionRefusedError/ConnectionResetError surfacing
+        unwrapped from a dependency should still render as one red line."""
+        error = ConnectionError("connection refused")
+        code, captured = _invoke_group_with(error)
+
+        assert code == 1
+        assert "Traceback" not in captured
+
+    def test_invoke_respects_din_debug_escape_hatch(self, monkeypatch):
+        monkeypatch.setenv("DIN_DEBUG", "1")
+        from dincli.cli.core import GlobalOptionsGroup
+
+        group = GlobalOptionsGroup(name="test")
+        ctx = MagicMock()
+        error = NetworkError("boom", code=RPC_UNREACHABLE)
+        with patch("typer.core.TyperGroup.invoke", side_effect=error):
+            with pytest.raises(NetworkError):
+                group.invoke(ctx)
+
+    def test_invoke_truthy_din_debug_values_do_not_enable_debug(self, monkeypatch):
+        """DIN_DEBUG must be exact '1', not merely truthy (§6) — '0'/'false' must
+        NOT enable debug, since that is the opposite of what those values say."""
+        for value in ("0", "false", "False", ""):
+            monkeypatch.setenv("DIN_DEBUG", value)
+            error = NetworkError("boom", code=RPC_UNREACHABLE)
+            code, captured = _invoke_group_with(error)
+            assert code == 1
+            assert "Traceback" not in captured
 
 
 # ---------------------------------------------------------------------------

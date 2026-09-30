@@ -185,6 +185,8 @@ contract PR146SlashingRegressionTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -212,6 +214,8 @@ contract PR146SlashingRegressionTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(1);
         tc.autoCreateTier1AndTier2(1);
         tc.startT1Aggregation(1);
         vm.stopPrank();
@@ -223,14 +227,28 @@ contract PR146SlashingRegressionTest is Test {
         bytes32 realCID = bytes32(uint256(0xC1D));
         for (uint i = 0; i < t1aggs.length; i++) {
             if (t1aggs[i] == agg3) continue;
+            bytes32 commitHash = keccak256(
+                abi.encode(realCID, TEST_SALT, t1aggs[i], uint(1), DINTaskCoordinator.TierKind.Tier1, uint(0))
+            );
             vm.prank(t1aggs[i]);
-            tc.submitT1Aggregation(1, 0, realCID);
+            tc.commitT1Aggregation(1, 0, commitHash);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.startT1AggregationReveal(1);
+        vm.stopPrank();
+
+        for (uint i = 0; i < t1aggs.length; i++) {
+            if (t1aggs[i] == agg3) continue;
+            vm.prank(t1aggs[i]);
+            tc.revealT1Aggregation(1, 0, realCID, TEST_SALT);
         }
 
         vm.startPrank(modelOwner);
         tc.finalizeT1Aggregation(1);
         tc.startT2Aggregation(1);
-        tc.finalizeT2Aggregation(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.startT2AggregationReveal(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.finalizeT2Aggregation(1);
         vm.stopPrank();
     }
 

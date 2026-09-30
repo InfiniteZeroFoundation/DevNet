@@ -1,21 +1,22 @@
 # DinCoordinator — Technical Documentation
 
-> **File:** `hardhat/contracts/DinCoordinator.sol`
+> **File:** [`foundry/src/DinCoordinator.sol`](../../../foundry/src/DinCoordinator.sol)
 > **SPDX-License-Identifier:** UNLICENSED
 > **Solidity:** `^0.8.28`
+> **Deployment:** once per network behind an OpenZeppelin Transparent Proxy
 
 ---
 
 ## 1. Overview
 
-`DinCoordinator` is the **entry-point and treasury contract** for the DIN Protocol. Its two core responsibilities are:
+`DinCoordinator` is the **DIN issuance hub and slasher administrator** of the DIN Protocol. Its responsibilities are:
 
-1. **Token issuance** — Accept ETH deposits from users and mint an equivalent amount of DIN tokens into their wallets.
-2. **Slasher management** — Act as the privileged caller that can register or de-register slasher contracts on `DinValidatorStake` on behalf of the DAO representative.
+1. **Faucet issuance** — accept ETH deposits and mint DIN at the `dinPerEth` rate (`depositAndMint`). The faucet can be capped (`mintCap`) and permanently retired (`retireFaucet`).
+2. **Emission issuance** — mint the per-GI DIN emission subsidy on behalf of the wired `DinEmission` contract (`mintEmission`), under the same cap/retirement rules.
+3. **Fee routing** — forward the ETH collected by the faucet to `DinFeeRouter` (`sweepFeesToRouter`), which splits it across validator pool / treasury / storage / public goods.
+4. **Slasher management** — the privileged caller that registers or de-registers slasher contracts on `DinValidatorStake`, on behalf of the DIN-Representative.
 
-The contract is deployed **once per network behind an OpenZeppelin Transparent Proxy** and configured through `initialize(address dinToken_)` instead of a constructor. It does **not** deploy `DinToken` itself: the token is deployed first (as its own proxy) and its address is passed to `initialize`. Minting rights are granted in a separate post-deploy step by calling `DinToken.setCoordinator(coordinatorProxy)` — see [§10 Deployment & Initialization Sequence](#10-deployment--initialization-sequence).
-
-
+The contract is configured through `initialize(address dinToken_)`. It does **not** deploy `DinToken`: the token proxy is deployed first and its address passed to `initialize`. Minting rights are granted separately by `DinToken.setCoordinator(coordinatorProxy)` — see [§10](#10-deployment--initialization-sequence).
 
 ---
 
@@ -24,12 +25,13 @@ The contract is deployed **once per network behind an OpenZeppelin Transparent P
 | Component | Source | Purpose |
 |-----------|--------|---------|
 | `Initializable` | OpenZeppelin (upgradeable) | Initializer guard for the proxy pattern |
-| `OwnableUpgradeable` | OpenZeppelin (upgradeable) | DAO admin access control; owner set in `initialize` |
-| `ReentrancyGuardTransient` | OpenZeppelin (L2-optimized) | Prevents re-entrancy on ETH flows |
+| `OwnableUpgradeable` | OpenZeppelin (upgradeable) | Admin access control (the DIN-Representative); owner set in `initialize` |
+| `ReentrancyGuardTransient` | OpenZeppelin | Re-entrancy lock on the mint and ETH-forwarding paths |
 | `DinToken` | Local | Token proxy reference, wired in `initialize` |
-| `IDinValidatorStake` (local interface) | Local | Typed calls to `DinValidatorStake` |
+| `IDinValidatorStake` (local interface) | Local | `addSlasherContract` / `removeSlasherContract` calls |
+| `IDinFeeRouter` (local interface) | Local | `routeFeeETH(payer)` call used by `sweepFeesToRouter` |
 
-`ReentrancyGuardTransient` is the L2-optimised variant that uses transient storage (EIP-1153), reducing gas cost for the re-entrancy lock on L2 networks. It is the non-upgradeable OpenZeppelin contract, which is safe behind a proxy because it is stateless — the lock lives in transient storage and occupies no storage slots.
+`ReentrancyGuardTransient` keeps its lock in EIP-1153 transient storage, so it occupies no persistent storage slots and is safe behind a proxy.
 
 ---
 
@@ -37,10 +39,17 @@ The contract is deployed **once per network behind an OpenZeppelin Transparent P
 
 | Variable | Type | Visibility | Description |
 |----------|------|-----------|-------------|
-| `dinToken` | `DinToken` | `public` | Reference to the `DinToken` proxy. Set once in `initialize` (a regular storage variable — `immutable` is not usable behind a proxy). |
-| `dinValidatorStakeContract` | `IDinValidatorStake` | `public` | Mutable reference to the validator staking contract. Set after deployment via `updateValidatorStakeContract`. |
-| `dinPerEth` | `uint256` | `public` | Exchange rate: how many raw DIN tokens (18-decimal units) are minted per 1 ETH wei. Default (set in `initialize`): `1,000,000 × 10¹⁸` (i.e., 1M DIN per ETH). |
-| `__gap` | `uint256[50]` | `private` | Reserved storage slots so future versions can append state variables without shifting the layout of child storage. |
+| `dinToken` | `DinToken` | `public` | `DinToken` proxy. Set once in `initialize`. |
+| `dinValidatorStakeContract` | `IDinValidatorStake` | `public` | Validator stake proxy. Set via `updateValidatorStakeContract`. |
+| `dinPerEth` | `uint256` | `public` | Faucet rate: raw DIN units minted per 1 ETH, 1e18-scaled. Default `1,000,000 × 10¹⁸` (1M DIN per ETH). |
+| `faucetRetired` | `bool` | `public` | One-way flag. Once `true`, `depositAndMint`, `mintEmission` and `setMintCap` all revert. |
+| `mintCap` | `uint256` | `public` | Cap on `totalMinted`. `0` = uncapped (DevNet default). |
+| `totalMinted` | `uint256` | `public` | DIN minted through this contract (faucet + emission combined). |
+| `feeRouter` | `IDinFeeRouter` | `public` | Destination for `sweepFeesToRouter`. |
+| `emissionContract` | `address` | `public` | The only address allowed to call `mintEmission` (the `DinEmission` proxy). |
+| `__gap` | `uint256[50]` | `private` | Reserved storage slots for future variables. |
+
+Slot order is recorded in [storage_layout.md](../storage_layout.md#dincoordinator).
 
 ---
 
@@ -48,10 +57,14 @@ The contract is deployed **once per network behind an OpenZeppelin Transparent P
 
 | Error | Condition |
 |-------|-----------|
-| `InvalidAddress()` | Zero-address provided to an address parameter |
-| `ValidatorStakeContractNotSet()` | Slasher management called before `dinValidatorStakeContract` is configured |
-| `ZeroValue()` | ETH deposit of zero value, or exchange rate update to zero |
-| `TransferFailed()` | Low-level ETH transfer from `withdraw()` reverted |
+| `InvalidAddress()` | Zero address passed to `initialize`, `setFeeRouter`, slasher management, `updateValidatorStakeContract`, or `setEmissionContract` |
+| `ValidatorStakeContractNotSet()` | Slasher management called before `dinValidatorStakeContract` is set |
+| `ZeroValue()` | `depositAndMint` with `msg.value == 0`, `mintEmission` with `amount == 0`, or `updateDinPerEth(0)` |
+| `FaucetRetired()` | `depositAndMint`, `mintEmission`, `setMintCap` or `retireFaucet` after the faucet was retired |
+| `ZeroMintAmount()` | `depositAndMint` with a deposit so small that the computed DIN amount rounds to zero |
+| `MintCapExceeded()` | A mint would push `totalMinted` above a non-zero `mintCap` |
+| `FeeRouterNotSet()` | `sweepFeesToRouter` before `setFeeRouter` |
+| `UnauthorizedEmissionCaller()` | `mintEmission` called by anything other than `emissionContract` |
 
 ---
 
@@ -60,28 +73,41 @@ The contract is deployed **once per network behind an OpenZeppelin Transparent P
 | Event | Parameters | Emitted When |
 |-------|-----------|--------------|
 | `EthDepositAndDINminted` | `address indexed user`, `uint256 ethAmount`, `uint256 mintAmount` | Successful `depositAndMint()` |
-| `SlasherContractAdded` | `address indexed slasher` | Slasher registered on validator stake contract |
+| `EmissionMinted` | `address indexed to`, `uint256 amount` | Successful `mintEmission()` |
+| `FeesSweptToRouter` | `uint256 amount` | `sweepFeesToRouter()` forwarded a non-zero balance |
+| `FeeRouterUpdated` | `address indexed feeRouter` | `setFeeRouter()` |
+| `MintCapUpdated` | `uint256 newCap` | `setMintCap()` |
+| `FaucetRetiredEvent` | — | `retireFaucet()` |
+| `EmissionContractUpdated` | `address indexed emissionContract` | `setEmissionContract()` |
+| `SlasherContractAdded` | `address indexed slasher` | Slasher registered on the stake contract |
 | `SlasherContractRemoved` | `address indexed slasher` | Slasher de-registered |
 | `ValidatorStakeContractUpdated` | `address indexed validatorStakeContract` | Stake contract reference updated |
-| `DinPerEthUpdated` | `uint256 newRate` | Exchange rate changed |
+| `DinPerEthUpdated` | `uint256 newRate` | Faucet rate changed |
 
 ---
 
 ## 6. Access Control
 
 ```
-owner() — OwnableUpgradeable; set to the account that ran initialize (DAO representative / deployer)
-  ├── withdraw()
+owner() — OwnableUpgradeable; the account that ran initialize (DIN-Representative)
+  ├── sweepFeesToRouter()
+  ├── setFeeRouter()
+  ├── setMintCap()
+  ├── retireFaucet()
+  ├── setEmissionContract()
   ├── addSlasherContract()
   ├── removeSlasherContract()
   ├── updateValidatorStakeContract()
   └── updateDinPerEth()
 
+emissionContract (the DinEmission proxy)
+  └── mintEmission()
+
 Any address (permissionless)
-  └── depositAndMint()   ← payable, guarded by nonReentrant
+  └── depositAndMint()   ← payable, nonReentrant
 ```
 
-A second, independent control plane exists at the proxy level: the **ProxyAdmin** contract that can upgrade the implementation. See [§9 Ownership & Upgradeability](#9-ownership--upgradeability).
+A second control plane sits at the proxy level: the per-proxy **ProxyAdmin** that can upgrade the implementation. See [§9](#9-ownership--upgradeability).
 
 ---
 
@@ -91,156 +117,145 @@ A second, independent control plane exists at the proxy level: the **ProxyAdmin*
 
 ```solidity
 constructor()
-```
-
-- Runs only on the raw implementation contract, never through the proxy.
-- Calls `_disableInitializers()`, permanently locking the implementation: calling `initialize` directly on it reverts with `InvalidInitialization`. This prevents anyone from "adopting" the unproxied implementation.
-
-```solidity
 function initialize(address dinToken_) external initializer
 ```
 
-- Runs exactly once, atomically with proxy deployment (the deploy script encodes the call into the proxy's constructor data, so there is no front-running window).
-- Reverts with `InvalidAddress()` if `dinToken_ == address(0)`.
-- `__Ownable_init(msg.sender)` — the deployer account becomes `owner()`.
-- Stores the externally deployed `DinToken` proxy address in `dinToken`.
-- Sets `dinPerEth` to the default `1_000_000 * 1e18`.
-
-> **Note:** Unlike the pre-proxy version, the coordinator does **not** deploy `DinToken` and is not automatically its minter. Minting rights are granted afterwards via `DinToken.setCoordinator(coordinatorProxy)`; until that step, `depositAndMint()` reverts with `DinToken.Unauthorized()`.
+- The constructor only calls `_disableInitializers()`, so the raw implementation can never be initialized or owned.
+- `initialize` runs once, atomically with proxy deployment: reverts with `InvalidAddress()` on a zero token, sets `owner()` to the deployer, stores `dinToken`, and sets `dinPerEth = 1_000_000 * 1e18`.
+- The coordinator is not a minter until `DinToken.setCoordinator(coordinatorProxy)` runs; before that, every mint reverts with `DinToken.Unauthorized()`.
 
 ---
 
-### 7.2 `depositAndMint` — Token Issuance Mechanism
+### 7.2 `depositAndMint` — Faucet
 
 ```solidity
 function depositAndMint() external payable nonReentrant
 ```
 
-**Purpose:** Converts ETH to DIN tokens at the current exchange rate.
+1. Revert `FaucetRetired()` if the faucet is retired; revert `ZeroValue()` if `msg.value == 0`.
+2. `mintAmount = (msg.value × dinPerEth) / 10¹⁸` — e.g. 1 ETH → `1_000_000 × 10¹⁸` raw DIN units at the default rate. Revert `ZeroMintAmount()` if this rounds to zero.
+3. Revert `MintCapExceeded()` if `mintCap > 0 && totalMinted + mintAmount > mintCap`.
+4. `totalMinted += mintAmount`, `dinToken.mint(msg.sender, mintAmount)`, emit `EthDepositAndDINminted`.
 
-**Algorithm:**
-1. Revert with `ZeroValue()` if `msg.value == 0`.
-2. Compute `mintAmount`:
-   ```
-   mintAmount = (msg.value × dinPerEth) / 10¹⁸
-   ```
-   - This performs safe decimal math: `dinPerEth` is stored as a 10¹⁸-scaled value, so dividing by 10¹⁸ correctly normalises the result.
-   - Example: `msg.value = 1 ETH (10¹⁸ wei)` → `mintAmount = (10¹⁸ × 1_000_000 × 10¹⁸) / 10¹⁸ = 1_000_000 × 10¹⁸ raw DIN units`.
-3. Call `dinToken.mint(msg.sender, mintAmount)`.
-4. Emit `EthDepositAndDINminted`.
-
-**Re-entrancy protection:** `nonReentrant` using transient storage. The ETH remains in the contract's balance until `withdraw()` is called.
+The ETH stays in the coordinator until `sweepFeesToRouter()` forwards it.
 
 ---
 
-### 7.3 `withdraw`
+### 7.3 `mintEmission` — Emission Subsidy
 
 ```solidity
-function withdraw() external onlyOwner nonReentrant
+function mintEmission(address to, uint256 amount) external nonReentrant
 ```
 
-Transfers the full ETH balance to the `owner()`. Silent no-op if balance is zero. Uses a low-level `.call` for ETH transfer; reverts with `TransferFailed()` if the call fails.
+1. Revert `UnauthorizedEmissionCaller()` unless `msg.sender == emissionContract`.
+2. Revert `FaucetRetired()` if the faucet is retired; revert `ZeroValue()` if `amount == 0`.
+3. Revert `MintCapExceeded()` under the same cap rule as the faucet.
+4. `totalMinted += amount`, `dinToken.mint(to, amount)`, emit `EmissionMinted`.
+
+`to` is the `DinEmission` contract itself: `DinEmission.fundGI(gi, taskAuditor)` mints to itself, approves, and calls `DINTaskAuditor.depositRewards(gi, amount)` to fund that GI's reward pool. Emission deliberately shares the faucet's supply controls: `mintCap` bounds faucet + emission together, and **retiring the faucet also stops emission**.
 
 ---
 
-### 7.4 `addSlasherContract`
+### 7.4 `sweepFeesToRouter`
 
 ```solidity
-function addSlasherContract(address slasherContract) external onlyOwner
+function sweepFeesToRouter() external onlyOwner nonReentrant
 ```
 
-Delegates to `dinValidatorStakeContract.addSlasherContract(slasherContract)`. Enforces:
-- `slasherContract != address(0)`.
-- `dinValidatorStakeContract` is set.
-
-Used by the DAO representative to authorise `DINTaskCoordinator` and `DINTaskAuditor` contracts to call `slash()` on validators.
+Reverts `FeeRouterNotSet()` if no router is wired; returns silently on a zero balance. Otherwise forwards the whole ETH balance via `feeRouter.routeFeeETH{value: balance}(address(this))` and emits `FeesSweptToRouter`. The router only accepts the call if the coordinator is on its fee-source allowlist (`DinFeeRouter.addFeeSource`, done by the deploy script). There is no direct ETH withdrawal to an address.
 
 ---
 
-### 7.5 `removeSlasherContract`
+### 7.5 Supply controls: `setMintCap`, `retireFaucet`
 
 ```solidity
-function removeSlasherContract(address slasherContract) external onlyOwner
+function setMintCap(uint256 newCap) external onlyOwner
+function retireFaucet() external onlyOwner
 ```
 
-Symmetric reverse of `addSlasherContract`. Delegates to `dinValidatorStakeContract.removeSlasherContract(slasherContract)`.
+- `setMintCap` sets the cap on `totalMinted` (`0` = uncapped); reverts `FaucetRetired()` after retirement. Setting a cap below the current `totalMinted` is allowed and simply blocks all further mints.
+- `retireFaucet` flips `faucetRetired` to `true` permanently (reverts `FaucetRetired()` if already retired) and emits `FaucetRetiredEvent`.
 
 ---
 
-### 7.6 `updateValidatorStakeContract`
+### 7.6 Wiring setters
 
 ```solidity
+function setFeeRouter(address feeRouter_) external onlyOwner
+function setEmissionContract(address emissionContract_) external onlyOwner
 function updateValidatorStakeContract(address validatorStakeContract) external onlyOwner
-```
-
-Updates the mutable `dinValidatorStakeContract` reference. Intended to be called once after `DinValidatorStake` is deployed. Reverts on zero address.
-
----
-
-### 7.7 `updateDinPerEth`
-
-```solidity
 function updateDinPerEth(uint256 newRate) external onlyOwner
 ```
 
-Updates the ETH→DIN exchange rate. Reverts on zero. Emits `DinPerEthUpdated`.
+All reject the zero address (`updateDinPerEth` rejects a zero rate with `ZeroValue()`) and emit their matching event. None is one-shot: the owner can re-point any of them at any time.
 
 ---
 
-## 8. Token Issuance Economics
+### 7.7 Slasher management
 
-| Parameter | Default Value | Description |
-|-----------|--------------|-------------|
-| `dinPerEth` | `1,000,000 × 10¹⁸` | Raw DIN units minted per 1 ETH wei |
-| Effective rate | 1 ETH → 1,000,000 DIN | Adjustable by DAO admin |
+```solidity
+function addSlasherContract(address slasherContract) external onlyOwner
+function removeSlasherContract(address slasherContract) external onlyOwner
+```
 
-The ETH collected accumulates in this contract and is withdrawable by `owner()` at any time.
+Delegate to `dinValidatorStakeContract.addSlasherContract` / `removeSlasherContract` after checking `slasherContract != address(0)` and that the stake contract is set. Used by the DIN-Representative to authorise each model's `DINTaskCoordinator` and `DINTaskAuditor` (`dincli dinrep add-slasher`).
+
+---
+
+## 8. Issuance Economics
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `dinPerEth` | `1,000,000 × 10¹⁸` | Faucet rate (1 ETH → 1M DIN); owner-adjustable |
+| `mintCap` | `0` (uncapped) | Cap on faucet + emission mints combined |
+| `faucetRetired` | `false` | One-way switch that ends faucet **and** emission minting |
+| Faucet ETH | forwarded by `sweepFeesToRouter` | Split by `DinFeeRouter`'s ETH split (default 95% validator pool / 5% treasury) |
+
+The testnet values for `mintCap`, `dinPerEth` and the emission schedule are open decisions (issue #155).
 
 ---
 
 ## 9. Ownership & Upgradeability
 
-The contract has **two independent control planes** that must not be confused:
-
 | Plane | Who | Controls |
 |-------|-----|----------|
-| Contract owner (`owner()`) | Account that ran `initialize` (deployer / DAO representative) | `withdraw`, slasher management, `updateValidatorStakeContract`, `updateDinPerEth`; transferable via `transferOwnership` |
-| Proxy admin (`ProxyAdmin` contract) | Deployed by the OpenZeppelin upgrades plugin at proxy deployment; owned by the deployer | Swapping the implementation contract (i.e., changing *all* code and rules) |
+| Contract owner (`owner()`) | Account that ran `initialize` (DIN-Representative) | Everything in §6 except `depositAndMint` / `mintEmission`; transferable via `transferOwnership` |
+| Proxy admin (`ProxyAdmin`) | One ProxyAdmin per proxy (OZ v5), created at proxy deployment and owned by the deployer | Swapping the implementation |
 
-Upgrade mechanics:
-
-- **Proxy kind:** OpenZeppelin **Transparent Proxy** (`upgrades.deployProxy(..., { kind: "transparent" })`). The proxy address is permanent; only the implementation behind it changes.
-- **Upgrade path:** `CONTRACT=DinCoordinator npx hardhat run scripts/upgrade-platform.ts --network <network>`. The script loads the proxy address from `hardhat/deployments/<network>.json`, runs `upgrades.upgradeProxy`, and records the new implementation address back into the file.
-- **Storage-layout safety:** state variables must only ever be appended. The trailing `uint256[50] __gap` reserves room for future variables. Upgrade tests (`hardhat/test/DinCoordinator.upgrade.test.ts`) call `upgrades.validateUpgrade` against a V2 fixture (`hardhat/contracts/upgrade/DinCoordinatorV2.sol`) and assert that `dinToken`, `dinPerEth`, balances, and owner-only restrictions survive the upgrade.
-- **Implementation lock:** the constructor's `_disableInitializers()` means the raw implementation can never be initialized or owned — only the proxy has state.
-- **Trust implication:** every guarantee in this document holds only as long as the ProxyAdmin owner is honest; an upgrade can replace any rule, including `onlyOwner` checks.
+- **Upgrade path:** `cd foundry && CONTRACT=DinCoordinator forge script script/UpgradePlatform.s.sol --rpc-url <rpc> --broadcast ...` — reads the proxy address from `foundry/deployments/<network>.json` (see [UpgradePlatform](foundry/script/UpgradePlatform.md)).
+- **Storage-layout safety:** variables are append-only above `__gap`; `foundry/test/UpgradeValidation.t.sol` runs `Upgrades.validateImplementation`, and `DinCoordinatorUpgradeTest` in `foundry/test/DeployPlatform.t.sol` upgrades to `foundry/src/upgrade/DinCoordinatorV2.sol` and checks rate, wiring and access control survive.
+- **Trust implication:** every rule here holds only while the ProxyAdmin owner is honest — an upgrade can replace any of it. There is no timelock.
 
 ---
 
 ## 10. Deployment & Initialization Sequence
 
-Automated by `hardhat/scripts/deploy-platform.ts` (mirrored by the test fixture `hardhat/test/helpers/platform.ts`). Each contract is a Transparent Proxy whose `initialize` runs atomically at deployment:
+Automated by `foundry/script/DeployPlatform.s.sol` (see [DeployPlatform](foundry/script/DeployPlatform.md)). The steps that touch the coordinator:
 
 ```
-1. Deploy DinToken proxy             → initialize()
-2. Deploy DinCoordinator proxy       → initialize(dinTokenAddress)
-3. dinToken.setCoordinator(dinCoordinatorAddress)          ← one-shot; grants minting rights
-4. Deploy DinValidatorStake proxy    → initialize(dinTokenAddress, dinCoordinatorAddress)
-5. dinCoordinator.updateValidatorStakeContract(dinValidatorStakeAddress)
-6. Deploy DINModelRegistry proxy     → initialize(dinValidatorStakeAddress)
-7. Addresses (proxies + shared proxyAdmin) saved to hardhat/deployments/<network>.json
+2.  Deploy DinToken proxy          → initialize()
+3.  Deploy DinFeeRouter proxy      → initialize(dinToken, dinTreasury)
+4.  Deploy DinCoordinator proxy    → initialize(dinToken)
+5.  dinToken.setCoordinator(dinCoordinator)            ← grants minting rights (one-shot)
+6.  dinCoordinator.setFeeRouter(dinFeeRouter)
+    dinFeeRouter.addFeeSource(dinCoordinator)          ← lets sweepFeesToRouter through
+7.  Deploy DinValidatorStake proxy → initialize(dinToken, dinCoordinator)
+8.  dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
+13. Deploy DinEmission proxy       → initialize(dinCoordinator, dinToken, schedule…)
+14. dinCoordinator.setEmissionContract(dinEmission)
+15. dinCoordinator.updateDinPerEth / setMintCap       ← only when DIN_PER_ETH / MINT_CAP are set to non-default values
 
-Later, per model:
-   dinCoordinator.addSlasherContract(taskCoordinatorAddress)
-   dinCoordinator.addSlasherContract(taskAuditorAddress)
+Later, per model (dincli dinrep add-slasher):
+    dinCoordinator.addSlasherContract(taskCoordinator)
+    dinCoordinator.addSlasherContract(taskAuditor)
 ```
-
-**Partially wired states** (between steps, or if a wiring step is skipped):
 
 | Missing step | Symptom |
 |--------------|---------|
-| Step 3 (`setCoordinator`) not done | `depositAndMint()` reverts with `DinToken.Unauthorized()` — the token has no minter yet |
-| Step 5 (`updateValidatorStakeContract`) not done | `addSlasherContract` / `removeSlasherContract` revert with `ValidatorStakeContractNotSet()` |
+| 5 (`setCoordinator`) | Every mint reverts with `DinToken.Unauthorized()` |
+| 6 (router wiring) | `sweepFeesToRouter` reverts `FeeRouterNotSet()` (or `NotFeeSource` on the router) |
+| 8 (`updateValidatorStakeContract`) | Slasher management reverts `ValidatorStakeContractNotSet()` |
+| 14 (`setEmissionContract`) | `mintEmission` reverts `UnauthorizedEmissionCaller()` |
 
 ---
 
@@ -248,13 +263,14 @@ Later, per model:
 
 | Risk | Mitigation |
 |------|-----------|
-| Re-entrancy via ETH deposit | `ReentrancyGuardTransient` on `depositAndMint` and `withdraw` |
-| Rogue slasher registration | `onlyOwner` on add/remove slasher functions |
-| Exchange rate manipulation | Only `owner` can update `dinPerEth` |
-| ETH locked | `withdraw()` allows owner to drain contract at any time |
-| Re-initialization | `initializer` modifier — `initialize` can run exactly once per proxy |
-| Implementation hijack | Constructor calls `_disableInitializers()` on the implementation |
-| Malicious upgrade | Governed by ProxyAdmin ownership (deployer); no on-chain timelock — operational key security is the only safeguard |
+| Re-entrancy on mint / ETH forwarding | `nonReentrant` on `depositAndMint`, `mintEmission`, `sweepFeesToRouter` |
+| Unbounded supply | Optional `mintCap` over faucet + emission; `retireFaucet` ends issuance permanently |
+| Rogue emission mints | Only `emissionContract` can call `mintEmission`; setting it is `onlyOwner` |
+| Rogue slasher registration | `onlyOwner` on add/remove slasher |
+| Rate manipulation | Only `owner` can call `updateDinPerEth` |
+| ETH diverted | ETH leaves only through `sweepFeesToRouter` to the configured router; no arbitrary-recipient withdrawal |
+| Re-initialization / implementation hijack | `initializer` + `_disableInitializers()` |
+| Malicious upgrade | Bounded only by ProxyAdmin key security; no timelock |
 
 ---
 
@@ -262,31 +278,38 @@ Later, per model:
 
 ```
 DinCoordinator (proxy)
-  ├── calls → DinToken.mint(user, amount)       [on depositAndMint]
-  ├── calls → DinValidatorStake.addSlasherContract()
-  └── calls → DinValidatorStake.removeSlasherContract()
+  ├── → DinToken.mint(user, amount)                 [depositAndMint]
+  ├── → DinToken.mint(to, amount)                   [mintEmission, from DinEmission]
+  ├── → DinFeeRouter.routeFeeETH{value}(this)       [sweepFeesToRouter]
+  ├── → DinValidatorStake.addSlasherContract()
+  └── → DinValidatorStake.removeSlasherContract()
 
-DinToken (proxy)
-  └── setCoordinator(dinCoordinator) authorises this contract as sole minter [post-deploy wiring]
+DinEmission → DinCoordinator.mintEmission()         [per-GI emission]
+DinToken.setCoordinator(dinCoordinator)             [one-shot minter wiring]
 ```
 
 ---
 
 ## 13. Change Log
 
+### P3 — supply controls, emission, fee routing (foundry)
+
+- **Removed** `withdraw()` and its `TransferFailed` error; faucet ETH now leaves only via `sweepFeesToRouter()` to `DinFeeRouter` (new `feeRouter`, `setFeeRouter`, `FeeRouterNotSet`, `FeeRouterUpdated`, `FeesSweptToRouter`).
+- Added supply controls: `mintCap` / `setMintCap` / `MintCapExceeded` / `MintCapUpdated`, `totalMinted`, and the one-way `faucetRetired` / `retireFaucet` / `FaucetRetired` / `FaucetRetiredEvent`.
+- Added emission minting: `emissionContract` / `setEmissionContract` / `mintEmission` with `UnauthorizedEmissionCaller`, `EmissionContractUpdated`, `EmissionMinted`.
+
 ### 2026-07 — Upgradeable conversion (PR 13)
 
-- Converted to a Transparent Proxy: `Ownable` → `Initializable` + `OwnableUpgradeable`; constructor replaced by `_disableInitializers()` plus `initialize(address dinToken_)`.
-- No longer deploys `DinToken` in its constructor — the token proxy is deployed separately and injected via `initialize`; minting rights are granted afterwards through `DinToken.setCoordinator` (see §10).
-- `dinToken` lost `immutable` (regular storage, set once in `initialize`); the `dinPerEth` default moved from an inline initializer into `initialize` (value unchanged).
-- Added `uint256[50] __gap` storage reserve.
-- Unchanged: `depositAndMint`, `withdraw`, slasher management, `updateValidatorStakeContract`, `updateDinPerEth`, and all events/errors.
+- Converted to a Transparent Proxy (`Initializable` + `OwnableUpgradeable`, `_disableInitializers()` constructor, `initialize(address dinToken_)`).
+- No longer deploys `DinToken`; minting rights granted via `DinToken.setCoordinator`.
+- `dinToken` lost `immutable`; `dinPerEth` default moved into `initialize`; added `uint256[50] __gap`.
 
 ---
 
 ## 14. Review Notes & Open Caveats
 
-- **No. 1 — Ownership is claimed at initialization, not implementation deployment:** whoever runs the deploy script becomes `owner()`; transfer to the DAO multisig should be part of the deployment runbook.
-- **No. 2 — Wiring is a two-transaction trust window:** between proxy deployment and `DinToken.setCoordinator`, `depositAndMint` reverts. The deploy script performs the wiring immediately, but a manual deployment that skips it leaves the exchange non-functional (fails closed, not open).
-- **No. 3 — `updateValidatorStakeContract` has no one-shot guard:** the owner can re-point the stake contract at any time (pre-existing behavior; the NatSpec now documents it as an operational responsibility).
-- **No. 4 — Upgrade power is absolute:** the ProxyAdmin owner can replace all logic, including the exchange rate and withdrawal rules, with no timelock (see §9).
+- **No. 1 — Retiring the faucet also stops emission:** `mintEmission` checks `faucetRetired`, so `retireFaucet()` ends *all* issuance through this contract, not only the ETH faucet. Intended per the NatSpec ("emission cannot bypass the supply cap machinery"), but easy to miss operationally.
+- **No. 2 — Swept ETH mostly stays in the router:** `dincli dinrep coordinator sweep-fees` calls `sweepFeesToRouter()`. With the default split only the treasury share is paid out; the validator-pool share accrues in `DinFeeRouter`, which has no withdrawal path yet.
+- **No. 3 — Ownership is claimed at initialization:** whoever runs the deploy script becomes `owner()`; transfer is a deliberate runbook step.
+- **No. 4 — Wiring setters have no one-shot guard:** `setFeeRouter`, `setEmissionContract`, `updateValidatorStakeContract` can be re-pointed at any time.
+- **No. 5 — Upgrade power is absolute:** the ProxyAdmin owner can replace all logic, with no timelock.

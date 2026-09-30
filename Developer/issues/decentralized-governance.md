@@ -619,7 +619,7 @@ Only later, if justified:
 
 ## Conclusion
 
-DIN should move the authority currently held by `dinDAO` admin keys and platform-contract owners into a DAO-based governance system for production.
+DIN should move the authority currently held by the DIN-Representative admin key and platform-contract owners into a DAO-based governance system for production.
 
 The recommended default is not raw quadratic voting on transferable DIN. A stronger first step is:
 

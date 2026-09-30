@@ -15,7 +15,8 @@ from eth_account import Account
 from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, require_custom_manifest_service)
+                               get_manifest_key, lock_batch_seed_if_pending,
+                               require_custom_manifest_service)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -150,6 +151,24 @@ def register(
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
                 raise typer.Exit()
 
+@app.command("lock-seed", help="Lock the auditor batch-assignment seed for the current GI (permissionless)")
+def lock_seed(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract, True, False, True)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSclosed", "Can not lock the auditor batch seed at this time")
+
+    lock_batch_seed_if_pending(ctx, task_coordinator_contract, ref_gi, curr_GI, curr_GIstate, "audit")
+
+
 @lms_evaluation_app.command("show-batch", help="Show LMS evaluation batch")
 def show_batch(
     ctx: typer.Context, 
@@ -164,6 +183,10 @@ def show_batch(
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+
+    # BL-26: batches not created yet -- lock the seed now so the model owner
+    # can't decline to lock it and wait out the window for a re-roll.
+    lock_batch_seed_if_pending(ctx, task_coordinator_contract, ref_gi, curr_GI, curr_GIstate, "audit")
 
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI, curr_GIstate, "AuditorsBatchesCreated", "Can not show auditor batch at this time")
 

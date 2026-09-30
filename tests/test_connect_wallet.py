@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from dincli.cli import system as system_mod
 from dincli.cli import utils as utils_mod
+from dincli.sdk import config as sdk_config
 from dincli.main import app as main_app
 
 
@@ -31,13 +32,17 @@ def _plain(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 @pytest.fixture
-def temp_config(tmp_path):
+def temp_config(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     wallets_dir = config_dir / "wallets"
     wallets_dir.mkdir()
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
+    # The extracted config functions read their defining SDK module's globals.
+    # CLI re-export aliases alone do not isolate the demo-wallet commands.
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_dir / "config.json")
     orig_config = utils_mod.CONFIG_DIR
     orig_cache = utils_mod.CACHE_DIR
     orig_wallets = utils_mod.WALLETS_DIR
@@ -47,6 +52,18 @@ def temp_config(tmp_path):
     sys_orig_config_file = getattr(system_mod, "CONFIG_FILE", None)
     sys_orig_wallet_file = getattr(system_mod, "WALLET_FILE", None)
     sys_orig_worker_cache = getattr(system_mod, "WORKER_CACHE_DIR", None)
+
+    # SDK wallet constants — now the canonical home for WALLETS_DIR etc.
+    from dincli.sdk import wallet as sdk_wallet
+    sdk_orig_config = sdk_wallet.CONFIG_DIR
+    sdk_orig_wallets = sdk_wallet.WALLETS_DIR
+    sdk_orig_wallet_file = sdk_wallet.WALLET_FILE
+    sdk_orig_legacy = sdk_wallet.LEGACY_WALLET_FILE
+
+    sdk_wallet.CONFIG_DIR = config_dir
+    sdk_wallet.WALLETS_DIR = wallets_dir
+    sdk_wallet.WALLET_FILE = config_dir / "wallet.json"
+    sdk_wallet.LEGACY_WALLET_FILE = config_dir / "wallet.json"
 
     utils_mod.CONFIG_DIR = config_dir
     utils_mod.CACHE_DIR = cache_dir
@@ -72,6 +89,12 @@ def temp_config(tmp_path):
             "cache_dir": cache_dir,
         }
     finally:
+        from dincli.sdk import wallet as sdk_wallet
+        sdk_wallet.CONFIG_DIR = sdk_orig_config
+        sdk_wallet.WALLETS_DIR = sdk_orig_wallets
+        sdk_wallet.WALLET_FILE = sdk_orig_wallet_file
+        sdk_wallet.LEGACY_WALLET_FILE = sdk_orig_legacy
+
         utils_mod.CONFIG_DIR = orig_config
         utils_mod.CACHE_DIR = orig_cache
         utils_mod.WALLETS_DIR = orig_wallets
@@ -603,6 +626,23 @@ class TestConnectDemoWallet:
         assert "not a demo wallet" in plain
         assert "connect-wallet realacct" in plain
 
+    def test_refuses_a_real_wallet_even_with_demo_mode_off(self, temp_config, monkeypatch):
+        # The wallet-type refusal must win over the demo-mode check: "Demo mode is
+        # off" would send the user to enable demo mode, and the command would
+        # still refuse this real wallet afterwards.
+        config_file = temp_config["config_dir"] / "config.json"
+        config_file.write_text('{"demo_mode": false}')
+        monkeypatch.setattr(utils_mod, "CONFIG_FILE", config_file)
+        self._base_monkeypatch(monkeypatch)
+        _write_encrypted_wallet(temp_config["wallets_dir"], "realacct", DUMMY_KEY_0, DUMMY_PW)
+        result = CliRunner().invoke(main_app, ["system", "connect-demo-wallet", "realacct"])
+        assert result.exit_code == 1
+        plain = _plain(result.output)
+        assert "not a demo wallet" in plain
+        assert "connect-wallet realacct" in plain
+        assert "Demo mode is off" not in plain
+        assert utils_mod.load_config().get("wallet_name") != "realacct"
+
     def test_overwrite_guard_declined_leaves_wallet_unchanged(self, temp_config, monkeypatch):
         config_file = temp_config["config_dir"] / "config.json"
         config_file.write_text('{"demo_mode": true}')
@@ -756,8 +796,8 @@ class TestFixERegression:
     def test_set_wallet_persists_config(self, monkeypatch, temp_config):
         config_file = temp_config["config_dir"] / "config.json"
         config_file.write_text("{}")
-        orig_config_file = utils_mod.CONFIG_FILE
-        utils_mod.CONFIG_FILE = config_file
+        orig_config_file = sdk_config.CONFIG_FILE
+        sdk_config.CONFIG_FILE = config_file
         monkeypatch.setattr(system_mod, "resolve_ipfs_config", lambda: SimpleNamespace(provider="env", api_url_add=None, api_url_retrieve=None, api_key=None, api_secret=None, service_path=None))
         try:
             (temp_config["wallets_dir"] / "wallet_validator.json").write_text('{"version": 1, "address": "0xTest"}')
@@ -766,10 +806,10 @@ class TestFixERegression:
             plain = _plain(result.output)
             assert "deprecated" in plain
             assert "Active wallet set to 'validator'" in plain
-            config = utils_mod.load_config()
+            config = sdk_config.load_config()
             assert config.get("wallet_name") == "validator"
         finally:
-            utils_mod.CONFIG_FILE = orig_config_file
+            sdk_config.CONFIG_FILE = orig_config_file
 
     def test_connect_wallet_persists_config(self, monkeypatch, temp_config):
         config_file = temp_config["config_dir"] / "config.json"
@@ -1004,54 +1044,84 @@ class TestPasswordVerboseFalse:
 
     # ── Site 1: load_account (:415) ─────────────────────────────────────
 
-    def test_load_account_no_red_x(self, monkeypatch, tmp_path):
-        """load_account: env lacking DIN_WALLET_PASSWORD prints no red X."""
+    def test_load_account_no_red_x(self, monkeypatch, temp_config, tmp_path):
+        """load_account: env lacking DIN_WALLET_PASSWORD prints no red X.
+
+        Reuses the canonical `temp_config` fixture rather than patching only
+        `cli.utils.CONFIG_DIR`/`WALLETS_DIR` (review finding 7): the actual
+        resolution path — `load_account()` -> `load_account_noninteractive()`
+        -> `load_keystore()` -> `resolve_wallet_path()` — is defined in
+        `dincli.sdk.wallet` and reads THAT module's own `WALLETS_DIR`/
+        `LEGACY_WALLET_FILE`/`CONFIG_DIR` globals, not the names re-exported
+        into `cli.utils`'s namespace for CLI compatibility. Patching only the
+        re-exported aliases leaves the SDK's own copies pointed at the real
+        user config directory, so the test would silently read (and pass
+        against) whatever wallet happens to already exist there instead of
+        its own fixture file. `temp_config` patches both.
+        """
         from dincli.cli import utils as utils_mod
+        from dincli.sdk import wallet as sdk_wallet
+        # cli.utils._PASSWORD_CACHE and sdk.wallet._PASSWORD_CACHE are the
+        # SAME dict object (re-exported, not copied) — mutate it in place and
+        # restore its exact prior contents afterward, rather than rebinding
+        # the name (which would only affect one module's reference).
+        _saved_cache = dict(utils_mod._PASSWORD_CACHE)
         utils_mod._PASSWORD_CACHE.clear()
+
+        # Absent-credential case: strip any password inherited from the real
+        # shell environment, and isolate .env lookup (get_env_key reads
+        # os.getcwd()/.env) to a directory that deliberately lacks the var —
+        # otherwise a developer's real DIN_WALLET_PASSWORD/.env would make
+        # this non-interactive load succeed for the wrong reason.
+        monkeypatch.delenv("DIN_WALLET_PASSWORD", raising=False)
         env_dir = _make_env_without_password(tmp_path)
         monkeypatch.chdir(env_dir)
 
-        # Isolate config/cache into a temp area
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        wallets_dir = config_dir / "wallets"
-        wallets_dir.mkdir()
-        orig_config = utils_mod.CONFIG_DIR
-        orig_wallets = utils_mod.WALLETS_DIR
-        utils_mod.CONFIG_DIR = config_dir
-        utils_mod.WALLETS_DIR = wallets_dir
+        wallets_dir = temp_config["wallets_dir"]
+        ks = Account.encrypt(DUMMY_KEY_0, DUMMY_PW)
+        acct = Account.from_key(DUMMY_KEY_0)
+        wrapper = {"version": 1, "address": acct.address, "keystore": ks,
+                   "source": "created", "name": "default"}
+        wallet_path = wallets_dir / "wallet_default.json"
+        wallet_path.write_text(json.dumps(wrapper))
+
+        # Prompt stub returns only the synthetic fixture password — never a
+        # real credential.
+        monkeypatch.setattr(utils_mod, "getpass", lambda prompt: DUMMY_PW)
+
+        # Capture console output
+        import io
+        from rich.console import Console as RichConsole
+        out = io.StringIO()
+        monkeypatch.setattr(utils_mod, "console", RichConsole(file=out, force_terminal=False))
 
         try:
-            ks = Account.encrypt(DUMMY_KEY_0, DUMMY_PW)
-            acct = Account.from_key(DUMMY_KEY_0)
-            wrapper = {"version": 1, "address": acct.address, "keystore": ks,
-                       "source": "created", "name": "default"}
-            (wallets_dir / "wallet_default.json").write_text(json.dumps(wrapper))
+            loaded = utils_mod.load_account(name="default")
+            assert loaded.address == acct.address
 
-            monkeypatch.setattr(utils_mod, "getpass", lambda prompt: DUMMY_PW)
-            monkeypatch.setattr(utils_mod, "_cleanup_stale_session", lambda: None)
+            # Confirm the wallet actually loaded is THIS test's own file, not
+            # merely a wallet elsewhere whose address happens to match: the SDK
+            # resolver (isolated via temp_config, not a local alias) must resolve
+            # "default" to exactly this path.
+            resolved_path, exists = sdk_wallet.resolve_wallet_path("default")
+            assert exists
+            assert resolved_path == wallet_path
 
-            # Capture console output
-            import io
-            from rich.console import Console as RichConsole
-            out = io.StringIO()
-            orig_console = utils_mod.console
-            utils_mod.console = RichConsole(file=out, force_terminal=False)
-
-            try:
-                loaded = utils_mod.load_account(name="default")
-                assert loaded.address == acct.address
-                output = out.getvalue()
-                # No red X
-                assert "❌" not in output
-                # Yellow fallback line appears exactly once
-                yellow_count = output.count("DIN_WALLET_PASSWORD not found in environment")
-                assert yellow_count == 1, f"Expected 1 yellow line, got {yellow_count}"
-            finally:
-                utils_mod.console = orig_console
+            output = out.getvalue()
+            # No red X
+            assert "❌" not in output
+            # Unlike develop's load_account (which delegates password
+            # resolution to _get_password and so emits its yellow fallback
+            # line), the SDK-extracted load_account resolves the env var
+            # itself via get_env_key(..., verbose=False) and never calls
+            # _get_password — so no yellow line is emitted here either.
+            # The verbose=False fix (no "❌ not found" red text) is what
+            # this test actually guards; site 2 below covers the yellow
+            # line's own call site (_get_password) directly.
+            assert "DIN_WALLET_PASSWORD not found in environment" not in output
         finally:
-            utils_mod.CONFIG_DIR = orig_config
-            utils_mod.WALLETS_DIR = orig_wallets
+            utils_mod._PASSWORD_CACHE.clear()
+            utils_mod._PASSWORD_CACHE.update(_saved_cache)
 
     # ── Site 2: _get_password self-fetch (:455) ──────────────────────────
 
@@ -1115,3 +1185,24 @@ class TestPasswordVerboseFalse:
         finally:
             utils_mod.console = orig_console
 
+
+
+class TestDumpAbiNeedsNoWallet:
+    """dump-abi is a file-only operation: it must run with no wallet connected
+    and write the {"abi": [...]} shape get_contract_instance expects."""
+
+    def test_dump_abi_foundry_artifact_without_wallet(self, temp_config, tmp_path):
+        (temp_config["config_dir"] / "config.json").write_text('{"network": "local"}')
+        artifact = tmp_path / "Foo.json"
+        artifact.write_text(json.dumps({
+            "abi": [{"type": "function", "name": "foo", "inputs": [], "outputs": [], "stateMutability": "view"}],
+            "bytecode": {"object": "0x6080", "sourceMap": "", "linkReferences": {}},
+        }))
+        out_dir = tmp_path / "abis_out"
+        result = CliRunner().invoke(main_app, [
+            "system", "dump-abi", "--artifact", str(artifact), "--output", str(out_dir), "--bytecode",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Error loading account" not in _plain(result.output)
+        data = json.loads((out_dir / "Foo.json").read_text())
+        assert data == {"abi": json.loads(artifact.read_text())["abi"], "bytecode": "0x6080"}

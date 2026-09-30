@@ -51,16 +51,13 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             treasuryBps: 500
         });
 
-    /// @notice Treasury's accrued share of settled reward pools.
-    /// @dev No live consumer yet -- DinTreasury doesn't exist on develop.
-    // TODO(task_210726_5): forward to DinTreasury once merged, instead of
-    // just accruing here.
-    uint256 public treasuryAccrued;
-
-    /// @notice Destination for treasuryAccrued once DinTreasury exists.
-    /// @dev Settable now so the wiring is a one-line change later, not a
-    ///      redeploy -- see treasuryAccrued's TODO.
-    address public treasuryAddress;
+    /// @notice Cumulative DIN routed out via burn + platform treasury: each
+    ///         settled reward pool's treasury share plus every forfeited
+    ///         test-data dispute bond / owner penalty (burned half included,
+    ///         and the whole amount when slashTreasury is unset).
+    /// @dev Observability only -- tokens leave the contract immediately
+    ///      (_forwardToTreasury / _burnAndForward); nothing is held against it.
+    uint256 public treasuryAccrued; // cumulative observability counter
 
     /// @notice Per-address claimable reward balance across all GIs.
     /// @dev Pull-payment only -- claimReward(gi) credits this per GI,
@@ -150,7 +147,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///         is allowed to cost auditors stake, per MECHANISM_DESIGN.md §6.
     bool public s3SlashingEnabled = false;
 
-    /// @notice S1 liveness-fault slash fraction in basis points (0–10000).
+    /// @notice S1 liveness-fault slash fraction in basis points (1–10000).
     ///         Applied to AUD_NO_VOTE (missed audit vote) slashes only.
     ///         S3 deviation slashes keep a full minStake() amount regardless.
     ///         30% default: three consecutive misses ~= full floor stake,
@@ -206,9 +203,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @dev Only affects AUD_NO_VOTE slashes. S3 deviation slashes keep
     ///      the full minStake() amount. Setting to 10000 restores the previous
     ///      flat-minStake behavior.
-    /// @param bps New fraction in basis points (0–10000).
+    /// @param bps New fraction in basis points (1–10000).
     function setS1SlashFractionBps(uint256 bps) external onlyOwner {
-        if (bps > 10_000) revert TA_InvalidSlashFraction();
+        if (bps == 0 || bps > 10_000) revert TA_InvalidSlashFraction();
         uint256 old = s1SlashFractionBps;
         s1SlashFractionBps = bps;
         emit S1SlashFractionBpsUpdated(old, bps);
@@ -317,7 +314,6 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     );
     event DinTokenSet(address indexed dinToken);
     event RewardSplitUpdated(RewardSplit split);
-    event TreasuryAddressUpdated(address indexed treasuryAddress);
     event RewardsSettled(
         uint256 indexed gi,
         uint256 clientPool,
@@ -385,6 +381,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 requested,
         uint256 actual
     );
+    event LocalModelSubmitted(uint indexed GI, uint indexed modelIndex, address indexed client, bytes32 modelCID);
 
     /// @notice Model registry ID this auditor manages.
     /// @dev Mirrors DINTaskCoordinator.modelId — used to look up per-model stake floors.
@@ -393,7 +390,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @notice Deploys the auditor, wiring it to the validator stake and coordinator contracts.
     /// @dev Batch parameters are set to demo defaults (3 auditors/batch, 3 models/batch,
     ///      quorum of 2, pass score of 50). The model owner can adjust pass score via
-    ///      updatePassScore.
+    ///      updatePassScore. Rejects a zero address for either dependency (L-6):
+    ///      this contract is non-upgradeable, so a bad deploy means a full
+    ///      redeploy, not a fix.
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
@@ -402,6 +401,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         address _dintaskcoordinator_contract_address,
         uint256 modelId_
     ) Ownable(msg.sender) {
+        if (
+            _dinvalidatorStakeContract_address == address(0) ||
+            _dintaskcoordinator_contract_address == address(0)
+        ) revert TA_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
         );
@@ -449,17 +452,6 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         emit RewardSplitUpdated(newSplit);
     }
 
-    /// @notice Sets the address treasuryAccrued will eventually forward to.
-    /// @dev No forwarding happens yet -- DinTreasury doesn't exist on develop
-    ///      (task_210726_5). This only records the destination so wiring it
-    ///      up later is a one-line change, not a redeploy.
-    /// @param treasuryAddress_ Destination address for the treasury's reward share.
-    function setTreasuryAddress(address treasuryAddress_) external onlyOwner {
-        if (treasuryAddress_ == address(0)) revert TA_InvalidAddress();
-        treasuryAddress = treasuryAddress_;
-        emit TreasuryAddressUpdated(treasuryAddress_);
-    }
-
     /// @notice Funds the reward pool for a specific Global Iteration.
     /// @dev Pulls `amount` DIN from the caller via safeTransferFrom -- caller
     ///      must have approved this contract first. Anyone may fund any GI's
@@ -486,6 +478,38 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         dinToken.safeTransferFrom(msg.sender, address(this), amount);
         giRewardPool[gi] += amount;
         emit RewardDeposited(gi, msg.sender, amount);
+    }
+
+    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
+    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
+    ///      the slash-treasury is unset. Increments `treasuryAccrued` for observability.
+    function _burnAndForward(uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 burnAmt = amount / 2;
+        uint256 fwdAmt  = amount - burnAmt;
+        IBurnableDinToken(address(dinToken)).burn(burnAmt);
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, fwdAmt);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(fwdAmt);
+        }
+        treasuryAccrued += amount;
+    }
+
+    /// @dev Forwards `amount` in full to the platform slash-treasury.
+    ///      Burns the full amount when the treasury is unset.
+    ///      Used for protocol-fee shares (settleRewards), not forfeitures.
+    ///      Increments `treasuryAccrued` for observability.
+    function _forwardToTreasury(uint256 amount) internal {
+        if (amount == 0) return;
+        address treasury = dinvalidatorStakeContract.slashTreasury();
+        if (treasury != address(0)) {
+            dinToken.safeTransfer(treasury, amount);
+        } else {
+            IBurnableDinToken(address(dinToken)).burn(amount);
+        }
+        treasuryAccrued += amount;
     }
 
     /// @notice Stores the per-GI reward pool snapshot at endGI time.
@@ -530,10 +554,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 aggregatorPool = (pool * split.aggregatorBps) / BPS_DENOMINATOR;
         uint256 treasuryShare = pool - clientPool - auditorPool - aggregatorPool;
 
-        treasuryAccrued += treasuryShare;
-        if (treasuryShare > 0 && treasuryAddress != address(0)) {
-            dinToken.safeTransfer(treasuryAddress, treasuryShare);
-        }
+        _forwardToTreasury(treasuryShare);
 
         giRewardSnapshot[gi] = GIRewardSnapshot({
             clientPool:            clientPool,
@@ -722,6 +743,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             })
         );
         clientHasSubmitted[_GI][msg.sender] = true;
+        emit LocalModelSubmitted(_GI, modelIndex, msg.sender, _clientModel);
     }
 
     /// @notice Returns all local model submissions for the given GI.
@@ -740,12 +762,12 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     }
 
     // ──────────── internal shuffle helpers ────────────
-    function _shuffleAddressArray(address[] memory arr) internal view {
+    function _shuffleAddressArray(address[] memory arr, bytes32 seed) internal pure {
         if (arr.length < 2) return;
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(blockhash(block.number - 1), i, arr.length)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
@@ -776,11 +798,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         }
     }
 
-    function _shuffleUintArray(uint[] memory arr) internal view {
+    function _shuffleUintArray(uint[] memory arr, bytes32 seed) internal pure {
         for (uint i = arr.length - 1; i > 0; i--) {
             uint j = uint(
                 keccak256(
-                    abi.encodePacked(block.timestamp, i, arr.length, msg.sender)
+                    abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
@@ -819,23 +841,34 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     }
 
     /// @notice Partitions active auditors and submitted models into audit batches.
-    /// @dev Called by the paired DINTaskCoordinator. Auditors are filtered to those
-    ///      still Active at call time, then shuffled with blockhash-based entropy.
-    ///      Returns false is never reached; reverts on any failure condition.
+    /// @dev Called by the paired DINTaskCoordinator, which has already locked
+    ///      and passed in `seed` (issue #156 H-2) -- anchored at
+    ///      DINTaskCoordinator.closeLMsubmissions, before this function could
+    ///      possibly run, so nobody can steer batch assignment by timing the
+    ///      call. Rejects a zero seed independently of the coordinator's own
+    ///      check (defense-in-depth, same principle as the M-3 fix elsewhere
+    ///      in this contract). Returns false is never reached; reverts on any
+    ///      failure condition.
     /// @param _GI Current GI index.
+    /// @param seed Locked, ungrindable seed from DINTaskCoordinator.auditSeed.
     /// @return True on success.
     function createAuditorsBatches(
-        uint _GI
+        uint _GI,
+        bytes32 seed
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
         if (dintaskcoordinatorContract.GIstate() != GIstates.LMSclosed)
             revert TA_CannotCreateAuditorsBatches();
+        if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
         // Filter the historical registration list down to currently active auditors.
         address[] memory auditorPool = _activeAuditorPool(_GI);
         uint aLen = auditorPool.length;
 
         if (aLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
-        _shuffleAddressArray(auditorPool);
+        // Domain-separated derived seeds, same reasoning as the coordinator's
+        // AGG_ADDR/AGG_IDX split -- independent of aggSeed since this derives
+        // from the separately-locked auditSeed.
+        _shuffleAddressArray(auditorPool, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
 
         // ▸ 2. Build list of local model indexes
         LMSubmission[] storage lmlist = lmSubmissions[_GI];
@@ -844,7 +877,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         for (uint i = 0; i < lmlist.length; i++) {
             modelIdx[i] = i;
         }
-        _shuffleUintArray(modelIdx);
+        _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AUD_IDX")));
 
         // ▸ 3. Create batches, Greedily fill Auditors batches
         uint vPtr;
@@ -1324,12 +1357,16 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
                 if (missedVote) {
                     // S1: partial slash via slashPartial (tracks S5 recidivism).
-                    uint256 actualSlashed = dinvalidatorStakeContract.slashPartial(
-                        auditor,
-                        s1Amount,
-                        "AUD_NO_VOTE",
-                        _GI
-                    );
+                    // Skip when rounding reduces s1Amount to 0 — slashPartial
+                    // reverts InvalidSlashAmount on zero, bricking the GI.
+                    uint256 actualSlashed = s1Amount > 0
+                        ? dinvalidatorStakeContract.slashPartial(
+                            auditor,
+                            s1Amount,
+                            "AUD_NO_VOTE",
+                            _GI
+                        )
+                        : 0;
                     emit AuditorSlashed(
                         _GI,
                         b,
@@ -1471,15 +1508,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bool commitmentMatches = (reconstructed == testDataCommitments[gi][batchId]);
 
         if (commitmentMatches) {
-            // Dispute is false — forfeited bond: 50% burn, 50% treasury
+            // Dispute is false — forfeited bond: 50% burn, 50% platform treasury.
             uint256 bond = d.bond;
             d.active = false;
-            if (bond > 0) {
-                uint256 burnAmt = bond / 2;
-                uint256 treasuryAmt = bond - burnAmt;
-                IBurnableDinToken(address(dinToken)).burn(burnAmt);
-                treasuryAccrued += treasuryAmt;
-            }
+            _burnAndForward(bond);
             emit TestDataDisputeResolvedFalse(gi, batchId, d.disputer, bond);
         } else {
             // Dispute upheld — return bond, penalise owner's reward pool
@@ -1495,10 +1527,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
             if (penalty > 0 && giRewardPool[gi] >= penalty) {
                 giRewardPool[gi] -= penalty;
-                uint256 burnAmt = penalty / 2;
-                uint256 treasuryAmt = penalty - burnAmt;
-                IBurnableDinToken(address(dinToken)).burn(burnAmt);
-                treasuryAccrued += treasuryAmt;
+                _burnAndForward(penalty);
             }
 
             emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
@@ -1516,12 +1545,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 bond = d.bond;
         d.active = false;
 
-        if (bond > 0) {
-            uint256 burnAmt = bond / 2;
-            uint256 treasuryAmt = bond - burnAmt;
-            IBurnableDinToken(address(dinToken)).burn(burnAmt);
-            treasuryAccrued += treasuryAmt;
-        }
+        _burnAndForward(bond);
 
         emit DisputeExpired(gi, batchId, bond);
     }
