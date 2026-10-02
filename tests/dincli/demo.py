@@ -45,6 +45,31 @@ def generate_demo_accounts(accounts_path: Path) -> Path:
     return accounts_path
 
 
+def prepare_demo_accounts(accounts_path: Path) -> bool:
+    """Reuse validated public accounts, or generate them and return ownership.
+
+    Only a file created here may be removed by the caller. A checkout already
+    includes public demo accounts; preserve that file byte-for-byte.
+    """
+    accounts_path = Path(accounts_path)
+    if accounts_path.is_symlink():
+        raise ValueError(f"Refusing symlink demo accounts: {accounts_path}")
+    if not accounts_path.exists():
+        generate_demo_accounts(accounts_path)
+        return True
+    try:
+        accounts = json.loads(accounts_path.read_text(encoding="utf-8"))["hardhat"]
+        for index, expected_address in enumerate(DEMO_ADDRESSES):
+            account = accounts[index]
+            if account["address"].lower() != expected_address.lower():
+                raise ValueError("Unexpected demo address")
+            if Account.from_key(account["private_key"]).address != expected_address:
+                raise ValueError("Unexpected demo private key")
+    except (ValueError, TypeError, KeyError, IndexError) as error:
+        raise ValueError(f"Invalid public demo accounts: {accounts_path}") from error
+    return False
+
+
 def bootstrap_demo(run) -> None:
     """Configure local demo mode and connect the two named test role wallets."""
     run(["system", "init"])

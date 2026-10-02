@@ -192,3 +192,25 @@ def test_isolated_bootstrap_provisions_then_cleans_demo_accounts(harness, fail_b
         assert len(commands) == 5
         fixture.close()
     assert not accounts_path.exists()
+
+
+@pytest.mark.parametrize("fail_bootstrap", [False, True])
+def test_isolated_bootstrap_preserves_existing_public_accounts(harness, fail_bootstrap):
+    from tests.dincli.demo import generate_demo_accounts
+
+    accounts_path = harness.DEVNET_ROOT / "dincli/config/accounts.json"
+    generate_demo_accounts(accounts_path)
+    original = accounts_path.read_bytes()
+
+    def run(args):
+        if fail_bootstrap:
+            raise RuntimeError("bootstrap command failed")
+
+    fixture = harness.bootstrap.__wrapped__(None, None, run)
+    if fail_bootstrap:
+        with pytest.raises(RuntimeError, match="bootstrap command failed"):
+            next(fixture)
+    else:
+        next(fixture)
+        fixture.close()
+    assert accounts_path.read_bytes() == original
