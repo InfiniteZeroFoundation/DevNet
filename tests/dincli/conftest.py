@@ -56,7 +56,7 @@ from tests.dincli.constants import (
     RESULTS_DIR,
 )
 
-from tests.dincli.demo import bootstrap_demo, generate_demo_accounts
+from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
 from tests.dincli.services import start_service, rpc_ready, ipfs_ready
 
 
@@ -559,13 +559,12 @@ def bootstrap(managed_services, din_info_backup, run):
     running before the first command.
     """
     accounts_path = DEVNET_ROOT / "dincli" / "config" / "accounts.json"
-    if ISOLATED_MODE:
-        generate_demo_accounts(accounts_path)
+    generated_accounts = ISOLATED_MODE and prepare_demo_accounts(accounts_path)
     try:
         bootstrap_demo(run)
         yield
     finally:
-        if ISOLATED_MODE:
+        if generated_accounts:
             accounts_path.unlink()
 
 

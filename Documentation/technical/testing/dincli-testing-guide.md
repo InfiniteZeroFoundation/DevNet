@@ -70,9 +70,10 @@ before fixture yield. Startup logs remain in the external results directory.
 Both compiler paths remain enabled at this foundation stage; the Foundry-only
 selection will accompany the later smoke runner.
 
-Isolated bootstrap generates accounts 0/1 from the public Anvil mnemonic at
-the disposable package's `dincli/config/accounts.json`, refuses an existing
-file, and removes the generated file on teardown. `connect-demo-wallet` reads
+Isolated bootstrap validates and reuses accounts 0/1 in the checkout's public
+`dincli/config/accounts.json`, preserving the file. If absent, it generates
+those accounts from the public Anvil mnemonic and removes only that generated
+file on teardown. Invalid accounts or symlinks fail setup. `connect-demo-wallet` reads
 this file; setting `ETH_PRIVATE_KEY_N` alone does not supply demo accounts.
 Existing manual runs must provide their own public account file with enough
 entries for the chosen phases. Real-wallet commands deliberately reject demo
