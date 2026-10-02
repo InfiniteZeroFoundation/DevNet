@@ -513,12 +513,12 @@ def aggregate_t2(
     
     found_batch = False
     
-    if batch_id and batch_id >= t2_batches_count:
+    if batch_id is not None and batch_id >= t2_batches_count:
         console.print(f"[red]Error:[/red] invalid T2 batch ID {batch_id} does not exist")
         raise typer.Exit(1)
     
     for i in range(t2_batches_count):
-        if batch_id:
+        if batch_id is not None:
             if i != batch_id:
                 continue
         
@@ -544,8 +544,11 @@ def aggregate_t2(
 
         for j in range(t1_batches_count):
             time.sleep(0.1)
-            (bid, val, idxs, fin, cid) = taskCoordinator_contract.functions.getTier1Batch(curr_GI, j).call()
-            model_cids.append(get_cid_from_bytes32(cid.hex()))
+            # Distinct names: rebinding `bid` here used to leave the last T1
+            # batch id in it, mis-naming the T2 models path, worker job and
+            # container below (issue #202 Part 2).
+            (_, _, _, _, t1_final_cid) = taskCoordinator_contract.functions.getTier1Batch(curr_GI, j).call()
+            model_cids.append(get_cid_from_bytes32(t1_final_cid.hex()))
 
         console.print(f"Aggregating T2 batch {bid} for aggregator {account.address} with T1 final cids {model_cids} and genesis model cid {genesis_model_ipfs_hash}")
 

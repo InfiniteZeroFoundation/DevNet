@@ -203,7 +203,7 @@ Read alongside the [foundry/src security review](../audits/foundry-src-security-
 - **No. 6 — Stale NatSpec and reused errors:** `slashAuditors` says S1 and S3 are both `minStake()` (S1 is now a fraction). Several comments call parameters "DAO-settable"; they are `onlyOwner`, i.e. set by the model owner. `setDisputePenaltyBps` reuses `TA_InvalidDisputeBond`, and `closeExpiredDispute` reuses `TA_DisputeWindowClosed` for "window still open".
 - **No. 7 — `modelId` is fixed at construction**, before the registry assigns it (see [DINTaskCoordinator §10 No. 4](DINTaskCoordinator.md#10-review-notes--open-caveats)).
 - **No. 8 — dincli lags this contract:** `dincli model-owner deploy task-auditor` still calls the older two-argument constructor (no `modelId`).
-- **No. 9 — dincli auditor commit retry can lose the committed salt.** Rerunning `dincli auditor lms-evaluation evaluate --submit` generates a new salt and overwrites the local commit cache even when the on-chain commit already exists. The later reveal then fails the hash check and the auditor is slashed for a missed vote. Tracked in issue No. 202 (Part 1); until it is fixed, don't rerun the command for a GI that already has commits.
+- **No. 9 — Fixed: a dincli auditor commit retry no longer loses the committed salt.** Rerunning `dincli auditor lms-evaluation evaluate --submit` used to generate a new salt and overwrite the local commit cache even when the on-chain commit already existed. The later reveal then failed the hash check, and the auditor was slashed for a missed vote. dincli now skips any LM whose `hasCommittedLM` is already set, leaving its cache untouched, and writes the cache before sending the commit tx (issue No. 202 Part 1). A rerun is safe.
 
 ---
 

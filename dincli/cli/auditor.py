@@ -430,6 +430,15 @@ def evaluate_lms(
                 continue
 
             found_any = True
+
+            # A retry must never replace the salt behind an existing on-chain
+            # commitment -- the reveal would then fail TA_RevealHashMismatch
+            # and the auditor be S1-slashed for an honest vote (issue #202).
+            # Skip before re-evaluating, leaving the commit cache untouched.
+            if submit and task_auditor_contract.functions.hasCommittedLM(curr_GI, batch_id, account.address, model_index).call():
+                console.print(f"[yellow]LM {model_index} in audit batch {batch_id} already committed by {account.address}; skipping (reveal with `dincli auditor lms-evaluation reveal`).[/yellow]")
+                continue
+
             console.print(f"[bold green]Evaluating LM {model_index} from Audit batch {batch_id}![/bold green]")
 
             time.sleep(0.5)
@@ -550,6 +559,13 @@ def evaluate_lms(
 
                 try:
                     time.sleep(0.5)
+                    # Cache before sending: build_and_send_tx returns None both
+                    # on a revert and when the receipt wait fails for a tx that
+                    # may still mine, so saving only after the send could strand
+                    # a real commit without its preimage. A failed attempt leaves
+                    # a stale cache that the next retry replaces (the LM isn't
+                    # committed yet, so the hasCommittedLM guard lets it through).
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                     build_and_send_tx(
                         ctx,
                         task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
@@ -558,9 +574,6 @@ def evaluate_lms(
                         f"Audit score commit failed for LM {model_index} from batch {batch_id}!",
                         exit_on_failure=False
                     )
-                    # Only cache locally once the commit tx is known to have
-                    # been attempted -- reveal is a no-op without this file.
-                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                 except Exception as e:
                     console.print(f"[bold red]✗ Error committing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
 
