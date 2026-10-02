@@ -16,9 +16,11 @@ chain ID 1337 on `http://127.0.0.1:8545`.
 
 ## Quick start
 
-The harness is self-contained. All prerequisites (contract compilation, the
-local chain node, IPFS daemon) are managed automatically by the conftest. The only manual
-requirement is Docker — it must be running before Phase 4 client training begins.
+The conftest manages contract compilation and local chain/IPFS startup.
+Install the Python dependencies and chain/IPFS toolchains first. The existing
+manual path also requires a repo-root `.env` and a packaged
+`dincli/config/accounts.json` containing the public development accounts.
+Docker must be running before Phase 4 client training begins.
 
 ```bash
 # 1. Ensure Docker daemon is running
@@ -49,6 +51,46 @@ That's it. The conftest will:
 
 The test suite is structured around a centralized session-scoped `conftest.py`
 that isolates dependencies and coordinates services.
+
+### CI smoke groundwork
+
+The first CI preparation change adds opt-in `DIN_TEST_ISOLATED=1` service
+ownership and corrects demo bootstrap to use `connect-demo-wallet`. It does
+not yet add a Docker runner, a smoke workflow job, or complete seven-contract
+deployment assertions. The Python CI job still selects `not integration`.
+Full lifecycle wallet switches and later phases are not verified by this change.
+
+In a disposable checkout/environment, isolated mode requires absolute
+`DIN_TEST_TMPDIR` and `DIN_TEST_RESULTS_DIR` paths. Scratch must not already
+exist; results must be outside scratch. The harness refuses checkout dotenv
+files, uses a local-only subprocess environment, creates a fresh offline Kubo
+repository, and rejects occupied ports without terminating their processes.
+Only newly started process groups are stopped, including when setup fails
+before fixture yield. Startup logs remain in the external results directory.
+Both compiler paths remain enabled at this foundation stage; the Foundry-only
+selection will accompany the later smoke runner.
+
+Isolated bootstrap generates accounts 0/1 from the public Anvil mnemonic at
+the disposable package's `dincli/config/accounts.json`, refuses an existing
+file, and removes the generated file on teardown. `connect-demo-wallet` reads
+this file; setting `ETH_PRIVATE_KEY_N` alone does not supply demo accounts.
+Existing manual runs must provide their own public account file with enough
+entries for the chosen phases. Real-wallet commands deliberately reject demo
+wallets and must not be substituted during bootstrap.
+
+The focused tests below exercise startup failures, process ownership,
+interruption, account setup and retained evidence without launching Anvil or
+IPFS, compiling contracts or contacting a chain:
+
+```bash
+python -m pytest tests/test_integration_demo.py \
+  tests/test_integration_services.py tests/test_integration_harness.py -q
+```
+
+Isolated mode is a harness setting, not a container or a guarantee that an
+arbitrary checkout is disposable. Use it only inside an environment you own
+for testing. The forthcoming Docker runner will establish that boundary and
+provide the shared GitHub/local reproduction command.
 
 ### Managed services (`managed_services` fixture)
 
