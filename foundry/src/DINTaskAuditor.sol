@@ -283,7 +283,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     }
     mapping(uint256 => mapping(uint256 => DisputeRecord)) public testDataDisputes;
 
-    uint256 public disputeBondAmount;           // DIN; 0 at deploy, DAO-settable
+    // Non-zero by default so each dispute attempt costs something (issue #205);
+    // matches DINTaskCoordinator.disputeBond. Revisit with issue #155's values.
+    uint256 public disputeBondAmount = 100 * 1e18; // DIN; owner-settable
     uint256 public disputeWindowBlocks = 7200;  // ~1 day on Optimism (~2s blocks)
     uint256 public disputePenaltyBps = 2500;    // 25% of giRewardPool[gi] forfeited on owner loss
 
@@ -355,7 +357,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     event TestDataDisputeResolvedFalse(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondForfeited);
     event TestDataDisputeUpheld(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondReturned, uint256 ownerPenalty);
     event BatchPendingReassignment(uint256 indexed gi, uint256 indexed batchId);
-    event DisputeExpired(uint256 indexed gi, uint256 indexed batchId, uint256 bondForfeited);
+    /// @dev Emitted when an unanswered dispute is closed after its window; it is
+    ///      then upheld (TestDataDisputeUpheld follows). Issue #205.
+    event DisputeExpired(uint256 indexed gi, uint256 indexed batchId);
 
     event EligibilityVoted(
         uint256 indexed gi,
@@ -1462,15 +1466,21 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         return encryptedTestDataKey[gi][batchId][auditor].length == 0;
     }
 
-    /// @notice Opens a test-data dispute for a batch. Requires a DIN bond.
-    ///         The disputer must call resolveTestDataDispute within the challenge
-    ///         window; failure to do so forfeits the bond (closeExpiredDispute).
+    /// @notice Opens a test-data dispute for a batch. Only an auditor of that
+    ///         batch can open one, and it requires the DIN bond.
+    ///         The model owner must then answer with resolveTestDataDispute
+    ///         within the challenge window; if the owner stays silent, anyone
+    ///         can call closeExpiredDispute and the dispute is upheld.
+    /// @dev Issue #205: opening was unrestricted and the bond defaulted to 0,
+    ///      so any address could drain giRewardPool through repeated disputes.
     /// @param gi GI index.
     /// @param batchId Batch to dispute.
     function openTestDataDispute(
         uint256 gi,
         uint256 batchId
     ) external nonReentrant {
+        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
+        if (!isBatchAuditor[gi][batchId][msg.sender]) revert TA_NotAssignedAuditor();
         if (testDataCommitments[gi][batchId] == bytes32(0)) revert TA_NoCommitmentStored();
         DisputeRecord storage d = testDataDisputes[gi][batchId];
         if (d.active) revert TA_DisputeAlreadyActive();
@@ -1492,11 +1502,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         emit TestDataDisputeOpened(gi, batchId, msg.sender, disputeBondAmount, expires);
     }
 
-    /// @notice Resolves an active dispute by revealing K and the actual plaintext hash.
-    ///         Anyone may call this — the disputer is the beneficiary if upheld.
+    /// @notice The model owner answers an active dispute by revealing K and the
+    ///         actual plaintext hash.
     ///         Commitment check: keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintextHash))
     ///         Match  → dispute false → disputer's bond forfeited (50% burn / 50% treasury).
     ///         Mismatch → dispute upheld → bond returned, owner's giRewardPool[gi] penalised.
+    /// @dev Owner-only (issue #205). When anyone could call this, a caller-chosen
+    ///      junk K always produced a mismatch, so any address could uphold a
+    ///      dispute and burn 25% of the GI reward pool. Only the party holding the
+    ///      data can now reveal; a non-matching owner reveal still upholds.
+    ///      Trust assumption: the owner judges disputes about their own test data
+    ///      (tracked for mainnet in issue #181); the silence rule in
+    ///      closeExpiredDispute keeps that from being a free veto.
     /// @param gi GI index.
     /// @param batchId Batch under dispute.
     /// @param K The raw symmetric key the model owner used to encrypt the test data.
@@ -1506,7 +1523,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 batchId,
         bytes calldata K,
         bytes32 plaintextHash
-    ) external nonReentrant {
+    ) external onlyOwner nonReentrant {
         DisputeRecord storage d = testDataDisputes[gi][batchId];
         if (!d.active) revert TA_NoActiveDispute();
         if (block.number > d.expiresAtBlock) revert TA_DisputeWindowClosed();
@@ -1523,40 +1540,47 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             _burnAndForward(bond);
             emit TestDataDisputeResolvedFalse(gi, batchId, d.disputer, bond);
         } else {
-            // Dispute upheld — return bond, penalise owner's reward pool
-            uint256 bond = d.bond;
-            address disputer = d.disputer;
-            d.active = false;
-            d.pendingReassignment = true;
-
-            if (bond > 0) {
-                dinToken.safeTransfer(disputer, bond);
-            }
-
-            uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
-            if (penalty > 0 && giRewardPool[gi] >= penalty) {
-                giRewardPool[gi] -= penalty;
-                _burnAndForward(penalty);
-            }
-
-            emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
-            emit BatchPendingReassignment(gi, batchId);
+            _upholdTestDataDispute(gi, batchId, d);
         }
     }
 
-    /// @notice Closes an expired dispute and forfeits the disputer's bond.
-    ///         Callable by anyone once the challenge window has elapsed without resolution.
+    /// @notice Closes a dispute the model owner didn't answer within the
+    ///         challenge window. The dispute is upheld: bond returned to the
+    ///         disputer, owner's giRewardPool[gi] penalised, batch flagged for
+    ///         reassignment. Callable by anyone once the window has elapsed.
+    /// @dev Issue #205: silence counts against the party who holds the data.
+    ///      Before, an unanswered dispute forfeited the disputer's bond, which
+    ///      combined with the open resolve made the owner's silence costless.
     function closeExpiredDispute(uint256 gi, uint256 batchId) external nonReentrant {
         DisputeRecord storage d = testDataDisputes[gi][batchId];
         if (!d.active) revert TA_NoActiveDispute();
         if (block.number <= d.expiresAtBlock) revert TA_DisputeWindowClosed();
 
+        emit DisputeExpired(gi, batchId);
+        _upholdTestDataDispute(gi, batchId, d);
+    }
+
+    /// @dev Upheld test-data dispute: return the bond, penalise the owner's GI
+    ///      reward pool by disputePenaltyBps, and block the batch until
+    ///      reassignAuditTestDataset.
+    function _upholdTestDataDispute(uint256 gi, uint256 batchId, DisputeRecord storage d) internal {
         uint256 bond = d.bond;
+        address disputer = d.disputer;
         d.active = false;
+        d.pendingReassignment = true;
 
-        _burnAndForward(bond);
+        if (bond > 0) {
+            dinToken.safeTransfer(disputer, bond);
+        }
 
-        emit DisputeExpired(gi, batchId, bond);
+        uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
+        if (penalty > 0 && giRewardPool[gi] >= penalty) {
+            giRewardPool[gi] -= penalty;
+            _burnAndForward(penalty);
+        }
+
+        emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
+        emit BatchPendingReassignment(gi, batchId);
     }
 
     /// @notice Re-assigns test data for a batch after the model owner lost a dispute.

@@ -237,7 +237,7 @@ Used by: `DINTaskCoordinator`
 | `TA_CannotSetTestDataAssignedFlag` | State is not `AuditorsBatchesCreated` |
 | `TA_FlagMustBeTrue` | `setTestDataAssignedFlag` called with `flag = false` |
 | `TA_FlagAlreadySet` | Flag was already set for this GI |
-| `TA_NotAssignedAuditor` | Score commit/reveal from auditor not assigned to the batch |
+| `TA_NotAssignedAuditor` | Score commit/reveal, or `openTestDataDispute`, from an auditor not assigned to the batch |
 | `TA_InvalidModelIndex` | Model index not assigned to this batch |
 | `TA_CannotSetAuditScore` | Declared but unused — left over from the pre-commit-reveal `setAuditScorenEligibility`. |
 | `TA_ScoreOutOfRange` | Score > 100 (checked at reveal time) |

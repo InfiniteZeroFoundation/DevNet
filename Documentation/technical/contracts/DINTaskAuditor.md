@@ -69,7 +69,7 @@ Constants: `MAX_REGISTERED_AUDITORS = 300`; `MAX_LM_SUBMISSIONS = 10000` (a plai
 | `s1SlashFractionBps` | 3000 (30%) | `setS1SlashFractionBps` (1 – 10 000) |
 | `s3DeviationThreshold` | 40 (on the 0–100 scale) | `setS3DeviationThreshold` (≤ 100) |
 | `s3SlashingEnabled` | `false` (shadow mode) | `setS3SlashingEnabled` |
-| `disputeBondAmount` | 0 | `setDisputeBondAmount` |
+| `disputeBondAmount` | 100 DIN (`100 * 1e18`) | `setDisputeBondAmount` |
 | `disputeWindowBlocks` | 7200 (~1 day on Optimism) | `setDisputeWindowBlocks` |
 | `disputePenaltyBps` | 2500 (25% of the GI pool) | `setDisputePenaltyBps` (≤ 10 000) |
 
@@ -93,8 +93,9 @@ The reward split and the S1 fraction are explicitly provisional (MECHANISM_DESIG
 | Paired coordinator (`onlyTaskCoordinator`) | `updatePassScore`, `createAuditorsBatches`, `setTestDataAssignedFlag`, `finalizeEvaluation`, `slashAuditors`, `settleRewards`, `decrementAuditorRegistrations` |
 | `owner()` (model owner) | `assignAuditTestDataset`, `reassignAuditTestDataset`, all setters |
 | Assigned auditor (`onlyAssignedAuditor`) | `commitAuditScore`, `revealAuditScore` |
+| Auditor of the disputed batch (`isBatchAuditor`) | `openTestDataDispute` |
 | Any active validator | `registerDINAuditor` |
-| Any address | `submitLocalModel`, `depositRewards`, `claimReward`, `claimRewards`, `openTestDataDispute`, `resolveTestDataDispute`, `closeExpiredDispute`, views |
+| Any address | `submitLocalModel`, `depositRewards`, `claimReward`, `claimRewards`, `closeExpiredDispute`, views |
 
 ---
 
@@ -161,9 +162,9 @@ Lets a batch auditor challenge the model owner's test data.
 | Step | Who | Effect |
 |------|-----|--------|
 | `isEncryptionKeyEmpty(gi, batchId, auditor)` | View | Free check: an auditor who received no key has grounds to dispute |
-| `openTestDataDispute(gi, batchId)` | Anyone | Needs a stored commitment; pulls `disputeBondAmount` DIN (0 by default); window = `disputeWindowBlocks` |
-| `resolveTestDataDispute(gi, batchId, K, plaintextHash)` | **Anyone**, within the window | Recomputes the commitment. **Match →** dispute false: bond forfeited. **Mismatch →** upheld: bond returned; `disputePenaltyBps` of `giRewardPool[gi]` removed as a penalty; batch marked `pendingReassignment` |
-| `closeExpiredDispute(gi, batchId)` | Anyone, after the window | Bond forfeited as above |
+| `openTestDataDispute(gi, batchId)` | An auditor of that batch (`TA_NotAssignedAuditor` otherwise) | Needs a stored commitment; pulls `disputeBondAmount` DIN (100 DIN by default); window = `disputeWindowBlocks` |
+| `resolveTestDataDispute(gi, batchId, K, plaintextHash)` | Owner, within the window | The owner reveals `K` and the plaintext hash, and the commitment is recomputed. **Match →** dispute false: bond forfeited. **Mismatch →** upheld: bond returned; `disputePenaltyBps` of `giRewardPool[gi]` removed as a penalty; batch marked `pendingReassignment` |
+| `closeExpiredDispute(gi, batchId)` | Anyone, after the window | The owner didn't answer, so the dispute is **upheld** with the same effects as a mismatch. Emits `DisputeExpired(gi, batchId)`, then `TestDataDisputeUpheld` |
 | `reassignAuditTestDataset(…)` | Owner | New CID, keys and commitment for a batch pending reassignment |
 
 Forfeited bonds and penalties are split 50% burned / 50% forwarded to `slashTreasury()`; both halves are burned if no treasury is set. `treasuryAccrued` is a running counter of everything routed out this way (including the burned part). No tokens are held against it.
@@ -195,7 +196,7 @@ Registration & data: `DINAuditorRegistered`, `LocalModelSubmitted`, `AuditorsBat
 
 Read alongside the [foundry/src security review](../audits/foundry-src-security-review.md).
 
-- **No. 1 — Test-data disputes can be won by the challenger alone.** `resolveTestDataDispute` is callable by anyone, and any commitment *mismatch* upholds the dispute. A challenger can call it with an arbitrary `K` and win: bond back, the model owner's GI pool cut by `disputePenaltyBps`, and the batch blocked until reassignment. Only the model owner revealing the real `K` should be able to reach the "match" branch, and a mismatch from a non-owner caller should not count as evidence. `disputeBondAmount` defaults to 0, so this costs the challenger nothing and can be repeated after every reassignment. Tracked in issue No. 205.
+- **No. 1 — Fixed: a test-data dispute can no longer be won by the challenger alone.** `resolveTestDataDispute` used to be callable by anyone, and any commitment mismatch upheld the dispute. So any address could pass a junk `K` and win: bond back, the model owner's GI pool cut by `disputePenaltyBps`, and the batch blocked until reassignment. With a 0 default bond this was free and repeatable. Now only an auditor of the batch can open a dispute, the bond defaults to 100 DIN, and only the owner can resolve. An owner who doesn't answer within the window loses through `closeExpiredDispute` (issue No. 205). Remaining trust assumption: the owner reveals evidence about their own data, and a bad plaintext behind a correct `K` can't be proven on-chain. Decentralised adjudication is tracked in issue No. 181.
 - **No. 2 — Fixed: commit hashes are now bound to the auditor.** The old hash, `keccak256(abi.encodePacked(score, vote, salt))`, carried no address, GI, batch or model. An assigned auditor could copy a peer's commit hash, wait for the peer's reveal, and replay it for a free vote. The hash now binds `msg.sender`, `gi`, `batchId` and `modelIndex` (§7), as the aggregation commits on the coordinator do (issue No. 192).
 - **No. 3 — Committed-but-unrevealed is slashed as a liveness miss.** An auditor who commits and then withholds the reveal pays the S1 fraction (`AUD_NO_VOTE`, 30% of `minStake` by default). That is less than the full-`minStake` S3 slash a revealed outlier would pay once `s3SlashingEnabled` is on, so an auditor who sees they will be in the minority can choose not to reveal. Whether this case gets its own reason code and fraction is open in issue No. 201 (Part B).
 - **No. 4 — Unclaimable remainders.** If no model is approved (`giTotalApprovedScore == 0`), or nobody reveals, or no aggregator weight exists, that role's pool share stays in the contract with no reclaim path.
@@ -219,3 +220,4 @@ Read alongside the [foundry/src security review](../audits/foundry-src-security-
 - Treasury shares and forfeitures forwarded to the platform treasury (`slashTreasury()`), replacing the per-contract treasury address (issue No. 152).
 - `createAuditorsBatches` takes the coordinator's locked audit seed (issue No. 156 H-2, PR No. 191).
 - The audit commit hash binds the auditor and the slot: `keccak256(abi.encode(score, vote, salt, msg.sender, gi, batchId, modelIndex))` replaces `keccak256(abi.encodePacked(score, vote, salt))` (issue No. 192). Function signatures and the ABI are unchanged; in-flight commits made under the old formula can't be revealed after the switch.
+- Test-data disputes (issue No. 205): only an auditor of the batch can open one; `resolveTestDataDispute` is owner-only; `closeExpiredDispute` now upholds an unanswered dispute instead of forfeiting the bond; `disputeBondAmount` defaults to 100 DIN. `DisputeExpired` drops its `bondForfeited` field.

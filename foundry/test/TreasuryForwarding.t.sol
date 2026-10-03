@@ -568,14 +568,15 @@ contract TreasuryForwardingTest is Test {
         ta.assignAuditTestDataset(2, 0, TEST_ENC_CID, keys, commitment);
     }
 
-    /// @dev Funds and stakes the disputer, sets bond, opens dispute on gi=2 batch=0.
+    /// @dev Sets the bond and opens a dispute on gi=2 batch=0 from that batch's
+    ///      first auditor (issue #205: only a batch auditor can open one).
     function _openTestDataDispute() internal returns (uint256 bond) {
         vm.prank(modelOwner);
         ta.setDisputeBondAmount(DISPUTE_BOND);
         bond = ta.disputeBondAmount();
 
-        address disputer = makeAddr("disputer");
-        _fundAndStake(disputer);
+        (, address[] memory batchAuditors,,) = ta.getAuditorsBatch(2, 0);
+        address disputer = batchAuditors[0];
         _fundDin(disputer, bond);
         vm.startPrank(disputer);
         token.approve(address(ta), type(uint256).max);
@@ -638,8 +639,9 @@ contract TreasuryForwardingTest is Test {
         assertEq(taBefore - token.balanceOf(address(ta)), bond + penalty, "task contract retains none of bond + penalty");
     }
 
-    /// closeExpiredDispute burns 50% and sends 50% to treasury.
-    function test_closeExpiredDispute_burns50pct_sends50pctToTreasury() public {
+    /// closeExpiredDispute (owner silent) upholds the dispute (issue #205): the
+    /// bond goes back to the disputer and the penalty is burned 50% / sent 50%.
+    function test_closeExpiredDispute_upheld_penaltyBurns50pct_sends50pctToTreasury() public {
         _runToTestDataAssigned();
         uint256 bond = _openTestDataDispute();
 
@@ -650,6 +652,7 @@ contract TreasuryForwardingTest is Test {
         (, , uint256 expiresAtBlock,,) = ta.testDataDisputes(2, 0);
         vm.roll(expiresAtBlock + 1);
 
+        uint256 penalty = (ta.giRewardPool(2) * ta.disputePenaltyBps()) / 10000;
         uint256 supplyBefore = token.totalSupply();
         uint256 treasuryBefore = token.balanceOf(treasury);
         uint256 accruedBefore = ta.treasuryAccrued();
@@ -659,10 +662,10 @@ contract TreasuryForwardingTest is Test {
 
         uint256 burned = supplyBefore - token.totalSupply();
         uint256 treasuryReceived = token.balanceOf(treasury) - treasuryBefore;
-        assertEq(burned, bond / 2, "50% burned on expired dispute");
-        assertEq(treasuryReceived, bond - bond / 2, "50% to treasury on expired dispute");
-        assertEq(ta.treasuryAccrued() - accruedBefore, bond, "treasuryAccrued delta == bond");
-        assertEq(taBefore - token.balanceOf(address(ta)), bond, "task contract retains none of the bond");
+        assertEq(burned, penalty / 2, "50% of penalty burned on expired dispute");
+        assertEq(treasuryReceived, penalty - penalty / 2, "50% of penalty to treasury on expired dispute");
+        assertEq(ta.treasuryAccrued() - accruedBefore, penalty, "treasuryAccrued delta == penalty");
+        assertEq(taBefore - token.balanceOf(address(ta)), bond + penalty, "bond refunded + penalty routed out");
     }
 
 }
