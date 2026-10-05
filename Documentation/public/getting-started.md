@@ -6,7 +6,7 @@
 
 Welcome to the onboarding guide for **Model_0** on the Infinite Zero Network.
 
-Planning a different model or dataset? Read [What can be trained on DIN?](what-can-be-trained.md) to understand the tested reference, custom-service path, and practical limits.
+Planning a different model or dataset? Read [What can I train on DIN?](what-can-be-trained.md) to understand the tested reference, custom-service path, and practical limits.
 
 Infinite Zero Network devnet has been launched as `sepolia-op-devnet`.
 
