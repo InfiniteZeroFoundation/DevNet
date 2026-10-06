@@ -128,11 +128,8 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     ///         auditor before minting/approving against it (issue #226).
     IDINModelRegistry public modelRegistry;
 
-    // Reserved for future state variables. Shrunk from 50 -> 49 when
-    // `modelRegistry` was appended above (issue #226) -- this is a
-    // Transparent Proxy, so the existing slot order/count must not change,
-    // only grow into the gap.
-    uint256[49] private __gap;
+    // Reserved for future state variables.
+    uint256[50] private __gap;
 
     // ── Constructor / initializer ─────────────────────────────────────────
 

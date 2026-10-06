@@ -164,12 +164,12 @@ Ownership is plain `OwnableUpgradeable` — there is no separate `daoAdmin` slot
   totalEmitted         : uint256                                        (slot 7)
   giEmissionFunded     : mapping(address => mapping(uint256 => bool))   (slot 8)
   modelRegistry        : IDINModelRegistry                              (slot 9, issue #226)
-  __gap                : uint256[49]                                    (slot 10 — shrunk from 50 to
-                                                                           49 when modelRegistry was
-                                                                           appended; total slot count
-                                                                           unchanged, safe for the
-                                                                           Transparent Proxy)
+  __gap                : uint256[50]                                    (slot 10)
 ```
+
+`modelRegistry` is set at `initialize` and by `setModelRegistry`. `__gap` stays at
+`[50]` rather than shrinking — see "Core rules" above for why that's fine
+pre-deployment.
 
 ---
 
