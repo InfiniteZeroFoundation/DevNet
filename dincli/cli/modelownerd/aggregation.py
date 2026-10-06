@@ -3,7 +3,8 @@ import typer
 from rich.table import Table
 
 from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, ensure_batch_seed_locked,
-                               get_manifest_key, require_custom_manifest_service)
+                               get_manifest_key, require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 aggregation_app = typer.Typer(help="Aggregation commands")
@@ -396,12 +397,12 @@ def set_t2_score(
 
         manifest = get_manifest_key(effective_network, "getscoreforGM", model_id)
         model_base_path = Path(CACHE_DIR) / effective_network /  f"model_{model_id}"
-        modelowner_service_path = model_base_path / Path(manifest["path"])
-        model_service_path = model_base_path / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+        modelowner_service_path = resolve_manifest_path(model_base_path, manifest["path"], what="getscoreforGM path")
+        model_service_path = resolve_manifest_path(model_base_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
 
         require_custom_manifest_service(manifest, "getscoreforGM")
-        ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "modelowner service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service")
+        ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "modelowner service", base_dir=model_base_path)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service", base_dir=model_base_path)
 
         fn = ctx.obj.load_custom_fn(
         modelowner_service_path,

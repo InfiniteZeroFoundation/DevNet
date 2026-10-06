@@ -17,7 +17,8 @@ from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, lock_batch_seed_if_pending,
-                               require_custom_manifest_service)
+                               require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -447,19 +448,19 @@ def evaluate_lms(
             lm_cid = get_cid_from_bytes32(lms[1].hex())
 
             manifest = get_manifest_key(effective_network, "Score_model_by_auditor", model_id)
-            auditor_service_path = model_base_dir / Path(manifest["path"])
-            model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+            auditor_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="Score_model_by_auditor path")
+            model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
             scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
-            scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
+            scoring_service_path = resolve_manifest_path(model_base_dir, scoring_manifest["path"], what="ScoringUtils path")
 
             require_custom_manifest_service(manifest, "Score_model_by_auditor")
-            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service")
+            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service", base_dir=model_base_dir)
+            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
             # auditor.py imports `scoring` as a sibling module via sys.path
             # rather than a package import, so it must be materialized at the
             # same local services/ path dincli derives from the manifest
             # before the worker container can import it.
-            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
+            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils", base_dir=model_base_dir)
 
             # Recover K and rawCID via decrypt chain:
             #   Box(auditor_privkey, owner_pubkey).decrypt(encryptedKey) → K

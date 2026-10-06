@@ -16,9 +16,11 @@ from rich.console import Console
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger, logging
 from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
+                              ManifestPathEscapesBaseError,
                               get_config, get_manifest, get_manifest_key, get_w3,
                               load_account, load_config, load_din_info,
-                              resolve_network, get_active_account_name,
+                              resolve_manifest_path, resolve_network,
+                              get_active_account_name,
                               validate_account_name, resolve_wallet_path)
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
@@ -313,7 +315,14 @@ class DinContext:
             # Without it, dincli cannot know where to cache/read the artifact.
             return Path(str(default_artifact_path))
 
-        artifact_path = model_base_path / artifact_rel_path
+        try:
+            artifact_path = resolve_manifest_path(model_base_path, artifact_rel_path, what="task_contracts artifact path")
+        except ManifestPathEscapesBaseError:
+            # issue #227: a manifest artifact path escaping its base
+            # directory is treated the same as any other malformed entry
+            # above -- fall back to the bundled ABI rather than crash or
+            # silently re-anchor.
+            return Path(str(default_artifact_path))
 
         # Ensure the artifact exists locally before constructing the Web3
         # contract. If "ipfs" is present, ensure_file_exists also refreshes the
@@ -327,6 +336,7 @@ class DinContext:
                 artifact_path,
                 artifact_entry.get("ipfs"),
                 f"{contract_key} ABI",
+                base_dir=model_base_path,
             )
         except FileNotFoundError:
             return Path(str(default_artifact_path))
@@ -490,7 +500,9 @@ class DinContext:
     def ensure_file_exists(self,
         file_path: Path,
         ipfs_cid: str | None,
-        description: str
+        description: str,
+        *,
+        base_dir: Path | None = None,
     ) -> None:
         """
         Retrieve *file_path* from IPFS if it is missing or its stored CID
@@ -501,7 +513,22 @@ class DinContext:
         files for a given model directory.
 
         If *ipfs_cid* is None, only a presence check is done (no CID comparison).
+
+        *base_dir* is a backstop containment check (issue #227): *file_path*
+        must resolve inside it. Callers building *file_path* from a manifest
+        field should already have rejected an escaping path via
+        `resolve_manifest_path` before reaching here -- this is the second
+        check, not the first, so a call site that forgets the helper still
+        can't write outside *base_dir*. Defaults to `CACHE_DIR` (the
+        broadest boundary dincli itself ever writes application data under)
+        when the caller doesn't have a tighter, model-specific base on hand.
         """
+        effective_base = (base_dir if base_dir is not None else CACHE_DIR).resolve()
+        if not file_path.resolve().is_relative_to(effective_base):
+            raise ManifestPathEscapesBaseError(
+                f"refusing to write {description} outside {effective_base!s}: {file_path!s}"
+            )
+
         directory = file_path.parent.parent
         filename  = file_path.name
 

@@ -5,7 +5,8 @@ import typer
 
 from dincli.cli.utils import (CACHE_DIR, GIstateToStr, build_and_send_tx,
                                get_manifest, get_manifest_key,
-                               require_custom_manifest_service, _confirm_or_exit)
+                               require_custom_manifest_service, resolve_manifest_path,
+                               _confirm_or_exit)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 gi_app = typer.Typer(help="Global iteration commands")
@@ -123,12 +124,12 @@ def start(
         require_custom_manifest_service(manifest, "getscoreforGM")
 
         # Retrieve required service files
-        service_path = model_base_path / manifest["path"]
+        service_path = resolve_manifest_path(model_base_path, manifest["path"], what="getscoreforGM path")
         model_arch_manifest = manifest_data["ModelArchitecture"]
-        model_arch_path = model_base_path / model_arch_manifest["path"]
+        model_arch_path = resolve_manifest_path(model_base_path, model_arch_manifest["path"], what="ModelArchitecture path")
 
-        ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-        ctx.obj.ensure_file_exists(model_arch_path, model_arch_manifest["ipfs"], "model architecture service")
+        ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=model_base_path)
+        ctx.obj.ensure_file_exists(model_arch_path, model_arch_manifest["ipfs"], "model architecture service", base_dir=model_base_path)
         ctx.obj.ensure_file_exists(genesis_model_path, manifest_data["Genesis_Model_CID"], "genesis model")
 
         _confirm_or_exit(f"Pass Scoring is enabled. Have you placed the test dataset for GM evaluation at {test_data_path}?", "Pass Scoring is enabled. Test dataset not placed. ", console)
