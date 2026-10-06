@@ -158,6 +158,7 @@ Used by: `DINTaskCoordinator`, `DINTaskAuditor`
 interface IDINTaskCoordinator {
     function GI() external view returns (uint256);
     function GIstate() external view returns (GIstates);
+    function isDINAggregator(uint256 gi, address aggregator) external view returns (bool);
     function aggregatorWeight(uint256 gi, address aggregator) external view returns (uint256);
 }
 ```
@@ -168,6 +169,7 @@ Used by: `DINTaskAuditor`
 |--------|---------|
 | `GI()` | Current GI counter, for `onlyCurrentGI` and `depositRewards` validation |
 | `GIstate()` | Lifecycle gate for every auditor-side phase |
+| `isDINAggregator` | Read by `registerDINAuditor` to refuse an address already registered as an aggregator for the GI (issue No. 180) |
 | `aggregatorWeight` | Read at `claimReward` time to compute each aggregator's weighted share |
 
 ### 3.3 `IDINTaskAuditor`
@@ -227,6 +229,7 @@ Used by: `DINTaskCoordinator`
 | `TA_AuditorRegistrationNotOpen` | Registration attempted outside registration window |
 | `TA_WrongGI` | Global Iteration mismatch |
 | `TA_AuditorAlreadyRegistered` | Duplicate auditor registration for same GI |
+| `TA_DualRoleNotAllowed` | `registerDINAuditor` by an address already registered as an aggregator for the same GI (issue No. 180) |
 | `TA_LMSubmissionsNotOpen` | Local model submission attempted outside submission window |
 | `TA_AlreadySubmitted` | Client has already submitted a model this GI |
 | `TA_MaxLMSubmissionsReached` | Submission count reached `MAX_LM_SUBMISSIONS` (10,000) |

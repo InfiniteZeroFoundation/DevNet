@@ -2465,6 +2465,11 @@
     },
     {
       "type": "error",
+      "name": "TA_DualRoleNotAllowed",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TA_EmptyCommitHash",
       "inputs": []
     },
