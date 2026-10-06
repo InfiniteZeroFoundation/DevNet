@@ -664,6 +664,12 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @notice Registers the caller as an auditor for the current GI.
     /// @dev Caller must be an active validator; duplicate registrations revert.
     ///      The coordinator's GI state must be DINauditorsRegistrationStarted.
+    ///      An address already registered as an aggregator for this GI is
+    ///      refused (TA_DualRoleNotAllowed, issue No. 180). The check lives
+    ///      here because aggregator registration (states 6-7) always comes
+    ///      before auditor registration (8-9), so the coordinator side could
+    ///      never see an auditor yet. It is per address: a second address with
+    ///      its own stake can still register.
     /// @param _GI Current GI index.
     function registerDINAuditor(uint _GI) public onlyCurrentGI(_GI) {
         if (
@@ -672,6 +678,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         ) revert TA_AuditorRegistrationNotOpen();
         if (isRegisteredAuditor[_GI][msg.sender])
             revert TA_AuditorAlreadyRegistered();
+        if (dintaskcoordinatorContract.isDINAggregator(_GI, msg.sender))
+            revert TA_DualRoleNotAllowed();
         if (dinAuditors[_GI].length >= MAX_REGISTERED_AUDITORS)
             revert TA_RegistrationCapReached();
 

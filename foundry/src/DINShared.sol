@@ -112,6 +112,12 @@ interface IDINTaskCoordinator {
 
     function GIstate() external view returns (GIstates);
 
+    /// @dev Whether `aggregator` registered as an aggregator for GI `gi`
+    ///      (the coordinator's public mapping). Read by
+    ///      DINTaskAuditor.registerDINAuditor to refuse dual-role registration
+    ///      (issue No. 180).
+    function isDINAggregator(uint256 gi, address aggregator) external view returns (bool);
+
     /// @dev Per-(aggregator, finalized-batch) settlement weight for a GI,
     ///      read by DINTaskAuditor.claimReward at claim time (BL-10, #125).
     function aggregatorWeight(
@@ -364,6 +370,10 @@ error TA_RewardsNotSettled();
 ///      settled; claims pay from the snapshot, so a pool penalty could no
 ///      longer be taken without underfunding them.
 error TA_RewardsAlreadySettled();
+/// @dev registerDINAuditor was called by an address already registered as an
+///      aggregator for the same GI. One address can't hold both roles in a GI
+///      (issue No. 180); a second address with its own stake still can.
+error TA_DualRoleNotAllowed();
 /// @dev Caller already claimed their reward for this GI.
 error TA_RewardAlreadyClaimed();
 /// @dev Caller earned no reward for this GI (not a participant, or scored zero).
