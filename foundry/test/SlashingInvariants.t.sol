@@ -554,6 +554,141 @@ contract SlashingInvariantsTest is StdInvariant, Test {
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // S5 global (cross-model) level tests (issue No. 193)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Registers a second slasher contract, standing in for another
+    ///      model's task contract (or the same model's other task contract).
+    function _addSecondSlasher() internal returns (address slasher2) {
+        slasher2 = makeAddr("slasher2");
+        vm.prank(admin);
+        coordinator.addSlasherContract(slasher2);
+    }
+
+    function test_s5Global_defaults() public view {
+        assertEq(stake.s5GlobalWindow(), 7 days, "default s5GlobalWindow");
+        assertEq(stake.s5GlobalThreshold(), 6, "default s5GlobalThreshold");
+    }
+
+    /// @dev The #193 attack: (threshold - 1) misses on each of several models
+    ///      never trips a per-slasher ring, but the global level adds them up.
+    function test_s5Global_escalatesAcrossSlashers() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 20);
+        address slasher2 = _addSecondSlasher();
+        address slasher3 = makeAddr("slasher3");
+        vm.prank(admin);
+        coordinator.addSlasherContract(slasher3);
+
+        // Per-slasher: window 5, threshold 3. Global: 7 days, threshold 6.
+        uint256 partialAmt = (stake.MIN_STAKE() * 3000) / 10_000;
+        address[3] memory slashers = [slasher, slasher2, slasher3];
+
+        // Five partial slashes, at most 2 per slasher: no level reached yet.
+        uint256 n;
+        for (uint256 gi = 1; gi <= 2; gi++) {
+            for (uint256 k = 0; k < 3; k++) {
+                if (n == 5) break;
+                vm.warp(block.timestamp + 1 hours);
+                vm.prank(slashers[k]);
+                uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", gi);
+                assertEq(actual, partialAmt, "below both thresholds: partial amount");
+                n++;
+            }
+        }
+        assertEq(stake.getPartialSlashTimes(validator1).length, 5, "global ring holds 5");
+
+        // Sixth, from slasher3 (its 2nd): per-slasher count 2 < 3, global 6 >= 6.
+        vm.warp(block.timestamp + 1 hours);
+        vm.expectEmit(true, true, false, true, address(stake));
+        emit DinValidatorStake.ValidatorEscalatedS5Global(validator1, stake.MIN_STAKE(), 6, slasher3);
+        vm.prank(slasher3);
+        uint256 escalated = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 2);
+        assertEq(escalated, stake.MIN_STAKE(), "global level: full MIN_STAKE slashed");
+
+        (, , , uint64 jailedUntil, ) = stake.validators(validator1);
+        assertGt(jailedUntil, block.timestamp, "validator jailed after global S5 escalation");
+        assertEq(stake.getPartialSlashTimes(validator1).length, 0, "global ring cleared");
+        assertEq(stake.getPartialSlashGIs(validator1, slasher3).length, 0, "caller ring cleared");
+    }
+
+    /// @dev Same-model split: S1 (auditor contract) and S2 (coordinator) are
+    ///      separate slashers, so their misses used to sit in separate rings.
+    function test_s5Global_addsUpTwoSlashersOfOneModel() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 20);
+        address coordinatorLike = _addSecondSlasher();
+        vm.prank(admin);
+        stake.setS5GlobalParams(7 days, 4);
+
+        uint256 partialAmt = (stake.MIN_STAKE() * 3000) / 10_000;
+        vm.prank(slasher);          stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 1);
+        vm.prank(coordinatorLike);  stake.slashPartial(validator1, partialAmt, "AGG_T1_NO_SUBMISSION", 1);
+        vm.prank(slasher);          stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 2);
+
+        vm.prank(coordinatorLike);
+        uint256 escalated = stake.slashPartial(validator1, partialAmt, "AGG_T1_NO_SUBMISSION", 2);
+        assertEq(escalated, stake.MIN_STAKE(), "S1 + S2 misses add up on the global level");
+    }
+
+    function test_s5Global_windowExpiry_resetsCount() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 20);
+        address slasher2 = _addSecondSlasher();
+        vm.prank(admin);
+        stake.setS5GlobalParams(1 days, 3);
+
+        uint256 partialAmt = (stake.MIN_STAKE() * 3000) / 10_000;
+        vm.prank(slasher);  stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 1);
+        vm.prank(slasher2); stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 1);
+
+        // A full window later both entries have expired: count is 1, not 3.
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(slasher2);
+        uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", 2);
+        assertEq(actual, partialAmt, "expired entries trimmed: partial amount applied");
+        assertEq(stake.getPartialSlashTimes(validator1).length, 1, "only the new entry remains");
+    }
+
+    /// @dev 0/0 is the off switch, and what an upgraded proxy reads for the
+    ///      new fields until setS5GlobalParams is called.
+    function test_s5Global_offWhenZero() public {
+        _setUpSingleValidator(stake.MIN_STAKE() * 20);
+        address slasher2 = _addSecondSlasher();
+        address slasher3 = makeAddr("slasher3");
+        vm.prank(admin);
+        coordinator.addSlasherContract(slasher3);
+        vm.prank(admin);
+        stake.setS5GlobalParams(0, 0);
+
+        uint256 partialAmt = (stake.MIN_STAKE() * 3000) / 10_000;
+        address[3] memory slashers = [slasher, slasher2, slasher3];
+        for (uint256 gi = 1; gi <= 2; gi++) {
+            for (uint256 k = 0; k < 3; k++) {
+                vm.prank(slashers[k]);
+                uint256 actual = stake.slashPartial(validator1, partialAmt, "AUD_NO_VOTE", gi);
+                assertEq(actual, partialAmt, "global level off: partial amount only");
+            }
+        }
+        assertEq(stake.getPartialSlashTimes(validator1).length, 0, "global ring untouched when off");
+    }
+
+    function test_s5Global_setterValidates() public {
+        vm.startPrank(admin);
+        vm.expectRevert(DinValidatorStake.InvalidS5Params.selector);
+        stake.setS5GlobalParams(0, 6);
+        vm.expectRevert(DinValidatorStake.InvalidS5Params.selector);
+        stake.setS5GlobalParams(7 days, 0);
+        stake.setS5GlobalParams(3 days, 9);
+        assertEq(stake.s5GlobalWindow(), 3 days);
+        assertEq(stake.s5GlobalThreshold(), 9);
+        stake.setS5GlobalParams(0, 0);
+        assertEq(stake.s5GlobalThreshold(), 0);
+        vm.stopPrank();
+
+        vm.prank(validator1);
+        vm.expectRevert(); // OwnableUnauthorizedAccount
+        stake.setS5GlobalParams(1 days, 2);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // S6 no-participation counter tests
     // ─────────────────────────────────────────────────────────────────────
 

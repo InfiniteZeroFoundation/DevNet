@@ -43,6 +43,8 @@ import {DeploymentsPath} from "./DeploymentsPath.sol";
 ///   S5_RECIDIVISM_THRESHOLD     — slashes in window to trigger S5 jail (default: 3)
 ///   S5_JAIL_DURATION            — jail duration in seconds (default: 604800 = 7 days)
 ///   S6_NO_PARTICIPATION_THRESHOLD — no-participation events before S6 fires (default: 3)
+///   S5_GLOBAL_WINDOW            — seconds over which S5 counts slashes from all slasher contracts (default: 604800 = 7 days)
+///   S5_GLOBAL_THRESHOLD         — slashes in that window to trigger S5 jail, 0 with window 0 = off (default: 6)
 ///
 /// Usage (from repo root):
 ///   ./foundry/anvil.sh &
@@ -82,6 +84,8 @@ contract DeployPlatform is DeploymentsPath {
     uint256 internal constant DEFAULT_S5_THRESHOLD       = 3;
     uint256 internal constant DEFAULT_S5_JAIL_DURATION   = 7 days;
     uint256 internal constant DEFAULT_S6_THRESHOLD       = 3;
+    uint256 internal constant DEFAULT_S5_GLOBAL_WINDOW   = 7 days;
+    uint256 internal constant DEFAULT_S5_GLOBAL_THRESHOLD= 6;
 
     /// @notice Tokenomics values the deploy applies; see the env keys in the header.
     struct Tokenomics {
@@ -96,6 +100,8 @@ contract DeployPlatform is DeploymentsPath {
         uint256 s5Threshold;
         uint256 s5JailDuration;
         uint256 s6Threshold;
+        uint256 s5GlobalWindow;
+        uint256 s5GlobalThreshold;
     }
 
     /// @notice Deployed proxy and ProxyAdmin addresses, as written to the deployments JSON.
@@ -152,7 +158,9 @@ contract DeployPlatform is DeploymentsPath {
             s5Window:            DEFAULT_S5_WINDOW,
             s5Threshold:         DEFAULT_S5_THRESHOLD,
             s5JailDuration:      DEFAULT_S5_JAIL_DURATION,
-            s6Threshold:         DEFAULT_S6_THRESHOLD
+            s6Threshold:         DEFAULT_S6_THRESHOLD,
+            s5GlobalWindow:      DEFAULT_S5_GLOBAL_WINDOW,
+            s5GlobalThreshold:   DEFAULT_S5_GLOBAL_THRESHOLD
         });
     }
 
@@ -171,6 +179,8 @@ contract DeployPlatform is DeploymentsPath {
         t.s5Threshold         = vm.envOr("S5_RECIDIVISM_THRESHOLD",       dflt.s5Threshold);
         t.s5JailDuration      = vm.envOr("S5_JAIL_DURATION",              dflt.s5JailDuration);
         t.s6Threshold         = vm.envOr("S6_NO_PARTICIPATION_THRESHOLD", dflt.s6Threshold);
+        t.s5GlobalWindow      = vm.envOr("S5_GLOBAL_WINDOW",              dflt.s5GlobalWindow);
+        t.s5GlobalThreshold   = vm.envOr("S5_GLOBAL_THRESHOLD",           dflt.s5GlobalThreshold);
 
         _logIfUnset("DIN_PER_ETH",                   t.dinPerEth);
         _logIfUnset("MINT_CAP",                      t.mintCap);
@@ -183,6 +193,8 @@ contract DeployPlatform is DeploymentsPath {
         _logIfUnset("S5_RECIDIVISM_THRESHOLD",       t.s5Threshold);
         _logIfUnset("S5_JAIL_DURATION",              t.s5JailDuration);
         _logIfUnset("S6_NO_PARTICIPATION_THRESHOLD", t.s6Threshold);
+        _logIfUnset("S5_GLOBAL_WINDOW",              t.s5GlobalWindow);
+        _logIfUnset("S5_GLOBAL_THRESHOLD",           t.s5GlobalThreshold);
     }
 
     /// @notice Deploys and wires the platform with the given tokenomics (steps
@@ -326,6 +338,15 @@ contract DeployPlatform is DeploymentsPath {
             DinValidatorStake(dinValidatorStakeProxy).setS6NoParticipationThreshold(t.s6Threshold);
             console.log("DinValidatorStake.s6NoParticipationThreshold set to:", t.s6Threshold);
         }
+        if (
+            t.s5GlobalWindow    != DEFAULT_S5_GLOBAL_WINDOW ||
+            t.s5GlobalThreshold != DEFAULT_S5_GLOBAL_THRESHOLD
+        ) {
+            DinValidatorStake(dinValidatorStakeProxy).setS5GlobalParams(
+                t.s5GlobalWindow, t.s5GlobalThreshold
+            );
+            console.log("DinValidatorStake S5 global params updated");
+        }
 
         console.log("--- Effective tokenomics ---");
         console.log("dinPerEth:            ", t.dinPerEth);
@@ -339,6 +360,8 @@ contract DeployPlatform is DeploymentsPath {
         console.log("s5Threshold:          ", t.s5Threshold);
         console.log("s5JailDuration:       ", t.s5JailDuration);
         console.log("s6Threshold:          ", t.s6Threshold);
+        console.log("s5GlobalWindow:       ", t.s5GlobalWindow);
+        console.log("s5GlobalThreshold:    ", t.s5GlobalThreshold);
 
         // ProxyAdmin — OZ v5 deploys one ProxyAdmin per proxy; record all seven
         address proxyAdminTreasury    = Upgrades.getAdminAddress(dinTreasuryProxy);

@@ -140,9 +140,9 @@ entry in `foundry/test/P3Adversarial.t.sol`.
 |---|---|
 | **Attacker** | Validator registered across multiple models, spreading misses so no single model's S5 ring reaches threshold |
 | **Capability** | Two or more models' task contracts are separate slashers; `_partialSlashGIs[validator][msg.sender]` is namespaced per slasher (`DinValidatorStake.sol:309`). With default threshold 3, ≤ 2 misses per model per window avoids S5 on every individual model. |
-| **Protocol response today** | None — S5 is per-slasher-contract, not aggregate across models. A validator can miss `(s5RecidivismThreshold − 1) × N` total votes across N models before any single model escalates. |
-| **Expected test outcome** | **KNOWN GAP** ([#193](https://github.com/InfiniteZeroFoundation/DevNet/issues/193)) — the test sets up two task contracts (two models), has a validator miss threshold−1 votes on each, and asserts S5 never fires and `isValidatorActive` remains true. |
-| **Trust assumption** | S5 counter would need to be aggregated across all models (or moved to a global platform-level counter) to close this gap. |
+| **Protocol response today** | Two-level S5 ([#193](https://github.com/InfiniteZeroFoundation/DevNet/issues/193)): besides the per-slasher GI ring, `slashPartial` counts every partial slash for the validator in one time-windowed ring shared by all slasher contracts (`_partialSlashTimes`; `s5GlobalWindow` 7 days, `s5GlobalThreshold` 6 by default). Reaching either threshold escalates (full `MIN_STAKE` + jail) and emits `ValidatorEscalatedS5Global` when only the global level fired. The same ring also adds up one model's S1 (auditor contract) and S2 (coordinator) misses. |
+| **Expected test outcome** | **DEFENDED above the global threshold.** With defaults, a validator escalates on its 6th partial slash within 7 days, however the misses are spread (`SlashingInvariants.t.sol` `test_s5Global_escalatesAcrossSlashers`, `test_s5Global_addsUpTwoSlashersOfOneModel`). Below it the gap is bounded, not closed: up to 5 misses across models in a window only pay their partial slashes. PR #218's `test_knownGap_perSlasherS5Evasion` (2 models × 2 misses = 4 < 6) still passes as written; when it rebases it should spread misses until the global count reaches `s5GlobalThreshold` and assert escalation (`test_defended_…`). |
+| **Trust assumption** | `s5GlobalWindow` / `s5GlobalThreshold` are calibrated (placeholders until [#155](https://github.com/InfiniteZeroFoundation/DevNet/issues/155)). On a proxy upgraded from an earlier version both read 0 (global level off) until the owner sets them. |
 
 ---
 
@@ -169,7 +169,7 @@ entry in `foundry/test/P3Adversarial.t.sol`.
 | Decentralized dispute adjudication | [#181](https://github.com/InfiniteZeroFoundation/DevNet/issues/181) | Row 7 (owner suppresses dispute) and bond-locked-forever variant | `resolveDispute` gated by multi-sig, DAO committee, or fraud-proof; timeout added for unresolved disputes |
 | Dispute timeout for unresolved disputes | [#181](https://github.com/InfiniteZeroFoundation/DevNet/issues/181) | Row 7 (owner never resolves → bond locked) | `expireDispute` (or a new function) reachable when `d.resolved == false` after a deadline |
 | BlockFLow duplicate-update scoring | [#39](https://github.com/InfiniteZeroFoundation/DevNet/issues/39) | Row 10 (duplicate-update gaming) | BlockFLow fold-in scoring implemented |
-| Per-slasher S5 ring evasion | [#193](https://github.com/InfiniteZeroFoundation/DevNet/issues/193) | Row 11 (multi-model S5 evasion) | S5 counter aggregated globally or per-validator across models |
+| Per-slasher S5 ring evasion | [#193](https://github.com/InfiniteZeroFoundation/DevNet/issues/193) | Row 11 (multi-model S5 evasion) | **Flipped by task_061026_20 Part C:** per-validator global ring across all slashers (7 days / 6 by default). Misses below the global threshold remain bounded by partial slashes; thresholds pending #155 |
 | Mainnet VRF for dispute and batch seeds | [#178](https://github.com/InfiniteZeroFoundation/DevNet/issues/178) | Rows 2, 6, 8 (trust assumption TA-4) | `lockDisputeSeed`, `lockAggSeed` and `lockAuditSeed` upgraded to VRF or multi-party commit-reveal |
 
 ---
