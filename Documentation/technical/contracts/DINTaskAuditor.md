@@ -77,12 +77,14 @@ The reward split and the S1 fraction are explicitly provisional (MECHANISM_DESIG
 
 ### 3.4 Per-GI data
 
-- **Registration:** `dinAuditors[gi]`, `isRegisteredAuditor[gi][addr]`.
+Mappings marked *(internal)* have no auto-getter; read them through the view named next to them (issue No. 201 Part A item 4).
+
+- **Registration:** `dinAuditors[gi]` *(internal; read with `getDINtaskAuditors(gi)`)*, `isRegisteredAuditor[gi][addr]`.
 - **Submissions:** `lmSubmissions[gi]` (`LMSubmission`: client, modelCID, submittedAt, eligible, evaluated, approved, finalMedianScore), `clientHasSubmitted`, `clientSubmissionIndex`.
-- **Batches:** `auditBatches[gi]` (`AuditBatch`: batchId, auditors, modelIndexes, testDataCID), `isBatchAuditor`, `isBatchModelIndex`.
+- **Batches:** `auditBatches[gi]` *(internal; read with `getAuditorsBatch(gi, batchId)`)* (`AuditBatch`: batchId, auditors, modelIndexes, testDataCID), `isBatchAuditor`, `isBatchModelIndex`.
 - **Scoring:** `auditScoreCommits`, `hasCommittedLM`, `auditScores`, `LMeligibleVote`, `hasAuditedLM` (all keyed `[gi][batchId][auditor][modelIndex]`).
-- **Test data:** `encryptedTestDataKey[gi][batchId][auditor]`, `testDataCommitments[gi][batchId]`, `Is_testdataCIDs_Assigned[gi]`, `testDataDisputes[gi][batchId]`.
-- **Rewards:** `giRewardPool[gi]`, `giRewardSnapshot[gi]`, `giTotalApprovedScore[gi]`, `giTotalAuditWeight[gi]`, `auditorGIWeight[gi][addr]`, `rewardClaimed[gi][addr]`, `claimable[addr]`, `treasuryAccrued`.
+- **Test data:** `encryptedTestDataKey[gi][batchId][auditor]`, `testDataCommitments[gi][batchId]`, `Is_testdataCIDs_Assigned[gi]` *(internal; only guards `setTestDataAssignedFlag` against a second call)*, `testDataDisputes[gi][batchId]`.
+- **Rewards:** `giRewardPool[gi]`, `giRewardSnapshot[gi]`, `giTotalApprovedScore[gi]`, `giTotalAuditWeight[gi]`, `auditorGIWeight[gi][addr]` *(internal; feeds `claimReward`)*, `rewardClaimed[gi][addr]`, `claimable[addr]`, `treasuryAccrued`.
 
 ---
 
@@ -221,3 +223,4 @@ Read alongside the [foundry/src security review](../audits/foundry-src-security-
 - `createAuditorsBatches` takes the coordinator's locked audit seed (issue No. 156 H-2, PR No. 191).
 - The audit commit hash binds the auditor and the slot: `keccak256(abi.encode(score, vote, salt, msg.sender, gi, batchId, modelIndex))` replaces `keccak256(abi.encodePacked(score, vote, salt))` (issue No. 192). Function signatures and the ABI are unchanged; in-flight commits made under the old formula can't be revealed after the switch.
 - Test-data disputes (issue No. 205): only an auditor of the batch can open one; `resolveTestDataDispute` is owner-only; `closeExpiredDispute` now upholds an unanswered dispute instead of forfeiting the bond; `disputeBondAmount` defaults to 100 DIN. `DisputeExpired` drops its `bondForfeited` field. Disputes can't be opened once the GI is settled (`TA_RewardsAlreadySettled`), and one upheld after settlement takes no pool penalty, so settled claims stay funded (PR No. 215 review).
+- Size review (issue No. 201 Part A item 4): `auditBatches`, `dinAuditors`, `Is_testdataCIDs_Assigned` and `auditorGIWeight` lose their auto-getters (nothing outside the contract read them; `getAuditorsBatch` / `getDINtaskAuditors` cover the first two). `assignAuditTestDataset` and `reassignAuditTestDataset` share `_storeTestData` and `_batchAt`, and `_burnAndForward` forwards its half through `_forwardToTreasury`. Behaviour and events are unchanged; runtime size drops from 22,718 B to 21,188 B.
