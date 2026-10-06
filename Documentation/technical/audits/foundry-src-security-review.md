@@ -256,6 +256,18 @@ All four constructors contain exactly one line, `_disableInitializers()`, with `
 
 ---
 
+## Post-Review Findings
+
+Findings identified after this review was written, against later commits — not part of the original pass, kept here so the fix history for `foundry/src` lives in one place.
+
+### PR-1 (2026-10, Critical). `DinEmission.fundGI` mints/approves/calls an unvalidated `taskAuditor`, letting anyone drain the mint
+
+**Fixed — [issue #226](https://github.com/InfiniteZeroFoundation/DevNet/issues/226), task_061026_22 Part A.** `fundGI(gi, taskAuditor)` was `external` with no check that `taskAuditor` was a real task auditor — only `!= address(0)`. Since `taskAuditor` both receives an ERC-20 allowance over the freshly-minted DIN and is the target of the subsequent `depositRewards` call, a caller could supply a trivial throwaway contract, mint to `DinEmission`, get approved, and immediately pull the full amount through the dangling allowance — repeatably, since a fresh address each time also reset the per-`taskAuditor` decay schedule. Confirmed exploitable with a from-scratch Foundry PoC (full one-call drain; repeated fresh addresses each getting the full undecayed `initialEmissionPerGI`) before the fix — see the issue for the PoC and exact trace.
+
+Fix: `DinEmission` now holds a `DINModelRegistry` reference (new proxy storage slot, `__gap` shrunk 50→49 to keep total slot count unchanged — see `Documentation/technical/storage_layout.md`), set at `initialize` and through an `onlyOwner` setter for already-initialized proxies. `fundGI` reverts `UnregisteredTaskAuditor` unless `registry.getModelIdByTaskAuditor(taskAuditor)` returns `exists == true`, and reverts `ModelDisabledForEmission` if that model has been disabled via `DINModelRegistry.disableModel` — emission for a model the DIN-Representative has disabled is hard to justify, and the check is one extra view call. `fundGI` itself stays permissionless; its own NatSpec rationale (the *amount* is schedule-deterministic, so there's no benefit to restricting the *caller*) still holds once the *recipient* is constrained separately.
+
+---
+
 ## Seeded Leads — Explicitly Confirmed or Refuted
 
 1. **`DINTaskAuditor.slashAuditors()` nested iteration (batches × auditors × models) may not fit in a block at production scale — is this a real DoS?** **Confirmed real, Critical.** See C-1. Not hypothetical: cheap to trigger deliberately via Sybil registration (≈0.00001 ETH per identity at the default exchange rate), no collusion needed, and real `forge` gas measurements (see C-1) put spec-scale cost at 5.6×–7.5× the L2 block gas limit.
