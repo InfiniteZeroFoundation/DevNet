@@ -165,6 +165,8 @@ This doesn't cause direct fund loss, but it undermines the core assumption that 
 
 ### M-2. `DINModelRegistry.disableModel()` kill-switch doesn't reach the live task contracts
 
+**Still open — tracked in [#224](https://github.com/InfiniteZeroFoundation/DevNet/issues/224) / BL-34** (re-confirmed against `develop` @ `740a613`, 2026-10).
+
 **Contracts / functions:** `DINModelRegistry.sol`, `disableModel()`/`enableModel()` (L404-416); contrast with `DINTaskCoordinator.sol` and `DINTaskAuditor.sol`, neither of which references `DINModelRegistry` at all.
 
 `modelDisabled[modelId]` only gates `requestManifestUpdate` (via the `notDisabled` modifier) inside the registry itself. It has **zero effect** on the model's actual `DINTaskCoordinator`/`DINTaskAuditor` — those contracts have no dependency on, or awareness of, the registry. A model that DIN-Representative has disabled (e.g., because it was found to be malicious, or is slashing honest validators due to a bug) can keep running full GIs — registration, LMS, evaluation, aggregation, slashing — completely unaffected.
@@ -177,6 +179,8 @@ This doesn't cause direct fund loss, but it undermines the core assumption that 
 
 ### M-3. `DINTaskAuditor.slashAuditors()` has no internal GI-state gate
 
+**Fixed — commit `216527c`** (same security batch as C-1/C-2/H-1, discussion #88). `slashAuditors()` now independently reverts with `TA_CannotSlashAuditors` unless `dintaskcoordinatorContract.GIstate() == GIstates.T2AggregationDone`, consistent with every other function in the file.
+
 **Contract / function:** `DINTaskAuditor.sol`, `slashAuditors()` (L620-659).
 
 Every other state-changing function in `DINTaskAuditor` independently re-checks `dintaskcoordinatorContract.GIstate()` before acting (`createAuditorsBatches` requires `LMSclosed`; `setTestDataAssignedFlag` requires `AuditorsBatchesCreated`; `finalizeEvaluation` requires `LMSevaluationStarted`). `slashAuditors()` breaks that pattern — it only checks `onlyTaskCoordinator` + `onlyCurrentGI`, with no GI-state precondition of its own. Correctness currently depends entirely on `DINTaskCoordinator.slashAuditors()` (L665-671) gating the call to `GIstate == T2AggregationDone` — i.e. a single point of trust with no defense-in-depth, unlike everywhere else in this pair of contracts.
@@ -188,6 +192,8 @@ Today this isn't independently exploitable (the coordinator's gate holds), but i
 ---
 
 ### M-4. `DinValidatorStake`'s `Jailed` status is dead code
+
+**Fixed — [issue #37](https://github.com/InfiniteZeroFoundation/DevNet/issues/37), commit `aee404f`** ("governable stake params, jail/reactivate, inert bounds storage"). A real `jailValidator()`/reactivate path now writes `jailedUntil` and `status = ValidatorStatus.Jailed`, and emits `ValidatorJailed`; the mechanism this finding flagged as unreachable is live.
 
 **Contract / function:** `DinValidatorStake.sol` — `ValidatorStatus.Jailed` (L46), `jailedUntil` field (L54), read at L269 and L324-325.
 
@@ -203,13 +209,13 @@ This isn't exploitable, but it either indicates a missing feature (a `jail()` fu
 
 | # | Finding | Location |
 |---|---|---|
-| L-1 | `stake()` calls `DIN_TOKEN.safeTransferFrom` (external call) before updating `activeStake` — violates checks-effects-interactions. Mitigated today by `nonReentrant` + `DIN_TOKEN` being a trusted, protocol-deployed contract, but worth fixing on principle. | `DinValidatorStake.sol` L113-126 |
+| L-1 | **Fixed** (current `stake()` updates `activeStake` before calling `DIN_TOKEN.safeTransferFrom` — correct checks-effects-interactions order). | `DinValidatorStake.sol` L113-126 |
 | L-2 | **Fixed — [PR #176](https://github.com/InfiniteZeroFoundation/DevNet/pull/176).** `depositAndMint()` has no minimum-deposit / non-zero-mint check. If the owner ever sets `dinPerEth` to a value that isn't a clean multiple of `1e18`, a small enough `msg.value` can round `mintAmount` to 0 via integer division while the ETH is still retained by the contract. *(Fix note: the zero-mint is only reachable when `dinPerEth < 1e18`, i.e. `msg.value * dinPerEth < 1e18` — any `dinPerEth >= 1e18` mints at least 1 wei for `msg.value >= 1`, clean multiple or not.)* | `DinCoordinator.sol` L92-101 |
 | L-3 | **Fixed — [PR #176](https://github.com/InfiniteZeroFoundation/DevNet/pull/176).** `requestModelRegistration` doesn't refund `msg.value` above the required fee — any overpayment is silently kept. *(Fix note: `requestManifestUpdate` had the same gap and is fixed the same way — `feePaid` records the required fee and the excess is refunded.)* | `DINModelRegistry.sol` L166-211 (`requestManifestUpdate` L281-320) |
-| L-4 | `rejectModel()` never refunds the fee paid in the corresponding `requestModelRegistration` — a rejected requester loses their fee permanently. Confirm this is the intended design (anti-spam fee) rather than an oversight. | `DINModelRegistry.sol` L244-254 |
-| L-5 | `withdrawFees(address payable to)` has no zero-address check; calling it with `to == address(0)` silently burns the entire fee balance (owner-only footgun, not exploitable by a third party). | `DINModelRegistry.sol` L472-477 |
+| L-4 | `rejectModel()` never refunds the fee paid in the corresponding `requestModelRegistration` — a rejected requester loses their fee permanently. `approveModel()` doesn't touch `feePaid` either, so this looks like an intentional pay-to-apply design rather than an oversight, but it was never confirmed/documented as such. Tracked in [#224](https://github.com/InfiniteZeroFoundation/DevNet/issues/224) / BL-35. | `DINModelRegistry.sol` L244-254 |
+| L-5 | **Fixed/obsolete** — `withdrawFees` no longer exists in `DINModelRegistry.sol`; superseded by `setFees`/`sweepFeesToRouter` (commit `06190e8`, "scope DINModelRegistry fee path to ETH-only, accumulate-then-sweep"), neither of which has this gap. | ~~`DINModelRegistry.sol` L472-477~~ |
 | L-6 | **Fixed — [PR #176](https://github.com/InfiniteZeroFoundation/DevNet/pull/176).** `DINTaskCoordinator`/`DINTaskAuditor` constructors accept `dinvalidatorStakeContract_address` / `dintaskcoordinator_contract_address` with no zero-address check. Self-inflicted misconfiguration risk only (deployer controls the args), not attacker-triggered. | `DINTaskCoordinator.sol` L256-264 (+ `setDINTaskAuditorContract` L272-283), `DINTaskAuditor.sol` L399-424 |
-| L-7 | `totalDepositedRewards` and the `RewardDeposited` event are declared but never written/emitted anywhere; the contract also has no `receive()`/`fallback()`, so any ETH that ever reaches this contract (e.g. via a forced `selfdestruct` send) would be permanently unwithdrawable. Dead code / incomplete feature. | `DINTaskAuditor.sol` L16, L102 |
+| L-7 | **Partly fixed** (task_210726_6 §3) — the dead-code half: `totalDepositedRewards` replaced by a real per-GI `giRewardPool` mapping ("funded per-GI, settled per-GI" model), and `RewardDeposited` is now actually emitted (`DINTaskAuditor.sol:487`). The stray-ETH half still applies as originally written: the contract still has no `receive()`/`fallback()` or any ETH withdrawal path, so ETH forced into it (e.g. via `selfdestruct`) is still permanently unrecoverable (re-verified against `develop`). | `DINTaskAuditor.sol` |
 | L-8 | `updateDinPerEth()` / `updateValidatorStakeContract()` take effect immediately with no timelock, giving depositors a front-run/back-run arbitrage window around rate changes. Inherent to the documented "tentative workaround" centralized exchange-rate design — flagged for completeness, not a new issue. | `DinCoordinator.sol` L106-120 |
 
 ---
@@ -247,6 +253,18 @@ Transparent Proxy puts upgrade authority in the auto-deployed `ProxyAdmin`, enti
 ### Constructor logic silently dropped under the proxy pattern — no finding
 
 All four constructors contain exactly one line, `_disableInitializers()`, with `@custom:oz-upgrades-unsafe-allow constructor` annotations. There is no other constructor logic in any of the four contracts that could silently stop running once behind a proxy — all real setup was correctly moved into `initialize()` per the conversion pattern documented in the architecture README. Checked explicitly per the task's ask; nothing to flag.
+
+---
+
+## Post-Review Findings
+
+Findings identified after this review was written, against later commits — not part of the original pass, kept here so the fix history for `foundry/src` lives in one place.
+
+### PR-1 (2026-10, Critical). `DinEmission.fundGI` mints/approves/calls an unvalidated `taskAuditor`, letting anyone drain the mint
+
+**Fixed — [issue #226](https://github.com/InfiniteZeroFoundation/DevNet/issues/226), task_061026_22 Part A.** `fundGI(gi, taskAuditor)` was `external` with no check that `taskAuditor` was a real task auditor — only `!= address(0)`. Since `taskAuditor` both receives an ERC-20 allowance over the freshly-minted DIN and is the target of the subsequent `depositRewards` call, a caller could supply a trivial throwaway contract, mint to `DinEmission`, get approved, and immediately pull the full amount through the dangling allowance — repeatably, since a fresh address each time also reset the per-`taskAuditor` decay schedule. Confirmed exploitable with a from-scratch Foundry PoC (full one-call drain; repeated fresh addresses each getting the full undecayed `initialEmissionPerGI`) before the fix — see the issue for the PoC and exact trace.
+
+Fix: `DinEmission` now holds a `DINModelRegistry` reference (new proxy storage slot appended above `__gap`, which stays at `[50]` pre-deployment per the "Core rules" in `Documentation/technical/storage_layout.md`), set at `initialize` and through an `onlyOwner` setter for already-initialized proxies. `fundGI` reverts `UnregisteredTaskAuditor` unless `registry.getModelIdByTaskAuditor(taskAuditor)` returns `exists == true`, and reverts `ModelDisabledForEmission` if that model has been disabled via `DINModelRegistry.disableModel` — emission for a model the DIN-Representative has disabled is hard to justify, and the check is one extra view call. `fundGI` itself stays permissionless; its own NatSpec rationale (the *amount* is schedule-deterministic, so there's no benefit to restricting the *caller*) still holds once the *recipient* is constrained separately.
 
 ---
 

@@ -53,7 +53,7 @@ The script ends the broadcast by logging a `--- Effective tokenomics ---` block 
 | 10 | `DINModelRegistry` proxy — `initialize(dinValidatorStake)` | Needs stake |
 | 11 | `dinFeeRouter.addFeeSource(dinModelRegistry)` | Registry fees can be swept to the router |
 | 12 | `dinModelRegistry.setFeeRouter(dinFeeRouter)` | |
-| 13 | `DinEmission` proxy — `initialize(dinCoordinator, dinToken, emissionPerGI, emissionDecayBps, emissionEpochLength, emissionMaxEpochs)` | Schedule from the env keys; defaults are 100 DIN/GI, 80% retained per epoch, 100 GIs per epoch, 10 epochs |
+| 13 | `DinEmission` proxy — `initialize(dinCoordinator, dinToken, dinModelRegistry, emissionPerGI, emissionDecayBps, emissionEpochLength, emissionMaxEpochs)` | Schedule from the env keys; defaults are 100 DIN/GI, 80% retained per epoch, 100 GIs per epoch, 10 epochs |
 | 14 | `dinCoordinator.setEmissionContract(dinEmission)` | Authorises emission minting |
 | 15 | Apply each post-deploy override only when it differs from its default: `updateDinPerEth`, `setMintCap`, `setMinStake`, `setS5RecidivismParams` (all three S5 values together, if any one differs), `setS6NoParticipationThreshold`. Then record the seven ProxyAdmins (`Upgrades.getAdminAddress`) | Invalid values revert the whole deploy (e.g. `InvalidMinStake`, `InvalidS5Params`, `InvalidS6Params`) |
 | 16 | `run()` writes the JSON, after `vm.stopBroadcast()` | |

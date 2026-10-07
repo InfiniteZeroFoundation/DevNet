@@ -286,6 +286,7 @@ contract DeployPlatform is DeploymentsPath {
                 (
                     dinCoordinatorProxy,
                     dinTokenProxy,
+                    dinModelRegistryProxy,
                     t.emissionPerGI,
                     t.emissionDecayBps,
                     t.emissionEpochLength,

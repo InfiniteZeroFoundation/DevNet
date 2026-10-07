@@ -64,6 +64,7 @@ contract DeployPlatformScriptTest is Test {
         assertEq(coord.dinPerEth(), t.dinPerEth, "dinPerEth");
         assertEq(coord.mintCap(), t.mintCap, "mintCap");
         assertEq(coord.emissionContract(), d.dinEmission, "emission contract wired");
+        assertEq(address(emission.modelRegistry()), d.dinModelRegistry, "emission model registry wired");
         assertEq(emission.initialEmissionPerGI(), t.emissionPerGI, "initialEmissionPerGI");
         assertEq(emission.decayBps(), t.emissionDecayBps, "decayBps");
         assertEq(emission.epochLength(), t.emissionEpochLength, "epochLength");
