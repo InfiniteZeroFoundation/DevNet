@@ -118,7 +118,9 @@ contract DinValidatorStake is
 
     /// @notice Number of active GI registrations held by each validator across
     ///         all task contracts. Incremented by task contracts (as slashers)
-    ///         at registration time, decremented at endGI time. Used to enforce
+    ///         at registration time, decremented when the model owner calls
+    ///         DINTaskCoordinator.releaseGIRegistrationSlots for an ended GI
+    ///         (endGI itself does not decrement). Used to enforce
     ///         maxConcurrentRegistrationsPerStakeUnit when non-zero.
     mapping(address => uint256) public activeRegistrationCount;
 
@@ -448,7 +450,10 @@ contract DinValidatorStake is
         emit UnbondingPeriodUpdated(newPeriod);
     }
 
-    /// @notice Stores per-model stake bounds (not yet enforced — follow-up task).
+    /// @notice Stores per-model stake bounds. The min bound is enforced as the
+    ///         per-model stake floor in DINTaskCoordinator.registerDINaggregator
+    ///         and DINTaskAuditor.registerDINAuditor (via getModelStakeMin);
+    ///         the max bound is stored but not read on-chain.
     function setModelStakeBounds(
         uint256 modelId,
         uint256 min,
@@ -459,7 +464,9 @@ contract DinValidatorStake is
         emit ModelStakeBoundsUpdated(modelId, min, max);
     }
 
-    /// @notice Stores the concurrent-registration cap per stake unit (not yet enforced).
+    /// @notice Stores the concurrent-registration cap per stake unit, enforced
+    ///         in DINTaskCoordinator.registerDINaggregator and
+    ///         DINTaskAuditor.registerDINAuditor when non-zero (0 = no cap).
     function setMaxConcurrentRegistrationsPerStakeUnit(
         uint256 value
     ) external onlyOwner {
@@ -467,7 +474,8 @@ contract DinValidatorStake is
         emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
     }
 
-    /// @notice Returns the per-model minimum stake floor set by the model owner.
+    /// @notice Returns the per-model minimum stake floor set by the owner
+    ///         (DIN-Representative) via setModelStakeBounds.
     /// @param modelId Model registry ID to query.
     function getModelStakeMin(uint256 modelId) external view returns (uint256) {
         return modelMinStakeBounds[modelId].min;

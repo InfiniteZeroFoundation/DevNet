@@ -23,7 +23,8 @@ import {
     TC_ConcurrentRegistrationCapReached,
     TC_WrongGI,
     TA_StakeBelowModelFloor,
-    TA_ConcurrentRegistrationCapReached
+    TA_ConcurrentRegistrationCapReached,
+    TA_DualRoleNotAllowed
 } from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
 
@@ -484,5 +485,77 @@ contract StakingEnforcementTest is Test {
         vm.expectRevert(bytes("slots already released"));
         tc.releaseGIRegistrationSlots(1);
         vm.stopPrank();
+    }
+
+    // ── one address can't hold both roles in a GI (issue No. 180) ────────────
+
+    /// @dev An aggregator for GI 1 can't also register as an auditor for GI 1.
+    function test_registerDINAuditor_aggregatorSameGI_reverts() public {
+        _stake(agg1, MIN_STAKE_AMOUNT * 2);
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(agg1);
+        vm.expectRevert(TA_DualRoleNotAllowed.selector);
+        ta.registerDINAuditor(1);
+        assertFalse(ta.isRegisteredAuditor(1, agg1));
+        assertEq(stake.activeRegistrationCount(agg1), 1, "only the aggregator slot is held");
+    }
+
+    /// @dev The guard is per GI: GI 1's aggregator may audit in GI 2.
+    function test_registerDINAuditor_aggregatorOfEarlierGI_registers() public {
+        _runFullGIToEnded(); // agg1 is a GI 1 aggregator
+
+        address funder = makeAddr("funder_gi2");
+        uint256 poolEth = 0.001 ether;
+        vm.deal(funder, poolEth + 1 ether);
+        vm.prank(funder);
+        coordinator.depositAndMint{value: poolEth}();
+        uint256 pool = token.balanceOf(funder);
+        vm.startPrank(funder);
+        token.approve(address(ta), pool);
+        ta.depositRewards(2, pool);
+        vm.stopPrank();
+
+        vm.startPrank(modelOwner);
+        tc.startGI(2);
+        tc.startDINaggregatorsRegistration(2);
+        tc.closeDINaggregatorsRegistration(2);
+        tc.startDINauditorsRegistration(2);
+        vm.stopPrank();
+
+        assertTrue(tc.isDINAggregator(1, agg1));
+        assertFalse(tc.isDINAggregator(2, agg1));
+        vm.prank(agg1);
+        ta.registerDINAuditor(2); // must not revert
+        assertTrue(ta.isRegisteredAuditor(2, agg1));
+    }
+
+    /// @dev Documents the guard's limit: it is per address, so the same
+    ///      operator with a second address and its own stake can still take
+    ///      the auditor role (Sybil). The defence is that it costs a second
+    ///      stake and is visible on-chain.
+    function test_registerDINAuditor_secondAddressWithOwnStake_registers() public {
+        _stake(agg1, MIN_STAKE_AMOUNT);
+        _stake(aud1, MIN_STAKE_AMOUNT); // the operator's second address
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(aud1);
+        ta.registerDINAuditor(1); // must not revert
+        assertTrue(ta.isRegisteredAuditor(1, aud1));
+        assertTrue(tc.isDINAggregator(1, agg1));
     }
 }
