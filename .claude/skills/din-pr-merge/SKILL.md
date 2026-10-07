@@ -19,11 +19,12 @@ back and treats whatever breaks as a distinct, separately-commented deviation.
 
 ## 0. Hard rules — same gates as `din-pr-review`
 
-- **Never commit or push without Umer reviewing first.** Get to "ready to
-  push" (merge commit made, deviation commit made, build/tests green, outcome
-  comment drafted), then stop and summarize file-by-file before `git push` or
-  posting anything. A `git commit` on `develop` has been observed to appear
-  pushed already — treat commit and push as one gated step.
+- **Never commit or push without Umer reviewing first.** Invoking this skill
+  is not that review. Stage the merge with `--no-commit` (step 3), summarize
+  file-by-file, and wait for Umer's go-ahead before the merge commit; the
+  same applies to any deviation commit (step 6) and to the push (step 7).
+  A `git commit` on `develop` has been observed to appear pushed already —
+  treat commit and push as one gated step.
 - **Never fabricate a GitHub-assigned ID.** Always `git rev-parse <ref>` for
   every SHA that goes in the outcome comment, and `gh api
   repos/InfiniteZeroFoundation/DevNet/pulls/<N>/commits` for the contributor's
@@ -76,21 +77,27 @@ comment yet) whether you stashed something, so step 4 isn't a surprise.
 
 ## 3. Merge the PR into develop
 
-Prefer `gh pr merge <N> --merge` (real merge commit, not squash) when GitHub
-reports `mergeable: MERGEABLE` and the local dry run agrees:
+Merge locally (real merge commit, not squash) — never `gh pr merge`, which
+is a GitHub-side push that skips both the review gate and `din-push-develop`.
+Check GitHub and a local dry run agree first:
 
 ```bash
 gh pr view <N> --json mergeable,mergeStateStatus
-git merge-tree $(git merge-base develop origin/pull/<N>/head) develop origin/pull/<N>/head
+git fetch origin refs/pull/<N>/head
+git merge-tree --write-tree --name-only develop FETCH_HEAD   # exit 0 = clean
+git merge --no-ff --no-commit FETCH_HEAD                    # stage only; resolve any conflicts
+git diff --cached --stat
 ```
 
-If there's a real conflict, or the review already established this needs a
-manual merge (see `din-pr-review` SKILL.md section 5), do it by hand instead —
-fetch the PR ref, merge with the contributor's real `--author`, resolve
-conflicts, commit. Either way, end this step with a real merge commit on
-`develop`; capture its SHA with `git rev-parse HEAD` immediately (don't defer
-this — it's easy to lose track once the stash pop starts moving the tree
-around again).
+**Stop here.** Summarize the staged merge file-by-file (conflicts and how
+they were resolved, if any) and wait for Umer's go-ahead. Only then commit
+with the contributor's real `--author` (see section 0) and a
+`merge: PR No. <N> (<owner>/<branch>) into develop` message. Capture the SHA
+with `git rev-parse HEAD` immediately (don't defer this — it's easy to lose
+track once the stash pop starts moving the tree around again).
+
+If Umer wants changes first, `git merge --abort` returns `develop` to its
+pre-merge state with nothing committed.
 
 ## 4. Pop the stash
 
@@ -127,8 +134,8 @@ itself already passed review.
 
 ## 6. Commit the deviations
 
-Once fixed and green, commit the deviation as its own commit — never amend
-the merge commit:
+Once fixed and green, show Umer the deviation diff and wait for his
+go-ahead, then commit it as its own commit — never amend the merge commit:
 
 ```bash
 git add <specific files>   # never -A; review `git status` first
@@ -149,7 +156,8 @@ ambiguously.
 ## 7. Stop and get Umer's review before pushing
 
 Summarize file-by-file (merge commit contents + deviation commit contents),
-then wait. Do not `git push` until Umer says to.
+then wait. Do not push until Umer says to, and then push only via
+`din-push-develop`.
 
 ## 8. Post the outcome comment
 
