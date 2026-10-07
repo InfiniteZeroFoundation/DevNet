@@ -25,6 +25,7 @@ import {auditCommitHash}    from "./utils/AuditCommitHash.sol";
 error TC_DisputeNotAwaitingRecomputation();
 error TC_DisputeSeedBlockNotMined();
 error TC_DisputeSeedAlreadyLocked();
+error TC_AggregatorNotActive();
 
 contract P3AdversarialTest is Test {
 
@@ -316,11 +317,98 @@ contract P3AdversarialTest is Test {
         vm.stopPrank();
     }
 
+    // Run a complete GI where `missedAgg` is registered but misses the T1 commit window.
+    // Registers exactly 3 aggs so all go to T1 (no T2 batch); missedAgg is slashed by
+    // slashAggregators.  For gi==1, GI is already started by _deployTaskPair.
+    // For gi>1, calls startGI(gi) first.  On exit: state = GIended.
+    function _runOneGIWithMiss(uint gi, address missedAgg) internal {
+        if (gi > 1) {
+            // Reward pool must be funded before startGI checks giRewardPool > 0.
+            vm.startPrank(modelOwner);
+            ta.depositRewards(gi, 1 ether);
+            tc.startGI(gi);
+            vm.stopPrank();
+        }
+
+        address honestA = makeAddr(string(abi.encodePacked("hA_gi", vm.toString(gi))));
+        address honestB = makeAddr(string(abi.encodePacked("hB_gi", vm.toString(gi))));
+        _fundAndStake(honestA);
+        _fundAndStake(honestB);
+
+        vm.prank(modelOwner); tc.startDINaggregatorsRegistration(gi);
+        vm.prank(honestA);   tc.registerDINaggregator(gi);
+        vm.prank(honestB);   tc.registerDINaggregator(gi);
+        vm.prank(missedAgg); tc.registerDINaggregator(gi);
+        vm.prank(modelOwner); tc.closeDINaggregatorsRegistration(gi);
+        vm.prank(modelOwner); tc.startDINauditorsRegistration(gi);
+        vm.prank(auditor1); ta.registerDINAuditor(gi);
+        vm.prank(auditor2); ta.registerDINAuditor(gi);
+        vm.prank(auditor3); ta.registerDINAuditor(gi);
+        vm.prank(modelOwner); tc.closeDINauditorsRegistration(gi);
+
+        vm.prank(modelOwner); tc.startLMsubmissions(gi);
+        vm.prank(client1); ta.submitLocalModel(bytes32(uint256(gi * 100)), gi);
+        vm.prank(client2); ta.submitLocalModel(bytes32(uint256(gi * 200)), gi);
+        vm.prank(client3); ta.submitLocalModel(bytes32(uint256(gi * 300)), gi);
+        vm.prank(modelOwner); tc.closeLMsubmissions(gi);
+        _lockAuditSeedNow(gi);
+        vm.startPrank(modelOwner);
+        tc.createAuditorsBatches(gi);
+        tc.setTestDataAssignedFlag(gi, true);
+        tc.startLMsubmissionsEvaluation(gi);
+        vm.stopPrank();
+
+        (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(gi, 0);
+        for (uint a = 0; a < bAuds.length; a++) {
+            for (uint m = 0; m < bMods.length; m++) {
+                vm.prank(bAuds[a]);
+                ta.commitAuditScore(gi, 0, bMods[m],
+                    auditCommitHash(100, true, TEST_SALT, bAuds[a], gi, 0, bMods[m]));
+            }
+        }
+        vm.prank(modelOwner); tc.startLMsubmissionsEvaluationReveal(gi);
+        for (uint a = 0; a < bAuds.length; a++) {
+            for (uint m = 0; m < bMods.length; m++) {
+                vm.prank(bAuds[a]); ta.revealAuditScore(gi, 0, bMods[m], 100, true, TEST_SALT);
+            }
+        }
+        vm.prank(modelOwner); tc.closeLMsubmissionsEvaluation(gi);
+        _lockAggSeedNow(gi);
+        vm.prank(modelOwner); tc.autoCreateTier1AndTier2(gi);
+        vm.prank(modelOwner); tc.startT1Aggregation(gi);
+
+        // 3 aggs → all placed in T1, no T2 batch; missedAgg skips commit.
+        (, address[] memory t1aggs,,, ) = tc.getTier1Batch(gi, 0);
+        for (uint i = 0; i < t1aggs.length; i++) {
+            if (t1aggs[i] == missedAgg) continue;
+            vm.prank(t1aggs[i]);
+            tc.commitT1Aggregation(gi, 0, _t1CommitHash(t1aggs[i], CORRECT_CID, TEST_SALT, gi, 0));
+        }
+        vm.prank(modelOwner); tc.startT1AggregationReveal(gi);
+        for (uint i = 0; i < t1aggs.length; i++) {
+            if (t1aggs[i] == missedAgg) continue;
+            vm.prank(t1aggs[i]); tc.revealT1Aggregation(gi, 0, CORRECT_CID, TEST_SALT);
+        }
+        vm.prank(modelOwner); tc.finalizeT1Aggregation(gi);
+
+        // No T2 batch (all 3 aggs consumed by T1); run T2 state machine empty.
+        vm.prank(modelOwner); tc.startT2Aggregation(gi);
+        vm.prank(modelOwner); tc.startT2AggregationReveal(gi);
+        vm.prank(modelOwner); tc.finalizeT2Aggregation(gi);
+
+        vm.startPrank(modelOwner);
+        tc.slashAuditors(gi);
+        tc.slashAggregators(gi); // S2-slashes missedAgg
+        tc.endGI(gi);
+        vm.stopPrank();
+    }
+
     // ── Row 1: COST-BOUNDED - Sybil N-identity no-participation ──────────────
 
     // 7 aggs registered → 3 T1, 3 T2, 1 unassigned (the 7th, aggs[6]).
     // T1 agg[2] misses submission (will be S2 slashed).
-    // Asserts: (a) unassigned agg faces NO slash; (b) T1 non-submitter slashed s2Amount.
+    // Asserts: (a) unassigned agg faces NO slash; (b) T1 non-submitter slashed s2Amount;
+    // (c) repeated T1 misses across 3 real GIs escalate to S5 on the threshold-th miss.
     function test_costBounded_sybilNoParticipation() public {
         address[] memory aggs = _runToAuditorsSlashed(7);
         (, address[] memory t1aggs,,, ) = tc.getTier1Batch(1, 0);
@@ -333,17 +421,51 @@ contract P3AdversarialTest is Test {
 
         vm.prank(modelOwner); tc.slashAggregators(1);
 
+        // (a) unassigned agg: no S2/S5 penalty.
         assertEq(stake.getStake(unassigned), unassignedBefore,
             "unassigned agg: stake unchanged - no S2/S5 penalty for excess registrants");
+        // (b) T1 non-submitter: slashed exactly s2SlashFractionBps of MIN_STAKE.
         uint256 expectedS2 = (stake.MIN_STAKE() * tc.s2SlashFractionBps()) / 10_000;
         assertEq(missedBefore - stake.getStake(missedAgg), expectedS2,
             "T1 non-submitter: slashed exactly s2SlashFractionBps of MIN_STAKE");
+    }
+
+    // (c) S5 on the threshold-th real GI miss.
+    // Uses _runOneGIWithMiss to run three complete GIs; attacker misses T1 each time.
+    // S5 fires on the 3rd miss (default threshold = 3).
+    function test_costBounded_sybilNoParticipation_s5OnThirdGI() public {
+        _deployPlatform();
+        _deployTaskPair();
+
+        address attacker = makeAddr("sybilMisser");
+        _fundAndStake(attacker);
+        // Extra stake so S2 partial slashes don't exhaust MIN_STAKE before S5 fires.
+        vm.prank(attacker); stake.stake(90 ether); // 100 DIN total
+
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        _fundAndStake(auditor3);
+
+        uint256 threshold = stake.s5RecidivismThreshold(); // default: 3
+
+        // GI 1 and GI 2: attacker misses, S2 slashed, still active after each.
+        for (uint gi = 1; gi < threshold; gi++) {
+            _runOneGIWithMiss(gi, attacker);
+            assertTrue(stake.isValidatorActive(attacker),
+                "active after miss -- S5 threshold not yet reached");
+        }
+
+        // GI 3: threshold-th miss fires S5.
+        _runOneGIWithMiss(threshold, attacker);
+        assertFalse(stake.isValidatorActive(attacker),
+            "jailed after S5 escalation on the threshold-th real-GI miss");
     }
 
     // ── Row 2: COST-BOUNDED - Sybil seat capture ─────────────────────────────
 
     // k Sybil identities each stake MIN_STAKE independently.
     // No per-identity barrier stops them; total cost is k × MIN_STAKE.
+    // Seat capture measured over the real T1 batch draw: Sybil holds at most k seats.
     function test_costBounded_sybilSeatCapture_stakeIsKTimesMinStake() public {
         uint k = 3;
         _setupToT1Open(6, "syAgg");
@@ -358,39 +480,65 @@ contract P3AdversarialTest is Test {
         }
         assertEq(sybilTotal, k * stake.MIN_STAKE(),
             "total Sybil stake locked = k * MIN_STAKE (the sole cost)");
+
+        // Count Sybil seats in the real T1 draw to bound capture against stake cost.
+        (, address[] memory t1aggs,,, ) = tc.getTier1Batch(1, 0);
+        uint256 sybilSeats;
+        for (uint i = 0; i < t1aggs.length; i++) {
+            for (uint j = 0; j < k; j++) {
+                if (t1aggs[i] == makeAddr(string(abi.encodePacked("syAgg", vm.toString(j))))) {
+                    sybilSeats++;
+                }
+            }
+        }
+        assertLe(sybilSeats, k,
+            "seat capture bounded: Sybil holds at most k T1 seats (k * MIN_STAKE buys at most k identities)");
+        emit log_named_uint("Sybil seats captured (out of 3 T1 slots)", sybilSeats);
     }
 
     // ── Row 3: DEFENDED - recidivist S5 escalation ────────────────────────────
 
-    // Calls slashPartial from tc (an authorised slasher) s5RecidivismThreshold times.
-    // Escalation fires on the Nth miss (threshold, not threshold+1).
+    // Runs three complete real GIs; attacker misses T1 each time.
+    // S5 fires on the threshold-th miss (default 3).
+    // After S5: a registration attempt for GI 4 reverts TC_AggregatorNotActive.
     function test_defended_recidivistS5Escalation() public {
         _deployPlatform();
         _deployTaskPair();
 
         address attacker = makeAddr("recidivisit");
         _fundAndStake(attacker);
-        // Extra stake so S2 partial slashes don't drop stake below MIN_STAKE before S5 fires.
+        // Extra stake so S2 partial slashes don't exhaust MIN_STAKE before S5 fires.
         vm.prank(attacker); stake.stake(90 ether); // 100 DIN total
+
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        _fundAndStake(auditor3);
 
         uint256 threshold = stake.s5RecidivismThreshold(); // default: 3
         assertEq(threshold, 3, "default S5 threshold");
-        uint256 s2Amount = (stake.MIN_STAKE() * tc.s2SlashFractionBps()) / 10_000;
 
-        // First (threshold-1) misses: still active after each.
+        // First (threshold-1) real GIs: attacker misses T1; still active after each.
         for (uint gi = 1; gi < threshold; gi++) {
-            vm.prank(address(tc));
-            stake.slashPartial(attacker, s2Amount, "AGG_T1_NO_SUBMISSION", gi);
+            _runOneGIWithMiss(gi, attacker);
             assertTrue(stake.isValidatorActive(attacker),
                 "active before threshold reached");
         }
 
-        // threshold-th miss: S5 escalation - jailed, no longer active.
-        vm.prank(address(tc));
-        stake.slashPartial(attacker, s2Amount, "AGG_T1_NO_SUBMISSION", threshold);
-
+        // threshold-th real GI: S5 escalation fires.
+        _runOneGIWithMiss(threshold, attacker);
         assertFalse(stake.isValidatorActive(attacker),
-            "jailed after S5 escalation on the threshold-th miss");
+            "jailed after S5 escalation on the threshold-th real-GI miss");
+
+        // 4th registration reverts: jailed attacker cannot register.
+        uint nextGI = threshold + 1;
+        vm.startPrank(modelOwner);
+        ta.depositRewards(nextGI, 1 ether);
+        tc.startGI(nextGI);
+        tc.startDINaggregatorsRegistration(nextGI);
+        vm.stopPrank();
+        vm.expectRevert(TC_AggregatorNotActive.selector);
+        vm.prank(attacker); tc.registerDINaggregator(nextGI);
+
     }
 
     // ── Row 4: KNOWN GAP - auditor bloc poisoned model (S3 shadow mode) ──────
@@ -398,6 +546,8 @@ contract P3AdversarialTest is Test {
     // 2-of-3 auditors collude: inflate score to 100 on a model an honest auditor
     // scored 20.  Median = 100; honest auditor deviation = 80 > threshold 40.
     // AuditorScoreDeviation is emitted with exceedsThreshold=true, no slash fires.
+    /// @dev Flip to test_defended_auditorBlocPoisonedModel once S3 slashing is enabled
+    ///      and the colluding majority can be slashed for deviation.
     event AuditorScoreDeviation(
         uint256 indexed gi,
         uint indexed batchId,
@@ -469,7 +619,8 @@ contract P3AdversarialTest is Test {
         }
 
         // Median of [20, 100, 100] = 100; honest auditor (score 20) deviation = 80 > 40.
-        vm.expectEmit(true, true, true, false);
+        // checkData=true: verify exceedsThreshold, auditorScore, medianScore, deviation.
+        vm.expectEmit(true, true, true, true);
         emit AuditorScoreDeviation(1, 0, bMods[0], bAuds[2], 20, 100, 80, true);
 
         vm.prank(modelOwner); tc.closeLMsubmissionsEvaluation(1);
@@ -483,6 +634,8 @@ contract P3AdversarialTest is Test {
     // Full S4 flow: upheld dispute + settleRecomputation(confirmed=true).
     // (a) finalCID stays WRONG_CID after settlement.
     // (b) Honest dissenter gets AGG_T1_BAD_CONSENSUS from slashAggregators - not refunded.
+    /// @dev Flip to test_defended_t1WrongCIDRepaired once #194 is fixed — assert that
+    ///      settleRecomputation(true) replaces finalCID with the recomputed result.
     function test_knownGap_t1WrongCID_finalCIDUnchangedDissenterSlashed() public {
         (, address dissenter) = _runToT1FinalizedWithDissent(6);
 
@@ -535,6 +688,9 @@ contract P3AdversarialTest is Test {
 
     // One address registers as both aggregator and auditor in the same GI.
     // No revert: the protocol has no cross-role guard.
+    /// @dev Flip to test_defended_dualRoleRegistration once #180 (PR #235) merges —
+    ///      assert that registerDINaggregator or registerDINAuditor reverts with the
+    ///      cross-role guard error for an address already registered in the other role.
     function test_knownGap_dualRoleRegistration() public {
         _deployPlatform();
         _deployTaskPair();
@@ -561,6 +717,7 @@ contract P3AdversarialTest is Test {
     // ── Row 7: KNOWN GAP - owner suppresses or abandons a dispute ────────────
 
     // 7a: resolveDispute(false) - challenger bond forfeited (50% burn / 50% treasury).
+    /// @dev Known gap: model owner can unilaterally reject any dispute; no on-chain appeal.
     function test_knownGap_ownerSuppressesDispute_rejected() public {
         _runToT1Finalized(6);
         _fundAndStake(challenger);
@@ -579,6 +736,7 @@ contract P3AdversarialTest is Test {
     }
 
     // 7b: upheld + settleRecomputation(false) - challenger bond forfeited (50/50).
+    /// @dev Known gap: owner can suppress via dishonest settleRecomputation(false).
     function test_knownGap_ownerSuppressesDispute_forfeitedViaSettlement() public {
         _runToT1Finalized(6);
         _fundAndStake(challenger);
@@ -601,6 +759,7 @@ contract P3AdversarialTest is Test {
 
     // 7c: owner never calls resolveDispute - bond locked forever.
     // expireDispute requires d.resolved && d.upheld; with resolved=false it reverts.
+    /// @dev Known gap: bond permanently locked if owner ignores the dispute.
     function test_knownGap_ownerSuppressesDispute_bondLockedIfNeverResolved() public {
         _runToT1Finalized(6);
         _fundAndStake(challenger);
@@ -619,8 +778,18 @@ contract P3AdversarialTest is Test {
     // ── Row 8: DEFENDED - dispute-seed subgroup is deterministic ─────────────
 
     // lockDisputeSeed anchors on a future block that nobody could pick when the
-    // dispute opened.  resolveDispute(upheld=true) draws a deterministic subgroup.
+    // dispute opened.  resolveDispute(upheld=true) draws a deterministic subgroup
+    // regardless of when or by whom it is called (snapshot proof).
     // Re-locking before the seedBlock reverts; re-locking after resolve reverts.
+    // Post-expiry re-anchor: if >256 blocks elapse since seedBlock, lockDisputeSeed
+    // re-anchors to a new future block rather than reading a stale blockhash.
+    event DisputeSeedReanchored(
+        uint256 indexed GI,
+        DINTaskCoordinator.TierKind tierKind,
+        uint indexed batchId,
+        uint64 newSeedBlock
+    );
+
     function test_defended_disputeSeedSubgroupDeterministic() public {
         _runToT1Finalized(6);
         _fundAndStake(challenger);
@@ -640,15 +809,61 @@ contract P3AdversarialTest is Test {
         vm.expectRevert(TC_DisputeSeedAlreadyLocked.selector);
         tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
 
+        // Determinism proof: snapshot state after seed lock, resolve twice with
+        // different timestamps and verify the same subgroup is drawn both times.
+        uint256 snap = vm.snapshotState();
+
         vm.prank(modelOwner);
         tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+        address assign0_first = tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 0);
+        address assign1_first = tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 1);
+        address assign2_first = tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 2);
 
-        // Fresh subgroup is non-empty and deterministic (re-run with same seed → same result).
-        address freshAgg0 = tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 0);
-        address freshAgg1 = tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 1);
-        address freshAgg2 = tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 2);
-        assertTrue(freshAgg0 != address(0) && freshAgg1 != address(0) && freshAgg2 != address(0),
+        vm.revertToState(snap);
+        vm.warp(block.timestamp + 7 hours); // different timestamp, same locked seed
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+        assertEq(tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 0), assign0_first,
+            "subgroup[0] deterministic: depends only on the locked seed");
+        assertEq(tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 1), assign1_first,
+            "subgroup[1] deterministic");
+        assertEq(tc.reEvaluationAssignees(1, DINTaskCoordinator.TierKind.Tier1, 0, 2), assign2_first,
+            "subgroup[2] deterministic");
+        assertTrue(assign0_first != address(0) && assign1_first != address(0) && assign2_first != address(0),
             "fresh subgroup of 3 assigned");
+    }
+
+    // Post-expiry re-anchor: when blockhash(seedBlock) returns 0 (>256 blocks elapsed),
+    // lockDisputeSeed emits DisputeSeedReanchored and updates seedBlock to a new future block.
+    // A second call after the new seedBlock actually locks the seed.
+    function test_defended_disputeSeedReanchorOnExpiry() public {
+        _runToT1Finalized(6);
+        _fundAndStake(challenger);
+        _approveTcForBond(challenger);
+
+        vm.prank(challenger); tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        uint64 delay = uint64(tc.disputeSeedDelay());
+
+        // Roll 257 blocks past the original seedBlock so blockhash returns 0.
+        vm.roll(block.number + delay + 257);
+
+        // lockDisputeSeed should re-anchor and emit DisputeSeedReanchored.
+        vm.expectEmit(true, false, true, false);
+        emit DisputeSeedReanchored(1, DINTaskCoordinator.TierKind.Tier1, 0, 0); // newSeedBlock not checked
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // Seed not yet stored — another early lock still reverts.
+        vm.expectRevert(TC_DisputeSeedBlockNotMined.selector);
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        // Roll past the new seedBlock and lock successfully.
+        vm.roll(block.number + delay + 1);
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0); // should not revert
+
+        // Re-lock now reverts with AlreadyLocked.
+        vm.expectRevert(TC_DisputeSeedAlreadyLocked.selector);
+        tc.lockDisputeSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
     }
 
     // ── Row 9a: COST-BOUNDED - inflated scores; odd reveal count ─────────────
@@ -709,7 +924,8 @@ contract P3AdversarialTest is Test {
         }
 
         // Median([40,40,100]) = 40. Colluder deviation = 60 > threshold 40.
-        vm.expectEmit(true, true, true, false);
+        // checkData=true: verify exceedsThreshold, auditorScore, medianScore, deviation.
+        vm.expectEmit(true, true, true, true);
         emit AuditorScoreDeviation(1, 0, mTarget, bAuds[2], 100, 40, 60, true);
 
         vm.prank(modelOwner); tc.closeLMsubmissionsEvaluation(1);
@@ -790,6 +1006,8 @@ contract P3AdversarialTest is Test {
     // Validator spreads (threshold-1) misses across TWO model slashers: no single
     // slasher reaches threshold, so S5 never fires.
     // A final miss on tc2 (now = threshold there) confirms S5 fires once the ring fills.
+    /// @dev Flip to test_defended_perSlasherS5 once #193 (PR #236) merges — assert that
+    ///      S5 fires on aggregate cross-model miss count rather than per-slasher ring.
     function test_knownGap_perSlasherS5Evasion() public {
         _deployPlatform();
         _deployTaskPair(); // tc / ta for model-1
