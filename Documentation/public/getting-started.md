@@ -6,6 +6,8 @@
 
 Welcome to the onboarding guide for **Model_0** on the Infinite Zero Network.
 
+Planning a different model or dataset? Read [What can I train on DIN?](what-can-be-trained.md) to understand the tested reference, custom-service path, and practical limits.
+
 Infinite Zero Network devnet has been launched as `sepolia-op-devnet`.
 
 Model_0 is the first active model registered on the Infinite Zero Network and serves as the pioneer deployment of Infinite Zero's  model-specific smart contracts.
