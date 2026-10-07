@@ -56,9 +56,11 @@ Its central safety property: a validator cannot misbehave and then withdraw befo
 | `s5RecidivismWindow` | `5` GIs | `setS5RecidivismParams` | Rolling window for counting partial slashes |
 | `s5RecidivismThreshold` | `3` | `setS5RecidivismParams` (`0 < threshold ≤ window`) | Partial slashes within the window that trigger escalation |
 | `s5JailDuration` | `7 days` | `setS5RecidivismParams` (non-zero) | Jail length applied on escalation |
+| `s5GlobalWindow` | `7 days` | `setS5GlobalParams` (both 0 = off, or both > 0) | Time window over which partial slashes from **every** slasher contract are counted (issue No. 193) |
+| `s5GlobalThreshold` | `6` | `setS5GlobalParams` | Partial slashes within `s5GlobalWindow`, from any slasher contract, that trigger escalation. `0` = global level off, which is also what a proxy upgraded from an earlier version reads until the setter is called |
 | `s6NoParticipationThreshold` | `3` | `setS6NoParticipationThreshold` (non-zero) | No-participation count at which S6 slashing starts |
 
-`MIN_STAKE` (10 DIN) is one of the testnet values still to be decided (issue #155). `DeployPlatform.s.sol` can override `MIN_STAKE` and the S5/S6 parameters at deploy time from environment variables (`MIN_STAKE`, `S5_RECIDIVISM_WINDOW`, `S5_RECIDIVISM_THRESHOLD`, `S5_JAIL_DURATION`, `S6_NO_PARTICIPATION_THRESHOLD`).
+`MIN_STAKE` (10 DIN) is one of the testnet values still to be decided (issue #155). `DeployPlatform.s.sol` can override `MIN_STAKE` and the S5/S6 parameters at deploy time from environment variables (`MIN_STAKE`, `S5_RECIDIVISM_WINDOW`, `S5_RECIDIVISM_THRESHOLD`, `S5_JAIL_DURATION`, `S5_GLOBAL_WINDOW`, `S5_GLOBAL_THRESHOLD`, `S6_NO_PARTICIPATION_THRESHOLD`).
 
 ### 3.3 Per-validator state
 
@@ -69,7 +71,8 @@ Its central safety property: a validator cannot misbehave and then withdraw befo
 | `encryptionKeys` | `mapping(address => bytes)` | Registered 32-byte X25519 public keys |
 | `activeRegistrationCount` | `mapping(address => uint256)` | Open GI registrations across all task contracts |
 | `s6NoParticipationCount` | `mapping(address => uint256)` | Lifetime no-participation count (never decays) |
-| `_partialSlashGIs` | `mapping(address => mapping(address => uint256[]))` (private) | Partial-slash GI indices per validator **per calling slasher contract** (S5 ring) |
+| `_partialSlashGIs` | `mapping(address => mapping(address => uint256[]))` (private) | Partial-slash GI indices per validator **per calling slasher contract** (S5 per-slasher ring) |
+| `_partialSlashTimes` | `mapping(address => uint256[])` (private) | Partial-slash block timestamps per validator across **all** slasher contracts (S5 global ring, issue No. 193) |
 | `__gap` | `uint256[50]` | Reserved slots |
 
 Slot order is in [storage_layout.md](../storage_layout.md#dinvalidatorstake).
@@ -120,7 +123,7 @@ Once a jail has expired, *any* call that syncs status (e.g. `stake`) recomputes 
 | `stake`, `unstake`, `claimUnstaked`, `reactivate`, `registerEncryptionKey` | Any address, acting on its own record |
 | `addSlasherContract`, `removeSlasherContract` | `DIN_COORDINATOR` only (`NotDINCoordinator`) |
 | `slash`, `slashPartial`, `recordNoParticipation`, `jailValidator`, `incrementActiveRegistration`, `decrementActiveRegistration` | Registered slasher contracts only (`NotSlasherContract`) |
-| `blacklistValidator`, `unblacklistValidator`, `setMinStake`, `setUnbondingPeriod`, `setModelStakeBounds`, `setMaxConcurrentRegistrationsPerStakeUnit`, `setSlashTreasury`, `setS5RecidivismParams`, `setS6NoParticipationThreshold` | `owner()` (DIN-Representative) |
+| `blacklistValidator`, `unblacklistValidator`, `setMinStake`, `setUnbondingPeriod`, `setModelStakeBounds`, `setMaxConcurrentRegistrationsPerStakeUnit`, `setSlashTreasury`, `setS5RecidivismParams`, `setS5GlobalParams`, `setS6NoParticipationThreshold` | `owner()` (DIN-Representative) |
 
 ---
 
@@ -157,11 +160,12 @@ For faults like bad consensus or S3 score deviation. Reverts on zero address / z
 
 Used by the task contracts for liveness faults (auditor didn't reveal a vote — S1; aggregator didn't reveal a CID — S2). `amount` is computed by the caller as a fraction of the global `MIN_STAKE`: `minStake() × s1SlashFractionBps / 10 000` (auditor) or `× s2SlashFractionBps` (aggregator), with the fractions set per model on the task contracts.
 
-1. Appends `giIndex` to `_partialSlashGIs[validator][msg.sender]` and trims entries with `giIndex − entry ≥ s5RecidivismWindow`.
-2. If the ring length reaches `s5RecidivismThreshold` → **S5 escalation**: slash a full `MIN_STAKE` (reason `S5_RECIDIVISM`), jail for `s5JailDuration`, emit `ValidatorEscalatedS5`, and clear this caller's ring.
-3. Otherwise slash `amount` with the given reason.
+1. Appends `giIndex` to `_partialSlashGIs[validator][msg.sender]` and trims entries with `giIndex − entry ≥ s5RecidivismWindow` (**per-slasher level**).
+2. If `s5GlobalThreshold ≠ 0`, also appends `block.timestamp` to `_partialSlashTimes[validator]` and trims entries with `now − entry ≥ s5GlobalWindow` (**global level**, issue No. 193).
+3. If the per-slasher ring reaches `s5RecidivismThreshold`, **or** the global ring reaches `s5GlobalThreshold` → **S5 escalation**: slash a full `MIN_STAKE` (reason `S5_RECIDIVISM`), jail for `s5JailDuration`, and clear both this caller's ring and the global ring. It emits `ValidatorEscalatedS5` when the per-slasher level fired, otherwise `ValidatorEscalatedS5Global`.
+4. Otherwise slash `amount` with the given reason.
 
-The ring is namespaced by the **calling task contract** because `giIndex` is a per-model counter: keying by validator alone would interleave different models' GI sequences and break the ascending-order trim. The consequence is that recidivism is counted **per model**, not across models.
+The per-slasher ring is namespaced by the **calling task contract** because `giIndex` is a per-model counter: keying by validator alone would interleave different models' GI sequences and break the ascending-order trim. On its own that counts recidivism per task contract, so misses spread across models, or across one model's coordinator (S2) and auditor (S1), never add up. The global ring closes that gap: block timestamps never go backwards, so one ring per validator stays ascending across every slasher.
 
 ### 7.4 `recordNoParticipation(validator, reason)` — S6
 
@@ -203,7 +207,8 @@ Slasher-only. Reverts on zero address or zero duration (`InvalidJailDuration`); 
 | `isSlasherContract(a)` | slasher flag |
 | `getEncryptionKey(v)` | registered key or empty bytes |
 | `getModelStakeMin(modelId)` | `modelMinStakeBounds[modelId].min` |
-| `getPartialSlashGIs(v, slasher)` | the S5 ring for that validator/caller pair |
+| `getPartialSlashGIs(v, slasher)` | the S5 per-slasher ring for that validator/caller pair |
+| `getPartialSlashTimes(v)` | the S5 global ring (timestamps, all slashers) |
 
 Plus the public getters for all state in §3.
 
@@ -273,7 +278,7 @@ The ring is kept per calling task contract, so the same three misses spread acro
 
 ## 12. Events & Errors
 
-**Events:** `ValidatorStaked`, `ValidatorUnstakeRequested`, `ValidatorWithdrawalClaimed`, `ValidatorSlashed`, `ValidatorJailed`, `ValidatorReactivated`, `ValidatorEscalatedS5`, `S6NoParticipationRecorded`, `S6PartialSlashFired`, `ValidatorBlacklisted`, `ValidatorUnblacklisted`, `SlasherContractAdded`, `SlasherContractRemoved`, `ActiveRegistrationIncremented`, `ActiveRegistrationDecremented`, `EncryptionKeyRegistered`, `MinStakeUpdated`, `UnbondingPeriodUpdated`, `ModelStakeBoundsUpdated`, `MaxConcurrentRegistrationsPerStakeUnitUpdated`, `SlashTreasuryUpdated`, `S5RecidivismParamsUpdated`, `S6ParamsUpdated`.
+**Events:** `ValidatorStaked`, `ValidatorUnstakeRequested`, `ValidatorWithdrawalClaimed`, `ValidatorSlashed`, `ValidatorJailed`, `ValidatorReactivated`, `ValidatorEscalatedS5`, `ValidatorEscalatedS5Global`, `S6NoParticipationRecorded`, `S6PartialSlashFired`, `ValidatorBlacklisted`, `ValidatorUnblacklisted`, `SlasherContractAdded`, `SlasherContractRemoved`, `ActiveRegistrationIncremented`, `ActiveRegistrationDecremented`, `EncryptionKeyRegistered`, `MinStakeUpdated`, `UnbondingPeriodUpdated`, `ModelStakeBoundsUpdated`, `MaxConcurrentRegistrationsPerStakeUnitUpdated`, `SlashTreasuryUpdated`, `S5RecidivismParamsUpdated`, `S5GlobalParamsUpdated`, `S6ParamsUpdated`.
 
 **Errors:** `NotDINCoordinator`, `NotSlasherContract`, `InvalidAddress`, `ValidatorIsBlacklisted`, `ValidatorNotBlacklisted`, `AmountLessThanMinStake`, `NotEnoughStake`, `InvalidUnstakeAmount`, `PendingWithdrawalExists`, `NoPendingWithdrawal`, `WithdrawalNotReady`, `InvalidSlashAmount`, `SlasherContractAlreadyAdded`, `SlasherContractNotAdded`, `InvalidJailDuration`, `NotJailed`, `JailPeriodNotExpired`, `StakeBelowFloor`, `InvalidMinStake`, `InvalidUnbondingPeriod`, `InvalidStakeBounds`, `InvalidEncryptionKey`, `InvalidS5Params`, `InvalidS6Params`.
 
@@ -300,6 +305,7 @@ Until step 8, slasher management through the coordinator reverts `ValidatorStake
 | ProxyAdmin | One per proxy, owned by the deployer | Implementation upgrades |
 
 - **Upgrade path:** `cd foundry && CONTRACT=DinValidatorStake forge script script/UpgradePlatform.s.sol ...` (see [UpgradePlatform](foundry/script/UpgradePlatform.md)); `foundry/test/UpgradeValidation.t.sol` runs `Upgrades.validateImplementation` on the implementation, and `DinValidatorStakeUpgradeTest` in `foundry/test/DeployPlatform.t.sol` upgrades to `foundry/src/upgrade/DinValidatorStakeV2.sol` and checks stakes and access control survive.
+- **Storage:** the S5 global level appends three slots (`s5GlobalWindow`, `s5GlobalThreshold`, `_partialSlashTimes`) after the S6 block and shrinks `__gap` from 50 to 47, so the layout stays upgrade-compatible.
 - **Trust implication:** this contract custodies all staked DIN; the ProxyAdmin owner can replace every rule here without moving the balance.
 
 ---
@@ -310,13 +316,19 @@ Until step 8, slasher management through the coordinator reverts `ValidatorStake
 - **No. 2 — S5 escalation on a blacklisted validator reverts the whole slash:** escalation calls `_jailInternal`, which reverts `ValidatorIsBlacklisted`. A task contract's slashing loop hitting a blacklisted repeat offender would revert, not just skip that validator.
 - **No. 3 — Jail exit does not require `reactivate()`:** after `jailedUntil` passes, any status-syncing call (e.g. `stake`) recomputes the status, bypassing `reactivate()`'s `StakeBelowFloor` check (the later sync still requires `≥ MIN_STAKE` for `Active`).
 - **No. 4 — Stale NatSpec:** `setModelStakeBounds` / `setMaxConcurrentRegistrationsPerStakeUnit` say "not yet enforced", but the task contracts enforce both (§8). `getModelStakeMin` says "set by the model owner", but the setter is `onlyOwner` (DIN-Representative). `modelMinStakeBounds[].max` is never read.
-- **No. 5 — Recidivism is per model:** the S5 ring is keyed by calling contract, so a validator faulting across many models never escalates unless it hits the threshold within one model.
+- **No. 5 — Recidivism is per model (fixed, issue No. 193):** the per-slasher ring is keyed by calling contract, so on its own a validator faulting across many models never escalates. The global ring (`s5GlobalWindow` / `s5GlobalThreshold`, defaults 7 days / 6) now counts every slasher's partial slashes together. Defaults are placeholders until issue No. 155. A proxy upgraded from an earlier version reads `0` for both, so the global level stays off until the owner calls `setS5GlobalParams`.
 - **No. 6 — Blacklisted funds are frozen:** blacklisted validators cannot unstake or claim; there is no recovery path other than unblacklisting.
 - **No. 7 — Custody meets upgradeability:** see §13.
 
 ---
 
 ## 15. Change Log
+
+### Cross-model S5 (issue No. 193)
+
+- `slashPartial` keeps the per-slasher GI ring and adds a per-validator timestamp ring shared by every slasher contract (`_partialSlashTimes`). Either level reaching its threshold escalates (full `MIN_STAKE` + jail) and clears both rings.
+- New owner-settable `s5GlobalWindow` (7 days) / `s5GlobalThreshold` (6), set in `initialize`; `setS5GlobalParams(window, threshold)` with (0, 0) as the off switch. On an upgraded proxy both read 0 (off); no reinitializer.
+- New events `ValidatorEscalatedS5Global` (emitted when only the global level fired; `ValidatorEscalatedS5` keeps its signature) and `S5GlobalParamsUpdated`; new view `getPartialSlashTimes`. `__gap` 50 → 47.
 
 ### P3 — slashing, jailing, parameters (foundry)
 

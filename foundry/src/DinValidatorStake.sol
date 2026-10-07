@@ -170,8 +170,36 @@ contract DinValidatorStake is
     );
     event S6PartialSlashFired(address indexed validator, uint256 slashedAmount, address indexed slasher);
 
+    // ── S5 — global (cross-model) recidivism level (issue No. 193) ─────────
+    /// @notice Rolling time window (seconds) for the per-validator S5 count
+    ///         that spans every slasher contract. DAO-settable. 0 = off.
+    uint256 public s5GlobalWindow;
+    /// @notice Number of partial slashes, from any slasher contract, within
+    ///         s5GlobalWindow that triggers S5 escalation. DAO-settable. 0 = off.
+    ///         Reads 0 on a proxy upgraded from a version without this field,
+    ///         so the global level stays off until setS5GlobalParams is called.
+    uint256 public s5GlobalThreshold;
+    /// @dev Per-validator ordered list of block timestamps at which a partial
+    ///      slash was recorded, from any slasher contract. Unlike
+    ///      _partialSlashGIs this ring is shared across models: timestamps
+    ///      never decrease, so the ascending-order trim stays safe without
+    ///      namespacing by caller. Entries older than s5GlobalWindow are trimmed.
+    mapping(address => uint256[]) private _partialSlashTimes;
+
+    event S5GlobalParamsUpdated(uint256 window, uint256 threshold);
+    /// @notice Emitted when the global (cross-model) S5 level escalates a
+    ///         partial slash and the per-slasher level did not. The per-slasher
+    ///         escalation keeps emitting ValidatorEscalatedS5.
+    event ValidatorEscalatedS5Global(
+        address indexed validator,
+        uint256 slashedAmount,
+        uint256 globalCount,
+        address indexed slasher
+    );
+
     // Reserved for future state variables at this inheritance level.
-    uint256[50] private __gap;
+    // 50 - 3 slots used by the S5 global level above.
+    uint256[47] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -196,6 +224,8 @@ contract DinValidatorStake is
         s5RecidivismWindow = 5;
         s5RecidivismThreshold = 3;
         s5JailDuration = 7 days;
+        s5GlobalWindow = 7 days;
+        s5GlobalThreshold = 6;
         s6NoParticipationThreshold = 3;
     }
 
@@ -281,8 +311,11 @@ contract DinValidatorStake is
     ///         recidivism tracking. Applies a fraction of MIN_STAKE rather than
     ///         the full amount. If the validator's partial-slash count within
     ///         s5RecidivismWindow GIs (tracked per calling slasher contract,
-    ///         see _partialSlashGIs) reaches s5RecidivismThreshold, the slash
-    ///         is automatically escalated to MIN_STAKE and the validator is jailed.
+    ///         see _partialSlashGIs) reaches s5RecidivismThreshold, or its
+    ///         count across all slasher contracts within s5GlobalWindow seconds
+    ///         reaches s5GlobalThreshold (the global level, issue No. 193; see
+    ///         _partialSlashTimes), the slash is automatically escalated to
+    ///         MIN_STAKE and the validator is jailed.
     /// @param validator Address of the validator to slash.
     /// @param amount Partial slash amount (computed by the calling task contract
     ///        as a fraction of minStake). Ignored on S5 escalation — full MIN_STAKE
@@ -308,13 +341,29 @@ contract DinValidatorStake is
         // Count entries now in the window (includes the one just added).
         uint256 countInWindow = _partialSlashGIs[validator][msg.sender].length;
 
-        if (countInWindow >= s5RecidivismThreshold) {
+        // Global level (issue No. 193): the same partial slash also counts in
+        // a per-validator, time-windowed ring shared by every slasher contract,
+        // so misses spread across models (or across one model's coordinator
+        // and auditor) still add up. Off while s5GlobalThreshold is 0.
+        uint256 globalCount;
+        if (s5GlobalThreshold != 0) {
+            globalCount = _trimAndRecordGlobalPartialSlash(validator);
+        }
+        bool perSlasherHit = countInWindow >= s5RecidivismThreshold;
+
+        if (perSlasherHit || (s5GlobalThreshold != 0 && globalCount >= s5GlobalThreshold)) {
             // Escalate: full MIN_STAKE slash + jail.
             uint256 escalatedAmount = _applySlash(validator, MIN_STAKE, "S5_RECIDIVISM");
             _jailInternal(validator, uint64(s5JailDuration), "S5_RECIDIVISM");
-            emit ValidatorEscalatedS5(validator, escalatedAmount, giIndex, msg.sender);
-            // Clear this caller's ring so its next GI starts a fresh window after jail exit.
+            if (perSlasherHit) {
+                emit ValidatorEscalatedS5(validator, escalatedAmount, giIndex, msg.sender);
+            } else {
+                emit ValidatorEscalatedS5Global(validator, escalatedAmount, globalCount, msg.sender);
+            }
+            // Clear this caller's ring and the global ring so the next GI
+            // starts a fresh window after jail exit.
             delete _partialSlashGIs[validator][msg.sender];
+            delete _partialSlashTimes[validator];
             return escalatedAmount;
         }
 
@@ -593,6 +642,19 @@ contract DinValidatorStake is
         emit S5RecidivismParamsUpdated(window, threshold, jailDuration);
     }
 
+    /// @notice Updates the global (cross-model) S5 level (issue No. 193).
+    /// @param window Time window in seconds over which partial slashes from
+    ///        every slasher contract are counted.
+    /// @param threshold Partial slashes within the window that trigger
+    ///        escalation. Pass (0, 0) to turn the global level off; otherwise
+    ///        both must be > 0.
+    function setS5GlobalParams(uint256 window, uint256 threshold) external onlyOwner {
+        if ((window == 0) != (threshold == 0)) revert InvalidS5Params();
+        s5GlobalWindow = window;
+        s5GlobalThreshold = threshold;
+        emit S5GlobalParamsUpdated(window, threshold);
+    }
+
     /// @notice Updates the S6 no-participation threshold.
     /// @param threshold Number of no-show GIs before an escalating slash fires.
     function setS6NoParticipationThreshold(uint256 threshold) external onlyOwner {
@@ -611,6 +673,13 @@ contract DinValidatorStake is
         address slasherContract
     ) external view returns (uint256[] memory) {
         return _partialSlashGIs[validator][slasherContract];
+    }
+
+    /// @notice Returns a validator's global partial-slash timestamp ring
+    ///         (all slasher contracts; for testing/inspection).
+    /// @param validator Validator address to query.
+    function getPartialSlashTimes(address validator) external view returns (uint256[] memory) {
+        return _partialSlashTimes[validator];
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────
@@ -703,6 +772,37 @@ contract DinValidatorStake is
                 ring.pop();
             }
         }
+    }
+
+    /// @dev Pushes block.timestamp onto the validator's global ring, trims
+    ///      entries older than s5GlobalWindow from the front, and returns the
+    ///      count left in the window (including the one just added). The ring
+    ///      is non-decreasing because block timestamps never go backwards.
+    function _trimAndRecordGlobalPartialSlash(address validator) internal returns (uint256) {
+        uint256[] storage ring = _partialSlashTimes[validator];
+        uint256 nowTs = block.timestamp;
+        ring.push(nowTs);
+
+        uint256 window = s5GlobalWindow;
+        uint256 len = ring.length;
+        uint256 removeCount = 0;
+        for (uint256 i = 0; i < len - 1; i++) {
+            if (nowTs - ring[i] >= window) {
+                removeCount++;
+            } else {
+                break;
+            }
+        }
+        if (removeCount > 0) {
+            uint256 newLen = len - removeCount;
+            for (uint256 i = 0; i < newLen; i++) {
+                ring[i] = ring[i + removeCount];
+            }
+            for (uint256 i = 0; i < removeCount; i++) {
+                ring.pop();
+            }
+        }
+        return ring.length;
     }
 
     function _syncValidatorStatus(ValidatorInfo storage validator) internal {

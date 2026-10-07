@@ -205,6 +205,25 @@
     },
     {
       "type": "function",
+      "name": "getPartialSlashTimes",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "getStake",
       "inputs": [
         {
@@ -443,6 +462,32 @@
     },
     {
       "type": "function",
+      "name": "s5GlobalThreshold",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "s5GlobalWindow",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "s5JailDuration",
       "inputs": [],
       "outputs": [
@@ -554,6 +599,24 @@
         },
         {
           "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setS5GlobalParams",
+      "inputs": [
+        {
+          "name": "window",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "threshold",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -958,6 +1021,25 @@
     },
     {
       "type": "event",
+      "name": "S5GlobalParamsUpdated",
+      "inputs": [
+        {
+          "name": "window",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "threshold",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "S5RecidivismParamsUpdated",
       "inputs": [
         {
@@ -1133,6 +1215,37 @@
         },
         {
           "name": "giIndex",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "slasher",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ValidatorEscalatedS5Global",
+      "inputs": [
+        {
+          "name": "validator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "slashedAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "globalCount",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
