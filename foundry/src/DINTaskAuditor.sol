@@ -487,9 +487,6 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         emit RewardDeposited(gi, msg.sender, amount);
     }
 
-    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
-    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
-    ///      the slash-treasury is unset. Increments `treasuryAccrued` for observability.
     /// @dev Bounds- and id-checked batch lookup shared by the test-data paths.
     function _batchAt(uint256 gi, uint256 batchId) internal view returns (AuditBatch storage batch) {
         if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
@@ -497,6 +494,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         if (batch.batchId != batchId) revert TA_BatchIDMismatch();
     }
 
+    /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
+    ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
+    ///      the slash-treasury is unset. Increments `treasuryAccrued` for observability.
     function _burnAndForward(uint256 amount) internal {
         if (amount == 0) return;
         uint256 burnAmt = amount / 2;

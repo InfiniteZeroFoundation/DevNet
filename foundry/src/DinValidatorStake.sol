@@ -474,7 +474,8 @@ contract DinValidatorStake is
         emit MaxConcurrentRegistrationsPerStakeUnitUpdated(value);
     }
 
-    /// @notice Returns the per-model minimum stake floor set by the model owner.
+    /// @notice Returns the per-model minimum stake floor set by the owner
+    ///         (DIN-Representative) via setModelStakeBounds.
     /// @param modelId Model registry ID to query.
     function getModelStakeMin(uint256 modelId) external view returns (uint256) {
         return modelMinStakeBounds[modelId].min;
