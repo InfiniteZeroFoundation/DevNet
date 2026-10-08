@@ -60,7 +60,7 @@ Each service function is registered in the manifest as a JSON object with the fo
 | Key | Description |
 |---|---|
 | `type` | Service type (currently `"custom"`) |
-| `path` | Local relative path to the service file |
+| `path` | Local relative path to the service file. Must be relative and resolve inside the model's own cache/task directory — an absolute path or a `..` segment that would escape it is rejected (issue #227), not silently re-anchored. |
 | `ipfs` | IPFS CID of the uploaded and pinned service file |
 | `stakeholders` | List of roles that use this service (e.g., `"modelowner"`, `"clients"`, `"auditors"`, `"aggregators"`) |
 

@@ -11,7 +11,8 @@ from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, lock_batch_seed_if_pending,
-                               require_custom_manifest_service)
+                               require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -333,12 +334,12 @@ def aggregate_t1(
 
         model_base_dir = ctx.obj.get_model_base_dir(model_id)
         manifest = get_manifest_key(effective_network, "get_aggregated_cid_t1", model_id)
-        aggregator_service_path = model_base_dir / Path(manifest["path"])
-        model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+        aggregator_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="get_aggregated_cid_t1 path")
+        model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
 
         require_custom_manifest_service(manifest, "get_aggregated_cid_t1")
-        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
+        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
 
         aggregator_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("aggregators")
         requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
@@ -554,12 +555,12 @@ def aggregate_t2(
 
         model_base_dir = ctx.obj.get_model_base_dir(model_id)
         manifest = get_manifest_key(effective_network, "get_aggregated_cid_t2", model_id)
-        aggregator_service_path = model_base_dir / Path(manifest["path"])
-        model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
-  
+        aggregator_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="get_aggregated_cid_t2 path")
+        model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
+
         require_custom_manifest_service(manifest, "get_aggregated_cid_t2")
-        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
+        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
 
         aggregator_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("aggregators")
         requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")

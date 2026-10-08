@@ -6,11 +6,12 @@ import typer
 import json
 from web3 import Web3
 
-from dincli.cli.utils import (build_and_send_tx, get_env_key, 
+from dincli.cli.utils import (build_and_send_tx, get_env_key,
                                 get_manifest,
                                get_manifest_key,
                                require_custom_manifest_service,
-                               resolve_task_coordinator_address, 
+                               resolve_manifest_path,
+                               resolve_task_coordinator_address,
                                set_env_key, _confirm_or_exit)
 from dincli.services.cid_utils import get_bytes32_from_cid
 
@@ -100,12 +101,12 @@ def create_genesis_model(
         raise typer.Exit(1)
 
     manifest = get_manifest_key(effective_network, "getGenesisModelIpfs", None, task_coordinator_address)
-    service_path = task_dir / Path(manifest["path"])
-    model_service_path = task_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"])
+    service_path = resolve_manifest_path(task_dir, manifest["path"], what="getGenesisModelIpfs path")
+    model_service_path = resolve_manifest_path(task_dir, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"], what="ModelArchitecture path")
 
     require_custom_manifest_service(manifest, "getGenesisModelIpfs")
-    ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-    ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service")
+    ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=task_dir)
+    ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service", base_dir=task_dir)
 
     _confirm_or_exit(
         f"Have you edited/modified the modelowner service at {service_path} according to your task requirements?",
@@ -216,12 +217,12 @@ def submit_genesis_model(
             console.print("[yellow]Manifest does not require genesis model scoring with a test dataset. Skipping tier 2 score submission.[/yellow]")
         else:
             manifest = manifest_data["getscoreforGM"]
-            service_path = task_dir / Path(manifest["path"])
-            model_service_path = task_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"])
+            service_path = resolve_manifest_path(task_dir, manifest["path"], what="getscoreforGM path")
+            model_service_path = resolve_manifest_path(task_dir, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"], what="ModelArchitecture path")
 
             require_custom_manifest_service(manifest, "getscoreforGM")
-            ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service")
+            ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=task_dir)
+            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service", base_dir=task_dir)
 
             fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM")
 
