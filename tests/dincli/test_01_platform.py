@@ -86,8 +86,8 @@ def ensure_artifacts():
 
 
 def test_connect_wallet_dinrep(run, state):
-    """Switch to the dinrep wallet (account 0, DIN-Representative)."""
-    result = run(["system", "connect-wallet", "dinrep"])
+    """Switch to the dinrep demo wallet (account 0, DIN-Representative)."""
+    result = run(["system", "connect-demo-wallet", "dinrep"])
     assert result.returncode == 0
     state["representative_connected"] = True
 
