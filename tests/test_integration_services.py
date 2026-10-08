@@ -123,6 +123,58 @@ def test_start_failure_closes_log_without_signalling(harness):
     assert log_path.exists()
 
 
+def test_diagnostic_sink_failure_cleans_owned_startup(harness):
+    process, popen, killpg, _, start, log_path = harness
+    sink = Mock(path=log_path)
+    sink.check.side_effect = RuntimeError("capture failed")
+    diagnostics = Mock()
+    diagnostics.open_stream.return_value = sink
+    with pytest.raises(RuntimeError, match="capture failed"):
+        start(diagnostics=diagnostics)
+    sink.close.assert_called_once()
+    assert killpg.call_args_list == [
+        ((process.pid, signal.SIGTERM),), ((process.pid, signal.SIGKILL),),
+    ]
+    assert popen.call_args.kwargs["stdout"] is sink
+
+
+def test_diagnostic_close_failure_occurs_after_process_cleanup(harness):
+    process, _, killpg, _, start, log_path = harness
+    sink = Mock(path=log_path)
+    sink.close.side_effect = RuntimeError("capture failed")
+    diagnostics = Mock()
+    diagnostics.open_stream.return_value = sink
+    service = start(diagnostics=diagnostics)
+    with pytest.raises(RuntimeError, match="capture failed"):
+        service.close()
+    assert killpg.call_count == 2
+    assert process.wait.call_count == 2
+    diagnostics.note_failure.assert_called_once()
+
+
+def test_context_cleanup_failure_preserves_primary_exception(harness):
+    _, _, _, _, start, log_path = harness
+    sink = Mock(path=log_path)
+    sink.close.side_effect = OSError("log close failed")
+    diagnostics = Mock()
+    diagnostics.open_stream.return_value = sink
+    with pytest.raises(ValueError, match="primary") as caught:
+        with start(diagnostics=diagnostics):
+            raise ValueError("primary")
+    assert any("cleanup" in note for note in caught.value.__notes__)
+
+
+def test_startup_cleanup_failure_preserves_keyboard_interrupt(harness):
+    _, _, _, _, start, log_path = harness
+    sink = Mock(path=log_path)
+    sink.close.side_effect = OSError("log close failed")
+    diagnostics = Mock()
+    diagnostics.open_stream.return_value = sink
+    with pytest.raises(KeyboardInterrupt) as caught:
+        start(ready=Mock(side_effect=KeyboardInterrupt()), diagnostics=diagnostics)
+    assert any("cleanup" in note for note in caught.value.__notes__)
+
+
 def test_cleanup_escalates_when_parent_does_not_exit(harness):
     process, popen, killpg, _, start, _ = harness
     service = start()
@@ -130,6 +182,68 @@ def test_cleanup_escalates_when_parent_does_not_exit(harness):
     service.close()
     assert_closed(process, popen, killpg)
     assert process.wait.call_count == 2
+
+
+@pytest.mark.parametrize("failure", [PermissionError("TERM failed"), KeyboardInterrupt()])
+def test_initial_term_failure_still_escalates_reaps_and_closes_log(harness, failure):
+    process, popen, killpg, _, start, _ = harness
+    service = start()
+    killpg.side_effect = [failure, None]
+    with pytest.raises(type(failure)) as caught:
+        service.close()
+    assert caught.value is failure
+    assert_closed(process, popen, killpg)
+    assert process.wait.call_count == 2
+    # All steps were attempted, so a repeat close is safe and has no side effects.
+    service.close()
+    assert process.wait.call_count == 2
+
+
+def test_cleanup_attempts_remaining_steps_after_grace_and_kill_failures(harness):
+    process, popen, killpg, _, start, _ = harness
+    service = start()
+    primary = RuntimeError("grace wait failed")
+    process.wait.side_effect = [primary, OSError("reap failed")]
+    killpg.side_effect = [None, PermissionError("KILL failed")]
+    with pytest.raises(RuntimeError, match="grace wait failed") as caught:
+        service.close()
+    assert caught.value is primary
+    assert_closed(process, popen, killpg)
+    assert process.wait.call_count == 2
+    assert any("escalation" in note for note in primary.__notes__)
+    assert any("reaping" in note for note in primary.__notes__)
+
+
+def test_process_cleanup_failure_stays_primary_when_log_close_also_fails(harness):
+    process, _, killpg, _, start, log_path = harness
+    sink = Mock(path=log_path)
+    sink.close.side_effect = OSError("log close failed")
+    diagnostics = Mock()
+    diagnostics.open_stream.return_value = sink
+    service = start(diagnostics=diagnostics)
+    primary = PermissionError("TERM failed")
+    killpg.side_effect = [primary, None]
+    with pytest.raises(PermissionError, match="TERM failed") as caught:
+        service.close()
+    assert caught.value is primary
+    assert process.wait.call_count == 2
+    assert killpg.call_count == 2
+    sink.close.assert_called_once()
+    assert any("log cleanup" in note for note in primary.__notes__)
+
+
+def test_context_primary_survives_process_cleanup_failure(harness, capsys):
+    process, popen, killpg, _, start, _ = harness
+    service = start()
+    killpg.side_effect = [PermissionError("TERM failed"), None]
+    primary = ValueError("primary operation failed")
+    with pytest.raises(ValueError, match="primary operation failed") as caught:
+        with service:
+            raise primary
+    assert caught.value is primary
+    assert_closed(process, popen, killpg)
+    assert any("cleanup" in note for note in primary.__notes__)
+    assert "PermissionError" in capsys.readouterr().err
 
 
 def test_already_exited_group_does_not_prevent_cleanup(harness):

@@ -9,6 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.dincli.diagnostics import DiagnosticsWriteError
+
 
 @pytest.fixture
 def harness(monkeypatch, tmp_path):
@@ -56,6 +58,16 @@ def fake_services(harness, monkeypatch):
     monkeypatch.setattr(services.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
     monkeypatch.setattr(harness, "_compile_contracts", lambda path: None)
     monkeypatch.setattr(harness, "_build_foundry_contracts", lambda path: None)
+
+    def capture(command, **kwargs):
+        with (harness.RESULTS_DIR / "ipfs_init.log").open("a") as log:
+            result = harness.subprocess.run(
+                command, stdout=log, stderr=subprocess.STDOUT,
+                env=kwargs["env"], cwd=kwargs["cwd"], timeout=kwargs["timeout"],
+            )
+        return result or subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(harness, "_get_diagnostics", lambda: SimpleNamespace(run=capture))
 
     def start(command, *, log_path, **kwargs):
         log = log_path.open("w", encoding="utf-8")
@@ -157,12 +169,15 @@ def test_isolated_scratch_cleanup_retains_external_evidence(harness):
 
     assert not harness.DIN_TEMP.exists()
     assert evidence.read_text() == "retain this"
+    assert json.loads((harness.RESULTS_DIR / "cleanup.json").read_text()) == {
+        "scratch_removed": True, "errors": [], "errors_omitted": 0,
+    }
 
 
 def test_results_creation_failure_cleans_new_scratch(harness):
     harness.RESULTS_DIR.write_text("existing file")
     fixture = harness.din_tmp.__wrapped__()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(DiagnosticsWriteError):
         next(fixture)
     assert not harness.DIN_TEMP.exists()
     assert harness.RESULTS_DIR.read_text() == "existing file"
@@ -214,3 +229,56 @@ def test_isolated_bootstrap_preserves_existing_public_accounts(harness, fail_boo
         next(fixture)
         fixture.close()
     assert accounts_path.read_bytes() == original
+
+
+def test_report_collection_failure_still_removes_scratch(harness, monkeypatch):
+    monkeypatch.setattr(harness, "collect_worker_reports", Mock(side_effect=OSError("disk full")))
+    fixture = harness.din_tmp.__wrapped__()
+    next(fixture)
+    with pytest.raises(OSError, match="disk full"):
+        fixture.close()
+    assert not harness.DIN_TEMP.exists()
+    assert json.loads((harness.RESULTS_DIR / "cleanup.json").read_text())["errors"] == [
+        "reports:OSError",
+    ]
+
+
+def test_prior_service_failure_is_retained_in_final_cleanup(harness):
+    fixture = harness.din_tmp.__wrapped__()
+    next(fixture)
+    failure = PermissionError("simulated service cleanup failure")
+    harness._get_diagnostics().note_failure("service_cleanup", failure)
+    with pytest.raises(PermissionError):
+        fixture.close()
+    assert not harness.DIN_TEMP.exists()
+    summary = json.loads((harness.RESULTS_DIR / "cleanup.json").read_text())
+    assert summary["errors"] == ["diagnostics:PermissionError"]
+
+
+def test_collection_failure_does_not_replace_active_error(harness, monkeypatch, capsys):
+    monkeypatch.setattr(harness, "collect_worker_reports", Mock(side_effect=OSError("disk full")))
+    fixture = harness.din_tmp.__wrapped__()
+    next(fixture)
+    with pytest.raises(ValueError, match="primary"):
+        fixture.throw(ValueError("primary"))
+    assert not harness.DIN_TEMP.exists()
+    assert "disk full" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+def test_run_cmd_preserves_results_and_input_in_both_modes(harness, monkeypatch, isolated):
+    monkeypatch.setattr(harness, "ISOLATED_MODE", isolated)
+    result = subprocess.CompletedProcess(["test"], 7, "stdout", "stderr")
+    capture = Mock(return_value=result)
+    legacy = Mock(return_value=result)
+    monkeypatch.setattr(harness, "_get_diagnostics", lambda: SimpleNamespace(run=capture))
+    monkeypatch.setattr(harness.subprocess, "run", legacy)
+    assert harness.run_cmd(
+        ["system", "where"], {"PATH": "/bin"}, harness.DIN_TEMP,
+        check=False, input_text="yes\n", timeout=3,
+    ) is result
+    called = capture if isolated else legacy
+    unused = legacy if isolated else capture
+    assert called.call_args.kwargs["timeout"] == 3
+    assert called.call_args.kwargs["input_text" if isolated else "input"] == "yes\n"
+    unused.assert_not_called()
