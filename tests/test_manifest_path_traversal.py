@@ -13,10 +13,12 @@ file on their own machine overwritten.
 `resolve_manifest_path` (dincli/cli/utils.py) is the fix: every call site
 that used to do `<base> / Path(manifest[...]["path"])` now goes through
 it, and it raises rather than silently re-anchoring. `ensure_file_exists`
-(dincli/cli/context.py) also gained its own containment check as a
-backstop, so a future call site that forgets the helper still can't
-write outside its base directory (or CACHE_DIR, if no tighter base is
-given).
+and `load_custom_fn` (dincli/cli/context.py) also take a required
+`base_dir` and check containment as a backstop, so a future call site that
+forgets the helper still can't write outside its workflow root:
+`get_model_base_dir(model_id)` for participants (and the model owner once
+the model is registered), `get_task_dir(coordinator)` for the model owner
+while preparing the task.
 """
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -93,6 +95,7 @@ def test_resolve_manifest_path_allows_a_path_equal_to_base_itself(tmp_path):
 def _make_dincontext():
     ctx = DinContext.__new__(DinContext)  # bypass __init__ (no config/log I/O needed)
     ctx.console = MagicMock()
+    ctx._resolved_network = "local"
     return ctx
 
 
@@ -108,17 +111,56 @@ def test_ensure_file_exists_backstop_rejects_outside_path_with_explicit_base(tmp
         mock_retrieve.assert_not_called()
 
 
-def test_ensure_file_exists_backstop_falls_back_to_cache_dir_default(tmp_path, monkeypatch):
-    # No base_dir passed -- falls back to CACHE_DIR. A path wildly outside
-    # CACHE_DIR must still be rejected.
-    monkeypatch.setattr("dincli.cli.context.CACHE_DIR", tmp_path / "dincli-cache")
+def test_ensure_file_exists_and_load_custom_fn_require_base_dir(tmp_path):
+    # There is no CACHE_DIR fallback: a caller that forgets base_dir fails
+    # loudly instead of being checked against a boundary that's either too
+    # wide (other models' dirs) or wrong (the model owner's cwd task dir).
     ctx = _make_dincontext()
-    outside_path = tmp_path / "definitely-not-the-cache-dir" / "evil.py"
+    path = tmp_path / "services" / "client.py"
+
+    with patch("dincli.cli.context.retrieve_from_ipfs") as mock_retrieve:
+        with pytest.raises(TypeError):
+            ctx.ensure_file_exists(path, "cidABC", "client service")
+        with pytest.raises(TypeError):
+            ctx.load_custom_fn(path, "fn")
+        mock_retrieve.assert_not_called()
+
+
+def test_ensure_file_exists_participant_cannot_write_into_another_model_dir(tmp_path, monkeypatch):
+    # A participant's root is its own model dir, not the whole cache: a path
+    # under a sibling model's dir is rejected even though it's inside CACHE_DIR.
+    monkeypatch.setattr("dincli.cli.context.CACHE_DIR", tmp_path / "cache")
+    ctx = _make_dincontext()
+    other_model_path = ctx.get_model_base_dir(2) / "services" / "client.py"
 
     with patch("dincli.cli.context.retrieve_from_ipfs") as mock_retrieve:
         with pytest.raises(ManifestPathEscapesBaseError):
-            ctx.ensure_file_exists(outside_path, "cidABC", "evil file")
+            ctx.ensure_file_exists(other_model_path, "cidABC", "client service", base_dir=ctx.get_model_base_dir(1))
         mock_retrieve.assert_not_called()
+
+
+def test_load_custom_fn_model_owner_task_dir_outside_cache_dir(tmp_path, monkeypatch):
+    # Regression for create-genesis-model / submit-genesis-model /
+    # distribute-mnist (task flow): the model owner's services live under
+    # cwd/tasks/<network>/<coordinator>, outside CACHE_DIR, and must load.
+    monkeypatch.setattr("dincli.cli.context.CACHE_DIR", tmp_path / "cache")
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    ctx = _make_dincontext()
+
+    task_dir = ctx.get_task_dir("0xabc")
+    assert task_dir == project / "tasks" / "local" / "0xabc"
+    service_path = resolve_manifest_path(task_dir, "services/modelowner.py")
+    service_path.parent.mkdir(parents=True)
+    service_path.write_text("def getGenesisModelIpfs(task_dir):\n    return 'ok'\n")
+
+    fn = ctx.load_custom_fn(service_path, "getGenesisModelIpfs", base_dir=task_dir)
+    assert fn(task_dir) == "ok"
+
+    # The same file is outside a participant's model dir.
+    with pytest.raises(ManifestPathEscapesBaseError):
+        ctx.load_custom_fn(service_path, "getGenesisModelIpfs", base_dir=ctx.get_model_base_dir(1))
 
 
 def test_ensure_file_exists_accepts_a_path_inside_the_given_base(tmp_path):
@@ -279,6 +321,7 @@ def test_create_testdataset_rejects_manifest_path_escape(mock_get_manifest_key):
     ctx.obj.get_current_gi_and_state.return_value = (1, "AuditorsBatchesCreated")
     ctx.obj.validate_gi_ET_curr_GI.return_value = 1
     ctx.obj.validate_GIstate_ET_given_GIstate.return_value = None
+    ctx.obj.get_model_base_dir.return_value = Path("/tmp/dincli-test-modelowner-model")
 
     mock_get_manifest_key.return_value = {"path": "/etc/passwd", "ipfs": "cidABC"}
 

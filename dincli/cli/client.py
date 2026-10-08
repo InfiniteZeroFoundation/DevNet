@@ -137,7 +137,7 @@ def train_lms(
     requirements_path = get_worker_requirements_path(model_base_dir, "clients")
     packages_dir = Path(packages_dir) if packages_dir else None
     if client_requirements_cid:
-        ctx.obj.ensure_file_exists(requirements_path, client_requirements_cid, "client requirements")
+        ctx.obj.ensure_file_exists(requirements_path, client_requirements_cid, "client requirements", base_dir=model_base_dir)
         try:
             ensure_worker_image(console)
 
@@ -157,6 +157,7 @@ def train_lms(
         model_base_dir / "models" / "genesis_model.pth",
         genesis_model_ipfs_hash,
         "genesis model",
+        base_dir=model_base_dir,
     )
 
     if initial_model_ipfs_hash:
@@ -164,6 +165,7 @@ def train_lms(
             model_base_dir / "models" / f"gm_{current_GI-1}.pt",
             initial_model_ipfs_hash,
             "latest global model",
+            base_dir=model_base_dir,
         )
 
     client_dataset_path = model_base_dir / "dataset" / "clients" / account.address / "data.pt"

@@ -62,7 +62,7 @@ def create_genesis_model(
         console.print(f"The genesis model hash will be set in {os.getcwd()}/.env under {effective_network.upper() + '_' + task_coordinator_address}_GENESIS_MODEL_IPFS_HASH")
         raise typer.Exit(0)
 
-    task_dir = Path(os.getcwd()) / 'tasks' / effective_network.lower() / task_coordinator_address
+    task_dir = ctx.obj.get_task_dir(task_coordinator_address)
 
     _confirm_or_exit(
         "Have you created task directory using: dincli model-owner task create-task-dir ?",
@@ -121,7 +121,8 @@ def create_genesis_model(
     console.print("[bold green]Creating genesis model... [/bold green]")
     fn = ctx.obj.load_custom_fn(
         service_path,
-        "getGenesisModelIpfs"
+        "getGenesisModelIpfs",
+        base_dir=task_dir,
     )
     model_hash = fn(task_dir)
     
@@ -149,7 +150,7 @@ def add_default_test_data(ctx: typer.Context,     task_coordinator_address: str 
     if model_id is not None:
         task_dir = ctx.obj.get_model_base_dir(model_id)
     elif task_coordinator_address is not None:
-        task_dir = Path.cwd() / 'tasks' / effective_network.lower()/ task_coordinator_address
+        task_dir = ctx.obj.get_task_dir(task_coordinator_address)
     test_dataset_path = task_dir.joinpath("dataset","test","test_dataset.pt")
     if default_test_data:
         default_test_dataset_ipfs_hash = "bafybeigjtcu2nzsffoy5pjmui25bnc43yduzn6aopi4wnrbtxfleqmw46y"
@@ -206,7 +207,7 @@ def submit_genesis_model(
         accuracy = score
     else:
 
-        task_dir = Path.cwd() / 'tasks' / effective_network.lower()/ task_coordinator_address
+        task_dir = ctx.obj.get_task_dir(task_coordinator_address)
 
         manifest_data = get_manifest(
             effective_network,
@@ -224,7 +225,7 @@ def submit_genesis_model(
             ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=task_dir)
             ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service", base_dir=task_dir)
 
-            fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM")
+            fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM", base_dir=task_dir)
 
             test_dataset_path = task_dir.joinpath("dataset", "test", "test_dataset.pt")
             _confirm_or_exit(
@@ -294,7 +295,7 @@ def validate_update_manifest(
         effective_network, task_coordinator_address, console
     )
 
-    task_dir = Path.cwd() / 'tasks' / effective_network.lower()/ task_coordinator_address
+    task_dir = ctx.obj.get_task_dir(task_coordinator_address)
 
     manifestpath = task_dir / "manifest.json"
     console.print(f"[bold green] Updating Manifest file at  {manifestpath} ...[/bold green]")

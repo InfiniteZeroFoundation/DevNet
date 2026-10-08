@@ -334,13 +334,17 @@ used for `ModelArchitecture`. This is handled for `scoring.py` via the
 
 ```python
 scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
-scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
-ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
+scoring_service_path = resolve_manifest_path(model_base_dir, scoring_manifest["path"], what="ScoringUtils path")
+ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils", base_dir=model_base_dir)
 ```
 
 When adding a new reference service with sibling-module imports, follow this
 pattern: add a manifest entry with its own IPFS CID, and fetch it explicitly
-before the worker job runs.
+before the worker job runs. Always build the path with
+`resolve_manifest_path` (never `base / Path(manifest["path"])`) and pass the
+workflow root as `base_dir`. That root is `get_model_base_dir(model_id)` for
+participants, or `get_task_dir(coordinator)` for the model owner before
+registration (issue #227).
 
 ---
 

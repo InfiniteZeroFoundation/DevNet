@@ -130,7 +130,7 @@ def start(
 
         ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=model_base_path)
         ctx.obj.ensure_file_exists(model_arch_path, model_arch_manifest["ipfs"], "model architecture service", base_dir=model_base_path)
-        ctx.obj.ensure_file_exists(genesis_model_path, manifest_data["Genesis_Model_CID"], "genesis model")
+        ctx.obj.ensure_file_exists(genesis_model_path, manifest_data["Genesis_Model_CID"], "genesis model", base_dir=model_base_path)
 
         _confirm_or_exit(f"Pass Scoring is enabled. Have you placed the test dataset for GM evaluation at {test_data_path}?", "Pass Scoring is enabled. Test dataset not placed. ", console)
             
@@ -139,7 +139,7 @@ def start(
             console.print(f"[red]X Test dataset missing:[/red] {test_data_path}")
             raise typer.Exit(1)
 
-        fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM")
+        fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM", base_dir=model_base_path)
 
         accuracy = fn(curr_gi, gmcid, model_base_path)
 
