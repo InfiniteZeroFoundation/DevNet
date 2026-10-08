@@ -2,7 +2,7 @@ from pathlib import Path
 import typer
 from rich.table import Table
 
-from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, ensure_batch_seed_locked,
+from dincli.cli.utils import (build_and_send_tx, ensure_batch_seed_locked,
                                get_manifest_key, require_custom_manifest_service,
                                resolve_manifest_path)
 from dincli.services.cid_utils import get_cid_from_bytes32
@@ -396,7 +396,7 @@ def set_t2_score(
         console.print("[cyan]Calculating score for final GM model...[/cyan]")
 
         manifest = get_manifest_key(effective_network, "getscoreforGM", model_id)
-        model_base_path = Path(CACHE_DIR) / effective_network /  f"model_{model_id}"
+        model_base_path = ctx.obj.get_model_base_dir(model_id)
         modelowner_service_path = resolve_manifest_path(model_base_path, manifest["path"], what="getscoreforGM path")
         model_service_path = resolve_manifest_path(model_base_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
 
@@ -406,9 +406,10 @@ def set_t2_score(
 
         fn = ctx.obj.load_custom_fn(
         modelowner_service_path,
-        "getscoreforGM")
+        "getscoreforGM",
+        base_dir=model_base_path)
 
-        ctx.obj.ensure_file_exists(Path(model_base_path)/"models"/"genesis_model.pth", get_manifest_key(effective_network,"Genesis_Model_CID", model_id), "genesis model")
+        ctx.obj.ensure_file_exists(Path(model_base_path)/"models"/"genesis_model.pth", get_manifest_key(effective_network,"Genesis_Model_CID", model_id), "genesis model", base_dir=model_base_path)
         if not (Path(model_base_path)/"dataset"/"test"/"test_dataset.pt").exists():
             console.print("[red]Error:[/red] Test dataset not found at ", str(Path(model_base_path)/"dataset"/"test"/"test_dataset.pt"))
             console.print("[yellow]Warning:[/yellow] please ensure the test dataset is present at ", str(Path(model_base_path)/"dataset"/"test"/"test_dataset.pt"))

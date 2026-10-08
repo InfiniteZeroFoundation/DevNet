@@ -386,7 +386,7 @@ def evaluate_lms(
     requirements_path = get_worker_requirements_path(model_base_dir, "auditors")
     packages_dir = Path(packages_dir) if packages_dir else None
     if auditor_requirements_cid:
-        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements")
+        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements", base_dir=model_base_dir)
         try:
             ensure_worker_image(console)
             if not no_cache and packages_dir is None:
@@ -403,6 +403,7 @@ def evaluate_lms(
         model_base_dir / "models" / "genesis_model.pth",
         genesis_model_cid,
         "genesis model",
+        base_dir=model_base_dir,
     )
 
     found_any = False
@@ -502,6 +503,7 @@ def evaluate_lms(
                 model_base_dir / "models" / "auditor" / f"lm_{curr_GI}_{model_index}.pth",
                 lm_cid,
                 "local model submission",
+                base_dir=model_base_dir,
             )
 
             metric_bundle_dir = model_base_dir / "audits" / "metric_bundles" / account.address

@@ -345,7 +345,7 @@ def aggregate_t1(
         requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
         packages_dir = Path(packages_dir) if packages_dir else None
         if aggregator_requirements_cid:
-            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements")
+            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements", base_dir=model_base_dir)
             try:
                 ensure_worker_image(console)
                 if not no_cache and packages_dir is None:
@@ -363,8 +363,8 @@ def aggregate_t1(
         # access happens inside the container.
         aggregator_models_path = model_base_dir / "aggregator" / account.address / str(curr_GI) / "T1" / str(bid) / "models"
         for model_cid in model_cids:
-            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 local model submission")
-        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model")
+            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 local model submission", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model", base_dir=model_base_dir)
 
         jobs_dir = model_base_dir / "jobs" / "aggregators" / account.address
         job_path, output_dir = write_worker_job(
@@ -566,7 +566,7 @@ def aggregate_t2(
         requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
         packages_dir = Path(packages_dir) if packages_dir else None
         if aggregator_requirements_cid:
-            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements")
+            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements", base_dir=model_base_dir)
             try:
                 ensure_worker_image(console)
                 if not no_cache and packages_dir is None:
@@ -581,8 +581,8 @@ def aggregate_t2(
 
         aggregator_models_path = model_base_dir / "aggregator" / account.address / str(curr_GI) / "T2" / str(bid) / "models"
         for model_cid in model_cids:
-            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 final model")
-        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model")
+            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 final model", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model", base_dir=model_base_dir)
 
         jobs_dir = model_base_dir / "jobs" / "aggregators" / account.address
         job_path, output_dir = write_worker_job(

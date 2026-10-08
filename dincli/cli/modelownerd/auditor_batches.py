@@ -10,7 +10,7 @@ from eth_abi.packed import encode_packed
 from eth_account.messages import encode_defunct
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from dincli.cli.utils import CACHE_DIR, CONFIG_DIR, build_and_send_tx, ensure_batch_seed_locked, get_manifest_key, require_custom_manifest_service, resolve_manifest_path
+from dincli.cli.utils import CONFIG_DIR, build_and_send_tx, ensure_batch_seed_locked, get_manifest_key, require_custom_manifest_service, resolve_manifest_path
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 auditor_batches_app = typer.Typer(help="Auditor Batches commands")
@@ -139,13 +139,13 @@ def create_testdataset(
 
     audtor_batch_count = taskauditor_contract.functions.AuditorsBatchCount(ref_gi).call()
 
-    model_base_path = Path(CACHE_DIR) / effective_network /  f"model_{model_id}"
+    model_base_path = ctx.obj.get_model_base_dir(model_id)
     manifest = get_manifest_key(effective_network, "create_audit_testDataCIDs", model_id)
     modelowner_service_path = resolve_manifest_path(model_base_path, manifest["path"], what="create_audit_testDataCIDs path")
 
     require_custom_manifest_service(manifest, "create_audit_testDataCIDs")
     ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "model owner service", base_dir=model_base_path)
-    fn = ctx.obj.load_custom_fn(modelowner_service_path, "create_audit_testDataCIDs")
+    fn = ctx.obj.load_custom_fn(modelowner_service_path, "create_audit_testDataCIDs", base_dir=model_base_path)
 
     if test_data_path is None:
         test_data_path = model_base_path / "dataset" / "test" / "test_dataset.pt"

@@ -1376,7 +1376,7 @@ def distribute_mnist(
     if model_id:
         base_dir = ctx.obj.get_model_base_dir(model_id)
     elif task_coordinator_address:
-        base_dir = Path(os.getcwd()) / "tasks" / effective_network.lower() / task_coordinator_address
+        base_dir = ctx.obj.get_task_dir(task_coordinator_address)
     else:
         console.print("[red]❌ Model ID or task coordinator address is required.[/red]")
         raise typer.Exit(1)
@@ -1418,8 +1418,8 @@ def distribute_mnist(
     service_path = base_dir / service_entry["path"].lstrip("/")
     requirements_path = base_dir / "requirements" / "distribute_mnist.txt"
 
-    ctx.obj.ensure_file_exists(service_path, service_entry["ipfs"], "distribute_mnist service")
-    ctx.obj.ensure_file_exists(requirements_path, service_entry["requirements"], "distribute_mnist requirements")
+    ctx.obj.ensure_file_exists(service_path, service_entry["ipfs"], "distribute_mnist service", base_dir=base_dir)
+    ctx.obj.ensure_file_exists(requirements_path, service_entry["requirements"], "distribute_mnist requirements", base_dir=base_dir)
 
     _confirm_or_exit(
         f"Have you installed the required dependencies via `pip install -r {requirements_path}`?",
@@ -1433,7 +1433,7 @@ def distribute_mnist(
     if test_train:
         console.print("[cyan]Processing Train/Test Datasets...[/cyan]")
         try:
-            save_test_train_fn = ctx.obj.load_custom_fn(service_path, "save_test_train_datasets")
+            save_test_train_fn = ctx.obj.load_custom_fn(service_path, "save_test_train_datasets", base_dir=base_dir)
             save_test_train_fn(base_dir=base_dir)
         except Exception as e:
             console.print(f"[bold red]Error saving train/test datasets: {e}[/bold red]")
@@ -1446,7 +1446,7 @@ def distribute_mnist(
     if clients:
         console.print("[cyan]Processing Client Datasets... This may take a while.[/cyan]")
         try:
-            distribute_to_clients_fn = ctx.obj.load_custom_fn(service_path, "distribute_to_clients")
+            distribute_to_clients_fn = ctx.obj.load_custom_fn(service_path, "distribute_to_clients", base_dir=base_dir)
             result = distribute_to_clients_fn(
                 base_dir=base_dir,
                 accounts_list=accounts_list,
