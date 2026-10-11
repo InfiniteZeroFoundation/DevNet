@@ -26,6 +26,7 @@ error TC_DisputeNotAwaitingRecomputation();
 error TC_DisputeSeedBlockNotMined();
 error TC_DisputeSeedAlreadyLocked();
 error TC_AggregatorNotActive();
+import {TA_DualRoleNotAllowed} from "../src/DINShared.sol";
 
 contract P3AdversarialTest is Test {
 
@@ -684,14 +685,10 @@ contract P3AdversarialTest is Test {
             "dissenter's stake not refunded - S4 flow does not repair this");
     }
 
-    // ── Row 6: KNOWN GAP - cross-role dual-registration ──────────────────────
+    // ── Row 6: DEFENDED - cross-role dual-registration ────────────────────────
 
-    // One address registers as both aggregator and auditor in the same GI.
-    // No revert: the protocol has no cross-role guard.
-    /// @dev Flip to test_defended_dualRoleRegistration once #180 (PR #235) merges —
-    ///      assert that registerDINaggregator or registerDINAuditor reverts with the
-    ///      cross-role guard error for an address already registered in the other role.
-    function test_knownGap_dualRoleRegistration() public {
+    // One address cannot register as both aggregator and auditor in the same GI.
+    function test_defended_dualRoleRegistration() public {
         _deployPlatform();
         _deployTaskPair();
 
@@ -705,13 +702,15 @@ contract P3AdversarialTest is Test {
         tc.startDINauditorsRegistration(1);
         vm.stopPrank();
 
-        // No cross-role check - same address registers as auditor too.
+        // Cross-role guard prevents the same address from registering as auditor
+        // after being registered as an aggregator in the same GI.
+        vm.expectRevert(TA_DualRoleNotAllowed.selector);
         vm.prank(dualRole); ta.registerDINAuditor(1);
 
         assertTrue(tc.isDINAggregator(1, dualRole),
             "dual-role address registered as aggregator");
-        assertTrue(ta.isRegisteredAuditor(1, dualRole),
-            "dual-role address registered as auditor in same GI");
+        assertFalse(ta.isRegisteredAuditor(1, dualRole),
+            "dual-role address not registered as auditor");
     }
 
     // ── Row 7: KNOWN GAP - owner suppresses or abandons a dispute ────────────
