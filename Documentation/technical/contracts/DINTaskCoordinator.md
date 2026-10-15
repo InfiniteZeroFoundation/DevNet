@@ -171,19 +171,23 @@ Both batch-creation steps shuffle with a seed that must be locked first (issue #
 
 A lock call reverts if the seed isn't anchored yet (`TC_*SeedNotAnchored`), is already locked (`TC_*SeedAlreadyLocked`), or the anchor block isn't mined yet (`TC_*SeedBlockNotMined`). If more than 256 blocks have passed and `blockhash(seedBlock)` is zero, the call re-anchors to `block.number + disputeSeedDelay` and emits the `…Reanchored` event; it never stores a zero-derived seed.
 
-**Residual trust and gaps** (from the PR #191 review; tracked as BL-26 in [`Developer/BACK_LOG.md`](../../../Developer/BACK_LOG.md)):
+**Residual trust and gaps** (as of issue #243 / PR #<n>; tracked as BL-26 in [`Developer/BACK_LOG.md`](../../../Developer/BACK_LOG.md)):
 - **Sequencer trust.** `blockhash` is sequencer-produced on OP Stack, so this design trusts the sequencer not to grind. VRF is the mainnet-grade follow-up (issue #178).
 - **Re-roll by declining to lock.** Once `seedBlock` is mined, anyone can compute the resulting shuffle off-chain. A model owner who dislikes it can simply not lock, wait out the 256-block window, and get a fresh anchor on the next lock call. The permissionless lock only prevents this if another party locks first.
-- **Post-lock pool reshaping.** The active pools are read when `createAuditorsBatches` / `autoCreateTier1AndTier2` run, after the seed is public. A validator can unstake between the lock and the create call, which changes the pool size and so reshuffles everyone. An attacker with several registered addresses can compute each outcome off-chain and unstake whichever address gives the batch they want.
+- ~~**Post-lock pool reshaping.**~~ **Fixed by issue #243.** Batch layout is now derived from the fixed per-GI registration list (`dinAggregators[_GI]`) instead of the live active pool. An unstake between seed-lock and batch-creation forfeits only the leaver's own seat; every other validator's batch and seat position is determined solely by the fixed list and the locked seed. See §6.4 for the position-stable seat assignment algorithm.
 
 ### 6.4 `autoCreateTier1AndTier2`
 Requires `LMSevaluationClosed` and a locked `aggSeed[gi]`.
-1. Filters the registered aggregators to those still `Active` at call time (`_activeAggregatorPool`); needs ≥ 3 (`TC_NotEnoughValidators`).
-2. Shuffles the aggregators with `keccak256(seed, "AGG_ADDR")` and the approved model indexes with `keccak256(seed, "AGG_IDX")` (Fisher-Yates, in memory). Needs ≥ `T1_MODELS_PER_BATCH` approved models (`TC_NotEnoughApprovedModels`).
-3. Greedily fills T1 batches with 3 aggregators and 3 models each (the last batch may take 2 models).
-4. If ≥ 3 aggregators remain, forms the single T2 batch (id 0) from the next 3.
 
-Leftover aggregators and models are simply not used this GI. If fewer than 3 aggregators remain for T2, no T2 batch exists and `finalizeT2Aggregation` has nothing to finalize.
+**Position-stable seat assignment** (issue #243): The batch layout is derived from the fixed per-GI registration list (`dinAggregators[_GI]`), not the live active pool. An unstake between seed-lock and this call can only forfeit the leaver's own seat — every other validator's batch and seat position is fixed.
+
+1. Shuffles the fixed per-GI registration list `dinAggregators[_GI]` in memory with `keccak256(seed, "AGG_ADDR")`. Also shuffles approved model indexes with `keccak256(seed, "AGG_IDX")`.
+2. Computes the batch layout from the registered count (`rLen`) and model count (`mLen`): T1 batch count = `mLen / T1_MODELS_PER_BATCH + (remainder ≥ MIN_T1_MODELS_PER_BATCH ? 1 : 0)`, capped by `rLen / T1_AGGREGATORS_PER_BATCH`; T2 exists if the remaining registered validators ≥ `T1_AGGREGATORS_PER_BATCH`. Total primary seats = `(t1cnt + hasT2) * T1_AGGREGATORS_PER_BATCH`.
+3. Position-stable seat fill: for each primary seat i, if `regList[i]` is inactive, scan forward in the reserve section (positions `totalSeats..rLen-1`) for the first active entry and substitute it. Reverts with `TC_NotEnoughValidators` if the reserve is exhausted.
+4. Builds T1 batches from the position-stable validator array (positions `0..3*t1cnt-1`) and the model array. The last T1 batch may receive `MIN_T1_MODELS_PER_BATCH` models if the model count is not divisible by 3.
+5. If T2 exists, builds the T2 batch from positions `3*t1cnt..totalSeats-1`.
+
+Leftover aggregators and models (beyond `totalSeats`) are not used this GI. If fewer than `T1_AGGREGATORS_PER_BATCH` aggregators remain beyond the T1 seats, no T2 batch is created and `finalizeT2Aggregation` has nothing to finalize.
 
 ### 6.5 Aggregation (T1 / T2): commit, reveal, finalize
 
