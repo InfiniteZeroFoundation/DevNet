@@ -162,7 +162,7 @@ def run_cmd(tmp_path, deps: dict, w3=None, no_color=True, slashers=None):
         verify_deployment(ctx, file=dep_file, no_color=no_color, slashers=slashers)
     except (SystemExit,) as exc:
         exit_code = exc.code or 0
-    except click.exceptions.Exit as exc:
+    except (click.exceptions.Exit, typer.Exit) as exc:
         exit_code = exc.exit_code
     return exit_code, ctx.obj.console.lines
 
@@ -270,7 +270,7 @@ class TestFileHandling:
             verify_deployment(ctx, file=tmp_path / "missing.json", no_color=True, slashers=None)
         except (SystemExit,) as exc:
             exit_code = exc.code or 0
-        except click.exceptions.Exit as exc:
+        except (click.exceptions.Exit, typer.Exit) as exc:
             exit_code = exc.exit_code
         assert exit_code != 0
 
@@ -283,6 +283,6 @@ class TestFileHandling:
             verify_deployment(ctx, file=bad, no_color=True, slashers=None)
         except (SystemExit,) as exc:
             exit_code = exc.code or 0
-        except click.exceptions.Exit as exc:
+        except (click.exceptions.Exit, typer.Exit) as exc:
             exit_code = exc.exit_code
         assert exit_code != 0
