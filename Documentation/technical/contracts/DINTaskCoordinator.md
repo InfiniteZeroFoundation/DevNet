@@ -171,7 +171,7 @@ Both batch-creation steps shuffle with a seed that must be locked first (issue #
 
 A lock call reverts if the seed isn't anchored yet (`TC_*SeedNotAnchored`), is already locked (`TC_*SeedAlreadyLocked`), or the anchor block isn't mined yet (`TC_*SeedBlockNotMined`). If more than 256 blocks have passed and `blockhash(seedBlock)` is zero, the call re-anchors to `block.number + disputeSeedDelay` and emits the `…Reanchored` event; it never stores a zero-derived seed.
 
-**Residual trust and gaps** (as of issue #243 / PR #<n>; tracked as BL-26 in [`Developer/BACK_LOG.md`](../../../Developer/BACK_LOG.md)):
+**Residual trust and gaps** (as of issue #243 / PR [#253](https://github.com/InfiniteZeroFoundation/DevNet/pull/253); tracked as BL-26 in [`Developer/BACK_LOG.md`](../../../Developer/BACK_LOG.md)):
 - **Sequencer trust.** `blockhash` is sequencer-produced on OP Stack, so this design trusts the sequencer not to grind. VRF is the mainnet-grade follow-up (issue #178).
 - **Re-roll by declining to lock.** Once `seedBlock` is mined, anyone can compute the resulting shuffle off-chain. A model owner who dislikes it can simply not lock, wait out the 256-block window, and get a fresh anchor on the next lock call. The permissionless lock only prevents this if another party locks first.
 - ~~**Post-lock pool reshaping.**~~ **Fixed by issue #243.** Batch layout is now derived from the fixed per-GI registration list (`dinAggregators[_GI]`) instead of the live active pool. An unstake between seed-lock and batch-creation forfeits only the leaver's own seat; every other validator's batch and seat position is determined solely by the fixed list and the locked seed. See §6.4 for the position-stable seat assignment algorithm.
