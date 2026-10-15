@@ -854,15 +854,16 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         return (scores[count / 2 - 1] + scores[count / 2]) / 2;
     }
 
-    /// @notice Partitions active auditors and submitted models into audit batches.
+    /// @notice Partitions registered auditors and submitted models into audit batches.
     /// @dev Called by the paired DINTaskCoordinator, which has already locked
     ///      and passed in `seed` (issue #156 H-2) -- anchored at
     ///      DINTaskCoordinator.closeLMsubmissions, before this function could
-    ///      possibly run, so nobody can steer batch assignment by timing the
-    ///      call. Rejects a zero seed independently of the coordinator's own
-    ///      check (defense-in-depth, same principle as the M-3 fix elsewhere
-    ///      in this contract). Returns false is never reached; reverts on any
-    ///      failure condition.
+    ///      possibly run. Rejects a zero seed independently of the coordinator's
+    ///      own check (defense-in-depth). Shuffles the fixed per-GI registration
+    ///      list (dinAuditors[_GI]); batch layout is derived from the registered
+    ///      count so an unstake between lockAuditSeed and this call only forfeits
+    ///      the leaver's own seat (issue #243). Returns false is never reached;
+    ///      reverts on any failure condition.
     /// @param _GI Current GI index.
     /// @param seed Locked, ungrindable seed from DINTaskCoordinator.auditSeed.
     /// @return True on success.
@@ -874,42 +875,52 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             revert TA_CannotCreateAuditorsBatches();
         if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
-        // Filter the historical registration list down to currently active auditors.
-        address[] memory auditorPool = _activeAuditorPool(_GI);
-        uint aLen = auditorPool.length;
-
-        if (aLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
+        // ▸ 1. Shuffle the fixed per-GI registration list (issue #243).
+        address[] memory regList = dinAuditors[_GI];
+        uint rLen = regList.length;
+        if (rLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
         // Domain-separated derived seeds, same reasoning as the coordinator's
         // AGG_ADDR/AGG_IDX split -- independent of aggSeed since this derives
         // from the separately-locked auditSeed.
-        _shuffleAddressArray(auditorPool, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
+        _shuffleAddressArray(regList, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
 
-        // ▸ 2. Build list of local model indexes
+        // ▸ 2. Build list of local model indexes (unchanged).
         LMSubmission[] storage lmlist = lmSubmissions[_GI];
         uint[] memory modelIdx = new uint[](lmlist.length);
-
-        for (uint i = 0; i < lmlist.length; i++) {
-            modelIdx[i] = i;
-        }
+        for (uint i = 0; i < lmlist.length; i++) modelIdx[i] = i;
         _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AUD_IDX")));
 
-        // ▸ 3. Create batches, Greedily fill Auditors batches
+        // ▸ 3. Compute batch count from registered count (not live active count).
+        uint mLen = modelIdx.length;
+        uint batchCnt = mLen / params.modelsPerBatch
+            + (mLen % params.modelsPerBatch >= params.MIN_MODELS_PER_BATCH ? 1 : 0);
+        if (batchCnt * params.auditorsPerBatch > rLen)
+            batchCnt = rLen / params.auditorsPerBatch;
+        uint vPre = batchCnt * params.auditorsPerBatch;
+
+        // ▸ 4. Position-stable seat fill. Inactive seat-holder at position i is
+        //      replaced by the first active reserve entry (positions vPre..rLen-1).
+        uint resPtr = vPre;
+        for (uint i = 0; i < vPre; i++) {
+            if (!dinvalidatorStakeContract.isValidatorActive(regList[i])) {
+                while (resPtr < rLen && !dinvalidatorStakeContract.isValidatorActive(regList[resPtr])) {
+                    resPtr++;
+                }
+                if (resPtr >= rLen) revert TA_NotEnoughAuditors();
+                regList[i] = regList[resPtr++];
+            }
+        }
+
+        // ▸ 5. Build audit batches from the position-stable validator array.
         uint vPtr;
         uint mPtr;
-        uint Batchcnt;
-
-        while (
-            vPtr + params.auditorsPerBatch <= auditorPool.length &&
-            (mPtr + params.modelsPerBatch <= modelIdx.length ||
-                (mPtr + params.MIN_MODELS_PER_BATCH <= modelIdx.length &&
-                    mPtr + params.modelsPerBatch > modelIdx.length))
-        ) {
-            AuditBatch storage b = auditBatches[_GI].push();
-            b.batchId = Batchcnt++;
+        for (uint b = 0; b < batchCnt; b++) {
+            AuditBatch storage batch = auditBatches[_GI].push();
+            batch.batchId = b;
 
             for (uint256 k = 0; k < params.auditorsPerBatch; k++) {
-                b.auditors.push(auditorPool[vPtr + k]);
-                isBatchAuditor[_GI][b.batchId][auditorPool[vPtr + k]] = true;
+                batch.auditors.push(regList[vPtr + k]);
+                isBatchAuditor[_GI][b][regList[vPtr + k]] = true;
             }
 
             uint modelsToAssign = params.modelsPerBatch;
@@ -918,17 +929,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             }
 
             for (uint256 k = 0; k < modelsToAssign; k++) {
-                b.modelIndexes.push(modelIdx[mPtr + k]);
-                isBatchModelIndex[_GI][b.batchId][modelIdx[mPtr + k]] = true;
+                batch.modelIndexes.push(modelIdx[mPtr + k]);
+                isBatchModelIndex[_GI][b][modelIdx[mPtr + k]] = true;
             }
 
-            emit AuditorsBatchAuto(_GI, b.batchId);
+            emit AuditorsBatchAuto(_GI, b);
 
             vPtr += params.auditorsPerBatch;
             mPtr += modelsToAssign;
         }
 
-        emit AuditorsBatchesCreated(_GI, Batchcnt);
+        emit AuditorsBatchesCreated(_GI, batchCnt);
         return true;
     }
 
