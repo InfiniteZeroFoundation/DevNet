@@ -360,6 +360,14 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 > where `CACHE_DIR` is the path to the cache directory of the dincli.
 > and can be found by running the command `dincli system get-cache-dir`.
 
+> [NOTE]
+> `create-testdataset --submit` is safe to re-run. If some auditor batches failed to
+> be assigned, it prints their batch IDs, skips the test-dataset-assigned flag, and
+> exits non-zero. Retry just those batches with the repeatable `--batch <id>` option,
+> e.g. `dincli model-owner auditor-batches create-testdataset <model_id> --submit --batch 2 --batch 5`.
+> The flag itself is one-shot on-chain; re-running after it's already set is detected
+> and skipped rather than treated as an error.
+
 **Auditors** evaluate their assigned batches (repeat for each auditor):
 
 ```bash
