@@ -714,22 +714,26 @@ contract DinValidatorStake is
     }
 
     function _syncValidatorStatus(ValidatorInfo storage validator) internal {
-        if (validator.status == ValidatorStatus.Blacklisted) {
+        // issue #249 finding 4: cache status/activeStake instead of
+        // re-reading each from storage.
+        ValidatorStatus status = validator.status;
+        if (status == ValidatorStatus.Blacklisted) {
             return;
         }
 
         if (
-            validator.status == ValidatorStatus.Jailed &&
+            status == ValidatorStatus.Jailed &&
             validator.jailedUntil > block.timestamp
         ) {
             return;
         }
 
+        uint256 activeStake = validator.activeStake;
         if (validator.pendingWithdrawals > 0) {
             validator.status = ValidatorStatus.Exiting;
-        } else if (validator.activeStake >= MIN_STAKE) {
+        } else if (activeStake >= MIN_STAKE) {
             validator.status = ValidatorStatus.Active;
-        } else if (validator.activeStake > 0) {
+        } else if (activeStake > 0) {
             validator.status = ValidatorStatus.Exiting;
         } else {
             validator.status = ValidatorStatus.None;

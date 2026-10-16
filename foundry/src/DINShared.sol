@@ -349,6 +349,11 @@ error TC_AggregatorNotActive();
 error TC_FailedToSlashAuditors();
 /// @dev The upcoming GI's reward pool has not been funded via depositRewards.
 error TC_GIRewardPoolNotFunded();
+/// @dev releaseGIRegistrationSlots was called for a GI that has not ended yet
+///      (not < current GI, and not == current GI with state GIended).
+error TC_GINotEnded();
+/// @dev releaseGIRegistrationSlots was already called for this GI (idempotent guard).
+error TC_SlotsAlreadyReleased();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom errors — rewards (task_210726_6 §3, DINTaskAuditor)

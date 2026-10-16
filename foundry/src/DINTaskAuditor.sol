@@ -689,16 +689,19 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         // Per-model stake floor: enforced when the model owner has set a non-zero bound.
         uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
-        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
-            revert TA_StakeBelowModelFloor();
-
         // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
         uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
-        if (capPerUnit > 0) {
-            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
-                dinvalidatorStakeContract.minStake()) * capPerUnit;
-            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
-                revert TA_ConcurrentRegistrationCapReached();
+        if (floorMin > 0 || capPerUnit > 0) {
+            // Single getStake() read shared by both checks below (issue #249 finding 1).
+            uint256 stake = dinvalidatorStakeContract.getStake(msg.sender);
+            if (floorMin > 0 && stake < floorMin)
+                revert TA_StakeBelowModelFloor();
+            if (capPerUnit > 0) {
+                uint256 maxAllowed = (stake /
+                    dinvalidatorStakeContract.minStake()) * capPerUnit;
+                if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                    revert TA_ConcurrentRegistrationCapReached();
+            }
         }
 
         dinAuditors[_GI].push(msg.sender);
@@ -794,22 +797,25 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint _GI
     ) internal view returns (address[] memory activePool) {
         address[] storage registeredPool = dinAuditors[_GI];
+        uint len = registeredPool.length;
+        // issue #249 finding 2: cache each isValidatorActive result from the
+        // counting pass instead of re-querying it in the fill pass below.
+        bool[] memory active = new bool[](len);
         uint activeCount;
 
-        for (uint i = 0; i < registeredPool.length; i++) {
-            if (
-                dinvalidatorStakeContract.isValidatorActive(registeredPool[i])
-            ) {
+        for (uint i = 0; i < len; i++) {
+            bool isActive = dinvalidatorStakeContract.isValidatorActive(registeredPool[i]);
+            active[i] = isActive;
+            if (isActive) {
                 activeCount++;
             }
         }
 
         activePool = new address[](activeCount);
         uint ptr;
-        for (uint i = 0; i < registeredPool.length; i++) {
-            address auditor = registeredPool[i];
-            if (dinvalidatorStakeContract.isValidatorActive(auditor)) {
-                activePool[ptr++] = auditor;
+        for (uint i = 0; i < len; i++) {
+            if (active[i]) {
+                activePool[ptr++] = registeredPool[i];
             }
         }
     }
@@ -1227,9 +1233,14 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint b = 0; b < batches; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
+            // issue #249 finding 3: both lengths are loop-invariant per
+            // batch; cache instead of re-reading storage on every iteration
+            // (modelIndexes.length) or per-model (auditors.length x3).
+            uint modelIndexCount = batch.modelIndexes.length;
+            uint auditorCount = batch.auditors.length;
 
             // For each model assigned to this batch
-            for (uint m = 0; m < batch.modelIndexes.length; m++) {
+            for (uint m = 0; m < modelIndexCount; m++) {
                 uint modelIndex = batch.modelIndexes[m];
                 if (modelIndex >= submissions.length) {
                     // Defensive: skip if bad index
@@ -1246,15 +1257,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                 // Collect scores from auditors who actually voted. Bounded by
                 // batch.auditors.length (params.auditorsPerBatch, demo: 3,
                 // spec: up to 10), so an in-memory sort here is cheap.
-                uint256[] memory votedScores = new uint256[](
-                    batch.auditors.length
-                );
-                address[] memory votedAuditors = new address[](
-                    batch.auditors.length
-                );
+                uint256[] memory votedScores = new uint256[](auditorCount);
+                address[] memory votedAuditors = new address[](auditorCount);
                 uint votes;
 
-                for (uint a = 0; a < batch.auditors.length; a++) {
+                for (uint a = 0; a < auditorCount; a++) {
                     address auditor = batch.auditors[a];
                     if (hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         votedScores[votes] = auditScores[_GI][b][auditor][
@@ -1355,12 +1362,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint b = 0; b < batchCount; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
-            for (uint a = 0; a < batch.auditors.length; a++) {
+            // issue #249 finding 3: both lengths are loop-invariant per
+            // batch; cache instead of re-reading storage on every iteration
+            // of the loops they bound (modelIndexes.length was re-read up to
+            // auditorCount x modelIndexCount times without this).
+            uint auditorCount = batch.auditors.length;
+            uint modelIndexCount = batch.modelIndexes.length;
+            for (uint a = 0; a < auditorCount; a++) {
                 address auditor = batch.auditors[a];
                 bool missedVote = false;
                 bool exceededDeviation = false;
 
-                for (uint m = 0; m < batch.modelIndexes.length; m++) {
+                for (uint m = 0; m < modelIndexCount; m++) {
                     uint modelIndex = batch.modelIndexes[m];
                     if (!hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         missedVote = true;
