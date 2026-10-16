@@ -166,9 +166,9 @@
          "name": "DINTaskCoordinator",
          "address": "0x8464135c8F25Da09e49BC8782676a84730C318bC",
          "artifact": {
-            "type": "hardhat-artifact",
+            "type": "foundry-artifact",
             "path": "contracts/abis/DINTaskCoordinator.json",
-            "ipfs": "bafybeickgth755xv6gxx2jlbtrk4bdc7jjqhoqbvpy56k7v4sups6w6cre",
+            "ipfs": "bafybeie4fki5rhunywzk5rybd6cfrqf4oce4u6xyzgq3uyxobsmlml43hi",
             "stakeholders": [
                "modelowner",
                "auditors",
@@ -177,32 +177,33 @@
             ]
          },
          "source": {
-            "path": "contracts/sources/DINTaskCoordinator.sol",
+            "path": "foundry/src/DINTaskCoordinator.sol",
             "ipfs": null
          },
          "compilation": {
-            "toolchain": "hardhat",
+            "toolchain": "foundry",
             "solidity": "0.8.28",
             "evm_version": "cancun",
+            "via_ir": true,
             "optimizer": {
-               "enabled": false,
+               "enabled": true,
                "runs": 200
             },
             "config": {
-               "path": "contracts/compilation/hardhat.config.ts",
+               "path": "foundry/foundry.toml",
                "ipfs": null
             },
             "sources": [
                {
-                  "path": "contracts/sources/DINTaskCoordinator.sol",
+                  "path": "foundry/src/DINTaskCoordinator.sol",
                   "ipfs": null
                },
                {
-                  "path": "contracts/sources/DINTaskAuditor.sol",
+                  "path": "foundry/src/DINTaskAuditor.sol",
                   "ipfs": null
                },
                {
-                  "path": "contracts/sources/DINShared.sol",
+                  "path": "foundry/src/DINShared.sol",
                   "ipfs": null
                }
             ],
@@ -215,9 +216,9 @@
          "name": "DINTaskAuditor",
          "address": "0x71C95911E9a5D330f4D621842EC243EE1343292e",
          "artifact": {
-            "type": "hardhat-artifact",
+            "type": "foundry-artifact",
             "path": "contracts/abis/DINTaskAuditor.json",
-            "ipfs": "bafybeifysyayopr2yng7qttryhzgo5obz7xdpapaeumszqtqtdqn6mzxla",
+            "ipfs": "bafybeic5e3e4b5ydtoicquggczta2ywxwoir4j53mutprfji5w4bjuzpj4",
             "stakeholders": [
                "modelowner",
                "auditors",
@@ -226,32 +227,33 @@
             ]
          },
          "source": {
-            "path": "contracts/sources/DINTaskAuditor.sol",
+            "path": "foundry/src/DINTaskAuditor.sol",
             "ipfs": null
          },
          "compilation": {
-            "toolchain": "hardhat",
+            "toolchain": "foundry",
             "solidity": "0.8.28",
             "evm_version": "cancun",
+            "via_ir": true,
             "optimizer": {
-               "enabled": false,
+               "enabled": true,
                "runs": 200
             },
             "config": {
-               "path": "contracts/compilation/hardhat.config.ts",
+               "path": "foundry/foundry.toml",
                "ipfs": null
             },
             "sources": [
                {
-                  "path": "contracts/sources/DINTaskCoordinator.sol",
+                  "path": "foundry/src/DINTaskCoordinator.sol",
                   "ipfs": null
                },
                {
-                  "path": "contracts/sources/DINTaskAuditor.sol",
+                  "path": "foundry/src/DINTaskAuditor.sol",
                   "ipfs": null
                },
                {
-                  "path": "contracts/sources/DINShared.sol",
+                  "path": "foundry/src/DINShared.sol",
                   "ipfs": null
                }
             ],
