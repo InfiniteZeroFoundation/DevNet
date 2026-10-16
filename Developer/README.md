@@ -19,6 +19,7 @@ Forward-looking material for people building the DIN Protocol: plans, designs, p
 | [`discussion/`](discussion/) | Open discussions (Filecoin support, Foundry migration) |
 | [`rejected-ideas/`](rejected-ideas/) | Ideas evaluated and rejected, with rationale (e.g. TKNN-Shapley) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution process and code standards pointers |
+| [partner-outreach-checklist.md](partner-outreach-checklist.md) | Conversation checklist for potential DIN partners, with an open question on shared outreach tracking |
 | [CODE_STANDARDS.md](CODE_STANDARDS.md) | Code style and quality expectations |
 | [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) | Setting up a development environment |
 | [GOOD_FIRST_ISSUES.md](GOOD_FIRST_ISSUES.md) | Curated starter tasks for new contributors |
