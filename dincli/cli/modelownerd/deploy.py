@@ -12,7 +12,8 @@ deploy_app = typer.Typer(help="Deploy task-level smart contracts")
 @deploy_app.command()
 def task_coordinator(
     ctx: typer.Context,
-    artifact_path: str = typer.Option(..., "--artifact", help="Path to DINTaskCoordinator contract artifact JSON (Hardhat format). "),
+    artifact_path: str = typer.Option(..., "--artifact", help="Path to DINTaskCoordinator contract artifact JSON (Foundry format)."),
+    model_id: int = typer.Option(..., "--model-id", help="Model ID assigned by DinModelRegistry for this task contract."),
 ):
     """
     Deploy the DINTaskCoordinator contract.
@@ -21,18 +22,19 @@ def task_coordinator(
 
     # Load contract instance
     DINTaskCoordinator_contract = get_contract_instance(artifact_path, effective_network)
-    
+
     # Resolve DINValidatorStake address
     din_info = load_din_info()
     if effective_network in din_info and "stake" in din_info[effective_network]:
         din_validator_stake_address = din_info[effective_network]["stake"]
-    
+
     console.print(f"[bold green]Deploying DINTaskCoordinator on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake:[/cyan] {din_validator_stake_address}")
-    
+    console.print(f"[cyan]Model ID:[/cyan] {model_id}")
+
     tx_receipt = build_and_send_tx(
         ctx,
-        DINTaskCoordinator_contract.constructor(din_validator_stake_address),
+        DINTaskCoordinator_contract.constructor(din_validator_stake_address, model_id),
         "Deploying DINTaskCoordinator",
         "DINTaskCoordinator contract deployed successfully",
         "Failed to deploy DINTaskCoordinator"
@@ -48,17 +50,18 @@ def task_coordinator(
 @deploy_app.command()
 def task_auditor(
     ctx: typer.Context,
-    artifact_path: str = typer.Option(..., "--artifact", help="Path to DINTaskAuditor contract artifact JSON (Hardhat format)."),
+    artifact_path: str = typer.Option(..., "--artifact", help="Path to DINTaskAuditor contract artifact JSON (Foundry format)."),
     task_coordinator: str = typer.Option(None, "--taskCoordinator", help="DINTaskCoordinator contract address"),
+    model_id: int = typer.Option(..., "--model-id", help="Model ID assigned by DinModelRegistry for this task contract."),
 ):
     """
     Deploy the DINTaskAuditor contract.
     """
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    
+
     # Load contract instance
     DINTaskAuditor_contract = get_contract_instance(artifact_path, effective_network)
-      
+
     din_info = load_din_info()
     if effective_network in din_info and "stake" in din_info[effective_network]:
         din_validator_stake_address = din_info[effective_network]["stake"]
@@ -67,14 +70,15 @@ def task_auditor(
     task_coordinator_address = resolve_task_coordinator_address(
         effective_network, task_coordinator, console
     )
-    
+
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
     console.print(f"[cyan]Using DINTaskCoordinator address:[/cyan] {task_coordinator_address}")
-    
+    console.print(f"[cyan]Model ID:[/cyan] {model_id}")
+
     tx_receipt = build_and_send_tx(
         ctx,
-        DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address),
+        DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address, model_id),
         "Deploying DINTaskAuditor",
         "DINTaskAuditor contract deployed successfully",
         "Failed to deploy DINTaskAuditor"
