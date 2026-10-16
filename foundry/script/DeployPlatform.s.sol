@@ -64,6 +64,9 @@ import {DeploymentsPath} from "./DeploymentsPath.sol";
 ///     --account <keystore_name> \
 ///     --sender <din_representative_address>
 ///
+/// To record the deploying commit in the JSON, set GIT_COMMIT_HASH before running:
+///   GIT_COMMIT_HASH=$(git rev-parse HEAD) forge script script/DeployPlatform.s.sol ...
+///
 /// Then import into dincli (reads foundry/deployments/<network>.json for the
 /// active dincli network):
 ///   dincli system import-deployments
@@ -121,22 +124,7 @@ contract DeployPlatform is DeploymentsPath {
         Deployment memory d = deploy(t, msg.sender);
 
         // 16. Write deployments JSON — read by `dincli system import-deployments`
-        _writeDeployments(
-            d.dinTreasury,
-            d.dinToken,
-            d.dinCoordinator,
-            d.dinFeeRouter,
-            d.dinValidatorStake,
-            d.dinModelRegistry,
-            d.dinEmission,
-            d.proxyAdminTreasury,
-            d.proxyAdminToken,
-            d.proxyAdminCoordinator,
-            d.proxyAdminFeeRouter,
-            d.proxyAdminStake,
-            d.proxyAdminRegistry,
-            d.proxyAdminEmission
-        );
+        _writeDeployments(d, msg.sender);
     }
 
     /// @notice The in-code defaults, i.e. what readTokenomics() returns with no env set.
@@ -385,40 +373,66 @@ contract DeployPlatform is DeploymentsPath {
         }
     }
 
-    function _writeDeployments(
-        address dinTreasury,
-        address dinToken,
-        address dinCoordinator,
-        address dinFeeRouter,
-        address dinValidatorStake,
-        address dinModelRegistry,
-        address dinEmission,
-        address proxyAdminTreasury,
-        address proxyAdminToken,
-        address proxyAdminCoordinator,
-        address proxyAdminFeeRouter,
-        address proxyAdminStake,
-        address proxyAdminRegistry,
-        address proxyAdminEmission
-    ) internal {
+    /// @dev Fetches the EVM extcodehash of an implementation address.
+    function _implCodehash(address impl) internal view returns (bytes32 ch) {
+        assembly { ch := extcodehash(impl) }
+    }
+
+    /// @dev Writes the deployments JSON.
+    ///      Includes proxy addresses, per-proxy implementation addresses and their
+    ///      extcodehashes (for `dincli system verify-deployment` check 1 and 3),
+    ///      the deployer (ProxyAdmin owner, check 4), and the optional git commit
+    ///      hash recorded via GIT_COMMIT_HASH env var (check meta).
+    function _writeDeployments(Deployment memory d, address deployer) internal {
+        // Resolve implementations via EIP-1967 slot reads.
+        address implTreasury    = Upgrades.getImplementationAddress(d.dinTreasury);
+        address implToken       = Upgrades.getImplementationAddress(d.dinToken);
+        address implCoordinator = Upgrades.getImplementationAddress(d.dinCoordinator);
+        address implFeeRouter   = Upgrades.getImplementationAddress(d.dinFeeRouter);
+        address implStake       = Upgrades.getImplementationAddress(d.dinValidatorStake);
+        address implRegistry    = Upgrades.getImplementationAddress(d.dinModelRegistry);
+        address implEmission    = Upgrades.getImplementationAddress(d.dinEmission);
+
         string memory json = "deployments";
-        vm.serializeAddress(json, "dinTreasury", dinTreasury);
-        vm.serializeAddress(json, "dinToken", dinToken);
-        vm.serializeAddress(json, "dinCoordinator", dinCoordinator);
-        vm.serializeAddress(json, "dinFeeRouter", dinFeeRouter);
-        vm.serializeAddress(json, "dinValidatorStake", dinValidatorStake);
-        vm.serializeAddress(json, "dinModelRegistry", dinModelRegistry);
-        vm.serializeAddress(json, "dinEmission", dinEmission);
-        vm.serializeAddress(json, "proxyAdminTreasury", proxyAdminTreasury);
-        vm.serializeAddress(json, "proxyAdminToken", proxyAdminToken);
-        vm.serializeAddress(json, "proxyAdminCoordinator", proxyAdminCoordinator);
-        vm.serializeAddress(json, "proxyAdminFeeRouter", proxyAdminFeeRouter);
-        vm.serializeAddress(json, "proxyAdminStake", proxyAdminStake);
-        vm.serializeAddress(json, "proxyAdminRegistry", proxyAdminRegistry);
-        string memory finalJson = vm.serializeAddress(
+        // Proxy addresses
+        vm.serializeAddress(json, "dinTreasury", d.dinTreasury);
+        vm.serializeAddress(json, "dinToken", d.dinToken);
+        vm.serializeAddress(json, "dinCoordinator", d.dinCoordinator);
+        vm.serializeAddress(json, "dinFeeRouter", d.dinFeeRouter);
+        vm.serializeAddress(json, "dinValidatorStake", d.dinValidatorStake);
+        vm.serializeAddress(json, "dinModelRegistry", d.dinModelRegistry);
+        vm.serializeAddress(json, "dinEmission", d.dinEmission);
+        // ProxyAdmin addresses
+        vm.serializeAddress(json, "proxyAdminTreasury", d.proxyAdminTreasury);
+        vm.serializeAddress(json, "proxyAdminToken", d.proxyAdminToken);
+        vm.serializeAddress(json, "proxyAdminCoordinator", d.proxyAdminCoordinator);
+        vm.serializeAddress(json, "proxyAdminFeeRouter", d.proxyAdminFeeRouter);
+        vm.serializeAddress(json, "proxyAdminStake", d.proxyAdminStake);
+        vm.serializeAddress(json, "proxyAdminRegistry", d.proxyAdminRegistry);
+        vm.serializeAddress(json, "proxyAdminEmission", d.proxyAdminEmission);
+        // Implementation addresses (for verify-deployment check 1)
+        vm.serializeAddress(json, "dinTreasuryImpl", implTreasury);
+        vm.serializeAddress(json, "dinTokenImpl", implToken);
+        vm.serializeAddress(json, "dinCoordinatorImpl", implCoordinator);
+        vm.serializeAddress(json, "dinFeeRouterImpl", implFeeRouter);
+        vm.serializeAddress(json, "dinValidatorStakeImpl", implStake);
+        vm.serializeAddress(json, "dinModelRegistryImpl", implRegistry);
+        vm.serializeAddress(json, "dinEmissionImpl", implEmission);
+        // Implementation extcodehashes (for verify-deployment check 3)
+        vm.serializeBytes32(json, "dinTreasuryImplCodehash", _implCodehash(implTreasury));
+        vm.serializeBytes32(json, "dinTokenImplCodehash", _implCodehash(implToken));
+        vm.serializeBytes32(json, "dinCoordinatorImplCodehash", _implCodehash(implCoordinator));
+        vm.serializeBytes32(json, "dinFeeRouterImplCodehash", _implCodehash(implFeeRouter));
+        vm.serializeBytes32(json, "dinValidatorStakeImplCodehash", _implCodehash(implStake));
+        vm.serializeBytes32(json, "dinModelRegistryImplCodehash", _implCodehash(implRegistry));
+        vm.serializeBytes32(json, "dinEmissionImplCodehash", _implCodehash(implEmission));
+        // Deployer = ProxyAdmin owner (for verify-deployment check 4)
+        vm.serializeAddress(json, "owner", deployer);
+        // Git commit at deploy time (optional; set GIT_COMMIT_HASH env var)
+        string memory finalJson = vm.serializeString(
             json,
-            "proxyAdminEmission",
-            proxyAdminEmission
+            "deployedAtCommit",
+            vm.envOr("GIT_COMMIT_HASH", string(""))
         );
 
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
