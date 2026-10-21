@@ -72,6 +72,7 @@ Tell Umer in one line that the push landed and the run is being watched, then ca
 |---|---|---|
 | `RESULT success <url>` | green | One-line confirmation with the SHA and run URL. No notification. |
 | `RESULT failure <url>` (or `cancelled`, `timed_out`) | red | **`PushNotification`**, e.g. `develop CI red on <short-sha>: Python test_x failed`. Then pull the failing job's log (`gh run view <id> --log-failed`, or `gh api .../actions/jobs/<job>/logs` if that's empty), name the failing step/test, and propose a fix commit. |
+| `WATCH_ERROR <url> <status>` | the watcher couldn't read a final result (GitHub unreachable for ~10 min, or the run is still going after ~90 min). **Not a CI verdict.** | No notification. Check the run yourself (`gh run view <id> --json status,conclusion,jobs`), and re-run the watcher if it's still in progress. Then handle the real result as in the rows above. |
 | `NO_RUN <sha>` | no push run started within ~5 min | **`PushNotification`**: `develop push <short-sha> has no CI run`. Check the Actions tab for a disabled workflow, a YAML error, or a runner outage. |
 
 For red or missing runs, remind Umer of the clock: if it's not fixed within ~6h and more commits land on top, the backup maintainers will open a thread in discussion No. 170.

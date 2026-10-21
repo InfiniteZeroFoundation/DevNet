@@ -12,7 +12,7 @@ Background: [PR No. 168](https://github.com/InfiniteZeroFoundation/DevNet/pull/1
 |---|---|
 | [`SKILL.md`](SKILL.md) | The skill: gate → local precheck → push → background watch → alert |
 | [`scripts/precheck.sh`](scripts/precheck.sh) | Mirrors `.github/workflows/ci.yml` on a given commit in a separate worktree, with an empty `HOME` |
-| [`scripts/watch-push-run.sh`](scripts/watch-push-run.sh) | Waits for the GitHub `push` run of a SHA; last line is `RESULT <conclusion> <url>` or `NO_RUN <sha>` |
+| [`scripts/watch-push-run.sh`](scripts/watch-push-run.sh) | Waits for the GitHub `push` run of a SHA; last line is `RESULT <conclusion> <url>`, `NO_RUN <sha>`, or `WATCH_ERROR <url> <status>` (couldn't read a final result — not a CI verdict) |
 | [`scripts/guard.py`](scripts/guard.py) | `PreToolUse` hook that blocks Claude from a raw `git push` to `develop` |
 
 ## Setup
