@@ -2485,11 +2485,6 @@
     },
     {
       "type": "error",
-      "name": "TA_FlagAlreadySet",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "TA_FlagMustBeTrue",
       "inputs": []
     },
@@ -2621,6 +2616,11 @@
     {
       "type": "error",
       "name": "TA_StakeBelowModelFloor",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TA_TestDataNotAssigned",
       "inputs": []
     },
     {

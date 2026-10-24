@@ -21,7 +21,7 @@ def start(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
     
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "AuditorsBatchesCreated",  "Can not start LMS evaluation at this time")
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "AuditTestDataAssigned",  "Can not start LMS evaluation at this time (run `auditor-batches create-testdataset --submit` first)")
     
     console.print(f"[bold green]Starting LMS evaluation[/bold green]")
 
