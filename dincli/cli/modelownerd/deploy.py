@@ -6,6 +6,11 @@ from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
                               resolve_task_coordinator_address, set_env_key)
 
+_MODEL_ID_ABI = [
+    {"inputs": [], "name": "modelId", "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+]
+
 # Deploy sub-app (for 'dincli modelowner deploy ...')
 deploy_app = typer.Typer(help="Deploy task-level smart contracts")
 
@@ -70,6 +75,18 @@ def task_auditor(
     task_coordinator_address = resolve_task_coordinator_address(
         effective_network, task_coordinator, console
     )
+
+    # Guard: --model-id must match the coordinator's immutable modelId().
+    # Both IDs select per-model stake floors; pairing is one-shot and irreversible.
+    coord_view = w3.eth.contract(address=task_coordinator_address, abi=_MODEL_ID_ABI)
+    coord_model_id = coord_view.functions.modelId().call()
+    if coord_model_id != model_id:
+        console.print(
+            f"[bold red]Error:[/bold red] --model-id {model_id} does not match "
+            f"coordinator modelId() {coord_model_id}. "
+            "Aborting — pairing is one-shot and the IDs are immutable."
+        )
+        raise typer.Exit(1)
 
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
