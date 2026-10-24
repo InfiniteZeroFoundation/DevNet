@@ -1,6 +1,7 @@
 import secrets
 from pathlib import Path
 import time
+from typing import List
 import typer
 from rich.table import Table
 from web3 import Web3
@@ -14,6 +15,24 @@ from dincli.cli.utils import CONFIG_DIR, build_and_send_tx, ensure_batch_seed_lo
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
 
 auditor_batches_app = typer.Typer(help="Auditor Batches commands")
+
+_TA_FLAG_ALREADY_SET_SELECTOR = Web3.keccak(text="TA_FlagAlreadySet()").hex()[:8].lower()
+
+
+def _is_flag_already_set_revert(exc: Exception) -> bool:
+    """Best-effort detection of DINTaskAuditor's TA_FlagAlreadySet() custom error.
+
+    setTestDataAssignedFlag has no getter for Is_testdataCIDs_Assigned, so
+    inspecting the revert data is the only way to tell "already set" (safe to
+    skip) apart from a real failure (should exit non-zero).
+    """
+    data = getattr(exc, "data", None)
+    if isinstance(data, dict):
+        data = data.get("data")
+    if not isinstance(data, str):
+        return False
+    data_hex = data[2:] if data.startswith("0x") else data
+    return data_hex.lower().startswith(_TA_FLAG_ALREADY_SET_SELECTOR)
 
 @auditor_batches_app.command()
 def create(
@@ -124,7 +143,25 @@ def create_testdataset(
     gi: int = typer.Option(None, "--gi", help="Global iteration number"),
     submit: bool = typer.Option(False, "--submit", help="Submit test dataset to TaskCoordinator"),
     test_data_path: str = typer.Option(None, "--test-data-path", help="Path to test dataset"),
+    batch: List[int] = typer.Option(
+        [],
+        "--batch",
+        help=(
+            "Retry assignAuditTestDataset for only this batch ID (repeatable, e.g. "
+            "--batch 2 --batch 5). Combine with --submit to retry batches that failed "
+            "on a previous run; the test-dataset-assigned flag is then (re-)attempted "
+            "for all batches as usual. If omitted, --submit sends every batch."
+        ),
+    ),
 ):
+    """Create per-batch encrypted audit test datasets and optionally submit them on-chain.
+
+    Safe to re-run with --submit: if any batch's assignAuditTestDataset tx fails,
+    the failed batch IDs are printed and the command exits 1 without touching the
+    test-dataset-assigned flag. Retry just those batches with `--batch <id>`
+    (repeatable). The flag itself is one-shot on-chain; if it's already set,
+    re-running --submit (with or without --batch) detects that and skips it.
+    """
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
     
     taskCoordinator_contract, taskauditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
@@ -194,8 +231,11 @@ def create_testdataset(
 
         stake_contract = ctx.obj.get_deployed_din_stake_contract(verbose=False)
 
+        batch_ids_to_process = list(batch) if batch else list(range(audtor_batch_count))
+
+        failed_batch_ids = []
         try:
-            for batch_id in range(audtor_batch_count):
+            for batch_id in batch_ids_to_process:
                 batch_info = audit_testDataCIDs[batch_id]
                 raw_cid = batch_info["raw_cid"]
                 K = batch_info["K"]
@@ -231,7 +271,7 @@ def create_testdataset(
                 ))
 
                 time.sleep(5)
-                build_and_send_tx(
+                tx_receipt = build_and_send_tx(
                     ctx,
                     taskauditor_contract.functions.assignAuditTestDataset(
                         curr_GI, batch_id, encrypted_cid, encrypted_keys, commitment
@@ -241,9 +281,40 @@ def create_testdataset(
                     f"Failed to assign test dataset for auditor batch : {batch_id}",
                     exit_on_failure=False,
                 )
+                if tx_receipt is None:
+                    failed_batch_ids.append(batch_id)
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")
+            raise typer.Exit(1)
 
-            time.sleep(5)
-            build_and_send_tx(
+        if failed_batch_ids:
+            retry_flags = " ".join(f"--batch {b}" for b in failed_batch_ids)
+            console.print(
+                f"[bold red]✗ Failed to assign test dataset for auditor batch(es): "
+                f"{', '.join(str(b) for b in failed_batch_ids)}[/bold red]"
+            )
+            console.print(
+                f"[yellow]Skipping the test-dataset-assigned flag. Retry just the failed "
+                f"batch(es) with: dincli model-owner task auditor-batches create-testdataset "
+                f"{model_id} --submit {retry_flags}[/yellow]"
+            )
+            raise typer.Exit(1)
+
+        time.sleep(5)
+        flag_already_set = False
+        try:
+            taskCoordinator_contract.functions.setTestDataAssignedFlag(curr_GI, True).call({"from": account.address})
+        except Exception as e:
+            if _is_flag_already_set_revert(e):
+                flag_already_set = True
+            else:
+                console.print(f"[bold red]✗ Failed to set test dataset assigned flag: {e}[/bold red]")
+                raise typer.Exit(1)
+
+        if flag_already_set:
+            console.print("[yellow]Test dataset assigned flag was already set for this GI — skipping.[/yellow]")
+        else:
+            flag_receipt = build_and_send_tx(
                 ctx,
                 taskCoordinator_contract.functions.setTestDataAssignedFlag(curr_GI, True),
                 "Setting test dataset assigned flag",
@@ -251,7 +322,6 @@ def create_testdataset(
                 "Failed to set test dataset assigned flag",
                 exit_on_failure=False,
             )
-        except Exception as e:
-            console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")
-            raise typer.Exit(1)
-            
+            if flag_receipt is None:
+                console.print("[bold red]✗ Failed to set test dataset assigned flag.[/bold red]")
+                raise typer.Exit(1)
