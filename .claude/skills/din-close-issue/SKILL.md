@@ -1,6 +1,6 @@
 ---
 name: din-close-issue
-description: Use when deciding whether a GitHub issue in InfiniteZeroFoundation/DevNet can be closed — "close issue N", "can issue N be closed", "is issue N done", "run din-close-issue on 195", or a batch "close issues 159-161". Must run as `umeradl`. Gathers the full context (issue body, every comment including the `din-approve-issue` review and its amendments, linked PRs and their review/outcome comments, sub-issues, follow-up commits) and verifies every proposed change, amendment and verification item against `origin/develop`. It never takes a comment that says "done" or "landed" as proof. If nothing remains, it posts a closing comment and closes the issue as completed. If anything remains, it posts a status-update comment listing done vs. remaining and leaves the issue open. Not for task Discussions (`din-task-close`), pre-implementation sign-off (`din-approve-issue`), or PR review (`din-pr-review`).
+description: Use when deciding whether a GitHub issue in InfiniteZeroFoundation/DevNet can be closed — "close issue N", "can issue N be closed", "is issue N done", "run din-close-issue on 195", or a batch "close issues 159-161". Any maintainer can run it, as long as they didn't implement the issue (checked first with `.claude/scripts/din_peer_check.py`). Gathers the full context (issue body, every comment including the `din-approve-issue` review and its amendments, linked PRs and their review/outcome comments, sub-issues, follow-up commits) and verifies every proposed change, amendment and verification item against `origin/develop`. It never takes a comment that says "done" or "landed" as proof. If nothing remains, it posts a closing comment and closes the issue as completed. If anything remains, it posts a status-update comment listing done vs. remaining and leaves the issue open. Not for task Discussions (`din-task-close`), pre-implementation sign-off (`din-approve-issue`), or PR review (`din-pr-review`).
 ---
 
 # DIN issue closure
@@ -16,16 +16,23 @@ This is the issue counterpart of `din-task-close`. The verification discipline
 is the same. The differences: the source of truth is the issue body plus its
 approval amendments rather than a task file's Deliverables list, and an issue
 that can't be closed gets a posted status-update comment instead of only a
-report back to Umer.
+report back to the operator.
+
+The process is [`Developer/MAINTAINING.md`](../../../Developer/MAINTAINING.md)
+No. 5.2: closing as completed is a peer's check, not the implementer's.
 
 ## 0. Hard rules
 
-- **Run as `umeradl`.** Before anything else:
+- **Peer check first.** "The operator" is the active `gh` user. Before
+  anything else:
   ```bash
-  gh api user --jq .login
+  python3 .claude/scripts/din_peer_check.py issue-close <N>
   ```
-  If it is not `umeradl`, run `gh auth switch --user umeradl` and check again.
-  If the switch fails, stop and tell Umer. Don't post from another account.
+  `REFUSE` means the operator implemented it: they're assigned, or they
+  authored a merged PR that references it. They may still post a progress
+  note, but the closing check goes to a peer (MAINTAINING No. 5.2). Stop and
+  name one. Never switch `gh` accounts to get past it. For a batch, run it per
+  issue and hand off only the refused ones.
 - **Verify against `origin/develop`, never the working tree.** Run
   `git fetch origin develop` and read files with `git show origin/develop:<path>`
   or `git grep <pattern> origin/develop -- <paths>`. Local uncommitted or
@@ -38,9 +45,8 @@ report back to Umer.
   file on `origin/develop`, or `gh pr view <P> --json state,mergedAt,baseRefName`
   showing `MERGED` into `develop`.
 - **Foundry is canonical.** Check contract claims against `foundry/src/`.
-  `hardhat/contracts/` and the `cache_model_0` ABIs lag behind
-  (`foundry-canonical-hardhat-stale`). A hardhat-only gap blocks closure only
-  if the issue explicitly scoped hardhat in.
+  `hardhat/contracts/` and the `cache_model_0` ABIs lag behind. A hardhat-only
+  gap blocks closure only if the issue explicitly scoped hardhat in.
 - **Never write `#N`** in anything GitHub renders. Write "No. N". Before
   posting, run `grep -n '#[0-9]' <draft>`. The only hits allowed are inside
   code spans or URLs.
@@ -56,7 +62,7 @@ report back to Umer.
 - **Don't edit the issue body, reassign, or change labels.** The skill
   comments, and it closes the issue when the verdict is closable. Nothing else.
 - **Invoking the skill is the go-ahead to post.** The exception is a judgment
-  call (see step 5). In that case show Umer the draft and wait.
+  call (see step 5). In that case show the operator the draft and wait.
 
 ## 1. Fetch the full context
 
@@ -77,7 +83,7 @@ Read every comment. Pay particular attention to:
 
 - **The `## Approval review` comment** from `din-approve-issue`. Its numbered
   **Amendments** are part of the scope, as binding as the body.
-- **Later scope changes by Umer or the author** ("drop Part C", "moving X to
+- **Later scope changes by a maintainer or the author** ("drop Part C", "moving X to
   issue No. M"). An item that was explicitly moved out doesn't block closure,
   but the comment should say where it went.
 - **Linked PRs.** For each PR, also read its `din-pr-review` verification,
@@ -108,9 +114,9 @@ gh pr view <P> --repo $R --json state,mergedAt,baseRefName,mergeCommit,isDraft
 git log --oneline origin/develop --grep="<P>" -i        # merge commit and follow-ups
 ```
 
-The PR must be `MERGED` into `develop`. Contributor PRs are often merged by
-hand (`din-pr-merge`), so the GitHub state can say `CLOSED` while the work is
-on `develop` in a `merge: PR No. <P> ...` commit. In that case find the commit
+The PR must be `MERGED` into `develop`. Older PRs and path-B merges were
+merged by hand (`din-pr-merge` path B), so the GitHub state can say `CLOSED`
+while the work is on `develop` in a `merge: PR No. <P> ...` commit. In that case find the commit
 with `git log origin/develop --grep` and cite it. A PR that is open, a draft,
 or closed with no merge commit on `develop` carries nothing.
 
@@ -137,10 +143,11 @@ gh run list --repo $R --branch develop --event push --limit 10 --json databaseId
 ```
 
 If no green run covers the commit, run the relevant suite yourself in a clean
-worktree of `origin/develop`: real via_ir `forge build` (`pr-review-skip-via-ir`),
-`forge test --match-contract <Suite>`, and `pytest -m "not integration"` with
-`~/my_venvs/torchenv`. Never run them in the `develop` checkout. Don't treat
-the stale dincli integration suite as verification (see the backlog).
+worktree of `origin/develop`: real via_ir `forge build` (the plain build no
+longer compiles `develop`), `forge test --match-contract <Suite>`, and
+`"$DIN_PY" -m pytest -m "not integration"` (`source .claude/scripts/din-env.sh`).
+Never run them in the `develop` checkout. The `tests/dincli/` integration
+suite counts only once its CI job is a required check (MAINTAINING No. 4.9).
 
 Mark each item ✅ done (with evidence), ❌ missing, or ↪️ moved out of scope
 (with where it went).
@@ -149,8 +156,8 @@ Mark each item ✅ done (with evidence), ❌ missing, or ↪️ moved out of sco
 PR but is missing or different on `develop` now, check `git log` on the path
 for a later commit that explains why before calling it a gap. A deliberate
 change backed by a commit (or by a recorded decision such as
-`eth-burn-din-only` or `p3-issues-defer-fee-changes`) counts as ✅ with the
-deviation named. An unexplained one is ❌.
+a decision comment on the issue or in `Developer/MECHANISM_DESIGN.md`) counts
+as ✅ with the deviation named. An unexplained one is ❌.
 
 ## 5. Verdict
 
@@ -158,10 +165,10 @@ deviation named. An unexplained one is ❌.
 |---|---|---|
 | **Closable** | Every item is ✅ or ↪️ with a destination. | Closing comment, then close as `completed`. |
 | **Not closable** | Any ❌. | Status-update comment. Leave open. |
-| **Judgment call** | For example: the only gap is small and could become a follow-up issue instead; an item was dropped silently with no comment or commit; an amendment reads ambiguously. | Show Umer the draft and the question. Don't post until he answers. |
+| **Judgment call** | For example: the only gap is small and could become a follow-up issue instead; an item was dropped silently with no comment or commit; an amendment reads ambiguously. | Show the operator the draft and the question. Don't post until they answer. |
 
 A partial issue doesn't get closed with caveats. It gets a status update. If
-Umer wants the remainder split out, he says so, and the close happens after
+the operator wants the remainder split out, they say so, and the close happens after
 the follow-up issue exists so the comment can link it.
 
 ## 6. Draft the comment
@@ -219,7 +226,7 @@ diff <(sed -e '$a\' <draft>) <(sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' <scratchpad
 Post through `gh api`, not `gh issue comment`: for `gh issue comment`, `-F`
 means `--body-file <path>`, so `-F body=@<draft>` fails with "open
 body=@...: no such file or directory" and posts nothing. Confirm that `user`
-is `umeradl` and the diff prints `BODY-OK` (GitHub can add a trailing blank
+is the operator and the diff prints `BODY-OK` (GitHub can add a trailing blank
 line, which the `sed` strips).
 
 Only for **Closable**, and only after `BODY-OK`. Run the close as a separate
@@ -236,7 +243,7 @@ status updates on the rest, and don't skip any silently.
 
 ## 8. Report back
 
-Tell Umer, per issue: the verdict, the comment URL (fetched), whether the
-issue was closed, any deviations named, remaining items in one line each for
-status updates, out-of-scope items not tracked anywhere yet, and whether
-`gh auth` was switched. Don't update project memory unless asked.
+Tell the operator, per issue: the verdict, the comment URL (fetched), whether
+the issue was closed, any deviations named, remaining items in one line each
+for status updates, out-of-scope items not tracked anywhere yet, and any issue
+handed to a peer because the peer check refused it. Don't update project memory unless asked.

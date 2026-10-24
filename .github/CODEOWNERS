@@ -33,5 +33,5 @@
 # The maintainer process itself and the Claude skills that implement it.
 /.github/CODEOWNERS     @umeradl @Santiagocetran @robertocarlous
 /Developer/MAINTAINING.md @umeradl @Santiagocetran @robertocarlous
-/.claude/               @umeradl
+/.claude/               @umeradl @Santiagocetran @robertocarlous
 /CLAUDE.md              @umeradl

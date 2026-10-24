@@ -176,4 +176,19 @@ Anyone may answer, label, or lock stale threads. Closing a design or Ideas Discu
 
 ## 8. Tooling
 
-The `din-*` Claude Code skills under [`.claude/skills/`](../.claude/skills/) implement this workflow (`din-pr-review`, `merge-fix-comment-update`, `din-merge-build-test`, `din-pr-merge`, `din-push-develop`, `din-approve-issue`, `din-close-issue`, `din-task-close`). Some of them still assume they run as `umeradl`. A follow-up PR generalises them: trailers taken from the active `gh` user, and a self-check that refuses to approve, merge or close when that user is the author, assignee or a co-author. Until it lands, follow this file and the templates by hand.
+The `din-*` Claude Code skills under [`.claude/skills/`](../.claude/skills/) implement this workflow, and any maintainer can run them as themselves. Setup and the shared scripts: [`.claude/scripts/README.md`](../.claude/scripts/README.md). Every skill that approves, merges or closes first runs [`din_peer_check.py`](../.claude/scripts/din_peer_check.py), which refuses when the active `gh` user is the author, assignee, implementer or a co-author ([No. 1](#1-the-rule)). Logins that belong to one person, such as `umeradl` and `umermjd11`, count as one.
+
+| Step | Skill |
+|---|---|
+| Review a PR: the three comments ([No. 4.3](#43-the-review-record)), then approve, request changes or recuse | `din-pr-review` |
+| Apply review fixes, per file | `merge-fix-comment-update` |
+| Build and test the fixed tree the way CI does, then update the merge-proposal comment | `din-merge-build-test` |
+| Merge: path A (GitHub-side merge commit) or path B (admin local merge) ([No. 4.4](#44-merge-paths)), own the `develop` CI run, post the outcome comment | `din-pr-merge` |
+| Admin direct push to `develop` (path B, emergencies), with a local CI mirror and a logged bypass reason | `din-push-develop` |
+| Approve an issue's plan ([No. 5.1](#51-issues-approval-before-implementation)) | `din-approve-issue` |
+| Close an issue as completed, or post done vs. remaining ([No. 5.2](#52-issues-status-updates-and-closing)) | `din-close-issue` |
+| Close a task Discussion ([No. 5.3](#53-tasks)) | `din-task-close` |
+
+**When a local build is needed before merging.** A PR that merges as-is needs no local build: its required `CI OK` runs the full pipeline on GitHub's merge of the PR into `develop`, and the branch has to be up to date, so that run tests exactly what lands. When a reviewer applies fixes, they run `din-merge-build-test` on the fixed branch before pushing it, so the PR doesn't go red in public. CI then re-runs on the pushed fixes and is the gate again. In path B there's no PR CI for the deviation commit, so the local run and `din-push-develop`'s precheck are the gate.
+
+The skills are a convenience, not a requirement. Following this file and the [templates](../.claude/skills/din-pr-review/templates/) by hand is equally valid.
