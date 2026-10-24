@@ -90,8 +90,52 @@ python -m pytest tests/test_integration_demo.py \
 
 Isolated mode is a harness setting, not a container or a guarantee that an
 arbitrary checkout is disposable. Use it only inside an environment you own
-for testing. The forthcoming Docker runner will establish that boundary and
-provide the shared GitHub/local reproduction command.
+for testing. A future runner must establish that boundary and provide a shared
+GitHub/local reproduction command; isolated mode itself does not do so.
+
+### Isolated failure diagnostics
+
+In isolated mode, CLI commands, compiler builds and Kubo initialization retain
+stdout/stderr as numbered logs in `DIN_TEST_RESULTS_DIR` while they execute.
+Owned chain/Kubo output uses the same bounded capture budget. The JSONL manifest
+records outcomes, duration, return codes, truncation and log filenames; it does
+not record command arguments, stdin or environment variables. It records the
+Python version and checkout SHA when available. Actual chain/compiler tool
+versions are not probed by this change and must be recorded when provisioning
+a future reproducible runner.
+
+Each output stream is limited to 10 MiB and the run's retained logs to 100 MiB.
+Exceeding a limit fails the run, with a truncation outcome in the separately
+bounded 64 KiB manifest. A timed-out command retains partial output and its
+owned host process group is stopped. Python exceptions and SIGINT use the same
+host-process cleanup; this does not establish Docker-container cleanup or
+SIGTERM/hosted-cancellation support.
+
+Before isolated scratch is removed, the harness collects sanitized worker
+reports under `worker-reports/` and writes `summary.json`. It recognizes only
+the current local model cache's client, auditor and aggregator output layout.
+Reports retain status, pseudonymous participant/job identity and bounded error/
+traceback text; success payloads, job inputs, wallet/config files and commit
+salts are excluded. Symlinks and hardlinked reports are rejected. Collection
+is limited to 200 reports, 1 MiB per input report and 20 MiB total; malformed,
+missing discovered results and collection failures are reported and fail an
+otherwise successful run. Cleanup is still attempted when collection fails.
+After log closure and scratch removal, `cleanup.json` records whether scratch
+was removed and any cleanup failure stages/types, without exception messages.
+Each isolated run needs its own results directory; existing evidence is never
+overwritten.
+
+There is no expected-job inventory yet: collecting reports does not prove that
+every participant ran successfully. Auditor/aggregator CLI exit codes alone
+also do not establish that. Full-GI success assertions and Docker ownership
+remain follow-up work. Error/traceback and CLI text are untrusted application
+output; the collection exclusions are not general secret redaction. Use only
+public demo state in an owned disposable checkout.
+
+The legacy non-isolated capture and retention behavior is unchanged. These
+diagnostics do not repair the later lifecycle phases or add a CI job. Focused
+coverage additionally lives in `tests/test_integration_diagnostics.py` and
+`tests/test_integration_reports.py`.
 
 ### Managed services (`managed_services` fixture)
 
