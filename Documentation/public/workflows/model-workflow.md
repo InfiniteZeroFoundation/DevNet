@@ -188,6 +188,8 @@ dincli model-owner model submit-genesis
 
 > make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command. The test dataset will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
 
+> this command is safe to re-run. If the genesis model hash was already submitted on-chain (e.g. a prior run submitted the hash but failed before or during the score submission), re-running it detects that the hash is already set, verifies it still matches the CID you're scoring, and (re-)submits only the tier 2 score. If the on-chain hash doesn't match the CID you're submitting, it exits with an error instead of attaching a score to the wrong genesis model.
+
 ## 8. Register Model - Model Owner
 
 Model Owner updates the manisfest file at`<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, specially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract`  fields with the IPFS CID of the genesis model, DINTaskCoordinator contract address and DINTaskAuditor contract address respectively.

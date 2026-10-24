@@ -1,85 +1,167 @@
 ---
 name: din-pr-merge
-description: Use when actually merging a contributor PR into InfiniteZeroFoundation/DevNet's `develop` — "merge PR #N", "merge this into develop", or any request to land a PR after it's been reviewed. Runs after `din-pr-review` (assumes the 2-comment verification/merge-proposal review already happened) and produces the 3rd comment (`outcome-comment.md`) once the merge is actually pushed. Encodes the stash-merge-pop flow for merging in a cwd that already has unrelated local WIP, plus this repo's attribution/no-push-without-review rules. Not for reviewing a PR (use `din-pr-review`) and not for generic git merges outside this repo's PR workflow.
+description: Use when actually merging a PR into InfiniteZeroFoundation/DevNet's `develop` — "merge PR #N", "merge this into develop", or any request to land a PR after it's been reviewed. Any maintainer who isn't the PR's author or a co-author can run it (checked first with `.claude/scripts/din_peer_check.py`). Path A (the default, per Developer/MAINTAINING.md No. 4.4): push any review fixes onto the PR branch, then merge on GitHub with a merge commit once the approval, `CI OK` and up-to-date gates pass. Path B (Umer only per MAINTAINING No. 4.4, exceptional): the local stash-merge-pop flow plus a deviation commit, pushed through `din-push-develop` with the admin bypass. Either way it ends with the merger watching `develop` CI and posting the outcome comment (`outcome-comment.md`). Runs after `din-pr-review`. Not for reviewing a PR (use `din-pr-review`) and not for generic git merges outside this repo's PR workflow.
 ---
 
 # DIN DevNet PR merge
 
-`din-pr-review` produces a verification comment and a merge-proposal table.
-This skill is the next step: actually landing the PR on `develop` in this cwd
-and posting the outcome comment once it's real. It assumes the review already
-happened (or is happening in parallel) and Umer has said to go ahead and
-merge PR `<N>`.
+`din-pr-review` produces a verification comment, a merge-proposal table and a
+GitHub review. This skill lands the PR on `develop` and posts the outcome
+comment once it's real.
 
-The devnet cwd routinely has unrelated uncommitted WIP sitting on `develop`
-(other in-flight tasks, doc edits, scratch config toggles). This flow never
-merges into a dirty tree and never lets that WIP silently ride along inside
-the merge commit — it stashes it out of the way, merges cleanly, then pops it
-back and treats whatever breaks as a distinct, separately-commented deviation.
+"The operator" means the maintainer running the skill (the active `gh` user).
+The process is [`Developer/MAINTAINING.md`](../../../Developer/MAINTAINING.md);
+setup is [`.claude/scripts/README.md`](../../scripts/README.md).
 
-## 0. Hard rules — same gates as `din-pr-review`
+## Which path
 
-- **Never commit or push without Umer reviewing first.** Invoking this skill
-  is not that review. Stage the merge with `--no-commit` (step 3), summarize
-  file-by-file, and wait for Umer's go-ahead before the merge commit; the
-  same applies to any deviation commit (step 6) and to the push (step 7).
-  A `git commit` on `develop` has been observed to appear pushed already —
-  treat commit and push as one gated step.
-- **Never fabricate a GitHub-assigned ID.** Always `git rev-parse <ref>` for
-  every SHA that goes in the outcome comment, and `gh api
-  repos/InfiniteZeroFoundation/DevNet/pulls/<N>/commits` for the contributor's
-  real commits — never pattern-match a nearby real one.
-- **Preserve real attribution on the merge commit.** Fetch the PR ref and read
-  the contributor's real identity before committing:
-  ```bash
-  git fetch origin refs/pull/<N>/head
-  git log --format='%an <%ae>' -1 FETCH_HEAD
-  git commit --author="<contributor name> <their email>" ...
-  ```
-  Trailers: `Co-Authored-By: umeradl <umermajeed.cto@gmail.com>` for anything
-  Umer/Claude fixed on top, plus this session's standard Claude attribution
-  trailer. Don't credit the contributor in prose only.
+| | Path A — GitHub-side merge commit | Path B — local merge + deviation commit |
+|---|---|---|
+| Who | Any maintainer who isn't the author or a co-author | Umer only (MAINTAINING No. 4.4; `din_peer_check.py path-b`) |
+| When | The default, for every PR | Exceptional: the PR needs adapting against a `develop` that has moved (renames, ABI regeneration, docs drift) and pushing fixes onto the PR branch isn't practical |
+| Fixes | Pushed onto the PR branch (or a small follow-up PR); the last-push rule sends the final approval to someone else | A separate deviation commit on top of the merge, on `develop` |
+| Gate | The `develop` ruleset: 1 approval of the latest push, `CI OK`, branch up to date | The admin bypass; log a one-line reason in [Discussion 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170) |
+
+Use path A unless the operator explicitly chooses B and is Umer.
+
+## 0. Hard rules — both paths
+
+- **Peer check first.** `python3 .claude/scripts/din_peer_check.py pr <N>`.
+  `REFUSE` → stop and name an eligible maintainer (MAINTAINING No. 1, No. 7).
+  Never switch `gh` accounts to get past it.
+- **Never commit, push or merge without the operator's go-ahead.** Invoking
+  this skill is not that go-ahead. `gh pr merge` is a push to `develop`; treat
+  it like one. A `git commit` on `develop` has been observed to appear pushed
+  already — treat commit and push as one gated step.
+- **Merge commits only.** Never squash or rebase (the ruleset refuses them
+  anyway). Authorship and history must survive.
+- **Attribution** (MAINTAINING No. 4.5). The PR author stays the commit author.
+  Any commit the operator writes on someone else's work credits them with a
+  `Co-Authored-By: <name> <email>` trailer taken from their real commits
+  (`git log --format='%an <%ae>' -1 <their commit>`), never a guessed address.
+  The operator's own identity comes from their `git config user.name` /
+  `user.email`. Add the session's standard Claude attribution trailer.
+- **Never fabricate a GitHub-assigned ID.** `git rev-parse` every SHA and fetch
+  every URL that goes in the outcome comment.
 - **`gh api` file-sourced comment bodies need `-F body=@<path>`, not `-f`.**
-  Lowercase posts the literal string `@/path/...`. Re-fetch after every
-  post/PATCH and check the actual body content, not just exit status.
-- **`git status --short` + `git diff --stat` repo-wide before posting the
-  outcome comment.** Catches stray edits (from the stash pop, from rebuilding)
-  before they leak into a "verified" claim.
+  Re-fetch after every post/PATCH and check the body, not just the exit status.
+- **`git status --short` + `git diff --stat` repo-wide before posting** the
+  outcome comment.
 - **Never write `#N`** for the PR number in anything GitHub renders — write
-  "PR No. `<N>`" or similar; `#N` auto-links to an unrelated issue.
+  "PR No. `<N>`".
 
-## 1. Baseline: confirm cwd builds and tests pass *before* touching anything
+---
 
-Run this against the current `develop` HEAD, dirty tree and all — this is the
-control measurement. If it's already red, stop and tell Umer; don't let a
+## Path A — GitHub-side merge commit (default)
+
+### A1. Fixes, if the merge proposal has any
+
+If every file's "Pending proposal" is `None`, skip to A2: the PR merges as-is
+and its green `CI OK` is the build/test evidence (MAINTAINING No. 4.2).
+
+Otherwise the fixes go **onto the PR branch**, not onto `develop`:
+
+1. `merge-fix-comment-update <path>` for each file with a pending fix. In path
+   A it works in the review worktree `$DIN_WORK/PRs/PRreview_<N>`.
+2. `din-merge-build-test` once, in the same worktree. It runs the
+   CI-equivalent build and tests on the fixed branch, so the PR doesn't go red
+   in public, and fills in the comment rows.
+3. Commit the fixes in the worktree (one commit, message naming the review
+   items it closes; trailers per section 0), show the operator the diff, and on
+   their go-ahead push to the PR's head branch:
+   ```bash
+   gh pr view <N> --json headRepositoryOwner,headRefName,maintainerCanModify
+   git push <head-repo-url> HEAD:<headRefName>
+   ```
+   For a fork PR this needs `maintainerCanModify: true`. If it's false, don't
+   push: ask the author to apply the fixes, or open a small follow-up PR
+   against their branch.
+
+**After pushing fixes, the operator can't approve or merge this PR.** They're a
+co-author now, and the last-push rule hands the final approval to someone else
+(MAINTAINING No. 7). Post a one-line comment saying what was pushed and who
+should take the final approval, then stop. That person runs this skill from A2.
+
+### A2. Check the gates
+
+```bash
+R=InfiniteZeroFoundation/DevNet
+gh pr view <N> -R $R --json headRefOid,mergeStateStatus,reviewDecision,isDraft,reviews \
+  --jq '{head: .headRefOid, state: .mergeStateStatus, decision: .reviewDecision, draft: .isDraft,
+         approvals: [.reviews[] | select(.state=="APPROVED") | {by: .author.login, at: .commit.oid}]}'
+gh pr checks <N> -R $R
+```
+
+All of these must hold:
+
+- `isDraft` is false.
+- An approval from an eligible peer is **on the current head SHA**.
+- `CI OK` is green on that head.
+- `mergeStateStatus` is `CLEAN`. `BEHIND` means the branch isn't up to date:
+  ask the author to update it, or run `gh pr update-branch <N>`. Updating it
+  makes the operator the last pusher, so the approval then has to come from
+  someone else.
+- **`foundry/src/**` touched?** The second sign-off (MAINTAINING No. 4.2) is
+  on the PR, as an approval or a comment from @umeradl, @abrahamnash or a
+  security reviewer they named.
+- **Mechanism change?** The mechanism sign-off is on the PR (MAINTAINING No. 4.2).
+- No unresolved "Changes requested" from anyone (MAINTAINING No. 7).
+
+If any gate fails, report which one and stop. Don't use `--admin`.
+
+### A3. Merge
+
+On the operator's go-ahead:
+
+```bash
+gh pr merge <N> -R $R --merge
+gh pr view <N> -R $R --json state,mergedAt,mergeCommit --jq '{state, mergedAt, sha: .mergeCommit.oid}'
+```
+
+Then the outcome steps: **C1–C2** below.
+
+---
+
+## Path B — local merge + deviation commit (Umer only)
+
+```bash
+python3 .claude/scripts/din_peer_check.py path-b  # REFUSE → use path A
+source .claude/scripts/din-env.sh
+cd "$DIN_REPO"
+```
+
+Path B lands the PR in the `develop` checkout, which routinely has unrelated
+uncommitted WIP. The flow never merges into a dirty tree and never lets that
+WIP ride along inside the merge commit: it stashes it, merges cleanly, pops it
+back, and treats whatever breaks as a separate, separately described deviation.
+
+In path B, `merge-fix-comment-update` and `din-merge-build-test` run against the
+`develop` checkout instead of the review worktree (each skill's "Path B" notes).
+
+### B1. Baseline: confirm the checkout builds and tests pass before touching anything
+
+Run against the current `develop` HEAD, dirty tree and all. This is the control
+measurement. If it's already red, stop and tell the operator; don't let a
 pre-existing failure get attributed to the PR later.
 
 ```bash
 cd foundry && npm ci   # populate node_modules before any forge test (see root CLAUDE.md)
-FOUNDRY_VIA_IR=false forge build && FOUNDRY_VIA_IR=false forge test
-cd .. && pytest
+forge build && forge test   # real via_ir profile; the plain build no longer compiles develop
+cd .. && "$DIN_PY" -m pytest -m "not integration"
 ```
 
-Use the fast build path (`FOUNDRY_VIA_IR=false`) for this go/no-go check per
-`din-pr-review`'s guidance — same repo, same shortcut. Don't edit
-`foundry.toml` to toggle it.
+Don't edit `foundry.toml`.
 
-## 2. Stash whatever is currently dirty
+### B2. Stash whatever is currently dirty
 
 ```bash
-git status --short   # see what's here
+git status --short
 git stash push -u -m "pre-merge-pr-<N>"   # only if the tree is dirty; -u for untracked
 ```
 
-If `git status --short` is empty, skip the stash — there's nothing to protect
-the merge from and nothing to pop back later. Note in your own head (not a
-comment yet) whether you stashed something, so step 4 isn't a surprise.
+If `git status --short` is empty, skip the stash.
 
-## 3. Merge the PR into develop
-
-Merge locally (real merge commit, not squash) — never `gh pr merge`, which
-is a GitHub-side push that skips both the review gate and `din-push-develop`.
-Check GitHub and a local dry run agree first:
+### B3. Merge the PR into develop
 
 ```bash
 gh pr view <N> --json mergeable,mergeStateStatus
@@ -89,91 +171,86 @@ git merge --no-ff --no-commit FETCH_HEAD                    # stage only; resolv
 git diff --cached --stat
 ```
 
-**Stop here.** Summarize the staged merge file-by-file (conflicts and how
-they were resolved, if any) and wait for Umer's go-ahead. Only then commit
-with the contributor's real `--author` (see section 0) and a
-`merge: PR No. <N> (<owner>/<branch>) into develop` message. Capture the SHA
-with `git rev-parse HEAD` immediately (don't defer this — it's easy to lose
-track once the stash pop starts moving the tree around again).
+**Stop here.** Summarize the staged merge file-by-file (conflicts and how they
+were resolved) and wait for the operator's go-ahead. Then commit with the
+contributor's real `--author` and a
+`merge: PR No. <N> (<owner>/<branch>) into develop` message, and capture the
+SHA with `git rev-parse HEAD` immediately.
 
-If Umer wants changes first, `git merge --abort` returns `develop` to its
-pre-merge state with nothing committed.
+If the operator wants changes first, `git merge --abort` returns `develop` to
+its pre-merge state.
 
-## 4. Pop the stash
+### B4. Pop the stash
 
 ```bash
 git stash pop
 ```
 
-This is where develop-drift-vs-local-WIP interactions surface. Two distinct
-things can happen and they're not the same:
-
-- **Git-level conflict markers from the pop itself** — resolve these first,
-  they're mechanical.
+- **Conflict markers from the pop** — resolve these first; they're mechanical.
 - **Silent deviations** — code that applies cleanly but is now wrong because
-  the PR changed something the stashed WIP depended on (an API, a contract
-  interface, a manifest field, a test fixture). These won't show up as
-  conflict markers; find them by actually re-running the build/test suite
-  (step 5), not by re-reading the diff.
+  the PR changed something the WIP depended on. Find them by re-running the
+  build/tests (B5), not by re-reading the diff.
 
-If nothing was stashed in step 2, there's nothing to pop — go straight to
-step 5 to confirm the merge alone is green.
+### B5. Rebuild and retest against the combined state
 
-## 5. Rebuild and retest against the combined state
+Same commands as B1. Anything newly broken is a deviation to fix, not a PR
+defect — the PR already passed review.
 
-Same commands as step 1, now against merge + popped WIP:
+### B6. Commit the deviations
 
-```bash
-cd foundry && FOUNDRY_VIA_IR=false forge build && FOUNDRY_VIA_IR=false forge test
-cd .. && pytest
-```
-
-Compare against the step-1 baseline numbers. Anything newly broken here is a
-deviation to fix, not a PR defect to report back to the contributor — the PR
-itself already passed review.
-
-## 6. Commit the deviations
-
-Once fixed and green, show Umer the deviation diff and wait for his
-go-ahead, then commit it as its own commit — never amend the merge commit:
+Show the operator the deviation diff, and on their go-ahead commit it as its
+own commit — never amend the merge commit:
 
 ```bash
 git add <specific files>   # never -A; review `git status` first
 git commit -m "$(cat <<'EOF'
 <what changed and why — the develop-drift root cause, not just "fix">
 
-Co-Authored-By: umeradl <umermajeed.cto@gmail.com>
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: <PR author name> <their email from their commits>
+<the session's standard Claude attribution trailer>
 EOF
 )"
-git rev-parse HEAD   # capture the real deviation SHA — never guess it later
+git rev-parse HEAD
 ```
 
-If step 4/5 needed no fixes at all, there's no deviation commit — say so
-explicitly in the outcome comment rather than omitting the section
-ambiguously.
+If B4/B5 needed no fixes, there's no deviation commit — say so explicitly in
+the outcome comment.
 
-## 7. Stop and get Umer's review before pushing
+### B7. Push
 
-Summarize file-by-file (merge commit contents + deviation commit contents),
-then wait. Do not push until Umer says to, and then push only via
-`din-push-develop`.
+Summarize file-by-file (merge commit + deviation commit) and wait. Push only
+on the operator's go-ahead, and only via `din-push-develop` (which uses the
+admin bypass and logs the reason in Discussion 170). Then C1–C2.
 
-## 8. Post the outcome comment
+---
 
-Once pushed, use
-[`../din-pr-review/templates/outcome-comment.md`](../din-pr-review/templates/outcome-comment.md)
-(same template `din-pr-review` defines as its 3rd comment — this skill is
-what actually produces the state that template describes). Fill in:
+## C1. Own the `develop` CI run (both paths)
 
-- The real merge-commit and deviation-commit SHAs (`git rev-parse`, never
-  fabricated), linked to their GitHub commit URLs.
-- `gh pr view <N> --json state,mergedAt` to confirm GitHub agrees the PR shows
-  **MERGED**.
-- The deviation section populated from what step 4/5 actually found — root
-  cause phrased as "develop moved since this branch was cut, in a way git's
-  conflict detection couldn't see," matching the template's own framing.
-- Final build/test numbers from step 5, not step 1.
+The merger owns the CI run for the push to `develop` (MAINTAINING No. 4.6):
+
+```bash
+bash .claude/skills/din-push-develop/scripts/watch-push-run.sh <merge sha>   # Bash run_in_background: true
+```
+
+`din-push-develop` already does this for path B. If it goes red: ping the PR
+author first; if they can't fix it the same working day, the operator fixes it
+on top (through a PR) or reverts it (MAINTAINING No. 4.7), and logs it in
+Discussion 170.
+
+## C2. Post the outcome comment
+
+Use [`../din-pr-review/templates/outcome-comment.md`](../din-pr-review/templates/outcome-comment.md):
+
+- The real merge-commit SHA, plus any fix or deviation commit SHAs (fetched,
+  never fabricated), linked to their GitHub commit URLs.
+- `gh pr view <N> --json state,mergedAt` showing **MERGED**.
+- What deviated from the PR as opened: path A's fix commits on the branch, or
+  path B's deviation commit, with the root cause.
+- Final build/test evidence: the PR's green `CI OK` run (path A), or B5's
+  numbers (path B), plus the `develop` push run from C1.
+- Fill each file's "Actual merge proposal" row in the merge-proposal comment if
+  `din-merge-build-test` didn't already. It's the merger's field.
+- Set the label: `merged` (path A) or `Merged Locally` (path B).
 
 Post via `gh api ... -F body=@<path>` (capital `-F`), then re-fetch and check
-the body content matches before considering this done.
+the body matches.

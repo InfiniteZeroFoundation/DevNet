@@ -17,6 +17,8 @@ pip install -e .
 
 Create a feature branch, commit your changes, and open a pull request to `develop`.
 
+Every PR is reviewed and merged by someone other than its author. [MAINTAINING.md](MAINTAINING.md) describes how review, merging, and issue/task closure work.
+
 ## A Note On The Developer Docs
 
 The materials in `/Developer` are working design input, not fixed specifications. They represent current thinking, not final decisions.

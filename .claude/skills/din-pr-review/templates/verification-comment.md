@@ -1,19 +1,25 @@
 # Template 1 — Deep verification / review comment
 
-Posted first, before the merge-proposal table. Goal: reproduce every checkable
-claim in the PR with real execution, not just reading.
+Posted first, before the merge-proposal table. Goal: a "Claimed / Verified"
+pair for every checkable claim in the PR. A claim is verified by linking the
+CI job that covers it (green against an up-to-date `develop`), or by running it
+locally where `Developer/MAINTAINING.md` No. 4.2 requires that: storage layout
+and upgrade safety in `foundry/src/**`, deploy/upgrade scripts, `dincli` flows
+against a live chain or IPFS, and any behaviour no test exercises.
 
 ```
 Reviewed against `develop` in an isolated worktree (branch applies cleanly on
 top of current tip, `<merge-base-sha>`, <N> commit(s), no conflicts — confirmed
 by both `git merge-tree` locally and GitHub's own `mergeable`/
-`mergeStateStatus`). Ran the actual <fix/behavior> rather than just reading it.
+`mergeStateStatus`). CI on `<head sha>`: [`CI OK` green](<run url>) — covers
+<what it covers for this PR>. Reproduced locally: <the parts CI doesn't cover>.
 
 **Claimed:** <the PR's own claim, quoted or paraphrased precisely>
 
-**Verified — <one-line verdict>:** <what was actually run/reproduced, with
-real numbers/output — forced edge cases, real-sampling stress tests, AST
-diffs, independent link/count checks, etc. Prefer going *beyond* the PR's own
+**Verified — <one-line verdict>:** <either the CI job that covers it (link),
+or what was actually run/reproduced locally, with real numbers/output — forced
+edge cases, real-sampling stress tests, AST diffs, independent link/count
+checks, etc. Where you reproduce, prefer going *beyond* the PR's own
 verification, not just repeating it.>
 
 <repeat per claim>
@@ -41,6 +47,6 @@ that didn't hold up).>
 - Structural claims (AST equivalence, "this file doesn't exist on `develop`
   yet", link/reference counts) are cheap to verify exactly — do it with a
   real command, cite the exact output, don't approximate.
-- For Solidity changes, use the fast build path (`FOUNDRY_VIA_IR=false`)
-  unless validating deploy-exact behavior (gas numbers, bytecode) — see the
-  main SKILL.md.
+- For Solidity changes run locally, use the real `via_ir` profile
+  (`forge build` / `forge test`); the plain build no longer compiles `develop`
+  — see the main SKILL.md.

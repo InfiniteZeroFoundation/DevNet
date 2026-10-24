@@ -1,0 +1,37 @@
+# Code owners for InfiniteZeroFoundation/DevNet.
+#
+# These entries only REQUEST reviewers automatically. They don't block merges:
+# the develop ruleset does not require code-owner review, because Robbert and
+# Similoluwa couldn't get each other's contract PRs merged otherwise. The real
+# gate is 1 approval from someone other than the author. See
+# Developer/MAINTAINING.md for the full process, including the second sign-off
+# on foundry/src/** and when a reviewer should recuse.
+#
+# GitHub uses the LAST matching pattern for a path, so the catch-all comes first
+# and the more specific areas come after it. GitHub ignores owners who don't
+# have Write access to the repo.
+
+# Fallback for anything not matched below.
+*                       @umeradl
+
+# Contracts: logic, storage layout, deploy and upgrade scripts, tests.
+/foundry/               @robertocarlous @Abidoyesimze @umeradl
+/hardhat/               @robertocarlous @Abidoyesimze @umeradl
+
+# Python CLI, tests, example model services, docker/IPFS ops, CI.
+/dincli/                @Santiagocetran @umeradl
+/tests/                 @Santiagocetran @umeradl
+/cache_model_0/         @Santiagocetran @umeradl
+/cid_services/          @Santiagocetran @umeradl
+/pyproject.toml         @Santiagocetran @umeradl
+/.github/               @Santiagocetran @umeradl
+
+# Docs and process.
+/Documentation/         @Santiagocetran @robertocarlous
+/Developer/             @Santiagocetran @robertocarlous
+
+# The maintainer process itself and the Claude skills that implement it.
+/.github/CODEOWNERS     @umeradl @Santiagocetran @robertocarlous
+/Developer/MAINTAINING.md @umeradl @Santiagocetran @robertocarlous
+/.claude/               @umeradl @Santiagocetran @robertocarlous
+/CLAUDE.md              @umeradl
