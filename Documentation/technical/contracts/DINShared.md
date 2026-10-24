@@ -353,7 +353,7 @@ Used by: `DINTaskCoordinator`
 | `TC_InvalidDisputeParams` | `setDisputeParams` with a zero bond, window or resolution window, or a seed delay outside 1–256 |
 | `TC_BatchNotFinalized` | `openDispute` on a batch that has not finalized |
 | `TC_DisputeWindowClosed` | `openDispute` after `finalizedAt + disputeWindow` |
-| `TC_DisputeAlreadyOpen` | A dispute already exists for the batch |
+| `TC_DisputeAlreadyOpen` | A dispute is open or has already been resolved for the batch (the challenger field is never cleared, so a resolved dispute also fires this error on a second `openDispute` attempt) |
 | `TC_DisputeNotOpen` | `resolveDispute` or `lockDisputeSeed` with no dispute |
 | `TC_DisputeAlreadyResolved` | Second `resolveDispute`, or `lockDisputeSeed` after resolution |
 | `TC_NoBondClaimable` | `claimDisputeBond` with nothing to claim |

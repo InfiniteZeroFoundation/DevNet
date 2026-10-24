@@ -1394,6 +1394,12 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         if (block.timestamp > finalizedAt + disputeWindow) {
             revert TC_DisputeWindowClosed();
         }
+        // One dispute per batch, ever. The challenger field is set on open and
+        // never cleared, so this check also blocks reopening after resolution.
+        // Consequence: a colluder can squat a batch from the moment they open a
+        // weak dispute — the batch becomes immune to a better-evidenced challenge
+        // for the rest of the window regardless of how the owner resolves it.
+        // Revisit if multi-dispute-per-batch is needed — see issue #181 (decentralised adjudication).
         if (disputes[_GI][tierKind][batchId].challenger != address(0)) {
             revert TC_DisputeAlreadyOpen();
         }
@@ -1542,6 +1548,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     /// @param tierKind Whether the batch is a Tier-1 or Tier-2 batch.
     /// @param batchId Index of the disputed batch within its tier.
     /// @param upheld True if the dispute is found valid.
+    // One dispute per batch, ever: once resolved (upheld or rejected) the batch cannot be re-disputed.
     function resolveDispute(
         uint _GI,
         TierKind tierKind,

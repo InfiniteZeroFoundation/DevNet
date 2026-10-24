@@ -232,6 +232,8 @@ A forfeited bond is split 50% burned / 50% forwarded to `dinvalidatorStakeContra
 
 The fresh subgroup is bookkeeping only: nothing re-opens the state machine for it to submit a recomputation on-chain (§10 No. 3).
 
+**One dispute per batch, ever.** `openDispute` checks `disputes[gi][tierKind][batchId].challenger != address(0)` and reverts `TC_DisputeAlreadyOpen`. The challenger field is set when the dispute opens and never cleared, so this check blocks reopening after resolution just as it blocks a second open while the first is pending — both produce `TC_DisputeAlreadyOpen`. Consequence: a colluder can open a weak dispute on their own batch early, accept the forfeited bond, and leave the batch immune to a better-evidenced challenge for the rest of the window. Revisit if multi-dispute-per-batch is ever desired; see [issue #181](https://github.com/InfiniteZeroFoundation/DevNet/issues/181) (decentralised adjudication).
+
 ---
 
 ## 8. Events
