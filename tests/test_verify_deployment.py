@@ -35,38 +35,50 @@ _CODEHASH = "0x" + __import__("eth_utils").keccak(_CODE).hex()
 
 # ── Minimal deployments JSON (one proxy) ────────────────────────────────────
 
-def _one_proxy_deps(impl_addr=_IMPL, admin_addr=_ADMIN, codehash=_CODEHASH, owner=_OWNER) -> dict:
+def _one_proxy_deps(impl_addr=_IMPL, admin_addr=_ADMIN, codehash=_CODEHASH, owner=_OWNER,
+                    treasury=None, fee_router=None) -> dict:
     return {
         "dinCoordinator":                "0x0000000000000000000000000000000000000000",
         "dinToken":                      "0x0000000000000000000000000000000000000000",
         "dinValidatorStake":             "0x0000000000000000000000000000000000000000",
         "dinModelRegistry":              "0x0000000000000000000000000000000000000000",
-        "dinTreasury":                   _PROXY,
+        "dinTreasury":                   treasury or _PROXY,
         "dinTreasuryImpl":               impl_addr,
         "dinTreasuryImplCodehash":       codehash,
         "proxyAdminTreasury":            admin_addr,
-        "dinFeeRouter":                  "0x0000000000000000000000000000000000000000",
+        "dinFeeRouter":                  fee_router or "0x0000000000000000000000000000000000000000",
         "dinEmission":                   "0x0000000000000000000000000000000000000000",
         "owner":                         owner,
         "deployedAtCommit":              "abc1234",
     }
 
 
+def _wired_deps() -> dict:
+    """Deps with a real fee-router address so the treasury wiring check fires."""
+    d = _one_proxy_deps(treasury=_TREASURY, fee_router=_FEE_ROUTER)
+    return d
+
+
 # ── Dummy web3 ───────────────────────────────────────────────────────────────
+
+_TREASURY = "0xDe2222222222222222222222222222222222222D"
+_FEE_ROUTER = "0xDe3333333333333333333333333333333333333D"
+
 
 class DummyEth:
     def __init__(self, impl=_IMPL, admin=_ADMIN, code=_CODE, owner_ret=_OWNER,
-                 wiring=None, slasher_authorized=True):
+                 wiring=None, slasher_authorized=True, treasury_ret=None):
         self._impl  = impl
         self._admin = admin
         self._code  = code
         self._owner = owner_ret
         self._wiring = wiring or {
-            "dinToken":          "0x0000000000000000000000000000000000000000",
-            "dinValidatorStake": "0x0000000000000000000000000000000000000000",
-            "dinModelRegistry":  "0x0000000000000000000000000000000000000000",
+            "dinToken":                  "0x0000000000000000000000000000000000000000",
+            "dinValidatorStakeContract": "0x0000000000000000000000000000000000000000",
+            "feeRouter":                 "0x0000000000000000000000000000000000000000",
         }
         self._slasher_authorized = slasher_authorized
+        self._treasury = treasury_ret or _TREASURY
 
     def get_storage_at(self, addr, slot):
         if slot == _IMPL_SLOT:
@@ -97,18 +109,25 @@ class DummyEth:
                             return outer._wiring["dinToken"]
                     return _R
                 @staticmethod
-                def dinValidatorStake():
+                def dinValidatorStakeContract():
                     class _R:
                         @staticmethod
                         def call():
-                            return outer._wiring["dinValidatorStake"]
+                            return outer._wiring["dinValidatorStakeContract"]
                     return _R
                 @staticmethod
-                def dinModelRegistry():
+                def feeRouter():
                     class _R:
                         @staticmethod
                         def call():
-                            return outer._wiring["dinModelRegistry"]
+                            return outer._wiring["feeRouter"]
+                    return _R
+                @staticmethod
+                def treasury():
+                    class _R:
+                        @staticmethod
+                        def call():
+                            return outer._treasury
                     return _R
                 @staticmethod
                 def slasherContracts(addr):
@@ -286,3 +305,73 @@ class TestFileHandling:
         except (click.exceptions.Exit, typer.Exit) as exc:
             exit_code = exc.exit_code
         assert exit_code != 0
+
+
+class TestApplicationOwner:
+    """Application proxy owner() checks (Check 4b)."""
+
+    def test_ok_when_proxy_owner_matches(self, tmp_path):
+        code, lines = run_cmd(tmp_path, _one_proxy_deps())
+        assert code == 0
+        assert any("[OK]" in l and "owner" in l for l in lines)
+
+    def test_drift_when_proxy_owner_wrong(self, tmp_path):
+        wrong_owner = "0xFfffffffffffffffffffffffffffffffFfffffff"
+        w3 = DummyWeb3(owner_ret=wrong_owner)
+        code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3)
+        assert code != 0
+        owner_drifts = [l for l in lines if "[DRIFT]" in l and "owner" in l]
+        assert owner_drifts, f"Expected DRIFT owner line, got: {lines}"
+
+
+_WIRED_WIRING = {
+    "dinToken":                  "0x0000000000000000000000000000000000000000",
+    "dinValidatorStakeContract": "0x0000000000000000000000000000000000000000",
+    "feeRouter":                 _FEE_ROUTER,
+}
+
+
+class TestFeeRouterTreasury:
+    """FeeRouter.treasury() wiring check."""
+
+    def test_ok_when_treasury_matches(self, tmp_path):
+        w3 = DummyWeb3(treasury_ret=_TREASURY, wiring=_WIRED_WIRING)
+        code, lines = run_cmd(tmp_path, _wired_deps(), w3=w3)
+        assert code == 0
+        assert any("[OK]" in l and "treasury" in l for l in lines)
+
+    def test_drift_when_treasury_wrong(self, tmp_path):
+        wrong_treasury = "0x0000000000000000000000000000000000000099"
+        w3 = DummyWeb3(treasury_ret=wrong_treasury, wiring=_WIRED_WIRING)
+        code, lines = run_cmd(tmp_path, _wired_deps(), w3=w3)
+        assert code != 0
+        assert any("[DRIFT]" in l and "treasury" in l for l in lines)
+
+    def test_skipped_when_fee_router_is_zero(self, tmp_path):
+        # zero dinFeeRouter address: treasury check is skipped (WARN), not DRIFT
+        deps = _one_proxy_deps()  # dinFeeRouter = zero addr, dinTreasury = _PROXY
+        code, lines = run_cmd(tmp_path, deps)
+        assert code == 0
+        assert not any("[DRIFT]" in l and "treasury" in l for l in lines)
+
+
+class TestAccountFreeDispatch:
+    """verify-deployment must not trigger account loading via the system callback."""
+
+    def test_no_wallet_loaded(self, tmp_path):
+        dep_file = tmp_path / "deps.json"
+        dep_file.write_text(json.dumps(_one_proxy_deps()))
+
+        class StrictDummy(DummyCtxObj):
+            def get_en_w3_account_console(self, *args, **kwargs):
+                raise AssertionError("account loading must not occur for verify-deployment")
+
+        from typer.testing import CliRunner as TCliRunner
+        runner = TCliRunner()
+        result = runner.invoke(
+            system_mod.app,
+            ["verify-deployment", "--file", str(dep_file), "--no-color"],
+            obj=StrictDummy(),
+        )
+        assert "AssertionError" not in (result.output or "")
+        assert result.exit_code == 0

@@ -72,7 +72,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "connect-demo-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet", "bridge-eth"]:
+    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "connect-demo-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet", "bridge-eth", "verify-deployment"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -1147,11 +1147,12 @@ _EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a7178
 # Minimal ABI fragments used by verify-deployment
 _OWNER_ABI    = [{"inputs": [], "name": "owner",             "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
 _WIRING_ABI   = [
-    {"inputs": [], "name": "dinToken",           "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "dinValidatorStake",  "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "dinModelRegistry",   "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "dinToken",                 "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "dinValidatorStakeContract","outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "feeRouter",                "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
 ]
-_SLASHER_ABI  = [{"inputs": [{"type": "address"}], "name": "slasherContracts", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"}]
+_SLASHER_ABI     = [{"inputs": [{"type": "address"}], "name": "slasherContracts", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"}]
+_FEE_ROUTER_ABI  = [{"inputs": [], "name": "treasury", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
 
 # Proxy names and the matching JSON keys for proxy / proxyAdmin / impl / codehash
 _PROXIES = [
@@ -1351,6 +1352,27 @@ def verify_deployment(
             _emit("DRIFT", f"{label} proxyAdmin owner: recorded {recorded_owner}  actual {actual_owner}")
             drift = True
 
+    # ── Check 4b: owner() of each application proxy ──────────────────────────
+    for label, proxy_key, _admin_key, _impl_key, _codehash_key in _PROXIES:
+        proxy_addr = deps.get(proxy_key, "")
+        if not proxy_addr:
+            continue
+        try:
+            proxy_addr = w3.to_checksum_address(proxy_addr)
+            contract = w3.eth.contract(address=proxy_addr, abi=_OWNER_ABI)
+            actual_owner = contract.functions.owner().call()
+        except Exception as exc:
+            _emit("ERROR", f"{label} owner() failed: {exc}")
+            drift = True
+            continue
+        if recorded_owner and w3.to_checksum_address(recorded_owner) == actual_owner:
+            _emit("OK", f"{label} owner {actual_owner}")
+        elif not recorded_owner:
+            _emit("INFO", f"{label} owner (no recorded value): on-chain {actual_owner}")
+        else:
+            _emit("DRIFT", f"{label} owner: recorded {recorded_owner}  actual {actual_owner}")
+            drift = True
+
     # ── Check 5: DinCoordinator cross-contract wiring ────────────────────────
     coordinator_addr = deps.get("dinCoordinator", "")
     if coordinator_addr:
@@ -1358,18 +1380,39 @@ def verify_deployment(
             coordinator_addr = w3.to_checksum_address(coordinator_addr)
             coord = w3.eth.contract(address=coordinator_addr, abi=_WIRING_ABI)
             wiring_checks = [
-                ("dinToken",          "dinToken",          coord.functions.dinToken().call()),
-                ("dinValidatorStake", "dinValidatorStake", coord.functions.dinValidatorStake().call()),
-                ("dinModelRegistry",  "dinModelRegistry",  coord.functions.dinModelRegistry().call()),
+                ("dinToken",                 "dinToken",          coord.functions.dinToken().call()),
+                ("dinValidatorStakeContract", "dinValidatorStake", coord.functions.dinValidatorStakeContract().call()),
+                ("feeRouter",                "dinFeeRouter",      coord.functions.feeRouter().call()),
             ]
             for desc, dep_key, actual in wiring_checks:
                 recorded = deps.get(dep_key, "")
-                if recorded and w3.to_checksum_address(recorded) == actual:
+                if recorded and w3.to_checksum_address(recorded) == w3.to_checksum_address(actual):
                     _emit("OK", f"wiring: DinCoordinator.{desc} → {actual}")
                 elif not recorded:
                     _emit("INFO", f"wiring: DinCoordinator.{desc} on-chain {actual}")
                 else:
                     _emit("DRIFT", f"wiring: DinCoordinator.{desc}: recorded {recorded}  actual {actual}")
+                    drift = True
+
+            # FeeRouter.treasury() must point at the recorded treasury proxy.
+            fee_router_addr = deps.get("dinFeeRouter", "")
+            treasury_addr   = deps.get("dinTreasury", "")
+            if fee_router_addr and treasury_addr:
+                try:
+                    fee_router_cs = w3.to_checksum_address(fee_router_addr)
+                    treasury_cs   = w3.to_checksum_address(treasury_addr)
+                    if int(fee_router_cs, 16) == 0:
+                        _emit("WARN", "DinFeeRouter address is zero — treasury wiring check skipped")
+                    else:
+                        fee_router = w3.eth.contract(address=fee_router_cs, abi=_FEE_ROUTER_ABI)
+                        actual_treasury = w3.to_checksum_address(fee_router.functions.treasury().call())
+                        if treasury_cs == actual_treasury:
+                            _emit("OK", f"wiring: DinFeeRouter.treasury → {actual_treasury}")
+                        else:
+                            _emit("DRIFT", f"wiring: DinFeeRouter.treasury: recorded {treasury_cs}  actual {actual_treasury}")
+                            drift = True
+                except Exception as exc:
+                    _emit("ERROR", f"DinFeeRouter.treasury() check failed: {exc}")
                     drift = True
         except Exception as exc:
             _emit("ERROR", f"DinCoordinator wiring check failed: {exc}")
