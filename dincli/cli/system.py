@@ -72,7 +72,7 @@ def system(
     ),
 ):
     # If the subcommand is one that doesn't need an account, we skip the default setup logic
-    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "connect-demo-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet", "bridge-eth"]:
+    if ctx.invoked_subcommand in ["register-wallet", "connect-wallet", "connect-demo-wallet", "init", "welcome", "where", "configure-network", "configure-demo", "configure-ipfs", "read-wallet", "show-index", "din-info", "import-deployments", "configure-logging", "dump-abi", "reset-all", "todo", "dataset", "send-eth", "run-worker-counting", "run-node-counting", "list-accounts", "set-wallet", "bridge-eth", "verify-deployment"]:
         return
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -1136,6 +1136,317 @@ def import_deployments(ctx: typer.Context,
     ]:
         if entry.get(_key):
             console.print(f"[magenta]{_label}:[/magenta] {entry[_key]}")
+
+
+# ── EIP-1967 storage slots ──────────────────────────────────────────────────
+# implementation: bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)
+_EIP1967_IMPL_SLOT  = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+# admin:          bytes32(uint256(keccak256("eip1967.proxy.admin")) - 1)
+_EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
+
+# Minimal ABI fragments used by verify-deployment
+_OWNER_ABI    = [{"inputs": [], "name": "owner",             "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
+_WIRING_ABI   = [
+    {"inputs": [], "name": "dinToken",                 "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "dinValidatorStakeContract","outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "feeRouter",                "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+]
+_SLASHER_ABI     = [{"inputs": [{"type": "address"}], "name": "slasherContracts", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"}]
+_FEE_ROUTER_ABI  = [{"inputs": [], "name": "treasury", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
+
+# Proxy names and the matching JSON keys for proxy / proxyAdmin / impl / codehash
+_PROXIES = [
+    ("DinTreasury",        "dinTreasury",        "proxyAdminTreasury",    "dinTreasuryImpl",        "dinTreasuryImplCodehash"),
+    ("DinToken",           "dinToken",           "proxyAdminToken",       "dinTokenImpl",           "dinTokenImplCodehash"),
+    ("DinCoordinator",     "dinCoordinator",     "proxyAdminCoordinator", "dinCoordinatorImpl",     "dinCoordinatorImplCodehash"),
+    ("DinFeeRouter",       "dinFeeRouter",       "proxyAdminFeeRouter",   "dinFeeRouterImpl",       "dinFeeRouterImplCodehash"),
+    ("DinValidatorStake",  "dinValidatorStake",  "proxyAdminStake",       "dinValidatorStakeImpl",  "dinValidatorStakeImplCodehash"),
+    ("DINModelRegistry",   "dinModelRegistry",   "proxyAdminRegistry",    "dinModelRegistryImpl",   "dinModelRegistryImplCodehash"),
+    ("DinEmission",        "dinEmission",        "proxyAdminEmission",    "dinEmissionImpl",        "dinEmissionImplCodehash"),
+]
+
+
+def _slot_to_address(w3, raw: bytes) -> str:
+    """Convert a 32-byte EIP-1967 slot value to a checksummed address."""
+    return w3.to_checksum_address("0x" + raw.hex()[-40:])
+
+
+def _read_impl_slot(w3, proxy: str) -> str:
+    raw = w3.eth.get_storage_at(proxy, _EIP1967_IMPL_SLOT)
+    return _slot_to_address(w3, raw)
+
+
+def _read_admin_slot(w3, proxy: str) -> str:
+    raw = w3.eth.get_storage_at(proxy, _EIP1967_ADMIN_SLOT)
+    return _slot_to_address(w3, raw)
+
+
+def _codehash(w3, addr: str) -> str:
+    """keccak256 of the runtime bytecode at addr, matching EVM extcodehash."""
+    from eth_utils import keccak
+    code = w3.eth.get_code(addr)
+    if not code:
+        return "0x" + "00" * 32
+    return "0x" + keccak(code).hex()
+
+
+@app.command("verify-deployment")
+def verify_deployment(
+    ctx: typer.Context,
+    file: Optional[Path] = typer.Option(
+        None, "--file", "-f",
+        help="Explicit deployments JSON path. Defaults to foundry/deployments/<network>.json.",
+    ),
+    no_color: bool = typer.Option(
+        False, "--no-color",
+        help="Plain-text output without Rich markup (auto-detected when stdout is not a tty).",
+    ),
+    slashers: Optional[str] = typer.Option(
+        None, "--slashers",
+        help="Comma-separated list of expected slasher (task-coordinator) addresses. "
+             "If omitted the on-chain slasher list is reported as informational only.",
+    ),
+):
+    """
+    Verify that foundry/deployments/<network>.json matches the live chain.
+
+    Reads the deployments file (written by DeployPlatform.s.sol / UpgradePlatform.s.sol),
+    connects to the configured RPC, and checks:
+
+    \b
+      1. EIP-1967 implementation slot of each proxy
+      2. EIP-1967 admin slot of each proxy
+      3. extcodehash of each implementation vs the recorded codehash
+      4. owner() of each ProxyAdmin
+      5. DinCoordinator cross-contract wiring
+      6. DinValidatorStake slasher authorizations (informational when no --slashers given)
+
+    Exits 0 when all checks pass, 1 on any DRIFT or ERROR.
+
+    This check is read-only; it never sends transactions.
+    It covers only what the deployments file records — a clean run does not
+    prove that nothing else was deployed or authorized outside that file.
+    """
+    import sys
+    from eth_utils import keccak
+
+    use_plain = no_color or not sys.stdout.isatty()
+    raw_console = ctx.obj.console
+
+    def _emit(status: str, msg: str):
+        tag = f"[{status}]".ljust(7)
+        if use_plain:
+            raw_console.print(f"{tag} {msg}", markup=False, highlight=False)
+        else:
+            color = {"OK": "green", "DRIFT": "red", "ERROR": "red", "INFO": "cyan", "WARN": "yellow"}.get(status, "white")
+            raw_console.print(f"[{color}]{tag}[/{color}] {msg}")
+
+    network = ctx.obj.network
+    w3 = ctx.obj.w3
+
+    if file is None:
+        network_key = _DEPLOYMENT_CHAIN_NETWORK_FOR.get(network, network)
+        file = Path("foundry") / "deployments" / f"{network_key}.json"
+
+    file = file.expanduser()
+    if not file.exists():
+        _emit("ERROR", f"Deployments file not found: {file}")
+        raise typer.Exit(1)
+
+    try:
+        with open(file) as fh:
+            deps = json.load(fh)
+    except (json.JSONDecodeError, OSError) as e:
+        _emit("ERROR", f"Failed to read deployments file: {e}")
+        raise typer.Exit(1)
+
+    commit = deps.get("deployedAtCommit", "")
+    if commit:
+        _emit("INFO", f"deployedAtCommit: {commit}")
+    recorded_owner = deps.get("owner", "")
+
+    drift = False
+
+    # ── Check 1 + 2: EIP-1967 impl and admin slots ──────────────────────────
+    for label, proxy_key, admin_key, impl_key, _codehash_key in _PROXIES:
+        proxy_addr = deps.get(proxy_key)
+        if not proxy_addr:
+            _emit("WARN", f"{label}: proxy address not in deployments file — skipped")
+            continue
+        try:
+            proxy_addr = w3.to_checksum_address(proxy_addr)
+        except Exception:
+            _emit("ERROR", f"{label}: invalid proxy address in file: {proxy_addr}")
+            drift = True
+            continue
+
+        # Check 1 — implementation slot
+        recorded_impl = deps.get(impl_key, "")
+        try:
+            on_chain_impl = _read_impl_slot(w3, proxy_addr)
+        except Exception as exc:
+            _emit("ERROR", f"{label} impl slot read failed: {exc}")
+            drift = True
+        else:
+            if recorded_impl and w3.to_checksum_address(recorded_impl) == on_chain_impl:
+                _emit("OK", f"{label} proxy → impl {on_chain_impl}")
+            elif not recorded_impl:
+                _emit("INFO", f"{label} impl (no recorded value): on-chain {on_chain_impl}")
+            else:
+                _emit("DRIFT", f"{label} impl: recorded {recorded_impl}  actual {on_chain_impl}")
+                drift = True
+
+        # Check 2 — admin slot
+        recorded_admin = deps.get(admin_key, "")
+        try:
+            on_chain_admin = _read_admin_slot(w3, proxy_addr)
+        except Exception as exc:
+            _emit("ERROR", f"{label} admin slot read failed: {exc}")
+            drift = True
+        else:
+            if recorded_admin and w3.to_checksum_address(recorded_admin) == on_chain_admin:
+                _emit("OK", f"{label} proxyAdmin {on_chain_admin}")
+            elif not recorded_admin:
+                _emit("INFO", f"{label} proxyAdmin (no recorded value): on-chain {on_chain_admin}")
+            else:
+                _emit("DRIFT", f"{label} proxyAdmin: recorded {recorded_admin}  actual {on_chain_admin}")
+                drift = True
+
+    # ── Check 3: extcodehash of each implementation ──────────────────────────
+    for label, _proxy_key, _admin_key, impl_key, codehash_key in _PROXIES:
+        impl_addr = deps.get(impl_key, "")
+        recorded_ch = deps.get(codehash_key, "")
+        if not impl_addr or not recorded_ch:
+            continue
+        try:
+            impl_addr = w3.to_checksum_address(impl_addr)
+            actual_ch = _codehash(w3, impl_addr)
+        except Exception as exc:
+            _emit("ERROR", f"{label} codehash check failed: {exc}")
+            drift = True
+            continue
+        if actual_ch.lower() == recorded_ch.lower():
+            _emit("OK", f"{label} impl codehash {actual_ch[:18]}…")
+        else:
+            _emit("DRIFT", f"{label} impl codehash: recorded {recorded_ch[:18]}…  actual {actual_ch[:18]}…")
+            drift = True
+
+    # ── Check 4: owner() of each ProxyAdmin ──────────────────────────────────
+    for label, _proxy_key, admin_key, _impl_key, _codehash_key in _PROXIES:
+        admin_addr = deps.get(admin_key, "")
+        if not admin_addr:
+            continue
+        try:
+            admin_addr = w3.to_checksum_address(admin_addr)
+            contract = w3.eth.contract(address=admin_addr, abi=_OWNER_ABI)
+            actual_owner = contract.functions.owner().call()
+        except Exception as exc:
+            _emit("ERROR", f"{label} proxyAdmin.owner() failed: {exc}")
+            drift = True
+            continue
+        if recorded_owner and w3.to_checksum_address(recorded_owner) == actual_owner:
+            _emit("OK", f"{label} proxyAdmin owner {actual_owner}")
+        elif not recorded_owner:
+            _emit("INFO", f"{label} proxyAdmin owner (no recorded value): on-chain {actual_owner}")
+        else:
+            _emit("DRIFT", f"{label} proxyAdmin owner: recorded {recorded_owner}  actual {actual_owner}")
+            drift = True
+
+    # ── Check 4b: owner() of each application proxy ──────────────────────────
+    for label, proxy_key, _admin_key, _impl_key, _codehash_key in _PROXIES:
+        proxy_addr = deps.get(proxy_key, "")
+        if not proxy_addr:
+            continue
+        try:
+            proxy_addr = w3.to_checksum_address(proxy_addr)
+            contract = w3.eth.contract(address=proxy_addr, abi=_OWNER_ABI)
+            actual_owner = contract.functions.owner().call()
+        except Exception as exc:
+            _emit("ERROR", f"{label} owner() failed: {exc}")
+            drift = True
+            continue
+        if recorded_owner and w3.to_checksum_address(recorded_owner) == actual_owner:
+            _emit("OK", f"{label} owner {actual_owner}")
+        elif not recorded_owner:
+            _emit("INFO", f"{label} owner (no recorded value): on-chain {actual_owner}")
+        else:
+            _emit("DRIFT", f"{label} owner: recorded {recorded_owner}  actual {actual_owner}")
+            drift = True
+
+    # ── Check 5: DinCoordinator cross-contract wiring ────────────────────────
+    coordinator_addr = deps.get("dinCoordinator", "")
+    if coordinator_addr:
+        try:
+            coordinator_addr = w3.to_checksum_address(coordinator_addr)
+            coord = w3.eth.contract(address=coordinator_addr, abi=_WIRING_ABI)
+            wiring_checks = [
+                ("dinToken",                 "dinToken",          coord.functions.dinToken().call()),
+                ("dinValidatorStakeContract", "dinValidatorStake", coord.functions.dinValidatorStakeContract().call()),
+                ("feeRouter",                "dinFeeRouter",      coord.functions.feeRouter().call()),
+            ]
+            for desc, dep_key, actual in wiring_checks:
+                recorded = deps.get(dep_key, "")
+                if recorded and w3.to_checksum_address(recorded) == w3.to_checksum_address(actual):
+                    _emit("OK", f"wiring: DinCoordinator.{desc} → {actual}")
+                elif not recorded:
+                    _emit("INFO", f"wiring: DinCoordinator.{desc} on-chain {actual}")
+                else:
+                    _emit("DRIFT", f"wiring: DinCoordinator.{desc}: recorded {recorded}  actual {actual}")
+                    drift = True
+
+            # FeeRouter.treasury() must point at the recorded treasury proxy.
+            fee_router_addr = deps.get("dinFeeRouter", "")
+            treasury_addr   = deps.get("dinTreasury", "")
+            if fee_router_addr and treasury_addr:
+                try:
+                    fee_router_cs = w3.to_checksum_address(fee_router_addr)
+                    treasury_cs   = w3.to_checksum_address(treasury_addr)
+                    if int(fee_router_cs, 16) == 0:
+                        _emit("WARN", "DinFeeRouter address is zero — treasury wiring check skipped")
+                    else:
+                        fee_router = w3.eth.contract(address=fee_router_cs, abi=_FEE_ROUTER_ABI)
+                        actual_treasury = w3.to_checksum_address(fee_router.functions.treasury().call())
+                        if treasury_cs == actual_treasury:
+                            _emit("OK", f"wiring: DinFeeRouter.treasury → {actual_treasury}")
+                        else:
+                            _emit("DRIFT", f"wiring: DinFeeRouter.treasury: recorded {treasury_cs}  actual {actual_treasury}")
+                            drift = True
+                except Exception as exc:
+                    _emit("ERROR", f"DinFeeRouter.treasury() check failed: {exc}")
+                    drift = True
+        except Exception as exc:
+            _emit("ERROR", f"DinCoordinator wiring check failed: {exc}")
+            drift = True
+
+    # ── Check 6: slasher authorizations ──────────────────────────────────────
+    stake_addr = deps.get("dinValidatorStake", "")
+    if stake_addr:
+        try:
+            stake_addr = w3.to_checksum_address(stake_addr)
+            stake_contract = w3.eth.contract(address=stake_addr, abi=_SLASHER_ABI)
+            if slashers:
+                expected_list = [s.strip() for s in slashers.split(",") if s.strip()]
+                for addr in expected_list:
+                    try:
+                        addr = w3.to_checksum_address(addr)
+                        authorized = stake_contract.functions.slasherContracts(addr).call()
+                    except Exception as exc:
+                        _emit("ERROR", f"slasher check for {addr} failed: {exc}")
+                        drift = True
+                        continue
+                    if authorized:
+                        _emit("OK", f"slasher {addr} authorized on DinValidatorStake")
+                    else:
+                        _emit("DRIFT", f"slasher {addr} NOT authorized on DinValidatorStake")
+                        drift = True
+            else:
+                _emit("INFO", "slasher list: pass --slashers to verify; on-chain list not enumerated")
+        except Exception as exc:
+            _emit("ERROR", f"DinValidatorStake slasher check failed: {exc}")
+            drift = True
+
+    if drift:
+        raise typer.Exit(1)
 
 
 @app.command("reset-all")
