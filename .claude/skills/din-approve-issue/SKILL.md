@@ -1,28 +1,38 @@
 ---
 name: din-approve-issue
-description: Use when Umer asks to approve, vet, or sign off on a GitHub issue in InfiniteZeroFoundation/DevNet before anyone implements it — "approve issue #N", "run din-approve-issue on 179", "does issue N have merit", "verify the plan in issue N". Must run as the `umeradl` GitHub account. Checks every factual claim in the issue (file:line refs, function names, "the contract doesn't have X", "the ABI already has Y", "no command exists for Z") against `origin/develop`, not the local working tree. Then judges whether the proposed plan is sound, complete, and correctly scoped. Posts one verdict comment (Approved / Approved with amendments / Changes requested / Not approved) and, on approval, applies the `Approved` label. Not for PRs (`din-pr-review`) or for closing task discussions (`din-task-close`).
+description: Use when a maintainer asks to approve, vet, or sign off on a GitHub issue in InfiniteZeroFoundation/DevNet before anyone implements it — "approve issue #N", "run din-approve-issue on 179", "does issue N have merit", "verify the plan in issue N". Any maintainer can run it, as long as they didn't open the issue and aren't its intended implementer (checked first with `.claude/scripts/din_peer_check.py`); mechanism-design issues also need @umeradl's sign-off. Checks every factual claim in the issue (file:line refs, function names, "the contract doesn't have X", "the ABI already has Y", "no command exists for Z") against `origin/develop`, not the local working tree. Then judges whether the proposed plan is sound, complete, and correctly scoped. Posts one verdict comment (Approved / Approved with amendments / Changes requested / Not approved) and, on approval, applies the `Approved` label. Not for PRs (`din-pr-review`) or for closing task discussions (`din-task-close`).
 ---
 
 # DIN issue approval
 
 Issues in this repo often come with a full plan ("Problem → Proposed change →
-Out of scope → Verification"), and many are drafted with Claude's help from
-the `umermjd11` account. Before anyone implements one, `umeradl` signs off.
+Out of scope → Verification"), and many are drafted with Claude's help. Before
+anyone implements one, a peer signs off ([`Developer/MAINTAINING.md`](../../../Developer/MAINTAINING.md)
+No. 5.1): someone who didn't open the issue and won't implement it.
 Approval means someone ran every factual claim against the real code and
 thought through what the plan leaves out. Reading the text and agreeing
 with it is not approval. This skill does that check and records the verdict on the issue.
 
 ## 0. Hard rules
 
-- **Run as `umeradl`.** Before anything else:
+- **Peer check first.** "The operator" is the active `gh` user. Before
+  anything else:
   ```bash
-  gh api user --jq .login
+  python3 .claude/scripts/din_peer_check.py issue-approve <N>
   ```
-  If it is not `umeradl`, run `gh auth switch --user umeradl` and re-check.
-  If the switch fails (account not logged in), stop and tell Umer. Don't fall
-  back to another account. If you switched, say so in the final report. The
-  `umermjd11` fork workflow switches back at the end of its own step, so leave
-  `umeradl` active.
+  `REFUSE` means the operator opened the issue or is assigned to it. Stop,
+  say so, and suggest a maintainer from MAINTAINING No. 3. Never switch `gh`
+  accounts to get past it — logins listed together in
+  `.claude/scripts/din-maintainers.json` are one person. If the issue names
+  its implementer in the body rather than as an assignee, apply the same rule
+  by hand.
+- **Mechanism-design issues** (slashing, tokenomics, fees, scoring) need
+  @umeradl's approval (MAINTAINING No. 5.1, mechanism sign-off). If the
+  operator isn't `umeradl`, post the verdict as usual, but for **Approved** /
+  **Approved with amendments** end it with "Mechanism sign-off needed from
+  @umeradl before implementation" and don't add the label — `umeradl` adds it
+  when signing off. If Umer opened the issue himself, the mechanism sign-off
+  comes from @abrahamnash (recorded in a comment that cc's him).
 - **Verify against `origin/develop`, never the working tree.** Run
   `git fetch origin develop` and read files with `git show origin/develop:<path>`
   / `git grep <pattern> origin/develop -- <paths>`. The `develop` checkout
@@ -30,17 +40,17 @@ with it is not approval. This skill does that check and records the verdict on t
   half done). That work must not count as evidence for or against a claim.
   Record `git rev-parse --short origin/develop` and cite it in the comment.
 - **Foundry is canonical.** Check contract claims against `foundry/src/`;
-  `hardhat/contracts/` and `cache_model_0` ABIs lag behind
-  (`foundry-canonical-hardhat-stale`). A hardhat-only mismatch is at most a
-  note, not a blocker.
+  `hardhat/contracts/` and `cache_model_0` ABIs lag behind. A hardhat-only
+  mismatch is at most a note, not a blocker.
 - **Never write `#N`** in the comment. Write "No. N".
 - **Never fabricate GitHub IDs or SHAs.** Fetch them.
 - **`-F body=@<file>`**, never `-f`, and re-fetch after posting to check the
   body arrived intact.
 - **Don't close, reassign, or edit the issue body.** The skill only comments
-  and labels. If the verdict is "Not approved", Umer decides whether to close.
-- **Show the draft comment to Umer and wait for a go-ahead before posting**,
-  unless he has already said to post directly this session.
+  and labels. If the verdict is "Not approved", the author or a peer decides
+  whether to close it as not planned (MAINTAINING No. 5.2).
+- **Show the draft comment to the operator and wait for a go-ahead before
+  posting**, unless they have already said to post directly this session.
 
 ## 1. Fetch the issue
 
@@ -104,9 +114,11 @@ one level further than the issue did. Questions that have caught real gaps:
   failure, so a pre-check with a clear message usually is worth it.
 - **Access control:** who can call the target function (`onlyOwner`, etc.)?
   Is that the role whose CLI the command lives under?
-- **Consistency with recorded decisions:** check memory and `Developer/` for
-  standing calls (e.g. `eth-burn-din-only`, `p3-issues-defer-fee-changes`,
-  `din-dao-deferred-post-mainnet`, `foundry-canonical-hardhat-stale`).
+- **Consistency with recorded decisions:** check `Developer/MECHANISM_DESIGN.md`,
+  `Developer/design/`, `Developer/ROADMAP.md` and the decision comments on
+  related issues and Discussions for standing calls (for example: burning
+  applies to DIN only — ETH "burn" shares go to the Treasury; DIN-DAO is
+  deferred until after mainnet; foundry is canonical, hardhat lags).
 - **Tests and verification:** does the test plan cover the failure paths?
   Does it follow an existing test file's style? Is the new test file named
   for what it covers?
@@ -152,7 +164,7 @@ bodies. Use "No. N" for every issue/PR number. Run
 `grep -n '#[0-9]' <draft>` before posting; the only hits allowed are inside
 code spans or URLs.
 
-## 7. Post and label (after Umer's go-ahead)
+## 7. Post and label (after the operator's go-ahead)
 
 ```bash
 gh api repos/InfiniteZeroFoundation/DevNet/issues/<N>/comments -F body=@<draft> --jq .html_url
@@ -161,19 +173,21 @@ gh api repos/InfiniteZeroFoundation/DevNet/issues/<N>/comments --jq '.[-1] | {ht
 
 Post through `gh api`, not `gh issue comment`: for `gh issue comment`, `-F`
 means `--body-file <path>`, so `-F body=@<draft>` fails and posts nothing.
-Confirm `user` is `umeradl` and the body starts with `## Approval review`.
+Confirm `user` is the operator and the body starts with `## Approval review`.
 Add the label only after that check passes.
 
-For **Approved** / **Approved with amendments**, add the label:
+For **Approved** / **Approved with amendments**, add the label (unless it's a
+mechanism issue still waiting on @umeradl, see section 0):
 
 ```bash
 gh issue edit <N> --repo InfiniteZeroFoundation/DevNet --add-label Approved
 ```
 
 The `Approved` label must already exist. If `gh label list` doesn't show it,
-ask Umer before creating it. For the other two verdicts, don't label.
+ask the operator before creating it. For the other two verdicts, don't label.
 
 ## 8. Report back
 
-Give Umer the verdict, the comment URL (fetched), the label change, the
-amendments list in one line each, and whether `gh auth` was switched.
+Give the operator the verdict, the comment URL (fetched), the label change
+(or that it waits on the mechanism sign-off), and the amendments list in one
+line each.

@@ -1,6 +1,8 @@
 # din-push-develop
 
-A Claude Code skill for pushing to `develop` with CI checks before and after the push. It runs a local copy of CI on the exact commit, pushes only if that's green, then watches the GitHub `push` run and alerts if it goes red or never starts.
+A Claude Code skill for pushing to `develop` with CI checks before and after the push. It runs a local copy of CI on the exact commit, pushes only if that's green, logs the admin-bypass reason in Discussion 170, then watches the GitHub `push` run and alerts if it goes red or never starts.
+
+Only admins can push to `develop` directly: the `develop` ruleset requires a PR for everyone else ([`Developer/MAINTAINING.md`](../../../Developer/MAINTAINING.md) No. 2, No. 4.4). Everyone can use `scripts/watch-push-run.sh`, which `din-pr-merge` uses to watch the `develop` run after a GitHub-side merge.
 
 The instructions Claude follows are in [`SKILL.md`](SKILL.md). This README covers setup: what you need on your machine to use it.
 
@@ -17,7 +19,7 @@ Background: [PR No. 168](https://github.com/InfiniteZeroFoundation/DevNet/pull/1
 
 ## Setup
 
-### 1. Register the guard hook (per machine, not committed)
+### 1. Register the guard hook (per machine, not committed, admins only)
 
 The skill is committed and loads automatically. The **hook is not**: it lives in `.claude/settings.local.json`, which is untracked. Without it the skill still works, but Claude can push to `develop` without going through it.
 
@@ -42,17 +44,16 @@ To check it's active, ask Claude to run `git push --dry-run origin develop`. It 
 
 It only affects Claude's Bash tool. Pushes you type in your own terminal are never blocked.
 
-### 2. Adjust machine-specific paths
+### 2. Machine-specific paths
 
-`precheck.sh` hard-codes paths from the maintainer's machine. Change them at the top of the script if yours differ:
+`precheck.sh` reads its paths from [`.claude/scripts/din-env.sh`](../../scripts/din-env.sh). Export your own values if the defaults don't match your machine (see [`.claude/scripts/README.md`](../../scripts/README.md)):
 
-| Variable / path | Default | Needs |
+| Variable | Used for | Needs |
 |---|---|---|
-| `REPO` | `~/projects/devnet` | the main checkout |
-| `WT` | `~/tempdir/DIN/push-check` | reusable detached worktree (created on first run) |
-| `PY` | `~/my_venvs/torchenv/bin/python` | a Python 3.12 venv with `torch` and `pip install -e ".[test]"` |
-| logs | `~/tempdir/DIN/push-check-logs/<sha>.log` | full output of each precheck |
-| `~/.nvm/nvm.sh` | sourced for the Solidity job | Node 20 (`npm`, `npx`) |
+| `DIN_REPO` | the main checkout | |
+| `DIN_WORK` | `$DIN_WORK/push-check` (reusable detached worktree) and `$DIN_WORK/push-check-logs/<sha>.log` | |
+| `DIN_PY` | Docs + Python jobs | a Python 3.12 venv with `torch` and `pip install -e ".[test]"` |
+| `DIN_NVM` | sourced for the Solidity job, if present | Node 20 (`npm`, `npx`) |
 
 You also need `forge` on `PATH` (the version CI pins is `FOUNDRY_VERSION` in `ci.yml`) and an authenticated `gh` for the watcher.
 
