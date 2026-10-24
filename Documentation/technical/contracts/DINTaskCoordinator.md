@@ -127,24 +127,24 @@ The numbers are `GIstates` ordinals (see [DINShared §2.1](DINShared.md)).
 
 | Step | Function (owner unless noted) | From → To state |
 |------|-------------------------------|-----------------|
-| Start | `startGI(gi)` / `startGI(gi, passScore)` | `GenesisModelCreated` (4) or `GIended` (28) → `GIstarted` (5) |
+| Start | `startGI(gi)` / `startGI(gi, passScore)` | `GenesisModelCreated` (4) or `GIended` (25) → `GIstarted` (5) |
 | Aggregator registration | `startDINaggregatorsRegistration` → *validators:* `registerDINaggregator` → `closeDINaggregatorsRegistration` | → 6 → 7 |
 | Auditor registration | `startDINauditorsRegistration` → *validators on the auditor contract* → `closeDINauditorsRegistration` | → 8 → 9 |
 | Local model submissions | `startLMsubmissions` → *clients on the auditor contract* → `closeLMsubmissions` (anchors the audit seed) | → 10 → 11 |
-| Audit seed | *anyone:* `lockAuditSeed` (a re-anchor leaves the state unchanged) | → 12 |
-| Audit batches | `createAuditorsBatches` (delegates to the auditor, passing the seed) | → 13 |
-| Test data | `DINTaskAuditor.assignAuditTestDataset` per batch; then `setTestDataAssignedFlag` (the auditor checks every batch has a commitment) | → 14 |
-| Score commit | `startLMsubmissionsEvaluation` → *auditors commit on the auditor contract* | → 15 |
-| Score reveal | `startLMsubmissionsEvaluationReveal` → *auditors reveal* | → 16 |
-| Finalize evaluation | `closeLMsubmissionsEvaluation` (calls `finalizeEvaluation`; anchors the aggregation seed) | → 17 |
-| Aggregation seed | *anyone:* `lockAggSeed` (a re-anchor leaves the state unchanged) | → 18 |
-| Batches | `autoCreateTier1AndTier2` | → 19 |
-| T1 commit | `startT1Aggregation` → *aggregators:* `commitT1Aggregation` | → 20 |
-| T1 reveal | `startT1AggregationReveal` → *aggregators:* `revealT1Aggregation` → `finalizeT1Aggregation` | → 21 → 22 |
-| T2 commit | `startT2Aggregation` → *aggregators:* `commitT2Aggregation` | → 23 |
-| T2 reveal | `startT2AggregationReveal` → *aggregators:* `revealT2Aggregation` → `finalizeT2Aggregation` | → 24 → 25 |
-| Slash | `slashAuditors` → `slashAggregators` | → 26 → 27 |
-| End | `endGI` (settles rewards) | → 28 |
+| Audit seed | *anyone:* `lockAuditSeed` | stays 11 |
+| Audit batches | `createAuditorsBatches` (delegates to the auditor, passing the seed) | → 12 |
+| Test data | `DINTaskAuditor.assignAuditTestDataset` per batch; `setTestDataAssignedFlag` | stays 12 |
+| Score commit | `startLMsubmissionsEvaluation` → *auditors commit on the auditor contract* | → 13 |
+| Score reveal | `startLMsubmissionsEvaluationReveal` → *auditors reveal* | → 14 |
+| Finalize evaluation | `closeLMsubmissionsEvaluation` (calls `finalizeEvaluation`; anchors the aggregation seed) | → 15 |
+| Aggregation seed | *anyone:* `lockAggSeed` | stays 15 |
+| Batches | `autoCreateTier1AndTier2` | → 16 |
+| T1 commit | `startT1Aggregation` → *aggregators:* `commitT1Aggregation` | → 17 |
+| T1 reveal | `startT1AggregationReveal` → *aggregators:* `revealT1Aggregation` → `finalizeT1Aggregation` | → 18 → 19 |
+| T2 commit | `startT2Aggregation` → *aggregators:* `commitT2Aggregation` | → 20 |
+| T2 reveal | `startT2AggregationReveal` → *aggregators:* `revealT2Aggregation` → `finalizeT2Aggregation` | → 21 → 22 |
+| Slash | `slashAuditors` → `slashAggregators` | → 23 → 24 |
+| End | `endGI` (settles rewards) | → 25 |
 | Housekeeping | `releaseGIRegistrationSlots(gi)` | no state change |
 
 Every owner transition after `startGI` takes the expected `_GI` and reverts `TC_WrongGI` if it is not the current one. Every state change goes through `_setGIstate`, which emits `GIStateChanged(GI, newState)`.
@@ -166,8 +166,7 @@ Both batch-creation steps shuffle with a seed that must be locked first (issue #
 | Anchor | `closeLMsubmissions` sets `auditSeedBlock[gi] = block.number + disputeSeedDelay` | `closeLMsubmissionsEvaluation` sets `aggSeedBlock[gi]` the same way |
 | Lock (anyone, current GI) | `lockAuditSeed(gi)` | `lockAggSeed(gi)` |
 | Seed | `keccak256(blockhash(seedBlock), gi, "AUD")` | `keccak256(blockhash(seedBlock), gi, "AGG")` |
-| State on lock | `LMSclosed` → `AuditSeedLocked` | `LMSevaluationClosed` → `AggSeedLocked` |
-| Consumer | `createAuditorsBatches`, gated on `AuditSeedLocked` (`TC_AuditSeedNotLocked` otherwise; the auditor contract also rejects a zero seed with `TA_AuditSeedNotLocked`) | `autoCreateTier1AndTier2`, gated on `AggSeedLocked` (`TC_AggSeedNotLocked` otherwise) |
+| Consumer | `createAuditorsBatches` (`TC_AuditSeedNotLocked` if unset; the auditor contract also rejects a zero seed with `TA_AuditSeedNotLocked`) | `autoCreateTier1AndTier2` (`TC_AggSeedNotLocked` if unset) |
 | Events | `AuditSeedLocked`, `AuditSeedReanchored` | `AggSeedLocked`, `AggSeedReanchored` |
 
 A lock call reverts if the seed isn't anchored yet (`TC_*SeedNotAnchored`), is already locked (`TC_*SeedAlreadyLocked`), or the anchor block isn't mined yet (`TC_*SeedBlockNotMined`). If more than 256 blocks have passed and `blockhash(seedBlock)` is zero, the call re-anchors to `block.number + disputeSeedDelay` and emits the `…Reanchored` event; it never stores a zero-derived seed.
@@ -178,7 +177,7 @@ A lock call reverts if the seed isn't anchored yet (`TC_*SeedNotAnchored`), is a
 - **Post-lock pool reshaping.** The active pools are read when `createAuditorsBatches` / `autoCreateTier1AndTier2` run, after the seed is public. A validator can unstake between the lock and the create call, which changes the pool size and so reshuffles everyone. An attacker with several registered addresses can compute each outcome off-chain and unstake whichever address gives the batch they want.
 
 ### 6.4 `autoCreateTier1AndTier2`
-Requires `AggSeedLocked`, i.e. a locked `aggSeed[gi]`.
+Requires `LMSevaluationClosed` and a locked `aggSeed[gi]`.
 1. Filters the registered aggregators to those still `Active` at call time (`_activeAggregatorPool`); needs ≥ 3 (`TC_NotEnoughValidators`).
 2. Shuffles the aggregators with `keccak256(seed, "AGG_ADDR")` and the approved model indexes with `keccak256(seed, "AGG_IDX")` (Fisher-Yates, in memory). Needs ≥ `T1_MODELS_PER_BATCH` approved models (`TC_NotEnoughApprovedModels`).
 3. Greedily fills T1 batches with 3 aggregators and 3 models each (the last batch may take 2 models).
@@ -278,7 +277,7 @@ Earlier findings from the [foundry/src security review](../audits/foundry-src-se
 - **No. 5 — Plurality with three aggregators.** Two colluding aggregators in a batch win the vote; nothing verifies the aggregated model itself. The dispute path (§7) is the only recourse, and the owner adjudicates it.
 - **No. 6 — No recovery from a stalled GI.** If a batch never reaches the reveal quorum, `finalizeT1Aggregation` / `finalizeT2Aggregation` keep reverting and there is no owner path to skip the batch or abort the GI.
 - **No. 7 — Stale NatSpec:** comments around the dispute scaffold still say `DinTreasury` "doesn't exist on develop yet" (forfeitures are already forwarded). Several parameters are described as "DAO-settable"; they are `onlyOwner`, i.e. set by the model owner.
-- **No. 8 — Leftovers:** `networkFeeFloor` is stored but not enforced.
+- **No. 8 — Leftovers:** `networkFeeFloor` is stored but not enforced. `setTestDataAssignedFlag` gates nothing: evaluation can start without test data being assigned. `releaseGIRegistrationSlots` uses string `require` messages, unlike the rest of the contract.
 - **No. 9 — Not upgradeable:** a bug in a model's task contracts requires redeploying them and re-registering the model.
 - **No. 10 — dincli lags this contract:** `dincli model-owner deploy task-coordinator` still calls the older one-argument constructor (no `modelId`). (`dincli aggregator aggregate-t2` used to name its working directory, worker job and container after the last T1 batch id; fixed in issue No. 202 Part 2.)
 - **No. 11 — Fixed: `registerDINaggregator` now checks the GI.** It used to have no `onlyCurrentGI`, so during GI N's window a validator could register for GI N+1. Up to 300 addresses could fill that list, which locked out honest registrants and handed the attacker every T1/T2 batch. Registering for a released past GI also leaked the caller's own slot. Fixed by adding `onlyCurrentGI` (issue #206); it cost 9 bytes inside the No. 1 budget.
@@ -298,7 +297,6 @@ Earlier findings from the [foundry/src security review](../audits/foundry-src-se
 - Forfeited dispute bonds forwarded to the platform treasury (`slashTreasury()`), replacing the per-contract treasury address (issue #152).
 - `GIStateChanged` emitted on every state change; `T1BatchFinalized` / `T2Finalized` on finalization.
 - `modelId` constructor argument.
-- Progress states (task_061026_21 Part B): `lockAuditSeed` → `AuditSeedLocked`, `setTestDataAssignedFlag` → `AuditTestDataAssigned`, `lockAggSeed` → `AggSeedLocked`. `createAuditorsBatches`, `startLMsubmissionsEvaluation` and `autoCreateTier1AndTier2` are gated on them, so evaluation can no longer start before every batch has test data. `GIended` moved from 25 to 28; `TC_EvalPhaseNotClosed` is gone. To fit the coordinator's size budget, `releaseGIRegistrationSlots`' two string `require`s became `TC_GINotEnded` / `TC_SlotsAlreadyReleased` (−88 B).
 - Locked batch-assignment seeds for auditor and T1/T2 batches (`lockAuditSeed`, `lockAggSeed`; issue #156 H-2, PR #191).
 - Commit-then-reveal T1/T2 aggregation with a sender-bound commit hash (`commitT*Aggregation`, `revealT*Aggregation`, `startT*AggregationReveal`; issue #156 M-1, PR #197). Adds states `T1AggregationRevealStarted` (18) and `T2AggregationRevealStarted` (21), shifting later ordinals.
 - Back under EIP-170 (issue #201 Part A). The `slashAggregators` T1/T2 loops are folded into `_slashBatch`, with unchanged slashes and events. `tier1Batches` / `tier2Batches` and the ten `t1*`/`t2*` per-aggregator maps are now `internal`, and the new `getAggregatorSubmission` view replaces their getters. This is a view-ABI change; dincli and the bundled ABI were updated with it.
