@@ -1,3 +1,6 @@
+import copy
+import json
+import math
 from collections import OrderedDict
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -6,6 +9,7 @@ import pytest
 
 try:
     import torch
+    import torch.nn as nn
 except ImportError as exc:
     raise ImportError(
         "torch is required for tests/test_cache_client_dp.py but is not installed "
@@ -350,3 +354,253 @@ def test_noise_scales_with_noise_multiplier(mechanism):
 
     assert std_at_low > 0.0
     assert std_at_high / std_at_low == pytest.approx(4.0, rel=0.05)
+
+
+# ---------------------------------------------------------------------------
+# Real-weight norm tests (BL-23 / issue #247)
+# Functions live in cache_model_0/services/client.py and
+# cache_model_0/services/model.py.
+# ---------------------------------------------------------------------------
+
+def load_model_module():
+    model_path = (
+        Path(__file__).resolve().parents[1] / "cache_model_0" / "services" / "model.py"
+    )
+    spec = spec_from_file_location("cache_model_0_model", model_path)
+    module = module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _combined_norm(state_dict):
+    """Global L2 norm across all floating tensors in a state_dict."""
+    return math.sqrt(
+        sum(
+            torch.norm(v).item() ** 2
+            for v in state_dict.values()
+            if torch.is_tensor(v) and torch.is_floating_point(v)
+        )
+    )
+
+
+def _build_and_train(num_epochs=3, num_batches=30, lr=0.01, seed=42):
+    """Build the ModelArchitecture net and train briefly on synthetic
+    MNIST-shaped data (28×28 pixels, 10 classes, batch_size=32).
+
+    Uses manual gradient updates to avoid torch.optim dependencies that
+    require optional packages (sympy) not present in all environments.
+    Returns (reference_state_dict, trained_state_dict) — both detached.
+
+    Measured norms (seed=42, 3 epochs × 30 batches × 32 samples):
+      post-training combined L2 norm  ≈  8.21
+      one-round delta L2 norm         ≈  0.18
+    These numbers justify clipping_norm=10.0 for post_training_* mechanisms
+    and confirm that clipping_norm=1.0 is safe for update_gaussian (delta well
+    below 1.0 so no clipping occurs).
+    """
+    model_module = load_model_module()
+    criterion = nn.CrossEntropyLoss()
+
+    torch.manual_seed(seed)
+    model = model_module.ModelArchitecture()
+    ref_sd = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    torch.manual_seed(seed)
+    for _ in range(num_epochs):
+        for _ in range(num_batches):
+            x = torch.randn(32, 1, 28, 28)
+            y = torch.randint(0, 10, (32,))
+            loss = criterion(model(x), y)
+            loss.backward()
+            with torch.no_grad():
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p -= lr * p.grad
+                        p.grad.zero_()
+
+    trained_sd = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    return ref_sd, trained_sd
+
+
+def _load_manifest_dp():
+    """Return a deep copy of the manifest's dp block with enabled=True for testing."""
+    manifest_path = Path(__file__).resolve().parents[1] / "cache_model_0" / "manifest.json"
+    dp = copy.deepcopy(json.loads(manifest_path.read_text())["dp"])
+    dp["enabled"] = True
+    return dp
+
+
+def _prediction_agreement(model_module, sd_a, sd_b, x):
+    """Fraction of inputs where sd_a and sd_b produce identical argmax predictions."""
+    def _predict(sd):
+        m = model_module.ModelArchitecture()
+        m.load_state_dict(sd)
+        m.eval()
+        with torch.no_grad():
+            return m(x).argmax(dim=1)
+    return (_predict(sd_a) == _predict(sd_b)).float().mean().item()
+
+
+def test_real_weights_combined_norm_fits_manifest_clipping_norm():
+    """The manifest's clipping_norm must cover the model's real post-training
+    combined L2 norm so that post_training_* mechanisms do not over-clip.
+
+    With the old value of 1.0 the scale factor was ≈ 0.12 (88% of each
+    weight discarded).  With 10.0 the trained model passes through unclipped.
+
+    This test loads clipping_norm directly from cache_model_0/manifest.json.
+    Reverting the manifest to clipping_norm=1.0 causes this test to fail,
+    which is the regression it guards.
+    """
+    client = load_client_module()
+    dp = _load_manifest_dp()
+    manifest_clipping_norm = dp["parameters"]["clipping_norm"]
+    clip_scope = dp["parameters"]["clip_scope"]
+
+    _ref_sd, trained_sd = _build_and_train()
+    pre_norm = _combined_norm(trained_sd)
+
+    assert pre_norm < manifest_clipping_norm, (
+        f"Combined L2 norm of trained weights ({pre_norm:.4f}) exceeds "
+        f"manifest clipping_norm ({manifest_clipping_norm}). "
+        "Raise clipping_norm in cache_model_0/manifest.json."
+    )
+
+    # Verify no over-clipping: clip at manifest value must leave norm unchanged.
+    clipped_sd = client.clip_state_dict(trained_sd, manifest_clipping_norm, clip_scope)
+    post_norm = _combined_norm(clipped_sd)
+
+    assert post_norm == pytest.approx(pre_norm, rel=1e-4), (
+        f"clip_state_dict with clipping_norm={manifest_clipping_norm} "
+        f"scaled weights: pre={pre_norm:.4f}, post={post_norm:.4f}."
+    )
+
+    # Applying full dp_config (clip + noise at manifest parameters) must not
+    # produce NaN or Inf in the output.
+    torch.manual_seed(0)
+    private_sd = client.apply_dp_mechanism(trained_sd, dp)
+    for key, tensor in private_sd.items():
+        if torch.is_tensor(tensor) and torch.is_floating_point(tensor):
+            assert torch.isfinite(tensor).all(), f"Non-finite values in '{key}' after DP"
+
+
+def test_clip_only_at_manifest_clipping_norm_preserves_model_outputs():
+    """Clip-only at the manifest's clipping_norm must leave model predictions
+    unchanged (amendment No. 2-3 accuracy evidence, clip-only comparison).
+
+    Since the trained combined norm (≈ 8.2) is below clipping_norm (10.0),
+    clip_state_dict is a no-op and every test-set prediction must agree with
+    the baseline.  With the old clipping_norm=1.0 the scale factor was ≈ 0.12,
+    so predictions changed substantially.
+    """
+    client = load_client_module()
+    model_module = load_model_module()
+    dp = _load_manifest_dp()
+    manifest_clipping_norm = dp["parameters"]["clipping_norm"]
+    clip_scope = dp["parameters"]["clip_scope"]
+
+    _ref_sd, trained_sd = _build_and_train()
+
+    clipped_sd = client.clip_state_dict(trained_sd, manifest_clipping_norm, clip_scope)
+
+    torch.manual_seed(0)
+    x_test = torch.randn(200, 1, 28, 28)
+    agreement = _prediction_agreement(model_module, trained_sd, clipped_sd, x_test)
+
+    assert agreement == pytest.approx(1.0, abs=0.0), (
+        f"Clip-only prediction agreement is {agreement:.3f}; "
+        f"clipping_norm={manifest_clipping_norm} clips the trained model. "
+        "The combined norm must be below clipping_norm."
+    )
+
+
+def test_manifest_dp_full_noise_impact():
+    """Documents the noise impact of the manifest's DP parameters
+    (amendment No. 2-3 accuracy evidence, full-DP comparison).
+
+    The manifest has dp.enabled=False; noise_multiplier=0.5 was chosen to keep
+    σ=0.5 under the old clipping_norm=1.0 config.  At clipping_norm=10.0 it
+    gives σ=5.0 (noise_multiplier × clipping_norm), which substantially
+    perturbs model outputs.
+
+    This test reports the prediction agreement between the unperturbed model and
+    the post-DP model so the documentation's noise guidance is based on
+    measured evidence.  Reducing noise_multiplier proportionally (to ~0.05)
+    preserves σ≈0.5 and restores model utility, but does not preserve equivalent
+    DP protection — that tradeoff requires separate privacy assessment.
+    """
+    client = load_client_module()
+    model_module = load_model_module()
+    dp = _load_manifest_dp()
+    clipping_norm    = dp["parameters"]["clipping_norm"]
+    noise_multiplier = dp["parameters"]["noise_multiplier"]
+    noise_std        = noise_multiplier * clipping_norm
+
+    _ref_sd, trained_sd = _build_and_train()
+
+    torch.manual_seed(0)
+    x_test = torch.randn(200, 1, 28, 28)
+
+    torch.manual_seed(42)
+    dp_sd = client.apply_dp_mechanism(trained_sd, dp)
+
+    # Outputs must be finite after full DP.
+    for key, tensor in dp_sd.items():
+        if torch.is_tensor(tensor) and torch.is_floating_point(tensor):
+            assert torch.isfinite(tensor).all(), f"Non-finite values in '{key}' after DP"
+
+    agreement = _prediction_agreement(model_module, trained_sd, dp_sd, x_test)
+
+    # With σ=5.0 and typical parameter magnitudes ≈ 0.025 (SNR ≪ 1), predictions
+    # should diverge substantially from the unperturbed baseline.
+    assert agreement < 0.5, (
+        f"Expected σ={noise_std:.1f} to substantially perturb predictions, "
+        f"but prediction agreement with baseline is {agreement:.3f}. "
+        "Review the manifest's noise_multiplier setting."
+    )
+
+    print(
+        f"\n[DP noise report] noise_std={noise_std:.2f} "
+        f"(noise_multiplier={noise_multiplier} × clipping_norm={clipping_norm}); "
+        f"prediction agreement with baseline: {agreement:.3f}"
+    )
+
+
+def test_update_gaussian_delta_norm_fits_clipping_norm_one():
+    """The one-round update delta for the reference model is well below 1.0,
+    confirming that clipping_norm=1.0 leaves the delta unclipped for
+    update_gaussian.
+
+    post_training_* clips absolute weights (combined norm ≈ 8.2) and therefore
+    needs a larger clipping_norm (~10).  update_gaussian clips the per-round
+    delta (norm ≈ 0.18 for 3 epochs × 30 batches), so clipping_norm=1.0 is
+    appropriate for that mechanism.
+    """
+    client = load_client_module()
+    ref_sd, trained_sd = _build_and_train()
+
+    delta_norm = math.sqrt(
+        sum(
+            (trained_sd[k] - ref_sd[k]).norm().item() ** 2
+            for k in trained_sd
+            if torch.is_tensor(trained_sd[k]) and torch.is_floating_point(trained_sd[k])
+        )
+    )
+
+    # Delta must be well under 1.0 so update_gaussian with clipping_norm=1.0
+    # passes the update through unclipped.
+    assert delta_norm < 1.0, (
+        f"One-round delta norm ({delta_norm:.4f}) exceeds 1.0; "
+        "clipping_norm=1.0 would clip update_gaussian deltas."
+    )
+
+    # Also verify that clipping the delta at 1.0 leaves it intact.
+    clipped_delta_norm = _combined_norm(
+        client.clip_state_dict(
+            {k: trained_sd[k] - ref_sd[k] for k in trained_sd},
+            1.0,
+            "global",
+        )
+    )
+    assert clipped_delta_norm == pytest.approx(delta_norm, rel=1e-4)

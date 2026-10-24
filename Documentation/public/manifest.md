@@ -42,7 +42,7 @@ For example:
 | `Genesis_Model_CID` | Yes | IPFS CID of the genesis model. Set after running `dincli model-owner model create-genesis` |
 | `DINTaskCoordinator_Contract` | Yes | Address of the deployed TaskCoordinator contract |
 | `DINTaskAuditor_Contract` | Yes | Address of the deployed TaskAuditor contract |
-| `dp` | No | Nested Differential Privacy configuration block used by services at runtime |
+| `dp` | No | Nested Differential Privacy configuration block used by services at runtime. See [Differential Privacy Parameters](#differential-privacy-parameters) below. |
 
 ### Service Entries
 
@@ -108,6 +108,40 @@ and then install the requirements.txt file using the following command:
 ```bash
 pip3 install -r requirements.txt
 ```
+
+---
+
+## Differential Privacy Parameters
+
+The optional `dp` block controls whether trained weights are clipped and noised before upload. Privacy is **off by default** — a manifest with no `dp` block or `"enabled": false` uploads raw weights.
+
+```json
+"dp": {
+  "enabled": false,
+  "mode": "afterTraining",
+  "mechanism": "post_training_gaussian",
+  "parameters": {
+    "clipping_norm": 10.0,
+    "noise_multiplier": 0.5,
+    "clip_scope": "global"
+  }
+}
+```
+
+### Choosing `clipping_norm`
+
+`clipping_norm` controls the L2-norm bound that is clipped and that the noise is calibrated against (`noise_scale = noise_multiplier × clipping_norm`). The right value depends on **what** the mechanism clips:
+
+| Mechanism | What is clipped | Guidance |
+|-----------|----------------|----------|
+| `post_training_gaussian` / `post_training_laplace` | Combined L2 norm of all final weights | Set to at least the model's combined weight norm. For the reference cache_model_0 architecture (~8.2), use **≥ 10.0**. Too small a value discards most of the model. |
+| `update_gaussian` | Combined L2 norm of the per-round weight delta | The delta is much smaller than the absolute weights. For cache_model_0 with typical training settings, the delta norm is ≈ 0.18. **1.0 – 2.0** is appropriate. |
+
+> **Note**: raising `clipping_norm` to stop over-clipping also raises the noise by the same factor. If you increase `clipping_norm`, lower `noise_multiplier` proportionally to keep the absolute noise standard deviation unchanged (note: this does not preserve equivalent DP privacy protection — a larger `clipping_norm` provides weaker privacy at the same σ; privacy assessment is needed separately).
+
+For full technical details see [technical/manifest.md](../technical/manifest.md).
+
+---
 
 ## Example Manifest
 
