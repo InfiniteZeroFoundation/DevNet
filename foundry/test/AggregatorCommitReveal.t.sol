@@ -38,7 +38,6 @@ import {
     TC_T2RevealPhaseNotOpen
 } from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
-import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract AggregatorCommitRevealTest is Test {
     DinToken tokenImpl;
@@ -216,7 +215,6 @@ contract AggregatorCommitRevealTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1); // issue #156 H-2
         tc.createAuditorsBatches(1);
-        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();

@@ -38,27 +38,24 @@ Value  State Name                          Description
   8    DINauditorsRegistrationStarted      Auditor registration window is open.
   9    DINauditorsRegistrationClosed       Auditor registration window is closed.
  10    LMSstarted                          Local Model Submission window is open.
- 11    LMSclosed                           Local Model Submission window is closed; audit seed block anchored.
- 12    AuditSeedLocked                     Audit batch seed locked (`lockAuditSeed`, permissionless).
- 13    AuditorsBatchesCreated              Audit batches have been formed.
- 14    AuditTestDataAssigned               Every audit batch has a test-data commitment; `setTestDataAssignedFlag` done.
- 15    LMSevaluationStarted                Commit phase: auditors submit hidden score/vote commitments via `commitAuditScore`.
- 16    LMSevaluationRevealStarted          Reveal phase: auditors reveal (score, vote, salt) via `revealAuditScore`; eligibility and median scoring are computed from revealed values only.
- 17    LMSevaluationClosed                 Evaluation finalized; approved models identified; aggregation seed block anchored.
- 18    AggSeedLocked                       T1/T2 batch seed locked (`lockAggSeed`, permissionless).
- 19    T1nT2Bcreated                       Tier-1 and Tier-2 aggregation batches formed.
- 20    T1AggregationStarted                Commit phase: Tier-1 aggregators submit hidden CID commitments via `commitT1Aggregation`.
- 21    T1AggregationRevealStarted          Reveal phase: Tier-1 aggregators reveal (cid, salt) via `revealT1Aggregation`; only revealed CIDs count toward finalization.
- 22    T1AggregationDone                   Tier-1 finalized; winning CIDs per batch recorded.
- 23    T2AggregationStarted                Commit phase: Tier-2 aggregators submit hidden CID commitments via `commitT2Aggregation`.
- 24    T2AggregationRevealStarted          Reveal phase: Tier-2 aggregators reveal (cid, salt) via `revealT2Aggregation`; only revealed CIDs count toward finalization.
- 25    T2AggregationDone                   Tier-2 finalized; global winning CID recorded.
- 26    AuditorsSlashed                     Auditor slashing phase executed.
- 27    AggregatorsSlashed                  Aggregator slashing phase executed.
- 28    GIended                             GI is complete; system is ready for next GI.
+ 11    LMSclosed                           Local Model Submission window is closed.
+ 12    AuditorsBatchesCreated              Audit batches have been formed.
+ 13    LMSevaluationStarted                Commit phase: auditors submit hidden score/vote commitments via `commitAuditScore`.
+ 14    LMSevaluationRevealStarted          Reveal phase: auditors reveal (score, vote, salt) via `revealAuditScore`; eligibility and median scoring are computed from revealed values only.
+ 15    LMSevaluationClosed                 Evaluation finalized; approved models identified.
+ 16    T1nT2Bcreated                       Tier-1 and Tier-2 aggregation batches formed.
+ 17    T1AggregationStarted                Commit phase: Tier-1 aggregators submit hidden CID commitments via `commitT1Aggregation`.
+ 18    T1AggregationRevealStarted          Reveal phase: Tier-1 aggregators reveal (cid, salt) via `revealT1Aggregation`; only revealed CIDs count toward finalization.
+ 19    T1AggregationDone                   Tier-1 finalized; winning CIDs per batch recorded.
+ 20    T2AggregationStarted                Commit phase: Tier-2 aggregators submit hidden CID commitments via `commitT2Aggregation`.
+ 21    T2AggregationRevealStarted          Reveal phase: Tier-2 aggregators reveal (cid, salt) via `revealT2Aggregation`; only revealed CIDs count toward finalization.
+ 22    T2AggregationDone                   Tier-2 finalized; global winning CID recorded.
+ 23    AuditorsSlashed                     Auditor slashing phase executed.
+ 24    AggregatorsSlashed                  Aggregator slashing phase executed.
+ 25    GIended                             GI is complete; system is ready for next GI.
 ```
 
-> **Ordinal note:** `LMSevaluationRevealStarted` (commit-then-reveal auditor scoring, task_210726_6 §2a) sits between `LMSevaluationStarted` and `LMSevaluationClosed` at ordinal 16. `T1AggregationRevealStarted` and `T2AggregationRevealStarted` (commit-then-reveal T1/T2 aggregation, issue #156 M-1, task_240926_18 Part C) sit at ordinals 21 and 24 respectively, immediately after their corresponding commit-phase state — same insert-in-lifecycle-position precedent, not appended. Each insertion shifts every later ordinal by +1 relative to the prior numbering. The three progress states `AuditSeedLocked` (12), `AuditTestDataAssigned` (14) and `AggSeedLocked` (18) (task_061026_21 Part B) follow the same precedent; with them `GIended` moved from 25 to 28. Each is set by the function that already does the step, so a GI needs no extra owner transaction. `dincli/cli/utils.py`'s `states`/`stateDescription` positional mirrors (indexed by this same raw ordinal) have been updated to match — see `dincli/cli/utils.py`'s `states`/`stateDescription` lists.
+> **Ordinal note:** `LMSevaluationRevealStarted` (commit-then-reveal auditor scoring, task_210726_6 §2a) sits between `LMSevaluationStarted` and `LMSevaluationClosed` at ordinal 14. `T1AggregationRevealStarted` and `T2AggregationRevealStarted` (commit-then-reveal T1/T2 aggregation, issue #156 M-1, task_240926_18 Part C) sit at ordinals 18 and 21 respectively, immediately after their corresponding commit-phase state — same insert-in-lifecycle-position precedent, not appended. Each insertion shifts every later ordinal by +1 relative to the prior numbering. `dincli/cli/utils.py`'s `states`/`stateDescription` positional mirrors (indexed by this same raw ordinal) have been updated to match — see `dincli/cli/utils.py`'s `states`/`stateDescription` lists.
 
 ### 2.2 State Transition Diagram
 
@@ -75,44 +72,41 @@ Value  State Name                          Description
 [3] AwaitingGenesisModel
         │ setGenesisModelIpfsHash()
         ▼
-[4] GenesisModelCreated ◄───────────────────────────[28] GIended
-        │ startGI()                                       ▲
-        ▼                                                 │ endGI()
-[5] GIstarted                                       [27] AggregatorsSlashed
-        │ startDINaggregatorsRegistration()               ▲
-        ▼                                                 │ slashAggregators()
-[6] DINaggregatorsRegistrationStarted               [26] AuditorsSlashed
-        │ closeDINaggregatorsRegistration()               ▲
-        ▼                                                 │ slashAuditors()
-[7] DINaggregatorsRegistrationClosed                [25] T2AggregationDone
-        │ startDINauditorsRegistration()                  ▲
-        ▼                                                 │ finalizeT2Aggregation()
-[8] DINauditorsRegistrationStarted                  [24] T2AggregationRevealStarted
-        │ closeDINauditorsRegistration()                  ▲
-        ▼                                                 │ startT2AggregationReveal()
-[9] DINauditorsRegistrationClosed                   [23] T2AggregationStarted
-        │ startLMsubmissions()                            ▲
-        ▼                                                 │ startT2Aggregation()
-[10] LMSstarted                                     [22] T1AggregationDone
-        │ closeLMsubmissions()                            ▲
-        ▼                                                 │ finalizeT1Aggregation()
-[11] LMSclosed                                      [21] T1AggregationRevealStarted
-        │ lockAuditSeed()  (anyone)                       ▲
-        ▼                                                 │ startT1AggregationReveal()
-[12] AuditSeedLocked                                [20] T1AggregationStarted
-        │ createAuditorsBatches()                         ▲
-        ▼                                                 │ startT1Aggregation()
-[13] AuditorsBatchesCreated                         [19] T1nT2Bcreated
-        │ setTestDataAssignedFlag()                       ▲
-        ▼                                                 │ autoCreateTier1AndTier2()
-[14] AuditTestDataAssigned                          [18] AggSeedLocked
-        │ startLMsubmissionsEvaluation()                  ▲
-        ▼                                                 │ lockAggSeed()  (anyone)
-[15] LMSevaluationStarted                           [17] LMSevaluationClosed
-        │ (auditors: commitAuditScore)                    ▲
-        │                                                 │ closeLMsubmissionsEvaluation()
-        └── startLMsubmissionsEvaluationReveal() ─► [16] LMSevaluationRevealStarted
-                                                      (auditors: revealAuditScore)
+[4] GenesisModelCreated ◄──────────────────────────────── [25] GIended
+        │ startGI()                                               ▲
+        ▼                                                         │ endGI()
+[5] GIstarted                                             [24] AggregatorsSlashed
+        │ startDINaggregatorsRegistration()                       ▲
+        ▼                                                         │ slashAggregators()
+[6] DINaggregatorsRegistrationStarted               [23] AuditorsSlashed
+        │ closeDINaggregatorsRegistration()                       ▲
+        ▼                                                         │ slashAuditors()
+[7] DINaggregatorsRegistrationClosed                [22] T2AggregationDone
+        │ startDINauditorsRegistration()                          ▲
+        ▼                                                         │ finalizeT2Aggregation()
+[8] DINauditorsRegistrationStarted                  [21] T2AggregationRevealStarted
+        │ closeDINauditorsRegistration()                          ▲
+        ▼                                                         │ startT2AggregationReveal()
+[9] DINauditorsRegistrationClosed                   [20] T2AggregationStarted
+        │ startLMsubmissions()                                    ▲
+        ▼                                                         │ startT2Aggregation()
+[10] LMSstarted                                     [19] T1AggregationDone
+        │ closeLMsubmissions()                                    ▲
+        ▼                                                         │ finalizeT1Aggregation()
+[11] LMSclosed                                      [18] T1AggregationRevealStarted
+        │ createAuditorsBatches()                                 ▲
+        ▼                                                         │ startT1AggregationReveal()
+[12] AuditorsBatchesCreated                         [17] T1AggregationStarted
+        │ startLMsubmissionsEvaluation()                          ▲
+        ▼                                                         │ startT1Aggregation()
+[13] LMSevaluationStarted                           [16] T1nT2Bcreated
+        │ (auditors: commitAuditScore, commit phase)               ▲
+        └──────────── startLMsubmissionsEvaluationReveal() ────────┤ autoCreateTier1AndTier2()
+                       (auditors: revealAuditScore, reveal phase)  │
+                                                         [15] LMSevaluationClosed
+                                                                    ▲
+                                                                    │ closeLMsubmissionsEvaluation()
+                                                         [14] LMSevaluationRevealStarted
 ```
 
 T1/T2 aggregation submissions follow the same commit-then-reveal shape as LMS evaluation above: `commitT1Aggregation`/`commitT2Aggregation` during the `*AggregationStarted` (commit) state, then the model owner calls `startT1AggregationReveal`/`startT2AggregationReveal` to open `*AggregationRevealStarted`, during which aggregators call `revealT1Aggregation`/`revealT2Aggregation`. Only revealed CIDs are counted by `finalizeT1Aggregation`/`finalizeT2Aggregation`; a committed-but-never-revealed aggregator is excluded from finalization and remains slashable via `slashAggregators`' existing "no submission" (S2) check (issue #156 M-1, task_240926_18 Part C).
@@ -198,7 +192,7 @@ Used by: `DINTaskCoordinator`
 
 | Method | Purpose |
 |--------|---------|
-| `createAuditorsBatches` | Batch formation, triggered by the coordinator in `AuditSeedLocked`. `seed` is the coordinator's locked `auditSeed[_GI]`; a zero seed reverts `TA_AuditSeedNotLocked` |
+| `createAuditorsBatches` | Batch formation, triggered by the coordinator in `LMSclosed`. `seed` is the coordinator's locked `auditSeed[_GI]`; a zero seed reverts `TA_AuditSeedNotLocked` |
 | `setTestDataAssignedFlag` | Records that test datasets were distributed (informational — nothing gates on it) |
 | `finalizeEvaluation` | Median scores + approval; requires `LMSevaluationRevealStarted` |
 | `slashAuditors` | S1/S3 auditor slashing; requires `T2AggregationDone` |
@@ -240,12 +234,12 @@ Used by: `DINTaskCoordinator`
 | `TA_AlreadySubmitted` | Client has already submitted a model this GI |
 | `TA_MaxLMSubmissionsReached` | Submission count reached `MAX_LM_SUBMISSIONS` (10,000) |
 | `TA_NotEnoughAuditors` | Too few auditors to form even one batch |
-| `TA_CannotCreateAuditorsBatches` | State is not `AuditSeedLocked` |
+| `TA_CannotCreateAuditorsBatches` | State is not `LMSclosed` |
 | `TA_BatchDoesNotExist` | Batch ID >= batch array length |
 | `TA_BatchIDMismatch` | Internal sanity check failure on batch ID |
 | `TA_CannotSetTestDataAssignedFlag` | State is not `AuditorsBatchesCreated` |
 | `TA_FlagMustBeTrue` | `setTestDataAssignedFlag` called with `flag = false` |
-| `TA_TestDataNotAssigned` | `setTestDataAssignedFlag`: some audit batch of the GI has no stored test-data commitment (task_061026_21 Part B). A second call is rejected by the state gate (`TA_CannotSetTestDataAssignedFlag` / `TC_CannotSetTestDataAssignedFlag`), so `TA_FlagAlreadySet` is gone |
+| `TA_FlagAlreadySet` | Flag was already set for this GI |
 | `TA_NotAssignedAuditor` | Score commit/reveal, or `openTestDataDispute`, from an auditor not assigned to the batch |
 | `TA_InvalidModelIndex` | Model index not assigned to this batch |
 | `TA_CannotSetAuditScore` | Declared but unused — left over from the pre-commit-reveal `setAuditScorenEligibility`. |
@@ -285,12 +279,11 @@ Used by: `DINTaskCoordinator`
 | `TC_AuditorsRegistrationCannotBeFinished` | Auditor registration close in wrong state |
 | `TC_LMSubmissionsCannotBeStarted` | LM submission window start in wrong state |
 | `TC_LMSubmissionsNotStarted` | LM submission close when not started |
-| `TC_LMEvalCannotBeStarted` | `startLMsubmissionsEvaluation` (opens the commit phase) when state is not `AuditTestDataAssigned` |
+| `TC_LMEvalCannotBeStarted` | Reused by two functions: `createAuditorsBatches` when state is not `LMSclosed`, and `startLMsubmissionsEvaluation` (opens the commit phase) when state is not `AuditorsBatchesCreated` |
 | `TC_LMEvalCannotBeFinished` | `closeLMsubmissionsEvaluation` called when state is not `LMSevaluationRevealStarted` |
 | `TC_FailedToCreateAuditorsBatches` | `createAuditorsBatches` returned false |
 | `TC_CannotSetTestDataAssignedFlag` | Test data flag set in wrong state |
-| `TC_GINotEnded` | `releaseGIRegistrationSlots` for a GI that hasn't reached `GIended` |
-| `TC_SlotsAlreadyReleased` | `releaseGIRegistrationSlots` called twice for the same GI |
+| `TC_EvalPhaseNotClosed` | T1/T2 batch creation before evaluation close |
 | `TC_NotEnoughValidators` | Too few aggregators for T1 batches |
 | `TC_NotEnoughApprovedModels` | Fewer than `T1_MODELS_PER_BATCH` models approved |
 | `TC_BatchNotFound` | `getTier1Batch` with a batch ID out of bounds |
@@ -373,11 +366,11 @@ One set per seed, mirroring the dispute-seed errors in §4.6. See [DINTaskCoordi
 | `TC_AggSeedNotAnchored` | `lockAggSeed` called before `aggSeedBlock[_GI]` has been set (i.e. before `closeLMsubmissionsEvaluation`) |
 | `TC_AggSeedBlockNotMined` | `lockAggSeed` called before `block.number > aggSeedBlock[_GI]` |
 | `TC_AggSeedAlreadyLocked` | `lockAggSeed` called when `aggSeed[_GI]` is already non-zero |
-| `TC_AggSeedNotLocked` | `autoCreateTier1AndTier2` called when state is not `AggSeedLocked` (the seed isn't locked yet, or the GI is elsewhere) |
+| `TC_AggSeedNotLocked` | `autoCreateTier1AndTier2` called while `aggSeed[_GI] == bytes32(0)` |
 | `TC_AuditSeedNotAnchored` | `lockAuditSeed` called before `auditSeedBlock[_GI]` has been set (i.e. before `closeLMsubmissions`) |
 | `TC_AuditSeedBlockNotMined` | `lockAuditSeed` called before `block.number > auditSeedBlock[_GI]` |
 | `TC_AuditSeedAlreadyLocked` | `lockAuditSeed` called when `auditSeed[_GI]` is already non-zero |
-| `TC_AuditSeedNotLocked` | `createAuditorsBatches` called when state is not `AuditSeedLocked` (the seed isn't locked yet, or the GI is elsewhere) |
+| `TC_AuditSeedNotLocked` | `createAuditorsBatches` called while `auditSeed[_GI] == bytes32(0)` |
 | `TA_AuditSeedNotLocked` | `DINTaskAuditor.createAuditorsBatches(uint, bytes32)` rejects a zero seed itself, as a second guard behind the coordinator's `TC_AuditSeedNotLocked` check |
 
 ### 4.8 Commit-then-reveal T1/T2 aggregation (`TC_*`, issue #156 M-1)
