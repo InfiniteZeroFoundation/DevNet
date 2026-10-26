@@ -78,13 +78,14 @@ Grounding: everything below references `foundry/src/` as of `develop`.
 | S2 | Missed T1/T2 aggregation submission | Aggregator | On-chain (already implemented) | Partial |
 | S3 | Score deviation beyond threshold from cross-auditor median (per model, per GI) | Auditor | On-chain comparison at `finalizeEvaluation` — requires median computed on-chain | Partial → Full on repeat |
 | S4 | Invalid aggregation: submitted T1/T2 CID whose recomputation from inputs fails verification | Aggregator | Off-chain challenge + on-chain dispute (S4 is the main dispute-resolution consumer) | Full |
-| S5 | Repeated liveness failures (≥ `r` partial slashes within `w` GIs) | Both | On-chain counter | Full + jail/blacklist |
+| S5 | Repeated liveness failures (≥ `r` partial slashes within `w` GIs from one slasher contract, or ≥ `r_g` within a time window `w_g` across all models; issue No. 193) | Both | On-chain counter | Full + jail/blacklist |
 | S6 | Registration without capacity (registers, never participates, across models) | Both | On-chain counter | Partial, escalating |
 
 ### Penalty tiers
 
 - **Partial slash:** fixed fraction of `minStake` (e.g., 25–50%), not the flat `minStake()` used today — today's flat amount fully unstakes a floor-staked validator for one missed vote, which over-punishes liveness faults. Make the fraction a DAO parameter.
 - **Full slash:** entire slashable stake (active + unbonding) + blacklist. Reserved for provable malice (S4) and recidivism (S5).
+  - *Implementation note (issue No. 193 review):* the S5 escalation in `DinValidatorStake.slashPartial` slashes `MIN_STAKE` (not the entire slashable stake) and jails for `s5JailDuration` (7 days by default) rather than blacklisting. Recorded here, not changed; aligning the two is a mechanism decision.
 - **Jailing:** `_syncValidatorStatus` already produces a Jailed state below min stake; keep — jailed validators cannot register until they top up.
 
 ### Slashed-stake destination (resolved, P3-4.2)
@@ -137,7 +138,7 @@ Settlement is **per-GI** and split into two on-chain steps so that neither is a 
 - **Incremental totals:** the denominators `claimReward` divides by are accumulated *during* the GI, on loops that already run for other reasons — `giTotalApprovedScore` in `finalizeEvaluation`, `giTotalAuditWeight` / `auditorGIWeight` in `revealAuditScore`, `aggregatorWeight` / `totalAggregatorWeight` in `finalizeT1Aggregation` / `finalizeT2Aggregation`. `settleRewards` therefore needs no scan to derive them.
 - **Aggregator weighting:** one weight unit per (aggregator, finalized T1/T2 batch) pair — an aggregator credited for both a T1 batch and the T2 batch earns a proportionally larger share, not a flat per-address amount.
 - **What's on-chain vs off-chain:** scores land on-chain (auditor submissions, already implemented); the proportional split is computed on-chain — at claim time, per participant — so payouts are verifiable. Heavy scoring math stays off-chain in the Python services; the chain only sees submitted scores.
-- **Unclaimed rewards:** claimable indefinitely; no expiry for 2.0. A participant who never calls `claimReward(gi)` simply leaves their share unaccrued in the contract — it is not swept or reassigned.
+- **Unclaimed rewards:** claimable indefinitely; no expiry for 2.0. A participant who never calls `claimReward(gi)` simply leaves their share unaccrued in the contract — it is not swept or reassigned. Distinct from this: the per-participant proportional division itself (`pool * share / total`) floor-rounds, so up to `participants − 1` wei per role pool per GI is stranded regardless of who claims — accepted as permanent, economically negligible dust rather than fixed, since a sweep would need the kind of per-bucket participant-count tracking the "no scan needed" design above deliberately avoids ([issue #250](https://github.com/InfiniteZeroFoundation/DevNet/issues/250), [DINTaskAuditor.md §13 No. 4](../../Documentation/technical/contracts/DINTaskAuditor.md#13-review-notes--open-caveats)).
 - **Anti-gaming:** duplicate-update discounting is inherent in BlockFLow sequential fold-in (P3-SCR verifies); score inflation by a single auditor is bounded by the median; a client scoring ≤ pass-score threshold earns nothing, so spam costs compute for zero return.
 
 ### Open decisions

@@ -37,6 +37,37 @@ CACHE_DIR = Path(user_cache_dir("dincli"))
 # access to the manifest/service/wallet cache that dincli itself manages.
 WORKER_CACHE_DIR = Path(user_cache_dir("dincli-worker"))
 
+
+class ManifestPathEscapesBaseError(ValueError):
+    """issue #227: a manifest-supplied path field would read/write outside
+    the model's own cache directory."""
+
+
+def resolve_manifest_path(base_dir: Path, manifest_path: str | Path, *, what: str = "manifest path") -> Path:
+    """Resolve a manifest-supplied relative path against `base_dir`, raising
+    rather than silently re-anchoring if it would escape it.
+
+    A manifest is fetched from IPFS by a CID a model owner controls, so its
+    "path" fields are attacker-influenced in this threat model (issue #227):
+    an absolute path discards `base_dir` entirely when joined via `/`, and
+    `..` segments walk back out of it. `resolve()` also follows symlinks, so
+    a symlink placed inside `base_dir` that points outside is caught the
+    same way -- that's deliberate, not an oversight.
+    """
+    manifest_path = Path(manifest_path)
+    if manifest_path.is_absolute():
+        raise ManifestPathEscapesBaseError(
+            f"{what} must be relative, got an absolute path: {manifest_path!s}"
+        )
+    resolved_base = base_dir.resolve()
+    resolved = (base_dir / manifest_path).resolve()
+    if not resolved.is_relative_to(resolved_base):
+        raise ManifestPathEscapesBaseError(
+            f"{what} escapes its base directory {resolved_base!s}: {manifest_path!s} -> {resolved!s}"
+        )
+    return resolved
+
+
 CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 WALLETS_DIR = CONFIG_DIR / "wallets"
@@ -650,10 +681,13 @@ stateDescription = [
         "DIN auditors registration closed",
         "LM submissions started",
         "LM submissions closed",
+        "Audit seed locked",
         "Auditors batches created",
+        "Audit test data assigned",
         "LM submissions evaluation started",
         "LM submissions evaluation reveal started",
         "LM submissions evaluation closed",
+        "Aggregation seed locked",
         "T1nT2B created",
         "T1B aggregation started",
         "T1B aggregation reveal started",
@@ -662,7 +696,7 @@ stateDescription = [
         "T2B aggregation reveal started",
         "T2B aggregation done",
         "Auditors slashed",
-        "Validators slashed",
+        "Aggregators slashed",
         "GI ended",
     ]
 
@@ -679,10 +713,15 @@ states = [
         "DINauditorsRegistrationClosed",
         "LMSstarted",
         "LMSclosed",
+        # task_061026_21 Part B: progress states, inserted in lifecycle
+        # position (same precedent as the reveal states below).
+        "AuditSeedLocked",
         "AuditorsBatchesCreated",
+        "AuditTestDataAssigned",
         "LMSevaluationStarted",
         "LMSevaluationRevealStarted",
         "LMSevaluationClosed",
+        "AggSeedLocked",
         "T1nT2Bcreated",
         "T1AggregationStarted",
         # issue #156 M-1 (task_240926_18 Part C): inserted in lifecycle
@@ -1112,17 +1151,22 @@ def lock_batch_seed_if_pending(ctx, task_coordinator_contract, gi: int, curr_gi:
 
 
 def print_tx_info(tx_hash, network=None, print_url = True):
+    """Print the transaction hash and its URL when an explorer is configured."""
     #ensure tx_hash is hex string
     if isinstance(tx_hash, bytes):
         tx_hash_hex = tx_hash.hex()
     else:
         tx_hash_hex = tx_hash
 
-    #print tx url
     console.print(f"[bold green]Transaction hash:[/bold green] {tx_hash_hex}")
-    if print_url:
-        din_info = load_din_info()
-        console.print(f"[bold green]Transaction url:[/bold green] [cyan]{din_info[network]['explorer']}/tx/{tx_hash_hex}[/cyan]")
+    if not print_url:
+        return
+
+    explorer = load_din_info().get(network, {}).get("explorer")
+    if not explorer:
+        return
+
+    console.print(f"[bold green]Transaction url:[/bold green] [cyan]{explorer.rstrip('/')}/tx/{tx_hash_hex}[/cyan]")
     
 def _confirm_or_exit(question: str, instruction: str, console):
     answer = console.input(f"[bold yellow]{question} (y/n):[/bold yellow] ").strip().lower()

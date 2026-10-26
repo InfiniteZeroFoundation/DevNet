@@ -16,9 +16,11 @@ from rich.console import Console
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger, logging
 from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
+                              ManifestPathEscapesBaseError,
                               get_config, get_manifest, get_manifest_key, get_w3,
                               load_account, load_config, load_din_info,
-                              resolve_network, get_active_account_name,
+                              resolve_manifest_path, resolve_network,
+                              get_active_account_name,
                               validate_account_name, resolve_wallet_path)
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
@@ -248,7 +250,7 @@ class DinContext:
                 return None, None
             return (
                 manifest_data,
-                Path.cwd() / "tasks" / self.network.lower() / taskCoordinator_address,
+                self.get_task_dir(taskCoordinator_address),
             )
 
         # Some callers still pass only a raw contract address, especially for
@@ -313,7 +315,14 @@ class DinContext:
             # Without it, dincli cannot know where to cache/read the artifact.
             return Path(str(default_artifact_path))
 
-        artifact_path = model_base_path / artifact_rel_path
+        try:
+            artifact_path = resolve_manifest_path(model_base_path, artifact_rel_path, what="task_contracts artifact path")
+        except ManifestPathEscapesBaseError:
+            # issue #227: a manifest artifact path escaping its base
+            # directory is treated the same as any other malformed entry
+            # above -- fall back to the bundled ABI rather than crash or
+            # silently re-anchor.
+            return Path(str(default_artifact_path))
 
         # Ensure the artifact exists locally before constructing the Web3
         # contract. If "ipfs" is present, ensure_file_exists also refreshes the
@@ -327,6 +336,7 @@ class DinContext:
                 artifact_path,
                 artifact_entry.get("ipfs"),
                 f"{contract_key} ABI",
+                base_dir=model_base_path,
             )
         except FileNotFoundError:
             return Path(str(default_artifact_path))
@@ -392,19 +402,25 @@ class DinContext:
         fn_name: str,
         ipfs_hash: str = None,
         runtime: Optional[ServiceRuntimeContext] = None,
+        *,
+        base_dir: Path,
     ) -> Callable:
         """
         Dynamically load a function from a project-local service file.
 
+        *base_dir* is the workflow root *module_path* must resolve inside --
+        see `ensure_file_exists`.
+
         Example:
             load_custom_fn(
-                Path.cwd() / "services" / "modelowner.py",
+                ctx.get_task_dir(task_coordinator_address) / "services" / "modelowner.py",
                 "getGenesisModelIpfs",
-                "bafybeifnsvq2stiisi2xv3ocpqjmmmbccrvykq5v5ti62fyzz56vyyhl6y"
+                "bafybeifnsvq2stiisi2xv3ocpqjmmmbccrvykq5v5ti62fyzz56vyyhl6y",
+                base_dir=ctx.get_task_dir(task_coordinator_address),
             )
         """
 
-        self.ensure_file_exists(module_path, ipfs_hash, "Custom service file")
+        self.ensure_file_exists(module_path, ipfs_hash, "Custom service file", base_dir=base_dir)
 
         spec = importlib.util.spec_from_file_location(
             module_path.stem,
@@ -490,7 +506,9 @@ class DinContext:
     def ensure_file_exists(self,
         file_path: Path,
         ipfs_cid: str | None,
-        description: str
+        description: str,
+        *,
+        base_dir: Path,
     ) -> None:
         """
         Retrieve *file_path* from IPFS if it is missing or its stored CID
@@ -501,7 +519,29 @@ class DinContext:
         files for a given model directory.
 
         If *ipfs_cid* is None, only a presence check is done (no CID comparison).
+
+        *base_dir* is a backstop containment check (issue #227): *file_path*
+        must resolve inside it. It is required and is always the root of the
+        workflow the file belongs to, never the whole cache:
+
+        - ``get_model_base_dir(model_id)`` (``CACHE_DIR/<network>/model_<id>``)
+          for clients, auditors, aggregators, and the model owner once the
+          model is registered;
+        - ``get_task_dir(task_coordinator_address)``
+          (``cwd/tasks/<network>/<coordinator>``) for the model owner while
+          preparing the task, before it has a model_id.
+
+        Callers building *file_path* from a manifest field should already
+        have rejected an escaping path via `resolve_manifest_path` before
+        reaching here -- this is the second check, not the first, so a call
+        site that forgets the helper still can't write outside *base_dir*.
         """
+        effective_base = base_dir.resolve()
+        if not file_path.resolve().is_relative_to(effective_base):
+            raise ManifestPathEscapesBaseError(
+                f"refusing to write {description} outside {effective_base!s}: {file_path!s}"
+            )
+
         directory = file_path.parent.parent
         filename  = file_path.name
 
@@ -574,3 +614,6 @@ class DinContext:
 
     def get_model_base_dir(self, model_id: int) -> Path:
         return Path(CACHE_DIR) / self.network / f"model_{model_id}"
+
+    def get_task_dir(self, task_coordinator_address: str) -> Path:
+        return Path.cwd() / "tasks" / self.network.lower() / task_coordinator_address

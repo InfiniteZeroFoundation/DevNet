@@ -2,8 +2,9 @@ from pathlib import Path
 import typer
 from rich.table import Table
 
-from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, ensure_batch_seed_locked,
-                               get_manifest_key, require_custom_manifest_service)
+from dincli.cli.utils import (GIstateToStr, build_and_send_tx, ensure_batch_seed_locked,
+                               get_manifest_key, require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 aggregation_app = typer.Typer(help="Aggregation commands")
@@ -26,16 +27,18 @@ def create_tier1_tier2_batches(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
 
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationClosed","Can not create Tier 1 & Tier 2 batches at this time.")
-
     # issue #156 H-2: autoCreateTier1AndTier2 now requires an ungrindable,
     # future-block-anchored seed to already be locked. Lock it here (or
     # skip if someone else already has) before attempting the real call.
-    ensure_batch_seed_locked(
-        ctx, task_coordinator_Contract, ref_gi,
-        seed_getter="aggSeed", seed_block_getter="aggSeedBlock",
-        lock_fn="lockAggSeed", label="T1/T2 batch",
-    )
+    # A successful lock moves the GI to AggSeedLocked (task_061026_21
+    # Part B), so only LMSevaluationClosed still needs it.
+    if GIstateToStr(GIstate) != "AggSeedLocked":
+        ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationClosed","Can not create Tier 1 & Tier 2 batches at this time.")
+        ensure_batch_seed_locked(
+            ctx, task_coordinator_Contract, ref_gi,
+            seed_getter="aggSeed", seed_block_getter="aggSeedBlock",
+            lock_fn="lockAggSeed", label="T1/T2 batch",
+        )
 
     console.print(f"[bold green]Creating Tier 1 & Tier 2 batches[/bold green]")
     
@@ -395,19 +398,20 @@ def set_t2_score(
         console.print("[cyan]Calculating score for final GM model...[/cyan]")
 
         manifest = get_manifest_key(effective_network, "getscoreforGM", model_id)
-        model_base_path = Path(CACHE_DIR) / effective_network /  f"model_{model_id}"
-        modelowner_service_path = model_base_path / Path(manifest["path"])
-        model_service_path = model_base_path / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+        model_base_path = ctx.obj.get_model_base_dir(model_id)
+        modelowner_service_path = resolve_manifest_path(model_base_path, manifest["path"], what="getscoreforGM path")
+        model_service_path = resolve_manifest_path(model_base_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
 
         require_custom_manifest_service(manifest, "getscoreforGM")
-        ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "modelowner service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service")
+        ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "modelowner service", base_dir=model_base_path)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service", base_dir=model_base_path)
 
         fn = ctx.obj.load_custom_fn(
         modelowner_service_path,
-        "getscoreforGM")
+        "getscoreforGM",
+        base_dir=model_base_path)
 
-        ctx.obj.ensure_file_exists(Path(model_base_path)/"models"/"genesis_model.pth", get_manifest_key(effective_network,"Genesis_Model_CID", model_id), "genesis model")
+        ctx.obj.ensure_file_exists(Path(model_base_path)/"models"/"genesis_model.pth", get_manifest_key(effective_network,"Genesis_Model_CID", model_id), "genesis model", base_dir=model_base_path)
         if not (Path(model_base_path)/"dataset"/"test"/"test_dataset.pt").exists():
             console.print("[red]Error:[/red] Test dataset not found at ", str(Path(model_base_path)/"dataset"/"test"/"test_dataset.pt"))
             console.print("[yellow]Warning:[/yellow] please ensure the test dataset is present at ", str(Path(model_base_path)/"dataset"/"test"/"test_dataset.pt"))

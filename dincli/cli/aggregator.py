@@ -11,7 +11,8 @@ from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, lock_batch_seed_if_pending,
-                               require_custom_manifest_service)
+                               require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -333,18 +334,18 @@ def aggregate_t1(
 
         model_base_dir = ctx.obj.get_model_base_dir(model_id)
         manifest = get_manifest_key(effective_network, "get_aggregated_cid_t1", model_id)
-        aggregator_service_path = model_base_dir / Path(manifest["path"])
-        model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+        aggregator_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="get_aggregated_cid_t1 path")
+        model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
 
         require_custom_manifest_service(manifest, "get_aggregated_cid_t1")
-        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
+        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
 
         aggregator_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("aggregators")
         requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
         packages_dir = Path(packages_dir) if packages_dir else None
         if aggregator_requirements_cid:
-            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements")
+            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements", base_dir=model_base_dir)
             try:
                 ensure_worker_image(console)
                 if not no_cache and packages_dir is None:
@@ -362,8 +363,8 @@ def aggregate_t1(
         # access happens inside the container.
         aggregator_models_path = model_base_dir / "aggregator" / account.address / str(curr_GI) / "T1" / str(bid) / "models"
         for model_cid in model_cids:
-            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 local model submission")
-        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model")
+            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 local model submission", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model", base_dir=model_base_dir)
 
         jobs_dir = model_base_dir / "jobs" / "aggregators" / account.address
         job_path, output_dir = write_worker_job(
@@ -554,18 +555,18 @@ def aggregate_t2(
 
         model_base_dir = ctx.obj.get_model_base_dir(model_id)
         manifest = get_manifest_key(effective_network, "get_aggregated_cid_t2", model_id)
-        aggregator_service_path = model_base_dir / Path(manifest["path"])
-        model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
-  
+        aggregator_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="get_aggregated_cid_t2 path")
+        model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
+
         require_custom_manifest_service(manifest, "get_aggregated_cid_t2")
-        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service")
+        ctx.obj.ensure_file_exists(aggregator_service_path, manifest["ipfs"], "aggregator service", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network,"ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
 
         aggregator_requirements_cid = get_manifest_key(effective_network, "requirements.txt", model_id).get("aggregators")
         requirements_path = get_worker_requirements_path(model_base_dir, "aggregators")
         packages_dir = Path(packages_dir) if packages_dir else None
         if aggregator_requirements_cid:
-            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements")
+            ctx.obj.ensure_file_exists(requirements_path, aggregator_requirements_cid, "aggregator requirements", base_dir=model_base_dir)
             try:
                 ensure_worker_image(console)
                 if not no_cache and packages_dir is None:
@@ -580,8 +581,8 @@ def aggregate_t2(
 
         aggregator_models_path = model_base_dir / "aggregator" / account.address / str(curr_GI) / "T2" / str(bid) / "models"
         for model_cid in model_cids:
-            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 final model")
-        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model")
+            ctx.obj.ensure_file_exists(aggregator_models_path / f"{model_cid}.pth", model_cid, "T1 final model", base_dir=model_base_dir)
+        ctx.obj.ensure_file_exists(model_base_dir / "models" / "genesis_model.pth", genesis_model_ipfs_hash, "genesis model", base_dir=model_base_dir)
 
         jobs_dir = model_base_dir / "jobs" / "aggregators" / account.address
         job_path, output_dir = write_worker_job(

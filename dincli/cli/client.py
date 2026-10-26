@@ -4,7 +4,7 @@ from typing import Optional
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import CACHE_DIR, build_and_send_tx, require_custom_manifest_service, _confirm_or_exit
+from dincli.cli.utils import CACHE_DIR, build_and_send_tx, require_custom_manifest_service, resolve_manifest_path, _confirm_or_exit
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -126,18 +126,18 @@ def train_lms(
     model_base_dir = ctx.obj.get_model_base_dir(model_id)
     manifest = runtime.require_manifest_key("train_client_model")
     model_manifest = runtime.require_manifest_key("ModelArchitecture")
-    client_service_path = model_base_dir / Path(manifest["path"])
-    model_service_path = model_base_dir / Path(model_manifest["path"])
+    client_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="train_client_model path")
+    model_service_path = resolve_manifest_path(model_base_dir, model_manifest["path"], what="ModelArchitecture path")
 
     require_custom_manifest_service(manifest, "train_client_model")
-    ctx.obj.ensure_file_exists(client_service_path, manifest["ipfs"], "client service")
-    ctx.obj.ensure_file_exists(model_service_path, model_manifest["ipfs"], "model architecture service")
+    ctx.obj.ensure_file_exists(client_service_path, manifest["ipfs"], "client service", base_dir=model_base_dir)
+    ctx.obj.ensure_file_exists(model_service_path, model_manifest["ipfs"], "model architecture service", base_dir=model_base_dir)
 
     client_requirements_cid = runtime.get_manifest_key("requirements.txt", {}).get("clients")
     requirements_path = get_worker_requirements_path(model_base_dir, "clients")
     packages_dir = Path(packages_dir) if packages_dir else None
     if client_requirements_cid:
-        ctx.obj.ensure_file_exists(requirements_path, client_requirements_cid, "client requirements")
+        ctx.obj.ensure_file_exists(requirements_path, client_requirements_cid, "client requirements", base_dir=model_base_dir)
         try:
             ensure_worker_image(console)
 
@@ -157,6 +157,7 @@ def train_lms(
         model_base_dir / "models" / "genesis_model.pth",
         genesis_model_ipfs_hash,
         "genesis model",
+        base_dir=model_base_dir,
     )
 
     if initial_model_ipfs_hash:
@@ -164,6 +165,7 @@ def train_lms(
             model_base_dir / "models" / f"gm_{current_GI-1}.pt",
             initial_model_ipfs_hash,
             "latest global model",
+            base_dir=model_base_dir,
         )
 
     client_dataset_path = model_base_dir / "dataset" / "clients" / account.address / "data.pt"

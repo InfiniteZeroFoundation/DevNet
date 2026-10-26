@@ -20,8 +20,17 @@ enum GIstates {
     DINauditorsRegistrationClosed, // 9
     LMSstarted, // 10
     LMSclosed, // 11
-    AuditorsBatchesCreated, // 12
-    LMSevaluationStarted, // 13
+    // Progress states (task_061026_21 Part B). Each is set by the function
+    // that already does the step -- lockAuditSeed, setTestDataAssignedFlag,
+    // lockAggSeed -- so a GI needs no extra owner transaction. Inserted at
+    // their lifecycle positions (same 2026-08-27 precedent as the reveal
+    // states below), shifting every later ordinal; dincli/cli/utils.py's
+    // `states`/`stateDescription` mirrors and
+    // Documentation/technical/contracts/DINShared.md §2.1 match.
+    AuditSeedLocked, // 12
+    AuditorsBatchesCreated, // 13
+    AuditTestDataAssigned, // 14
+    LMSevaluationStarted, // 15
     // Reveal phase for commit-then-reveal auditor scoring (task_210726_6 §2a).
     // Inserted here, immediately after the commit phase, rather than
     // appended at the end as PR #63's own diff originally did (see git
@@ -31,11 +40,12 @@ enum GIstates {
     // (indexed by this enum's raw ordinals) have been updated to match,
     // shifting every subsequent entry by +1; see that file and
     // Documentation/technical/contracts/DINShared.md §2.1 for the full
-    // 24-member table.
-    LMSevaluationRevealStarted, // 14
-    LMSevaluationClosed, // 15
-    T1nT2Bcreated, // 16
-    T1AggregationStarted, // 17
+    // 29-member table.
+    LMSevaluationRevealStarted, // 16
+    LMSevaluationClosed, // 17
+    AggSeedLocked, // 18
+    T1nT2Bcreated, // 19
+    T1AggregationStarted, // 20
     // Reveal phase for commit-then-reveal T1/T2 aggregation submissions
     // (issue #156 M-1, task_240926_18 Part C). Same 2026-08-27 precedent as
     // LMSevaluationRevealStarted above: inserted immediately after each
@@ -43,14 +53,14 @@ enum GIstates {
     // `stateDescription` mirrors and Documentation/technical/contracts/
     // DINShared.md §2.1 have been updated to match, shifting every
     // subsequent entry by +1 (T1) then +1 again (T2).
-    T1AggregationRevealStarted, // 18
-    T1AggregationDone, // 19
-    T2AggregationStarted, // 20
-    T2AggregationRevealStarted, // 21
-    T2AggregationDone, // 22
-    AuditorsSlashed, // 23
-    AggregatorsSlashed, // 24
-    GIended // 25
+    T1AggregationRevealStarted, // 21
+    T1AggregationDone, // 22
+    T2AggregationStarted, // 23
+    T2AggregationRevealStarted, // 24
+    T2AggregationDone, // 25
+    AuditorsSlashed, // 26
+    AggregatorsSlashed, // 27
+    GIended // 28
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +121,12 @@ interface IDINTaskCoordinator {
     function GI() external view returns (uint256);
 
     function GIstate() external view returns (GIstates);
+
+    /// @dev Whether `aggregator` registered as an aggregator for GI `gi`
+    ///      (the coordinator's public mapping). Read by
+    ///      DINTaskAuditor.registerDINAuditor to refuse dual-role registration
+    ///      (issue No. 180).
+    function isDINAggregator(uint256 gi, address aggregator) external view returns (bool);
 
     /// @dev Per-(aggregator, finalized-batch) settlement weight for a GI,
     ///      read by DINTaskAuditor.claimReward at claim time (BL-10, #125).
@@ -207,8 +223,8 @@ error TA_BatchIDMismatch();
 error TA_CannotSetTestDataAssignedFlag();
 /// @dev The flag value supplied must be true; false is not accepted here.
 error TA_FlagMustBeTrue();
-/// @dev The test data assigned flag for this batch has already been set.
-error TA_FlagAlreadySet();
+/// @dev setTestDataAssignedFlag: some audit batch of the GI has no stored test-data commitment yet.
+error TA_TestDataNotAssigned();
 /// @dev Caller is not assigned to the target auditor batch.
 error TA_NotAssignedAuditor();
 /// @dev The supplied model index is outside the range of submitted models.
@@ -295,8 +311,10 @@ error TC_LMEvalCannotBeFinished();
 error TC_FailedToCreateAuditorsBatches();
 /// @dev GI state does not permit setting the test data assigned flag.
 error TC_CannotSetTestDataAssignedFlag();
-/// @dev LMS evaluation phase has not been closed yet.
-error TC_EvalPhaseNotClosed();
+/// @dev releaseGIRegistrationSlots: the GI has not ended yet.
+error TC_GINotEnded();
+/// @dev releaseGIRegistrationSlots: this GI's slots were already released.
+error TC_SlotsAlreadyReleased();
 /// @dev Fewer active validators registered than required to form T1 batches.
 error TC_NotEnoughValidators();
 /// @dev Fewer models passed evaluation than the minimum required for T2 aggregation.
@@ -364,6 +382,10 @@ error TA_RewardsNotSettled();
 ///      settled; claims pay from the snapshot, so a pool penalty could no
 ///      longer be taken without underfunding them.
 error TA_RewardsAlreadySettled();
+/// @dev registerDINAuditor was called by an address already registered as an
+///      aggregator for the same GI. One address can't hold both roles in a GI
+///      (issue No. 180); a second address with its own stake still can.
+error TA_DualRoleNotAllowed();
 /// @dev Caller already claimed their reward for this GI.
 error TA_RewardAlreadyClaimed();
 /// @dev Caller earned no reward for this GI (not a participant, or scored zero).

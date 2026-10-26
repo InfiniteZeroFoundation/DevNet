@@ -19,8 +19,9 @@ The conftest automatically handles all prerequisites:
 Run (fail-fast — recommended, because every test depends on the previous one):
   pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee ~/tempdir/dincli/results/last_run.txt
 
-All test output / logs are written to ~/tempdir/dincli/ (override with
-DIN_TEST_TMPDIR; see tests/dincli/constants.py for all env overrides).
+DIN_TEST_ISOLATED=1 opts into owned service groups and fresh disposable state.
+It requires explicit scratch and external results paths; it does not create a
+container. The default manual service behavior remains unchanged.
 """
 
 import json
@@ -31,6 +32,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from contextlib import ExitStack
 
 import pytest
 import requests
@@ -49,7 +51,13 @@ from tests.dincli.constants import (
     DIN_TEMP,
     NPX_BIN,
     IPFS_BIN,
+    ANVIL_BIN,
+    ISOLATED_MODE,
+    RESULTS_DIR,
 )
+
+from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
+from tests.dincli.services import start_service, rpc_ready, ipfs_ready
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +114,7 @@ def _compile_contracts(results_dir: Path) -> None:
         capture_output=True,
         text=True,
         timeout=180,
+        env=_isolated_env(DIN_TEMP) if ISOLATED_MODE else None,
     )
     log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
     if result.returncode != 0:
@@ -129,6 +138,7 @@ def _build_foundry_contracts(results_dir: Path) -> None:
         capture_output=True,
         text=True,
         timeout=180,
+        env=_isolated_env(DIN_TEMP) if ISOLATED_MODE else None,
     )
     log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
     if result.returncode != 0:
@@ -263,6 +273,17 @@ def din_tmp():
 
     config/ and cache/ are wiped at session start; results/ accumulates runs.
     """
+    if ISOLATED_MODE:
+        for directory in (DEVNET_ROOT, FOUNDRY_DIR):
+            if any(path.name != ".env.example" for path in directory.glob(".env*")):
+                pytest.fail("Isolated mode requires a disposable checkout without dotenv files")
+        DIN_TEMP.mkdir(parents=True, exist_ok=False)
+        try:
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            yield DIN_TEMP
+        finally:
+            shutil.rmtree(DIN_TEMP)
+        return
     DIN_TEMP.mkdir(parents=True, exist_ok=True)
     for subdir in ("config", "cache"):
         d = DIN_TEMP / subdir
@@ -270,7 +291,7 @@ def din_tmp():
             shutil.rmtree(d)
         d.mkdir(parents=True, exist_ok=True)
     (DIN_TEMP / "results").mkdir(exist_ok=True)
-    return DIN_TEMP
+    yield DIN_TEMP
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +313,7 @@ def managed_services(din_tmp):
     depend on it transitively via bootstrap). On teardown, any processes we
     started are terminated.
     """
-    results_dir = din_tmp / "results"
+    results_dir = RESULTS_DIR
     chain_proc = None
     ipfs_proc = None
 
@@ -301,6 +322,37 @@ def managed_services(din_tmp):
     _compile_contracts(results_dir)
     if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
         _build_foundry_contracts(results_dir)
+
+    if ISOLATED_MODE:
+        env = _isolated_env(din_tmp)
+        with ExitStack() as resources:
+            if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
+                command = [ANVIL_BIN, "--host", "127.0.0.1", "--chain-id", "1337",
+                           "--accounts", "70", "--balance", "10000", "--block-time", "2",
+                           "--code-size-limit", "4294967295",
+                           "--mnemonic", "test test test test test test test test test test test junk"]
+                cwd = FOUNDRY_DIR
+            else:
+                command = [NPX_BIN, "hardhat", "node", "--hostname", "127.0.0.1"]
+                cwd = HARDHAT_DIR
+            chain = start_service(command, cwd=cwd, env=env,
+                                  log_path=results_dir / "chain_node.log",
+                                  ready=lambda: rpc_ready(HARDHAT_RPC), port=8545)
+            resources.callback(chain.close)
+            # Never initialize or reuse an existing IPFS repository.
+            if Path(env["IPFS_PATH"]).exists():
+                raise RuntimeError("Isolated IPFS repository already exists")
+            with (results_dir / "ipfs_init.log").open("w") as log:
+                for args in (["init"], ["config", "--json", "Bootstrap", "[]"],
+                             ["config", "--json", "Discovery.MDNS.Enabled", "false"]):
+                    subprocess.run([IPFS_BIN, *args], env=env, check=True,
+                                   stdout=log, stderr=subprocess.STDOUT, timeout=30)
+            ipfs = start_service([IPFS_BIN, "daemon", "--offline"], cwd=din_tmp, env=env,
+                                 log_path=results_dir / "ipfs_daemon.log",
+                                 ready=ipfs_ready, port=5001)
+            resources.callback(ipfs.close)
+            yield
+        return
 
     # 2. Fresh chain node (kill and restart for clean EVM state)
     if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
@@ -335,6 +387,23 @@ def managed_services(din_tmp):
 # ---------------------------------------------------------------------------
 
 
+def _isolated_env(din_tmp):
+    """Local-only subprocess settings; do not inherit provider credentials."""
+    return {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "LANG": "C.UTF-8", "HOME": str(din_tmp / "home"),
+        "XDG_CONFIG_HOME": str(din_tmp / "config"),
+        "XDG_CACHE_HOME": str(din_tmp / "cache"),
+        "XDG_DATA_HOME": str(din_tmp / "data"),
+        "IPFS_PATH": str(din_tmp / "ipfs"),
+        "PYTHONPATH": str(DEVNET_ROOT), "LOCAL_RPC_URL": HARDHAT_RPC,
+        "IPFS_PROVIDER": "env", "IPFS_PUBLIC_GATEWAY": "0",
+        "IPFS_API_URL_ADD": "http://127.0.0.1:5001/api/v0/add",
+        "IPFS_API_URL_RETRIEVE": "http://127.0.0.1:5001/api/v0",
+        "NO_COLOR": "1", "TERM": "dumb",
+    }
+
+
 @pytest.fixture(scope="session")
 def din_env(din_tmp):
     """
@@ -346,6 +415,8 @@ def din_env(din_tmp):
       local dincli/ package without a pip install into the venv.
     - LOCAL_RPC_URL points at the Hardhat node.
     """
+    if ISOLATED_MODE:
+        return _isolated_env(din_tmp)
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(din_tmp / "config")
     env["XDG_CACHE_HOME"]  = str(din_tmp / "cache")
@@ -366,6 +437,8 @@ def workdir():
     dincli/ package is found via PYTHONPATH from here.
     """
 
+    if ISOLATED_MODE:
+        return DIN_TEMP
     shutil.copy(str(DEVNET_ROOT / ".env"), str(DIN_TEMP / ".env"))
     return DIN_TEMP
 
@@ -478,19 +551,21 @@ def run(din_env, workdir):
 @pytest.fixture(scope="session", autouse=True)
 def bootstrap(managed_services, din_info_backup, run):
     """
-    Configure demo mode and local network, and register the named role
+    Configure demo mode and local network, and connect the named demo role
     wallets (account 0 = dinrep / DIN-Representative, account 1 = modelowner).
-    Tests switch between them with `system connect-wallet <name>`; dynamic
-    per-account roles in test_04 self-register via
-    `register-wallet --account N --name acctN --yes --connect`.
+    Use `system connect-demo-wallet <name>` to switch demo accounts. Later
+    lifecycle phases still require their own wallet-command migration.
     Depends on managed_services so the Hardhat node is guaranteed to be
     running before the first command.
     """
-    run(["system", "init"])
-    run(["system", "configure-demo"])
-    run(["system", "configure-network", "--network", "local"])
-    run(["system", "register-wallet", "--account", "0", "--name", "dinrep", "--yes"])
-    run(["system", "register-wallet", "--account", "1", "--name", "modelowner", "--yes"])
+    accounts_path = DEVNET_ROOT / "dincli" / "config" / "accounts.json"
+    generated_accounts = ISOLATED_MODE and prepare_demo_accounts(accounts_path)
+    try:
+        bootstrap_demo(run)
+        yield
+    finally:
+        if generated_accounts:
+            accounts_path.unlink()
 
 
 # ---------------------------------------------------------------------------
