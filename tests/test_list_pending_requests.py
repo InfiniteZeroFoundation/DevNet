@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import dincli.cli.dindao as dindao_module
+import dincli.cli.dinrep as dindao_module
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ def test_graphql_model_path():
         ]
     }
     with patch.object(dindao_module._requests, "post", return_value=_make_response(fake_data)):
-        dindao_module.list_pending_requests.callback(ctx, req_type="model")
+        dindao_module.list_pending_requests(ctx, req_type="model")
 
     output = "\n".join(str(m) for m in msgs)
     assert "Request ID 0" in output
@@ -95,7 +95,7 @@ def test_graphql_model_path_empty():
     ctx, msgs, registry = _make_ctx()
     fake_data = {"modelRegistrationRequests": []}
     with patch.object(dindao_module._requests, "post", return_value=_make_response(fake_data)):
-        dindao_module.list_pending_requests.callback(ctx, req_type="model")
+        dindao_module.list_pending_requests(ctx, req_type="model")
 
     output = "\n".join(str(m) for m in msgs)
     assert "No pending model registration requests" in output
@@ -120,7 +120,7 @@ def test_graphql_manifest_path():
         ]
     }
     with patch.object(dindao_module._requests, "post", return_value=_make_response(fake_data)):
-        dindao_module.list_pending_requests.callback(ctx, req_type="manifest")
+        dindao_module.list_pending_requests(ctx, req_type="manifest")
 
     output = "\n".join(str(m) for m in msgs)
     assert "Request ID 0" in output
@@ -140,7 +140,7 @@ def test_rpc_fallback_on_connection_error():
     with patch.object(
         dindao_module._requests, "post", side_effect=ConnectionError("refused")
     ):
-        dindao_module.list_pending_requests.callback(ctx, req_type="model")
+        dindao_module.list_pending_requests(ctx, req_type="model")
 
     # RPC loop must have been invoked
     registry.functions.totalModelRequests.return_value.call.assert_called_once()
@@ -150,7 +150,7 @@ def test_rpc_fallback_on_graphql_error_body():
     ctx, msgs, registry = _make_ctx()
     error_resp = _make_response(errors=[{"message": "subgraph not found"}])
     with patch.object(dindao_module._requests, "post", return_value=error_resp):
-        dindao_module.list_pending_requests.callback(ctx, req_type="model")
+        dindao_module.list_pending_requests(ctx, req_type="model")
 
     # GraphQL returned errors — must fall through to RPC
     registry.functions.totalModelRequests.return_value.call.assert_called_once()
@@ -160,6 +160,6 @@ def test_rpc_fallback_on_http_error():
     ctx, msgs, registry = _make_ctx()
     bad_resp = _make_response(status=503)
     with patch.object(dindao_module._requests, "post", return_value=bad_resp):
-        dindao_module.list_pending_requests.callback(ctx, req_type="model")
+        dindao_module.list_pending_requests(ctx, req_type="model")
 
     registry.functions.totalModelRequests.return_value.call.assert_called_once()
