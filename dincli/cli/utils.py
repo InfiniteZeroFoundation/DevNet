@@ -1143,17 +1143,22 @@ def lock_batch_seed_if_pending(ctx, task_coordinator_contract, gi: int, curr_gi:
 
 
 def print_tx_info(tx_hash, network=None, print_url = True):
+    """Print the transaction hash and its URL when an explorer is configured."""
     #ensure tx_hash is hex string
     if isinstance(tx_hash, bytes):
         tx_hash_hex = tx_hash.hex()
     else:
         tx_hash_hex = tx_hash
 
-    #print tx url
     console.print(f"[bold green]Transaction hash:[/bold green] {tx_hash_hex}")
-    if print_url:
-        din_info = load_din_info()
-        console.print(f"[bold green]Transaction url:[/bold green] [cyan]{din_info[network]['explorer']}/tx/{tx_hash_hex}[/cyan]")
+    if not print_url:
+        return
+
+    explorer = load_din_info().get(network, {}).get("explorer")
+    if not explorer:
+        return
+
+    console.print(f"[bold green]Transaction url:[/bold green] [cyan]{explorer.rstrip('/')}/tx/{tx_hash_hex}[/cyan]")
     
 def _confirm_or_exit(question: str, instruction: str, console):
     answer = console.input(f"[bold yellow]{question} (y/n):[/bold yellow] ").strip().lower()
