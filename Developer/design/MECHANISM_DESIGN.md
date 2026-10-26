@@ -78,14 +78,16 @@ Grounding: everything below references `foundry/src/` as of `develop`.
 | S2 | Missed T1/T2 aggregation submission | Aggregator | On-chain (already implemented) | Partial |
 | S3 | Score deviation beyond threshold from cross-auditor median (per model, per GI) | Auditor | On-chain comparison at `finalizeEvaluation` — requires median computed on-chain | Partial → Full on repeat |
 | S4 | Invalid aggregation: submitted T1/T2 CID whose recomputation from inputs fails verification | Aggregator | Off-chain challenge + on-chain dispute (S4 is the main dispute-resolution consumer) | Full |
-| S5 | Repeated liveness failures (≥ `r` partial slashes within `w` GIs from one slasher contract, or ≥ `r_g` within a time window `w_g` across all models; issue No. 193) | Both | On-chain counter | Full + jail/blacklist |
+| S5 | Repeated liveness failures (≥ `r` partial slashes within `w` GIs from one slasher contract, or ≥ `r_g` within a time window `w_g` across all models; issue No. 193) | Both | On-chain counter | Escalated: `MIN_STAKE` + jail (no blacklist) |
 | S6 | Registration without capacity (registers, never participates, across models) | Both | On-chain counter | Partial, escalating |
 
 ### Penalty tiers
 
 - **Partial slash:** fixed fraction of `minStake` (e.g., 25–50%), not the flat `minStake()` used today — today's flat amount fully unstakes a floor-staked validator for one missed vote, which over-punishes liveness faults. Make the fraction a DAO parameter.
-- **Full slash:** entire slashable stake (active + unbonding) + blacklist. Reserved for provable malice (S4) and recidivism (S5).
-  - *Implementation note (issue No. 193 review):* the S5 escalation in `DinValidatorStake.slashPartial` slashes `MIN_STAKE` (not the entire slashable stake) and jails for `s5JailDuration` (7 days by default) rather than blacklisting. Recorded here, not changed; aligning the two is a mechanism decision.
+- **Full slash:** entire slashable stake (active + unbonding) + blacklist. Reserved for provable malice (S4).
+- **S5 escalation:** a flat `MIN_STAKE` slash plus a jail of `s5JailDuration` (7 days by default), applied by `DinValidatorStake.slashPartial`. There is no blacklist; once the jail expires the validator can `reactivate()` after topping up to `MIN_STAKE`.
+  - ✅ **Resolved (Abraham, issue No. 274, 2026-10-25): keep the code's behaviour.** S5 punishes unreliability, not provable malice, so the irreversible full slash + blacklist stays reserved for S4. One outage can also trigger S5 on a validator serving many models at once (the global-threshold calibration concern on issue No. 155), which makes a permanent ban disproportionate.
+  - *Mainnet follow-up:* we may add an escalation path where repeated S5 escalations after a jail lead to a full slash + blacklist.
 - **Jailing:** `_syncValidatorStatus` already produces a Jailed state below min stake; keep — jailed validators cannot register until they top up.
 
 ### Slashed-stake destination (resolved, P3-4.2)
