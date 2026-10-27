@@ -54,6 +54,7 @@ from tests.dincli.constants import (
     ANVIL_BIN,
     ISOLATED_MODE,
     RESULTS_DIR,
+    SVM_SEED_DIR,
 )
 
 from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
@@ -156,6 +157,25 @@ def _compile_contracts(results_dir: Path) -> None:
             f"[setup] Contract compilation failed (see {results_dir if ISOLATED_MODE else log_path}):\n{result.stderr[-2000:]}"
         )
     print("[setup] Contracts compiled successfully.")
+
+
+def _seed_solc(din_tmp: Path) -> None:
+    """Copy pre-installed solc builds into the isolated svm directory.
+
+    Isolated runs give forge a fresh XDG_DATA_HOME, and forge resolves its
+    pinned compiler before it reads the artifact cache, so even a build with
+    nothing to compile would download solc. DIN_TEST_SVM_DIR points at an
+    existing svm directory (normally ~/.svm on a runner that has already built
+    the contracts). Its version folders are copied, never linked, so nothing
+    is written back to it.
+    """
+    if SVM_SEED_DIR is None:
+        return
+    versions = [d for d in SVM_SEED_DIR.iterdir() if d.is_dir()] if SVM_SEED_DIR.is_dir() else []
+    if not versions:
+        raise RuntimeError(f"DIN_TEST_SVM_DIR has no solc versions: {SVM_SEED_DIR}")
+    for version in versions:
+        shutil.copytree(version, din_tmp / "data" / "svm" / version.name)
 
 
 def _build_foundry_contracts(results_dir: Path) -> None:
@@ -395,21 +415,25 @@ def managed_services(din_tmp):
     #    always need hardhat's ABIs/bytecode, regardless of deploy toolchain.
     _compile_contracts(results_dir)
     if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
+        if ISOLATED_MODE:
+            _seed_solc(din_tmp)
         _build_foundry_contracts(results_dir)
 
     if ISOLATED_MODE:
         env = _isolated_env(din_tmp)
         with ExitStack() as resources:
             if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
-                command = [ANVIL_BIN, "--host", "127.0.0.1", "--chain-id", "1337",
-                           "--accounts", "70", "--balance", "10000", "--block-time", "2",
-                           "--code-size-limit", "4294967295",
-                           "--mnemonic", "test test test test test test test test test test test junk"]
+                # foundry/anvil.sh is the single source of the chain flags (chain id,
+                # funded accounts, --block-time 2, code-size limit, mnemonic). Only the
+                # loopback bind and the resolved binary are added here.
+                command = ["bash", str(FOUNDRY_DIR / "anvil.sh"), "--host", "127.0.0.1"]
+                chain_env = {**env, "ANVIL_BIN": ANVIL_BIN}
                 cwd = FOUNDRY_DIR
             else:
                 command = [NPX_BIN, "hardhat", "node", "--hostname", "127.0.0.1"]
+                chain_env = env
                 cwd = HARDHAT_DIR
-            chain = start_service(command, cwd=cwd, env=env,
+            chain = start_service(command, cwd=cwd, env=chain_env,
                                   log_path=results_dir / "chain_node.log",
                                   ready=lambda: rpc_ready(HARDHAT_RPC), port=8545,
                                   diagnostics=_get_diagnostics())
@@ -417,8 +441,12 @@ def managed_services(din_tmp):
             # Never initialize or reuse an existing IPFS repository.
             if Path(env["IPFS_PATH"]).exists():
                 raise RuntimeError("Isolated IPFS repository already exists")
+            # No HTTP gateway: dincli reads through the RPC API on 5001, and the
+            # default gateway port (8080) is neither owned nor checked here, so a
+            # host process already on it would stop the daemon from starting.
             for args in (["init"], ["config", "--json", "Bootstrap", "[]"],
-                         ["config", "--json", "Discovery.MDNS.Enabled", "false"]):
+                         ["config", "--json", "Discovery.MDNS.Enabled", "false"],
+                         ["config", "--json", "Addresses.Gateway", "[]"]):
                 result = _get_diagnostics().run(
                     [IPFS_BIN, *args], cwd=din_tmp, env=env,
                     timeout=30, label="ipfs_init",

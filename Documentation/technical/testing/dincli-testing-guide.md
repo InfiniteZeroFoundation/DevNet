@@ -56,8 +56,9 @@ that isolates dependencies and coordinates services.
 
 The first CI preparation change adds opt-in `DIN_TEST_ISOLATED=1` service
 ownership and corrects demo bootstrap to use `connect-demo-wallet`. It does
-not yet add a Docker runner, a smoke workflow job, or complete seven-contract
-deployment assertions. The Python CI job still selects `not integration`.
+not add a Docker runner or complete seven-contract deployment assertions.
+The Python CI job still selects `not integration`; the suite itself runs in
+the separate [CI integration job](#ci-integration-job).
 Full lifecycle wallet switches and later phases are not verified by this change.
 
 In a disposable checkout/environment, isolated mode requires absolute
@@ -69,6 +70,19 @@ Only newly started process groups are stopped, including when setup fails
 before fixture yield. Startup logs remain in the external results directory.
 Both compiler paths remain enabled at this foundation stage; the Foundry-only
 selection will accompany the later smoke runner.
+
+The isolated Anvil is started through `foundry/anvil.sh` itself, so the chain
+flags have one source: the harness sets `ANVIL_BIN` to the binary it resolved
+and appends `--host 127.0.0.1`. The offline Kubo is configured without an
+HTTP gateway, so the RPC API on 5001 is its only port (dincli never reads
+through the gateway). Isolated compiles get a fresh `HOME` and XDG
+directories, so forge would download solc even for an up-to-date build. Set
+`DIN_TEST_SVM_DIR` to an existing absolute svm directory (`~/.svm`, or
+`~/.local/share/svm` when `~/.svm` does not exist) and its compiler versions
+are copied into scratch before `forge build`; the source is never linked or
+written to. Hardhat needs no equivalent once `hardhat/` has been compiled
+outside the harness: its isolated compile then reports "Nothing to compile"
+and never asks for a compiler.
 
 Isolated bootstrap validates and reuses accounts 0/1 in the checkout's public
 `dincli/config/accounts.json`, preserving the file. If absent, it generates
@@ -90,7 +104,8 @@ python -m pytest tests/test_integration_demo.py \
 
 Isolated mode is a harness setting, not a container or a guarantee that an
 arbitrary checkout is disposable. Use it only inside an environment you own
-for testing. A future runner must establish that boundary and provide a shared
+for testing. In CI that environment is the job's GitHub-hosted runner. A future
+Docker runner must establish a container boundary and provide a shared
 GitHub/local reproduction command; isolated mode itself does not do so.
 
 ### Isolated failure diagnostics
@@ -133,9 +148,65 @@ output; the collection exclusions are not general secret redaction. Use only
 public demo state in an owned disposable checkout.
 
 The legacy non-isolated capture and retention behavior is unchanged. These
-diagnostics do not repair the later lifecycle phases or add a CI job. Focused
+diagnostics do not repair the later lifecycle phases. Focused
 coverage additionally lives in `tests/test_integration_diagnostics.py` and
 `tests/test_integration_reports.py`.
+
+### CI integration job
+
+`.github/workflows/ci.yml` has an **Integration (full GI)** job (issue #228)
+that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
+`DIN_TEST_ISOLATED=1` on a GitHub-hosted runner.
+
+- **When it runs:** on PRs and pushes to `develop` that change
+  `foundry/src/`, `foundry/script/`, `foundry/anvil.sh`, `hardhat/`,
+  `dincli/`, `tests/dincli/` or `ci.yml`. (`hardhat/` is included while the
+  suite still deploys the task contracts from Hardhat artifacts.) The workflow itself has no path filters
+  because `CI OK` is the single required check, so the small
+  **Integration paths** job decides by diffing against the base. When it
+  cannot diff (a force push, for example), the suite runs.
+- **Non-blocking:** the job has `continue-on-error: true` and `CI OK` does not
+  wait for it. It is expected to fail after `test_01` until task_061026_21
+  moves the suite to the foundry task contracts and demo wallets. Once it has
+  been stable for a couple of weeks it can become required: add it to
+  `ci-ok`'s `needs` and accept `skipped` there.
+- **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
+  Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
+  `npx hardhat compile` run first, in the runner's normal environment, so the
+  harness's isolated compiles are up to date: forge gets solc through
+  `DIN_TEST_SVM_DIR` and hardhat needs no compiler. Without this step the
+  harness would download both compilers and run a full `via_ir` build inside
+  its 180 s compile timeout. The solc and Hardhat compiler downloads are
+  cached between runs, and the `din-worker` image is built before the suite
+  starts rather than inside a Phase 4 command's timeout.
+- **Logs:** when the job fails, the `integration-logs` artifact holds the
+  results directory: `pytest.log`, numbered diagnostic logs for commands,
+  compiler builds, Kubo initialization and owned services, plus
+  `0001_manifest.jsonl`, `worker-reports/`, `summary.json` and `cleanup.json` when
+  collection and cleanup reach those stages. The step summary records the
+  suite's exit status and runtime. These artifacts do not prove full-GI
+  completion or guarantee cleanup of every resource.
+
+To reproduce the job locally, use a disposable checkout with no `.env*` file
+other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo
+(`ipfs`) on `PATH`, Docker running, and nothing listening on ports 8545 or
+5001:
+
+```bash
+(cd foundry && npm ci && forge build)
+(cd hardhat && npm ci && npx hardhat compile)
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+python -m pip install -e ".[test]"
+docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
+
+svm="$HOME/.svm"; [ -d "$svm" ] || svm="${XDG_DATA_HOME:-$HOME/.local/share}/svm"
+export DIN_TEST_ISOLATED=1 DIN_TEST_SVM_DIR="$svm"
+export DIN_TEST_TMPDIR="$(mktemp -d)/scratch" DIN_TEST_RESULTS_DIR="$(mktemp -d)"
+pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee "$DIN_TEST_RESULTS_DIR/pytest.log"
+```
+
+`DIN_TEST_TMPDIR` must not exist yet: the harness creates it and deletes it
+at the end of the session. The logs stay in `DIN_TEST_RESULTS_DIR`.
 
 ### Managed services (`managed_services` fixture)
 
@@ -143,10 +214,12 @@ Before any test runs, the fixture does the following:
 1. **Solidity compilation** — runs `npx hardhat compile` in `hardhat/` (the
    task-contract deploys and `dump-abi` tests use Hardhat artifacts), and
    `forge build` in `foundry/` when the toolchain is `foundry` (the platform is
-   deployed from `foundry/out/` via `DeployPlatform.s.sol`).
+   deployed from `foundry/out/` via `DeployPlatform.s.sol`). In isolated mode
+   the `DIN_TEST_SVM_DIR` compilers, if set, are copied into scratch first.
 2. **Fresh chain node** — kills any running node and launches a clean one on
    port `8545`: `foundry/anvil.sh` (70 accounts, chain ID 1337) for `foundry`,
-   or `npx hardhat node` for `hardhat`.
+   or `npx hardhat node` for `hardhat`. Isolated mode starts the same
+   `foundry/anvil.sh`, but never kills anything: an occupied port fails setup.
 3. **IPFS daemon** — checks if the IPFS API (`http://127.0.0.1:5001`) is
    running, starting it (`ipfs daemon`) if not. If it was already running
    externally, it is left running at teardown.
@@ -415,7 +488,7 @@ pytest tests/dincli/test_04_gi.py::test_gi_start -v -m integration
 
 ## Output / logs
 
-All output is written to `~/tempdir/dincli/`:
+In non-isolated mode, output is written to `~/tempdir/dincli/`:
 
 | Path | Contents |
 |------|----------|
@@ -427,6 +500,12 @@ All output is written to `~/tempdir/dincli/`:
 | `results/ipfs_daemon.log` | IPFS daemon stdout/stderr (if started by conftest) |
 | `config/` | Isolated dincli config for the test session |
 | `cache/` | Isolated dincli cache for the test session |
+
+In isolated mode (and in CI), `DIN_TEST_RESULTS_DIR` retains numbered command,
+compiler, Kubo initialization and owned-service logs, the JSONL manifest,
+worker summaries and cleanup evidence described under
+[Isolated failure diagnostics](#isolated-failure-diagnostics) and
+[CI integration job](#ci-integration-job).
 
 ---
 
