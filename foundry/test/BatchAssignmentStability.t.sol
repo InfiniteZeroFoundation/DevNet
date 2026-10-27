@@ -24,7 +24,6 @@ import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
-import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract BatchAssignmentStabilityTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -202,7 +201,6 @@ contract BatchAssignmentStabilityTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1);
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
-        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
