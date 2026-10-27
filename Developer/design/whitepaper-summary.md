@@ -1,6 +1,6 @@
 # DIN White Paper — Summary & Implementation Mapping
 
-> **Source:** [Decentralized Intelligence Network (DIN)](https://github.com/InfiniteZeroFoundation/White-Paper/blob/main/Decentralized%20Intelligence%20Network%20(DIN).pdf.zip), Abraham Nash (23 pp., zip published Jun 2026).
+> **Source:** [Decentralized Intelligence Network (DIN)](https://github.com/InfiniteZeroFoundation/White-Paper/blob/main/Decentralized%20Intelligence%20Network%20%28DIN%29.pdf), Abraham Nash (23 pp., published Jun 2026).
 > **Purpose of this document:** working summary of the white paper for aligning ROADMAP.md, `Documentation/`, and `issues/` with the canonical protocol design. Section references (§) are to the white paper.
 
 ---

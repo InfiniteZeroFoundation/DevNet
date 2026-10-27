@@ -4,6 +4,9 @@
 > Hit an error or get stuck anywhere in this guide? Post it in the
 > [DevNet 2.0 pre-launch discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/102).
 
+> [!IMPORTANT]
+> This guide follows the code on the `develop` branch, which is preparing DevNet 2.0. The live network today runs DevNet 1.0, which doesn't have the commit and reveal steps described below. This guide will be updated when DevNet 2.0 launches.
+
 Welcome to the onboarding guide for **Model_0** on the Infinite Zero Network.
 
 Planning a different model or dataset? Read [What can I train on DIN?](what-can-be-trained.md) to understand the tested reference, custom-service path, and practical limits.
@@ -59,7 +62,7 @@ It means:
 # Current Status
 
 * ✅ Global Iteration 1 completed
-* 🔄 Global Iteration 2 in progress
+* ⏸️ Global Iteration 2 stopped at registration; the next rounds will run on DevNet 2.0
 
 ---
 
@@ -89,13 +92,13 @@ Ethereum acts as the source of truth for:
 
 ### Core guarantee
 
-The system is **fully verifiable end-to-end**:
+The system is designed to be verifiable end to end:
 
 - Ethereum enforces correctness, coordination, and finality  
 - IPFS ensures reproducible and distributed data availability  
 - Off-chain compute enables scalable ML execution  
 
-> 💡 Trust is shifted from participants to cryptographic and economic enforcement.
+> 💡 The aim is to shift trust from participants to cryptographic and economic enforcement. The economic layer is still being built; see "Current Devnet Scope" below.
 
 # 📦 Data Availability Layer (IPFS via Filebase)
 
@@ -187,7 +190,7 @@ Economic and reward distribution mechanisms are still under active development a
 * Coordination
 * Community support
 
-https://t.me/+I4Tl7foCVwwwM2Vk
+https://t.me/+h46VS3AnO384ZGI8
 
 ### Signal
 

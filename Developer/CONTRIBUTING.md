@@ -10,10 +10,9 @@ git checkout develop
 
 # Install dependencies and set up dincli in editable mode
 pip install -e .
-
-# See full setup guide
-/Developer/DEVELOPMENT_SETUP.md
 ```
+
+See the full [development setup guide](DEVELOPMENT_SETUP.md).
 
 Create a feature branch, commit your changes, and open a pull request to `develop`.
 

@@ -4,6 +4,9 @@ Welcome to InfiniteZero Network DevNet. This is a live, open experiment in build
 
 This document is your entry point for beginner-friendly contributions across federated learning, privacy-preserving systems, blockchain coordination, and developer tooling. Each detailed issue lives in `Developer/issues/`.
 
+> [!NOTE]
+> For the current list of beginner-friendly tasks, see the [good first issue label](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22). This page gives background on two longer-running areas.
+
 ---
 
 ## What We're Building
@@ -40,7 +43,9 @@ Core components:
 
 ## Open Issues
 
-### 0. Starter Task: Differential Privacy & Responsible AI Review
+### 0. Starter Task: Differential Privacy & Responsible AI Review (completed)
+
+**Status:** ✅ Completed in [PR #89](https://github.com/InfiniteZeroFoundation/DevNet/pull/89). The review is at [dp-mechanism-review.md](../Documentation/technical/audits/dp-mechanism-review.md); follow-up work is in the issues it links to.
 
 **Difficulty:** Beginner (review/analysis, not implementation)
 **Area:** Privacy-Preserving Federated Learning / AI Governance

@@ -70,15 +70,15 @@ Creates the required `config` and `cache` directories and generates an empty con
 # Disable demo mode to use your own wallet and private keys
 dincli system configure-demo --mode no
 
-# Set the default network  [local | sepolia_devnet | sepolia_op_devnet | mainnet]
+# Set the default network  [local | sepolia_op_devnet]
 dincli system configure-network --network sepolia_op_devnet
-
-> [!NOTE]
-> Use `sepolia_op_devnet` for devnet. Testnet and Mainnet support will be rolled out in a future release.
 
 # Set the log level  [debug | info | warning | error | critical]
 dincli system configure-logging --level info
 ```
+
+> [!NOTE]
+> Use `sepolia_op_devnet` for devnet. Testnet and Mainnet support will be rolled out in a future release.
 
 
 ## 5. Environment Variables (`.env`)

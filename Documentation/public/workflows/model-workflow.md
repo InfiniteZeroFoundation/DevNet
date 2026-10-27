@@ -5,7 +5,7 @@ In this guide we will describe the workflow of the DIN Protocol for a model.
 In Model Workflow there are 5 main entities:
 
 1. Model-Owner
-2. DIN-Representative (later DIN-DAO)
+2. DIN-Representative
 3. Auditors
 4. Aggregators
 5. Clients (Model-Trainees)
@@ -175,7 +175,7 @@ Model Owner creates and submits the genesis model to the TaskCoordinator contrac
 The following dincli command is used to create the genesis model:
 
 ```bash
-dincli model-owner model create-genesis
+dincli model-owner model create-genesis-model
 ```
 
 > make sure that the manifest.json file is present at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json` before running the above command. The above dincli command will use `getGenesisModelIpfs` in `modelowner.py` service  to create the genesis model and upload it to IPFS and store the IPFS CID in the .env file as `SEPOLIA_OP_DEVNET_<TASK_COORDINATOR_CONTRACT_ADDRESS>_GENESIS_MODEL_IPFS_HASH`. Please note that dincli can automatically fetch the service from IPFS using the coressponding entry for `getGenesisModelIpfs` in the manifest.json file.
@@ -183,7 +183,7 @@ dincli model-owner model create-genesis
 The model owner can submit the genesis model to the TaskCoordinator contract using the following dincli command:
 
 ```bash
-dincli model-owner model submit-genesis
+dincli model-owner model submit-genesis-model
 ```
 
 > make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command. The test dataset will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
@@ -192,18 +192,18 @@ dincli model-owner model submit-genesis
 
 ## 8. Register Model - Model Owner
 
-Model Owner updates the manisfest file at`<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, specially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract`  fields with the IPFS CID of the genesis model, DINTaskCoordinator contract address and DINTaskAuditor contract address respectively.
+Model Owner updates the manifest file at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, especially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract`  fields with the IPFS CID of the genesis model, DINTaskCoordinator contract address and DINTaskAuditor contract address respectively.
 
-Model Owner then register the model with the DIN Protocolat DINModelRegistry contract using the following dincli command:
+The Model Owner then submits a registration request to the DINModelRegistry contract with the following command (add `--isOpenSource` for an open-source model). The DIN-Representative reviews and approves it:
 
 ```bash
-dincli task model-owner register --isOpenSource [true/false]
+dincli task model-owner register-request [--isOpenSource]
 ```
 
-Once the model is registered, the model is assigned a model ID. The manifest file may be updated with the model id field `Model ID` and uploaded to IPFS again. Other fields in manifest file can also be updated as per requirement. The following dincli command can be used to update the model CID in DINModelRegistry contract:
+Once the model is registered, the model is assigned a model ID. The manifest file may be updated with the model id field `Model ID` and uploaded to IPFS again. Other fields in manifest file can also be updated as per requirement. To change the manifest recorded in the DINModelRegistry contract, submit a manifest update request, which the DIN-Representative then approves:
 
 ```bash
-dincli task model-owner update-manifest <model_id> [--modelCID <model_cid>] [--manifestpath <manifest_path>]
+dincli task model-owner update-manifest-request <model_id> [--manifestCID <manifest_cid>] [--manifestpath <manifest_path>]
 ```
 
 ## 9. Start Global Iteration (GI) - Model Owner
