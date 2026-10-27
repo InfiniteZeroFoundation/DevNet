@@ -681,13 +681,10 @@ stateDescription = [
         "DIN auditors registration closed",
         "LM submissions started",
         "LM submissions closed",
-        "Audit seed locked",
         "Auditors batches created",
-        "Audit test data assigned",
         "LM submissions evaluation started",
         "LM submissions evaluation reveal started",
         "LM submissions evaluation closed",
-        "Aggregation seed locked",
         "T1nT2B created",
         "T1B aggregation started",
         "T1B aggregation reveal started",
@@ -696,7 +693,7 @@ stateDescription = [
         "T2B aggregation reveal started",
         "T2B aggregation done",
         "Auditors slashed",
-        "Aggregators slashed",
+        "Validators slashed",
         "GI ended",
     ]
 
@@ -713,15 +710,10 @@ states = [
         "DINauditorsRegistrationClosed",
         "LMSstarted",
         "LMSclosed",
-        # task_061026_21 Part B: progress states, inserted in lifecycle
-        # position (same precedent as the reveal states below).
-        "AuditSeedLocked",
         "AuditorsBatchesCreated",
-        "AuditTestDataAssigned",
         "LMSevaluationStarted",
         "LMSevaluationRevealStarted",
         "LMSevaluationClosed",
-        "AggSeedLocked",
         "T1nT2Bcreated",
         "T1AggregationStarted",
         # issue #156 M-1 (task_240926_18 Part C): inserted in lifecycle

@@ -259,6 +259,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has committed
         public hasCommittedLM;
 
+    mapping(uint256 => bool) internal Is_testdataCIDs_Assigned;
+
     // §2b: per-validator encrypted test-data key mapping. GI => batchId =>
     // auditor => that auditor's copy of the test-data decryption key,
     // encrypted to their public key off-chain. Populated in
@@ -871,7 +873,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint _GI,
         bytes32 seed
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
-        if (dintaskcoordinatorContract.GIstate() != GIstates.AuditSeedLocked)
+        if (dintaskcoordinatorContract.GIstate() != GIstates.LMSclosed)
             revert TA_CannotCreateAuditorsBatches();
         if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
@@ -1034,12 +1036,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     }
 
     /// @notice Marks test dataset distribution as complete for the given GI.
-    /// @dev Restricted to the paired DINTaskCoordinator. flag must be true,
-    ///      and every audit batch of the GI must have a stored test-data
-    ///      commitment (written by assignAuditTestDataset), else
-    ///      TA_TestDataNotAssigned. One-way: the coordinator then moves to
-    ///      AuditTestDataAssigned, so the AuditorsBatchesCreated gate below
-    ///      rejects a second call (task_061026_21 Part B).
+    /// @dev Restricted to the paired DINTaskCoordinator. flag must be true;
+    ///      can only be set once per GI.
     /// @param _GI Current GI index.
     /// @param flag Must be true.
     /// @return True on success.
@@ -1052,11 +1050,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             GIstates.AuditorsBatchesCreated
         ) revert TA_CannotSetTestDataAssignedFlag();
         if (!flag) revert TA_FlagMustBeTrue();
-        uint256 n = auditBatches[_GI].length;
-        for (uint256 b = 0; b < n; b++) {
-            if (testDataCommitments[_GI][b] == bytes32(0))
-                revert TA_TestDataNotAssigned();
-        }
+        if (Is_testdataCIDs_Assigned[_GI]) revert TA_FlagAlreadySet();
+
+        Is_testdataCIDs_Assigned[_GI] = flag;
         return true;
     }
 

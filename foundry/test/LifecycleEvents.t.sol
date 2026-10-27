@@ -11,8 +11,6 @@ pragma solidity ^0.8.28;
 //   - T2AggregationSubmitted emitted by revealT2Aggregation (same split)
 //   - T1BatchFinalized emitted per batch in finalizeT1Aggregation
 //   - T2Finalized emitted in finalizeT2Aggregation
-//   - task_061026_21 Part B progress states: AuditSeedLocked,
-//     AuditTestDataAssigned, AggSeedLocked, and the gates that need them
 // Run: forge test --match-contract LifecycleEventsTest -vv
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -24,16 +22,8 @@ import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {
-    GIstates,
-    TA_TestDataNotAssigned,
-    TC_AggSeedNotLocked,
-    TC_AuditSeedNotLocked,
-    TC_CannotSetTestDataAssignedFlag,
-    TC_LMEvalCannotBeStarted
-} from "../src/DINShared.sol";
+import {GIstates} from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
-import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract LifecycleEventsTest is Test {
     DinToken token;
@@ -76,23 +66,20 @@ contract LifecycleEventsTest is Test {
     uint8 constant GI_AUD_REG_CLOSED               = 9;
     uint8 constant GI_LMS_STARTED                  = 10;
     uint8 constant GI_LMS_CLOSED                   = 11;
-    uint8 constant GI_AUDIT_SEED_LOCKED            = 12;
-    uint8 constant GI_AUDITOR_BATCHES_CREATED      = 13;
-    uint8 constant GI_TEST_DATA_ASSIGNED           = 14;
-    uint8 constant GI_LMS_EVAL_STARTED             = 15;
-    uint8 constant GI_LMS_EVAL_REVEAL_STARTED      = 16;
-    uint8 constant GI_LMS_EVAL_CLOSED              = 17;
-    uint8 constant GI_AGG_SEED_LOCKED              = 18;
-    uint8 constant GI_T1T2_CREATED                 = 19;
-    uint8 constant GI_T1_AGG_STARTED               = 20;
-    uint8 constant GI_T1_AGG_REVEAL_STARTED        = 21;
-    uint8 constant GI_T1_AGG_DONE                  = 22;
-    uint8 constant GI_T2_AGG_STARTED               = 23;
-    uint8 constant GI_T2_AGG_REVEAL_STARTED        = 24;
-    uint8 constant GI_T2_AGG_DONE                  = 25;
-    uint8 constant GI_AUDITORS_SLASHED             = 26;
-    uint8 constant GI_AGGREGATORS_SLASHED          = 27;
-    uint8 constant GI_ENDED                        = 28;
+    uint8 constant GI_AUDITOR_BATCHES_CREATED       = 12;
+    uint8 constant GI_LMS_EVAL_STARTED             = 13;
+    uint8 constant GI_LMS_EVAL_REVEAL_STARTED      = 14;
+    uint8 constant GI_LMS_EVAL_CLOSED              = 15;
+    uint8 constant GI_T1T2_CREATED                 = 16;
+    uint8 constant GI_T1_AGG_STARTED               = 17;
+    uint8 constant GI_T1_AGG_REVEAL_STARTED        = 18;
+    uint8 constant GI_T1_AGG_DONE                  = 19;
+    uint8 constant GI_T2_AGG_STARTED               = 20;
+    uint8 constant GI_T2_AGG_REVEAL_STARTED        = 21;
+    uint8 constant GI_T2_AGG_DONE                  = 22;
+    uint8 constant GI_AUDITORS_SLASHED             = 23;
+    uint8 constant GI_AGGREGATORS_SLASHED          = 24;
+    uint8 constant GI_ENDED                        = 25;
 
     function setUp() public {
         vm.startPrank(admin);
@@ -221,19 +208,6 @@ contract LifecycleEventsTest is Test {
     ///      T1AggregationStarted, committing/revealing in every auditor batch.
     ///      6 approved models + 6 aggregators yield two Tier-1 batches.
     function _advanceToT1(uint256 giIndex, uint256 nClients) internal {
-        _advanceToEvalClosed(giIndex, nClients);
-        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
-        tc.lockAggSeed(giIndex);
-
-        vm.startPrank(modelOwner);
-        tc.autoCreateTier1AndTier2(giIndex);
-        tc.startT1Aggregation(giIndex);
-        vm.stopPrank();
-    }
-
-    /// @dev Submits `nClients` (3 or 6) local models and closes LMS, which
-    ///      anchors the audit seed.
-    function _submitAndCloseLMS(uint256 giIndex, uint256 nClients) internal {
         address[6] memory clients = [client1, client2, client3, client4, client5, client6];
         for (uint i = 0; i < nClients; i++) {
             vm.prank(clients[i]); ta.submitLocalModel(bytes32((i + 1) * 100), giIndex);
@@ -242,18 +216,11 @@ contract LifecycleEventsTest is Test {
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(giIndex);
         vm.stopPrank();
-    }
-
-    /// @dev Same as _advanceToT1 up to LMSevaluationClosed (aggregation seed
-    ///      anchored, not locked).
-    function _advanceToEvalClosed(uint256 giIndex, uint256 nClients) internal {
-        _submitAndCloseLMS(giIndex, nClients);
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(giIndex);
 
         vm.startPrank(modelOwner);
         tc.createAuditorsBatches(giIndex);
-        assignPlaceholderTestData(ta, address(stake), giIndex);
         tc.setTestDataAssignedFlag(giIndex, true);
         tc.startLMsubmissionsEvaluation(giIndex);
         vm.stopPrank();
@@ -284,6 +251,13 @@ contract LifecycleEventsTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissionsEvaluation(giIndex);
+        vm.stopPrank();
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(giIndex);
+
+        vm.startPrank(modelOwner);
+        tc.autoCreateTier1AndTier2(giIndex);
+        tc.startT1Aggregation(giIndex);
         vm.stopPrank();
     }
 
@@ -585,11 +559,9 @@ contract LifecycleEventsTest is Test {
         emit DINTaskCoordinator.GIStateChanged(1, GI_LMS_CLOSED);
         vm.prank(modelOwner); tc.closeLMsubmissions(1);
 
-        // AuditSeedLocked (task_061026_21 Part B): the permissionless seed
-        // lock (issue #156 H-2) now also advances the state
+        // issue #156 H-2: seed lock (emits its own event, so this must land
+        // before the expectEmit below rather than between it and the call)
         vm.roll(block.number + tc.disputeSeedDelay() + 1);
-        vm.expectEmit(true, true, false, false, address(tc));
-        emit DINTaskCoordinator.GIStateChanged(1, GI_AUDIT_SEED_LOCKED);
         tc.lockAuditSeed(1);
 
         // AuditorsBatchesCreated
@@ -597,13 +569,7 @@ contract LifecycleEventsTest is Test {
         emit DINTaskCoordinator.GIStateChanged(1, GI_AUDITOR_BATCHES_CREATED);
         vm.prank(modelOwner); tc.createAuditorsBatches(1);
 
-        // AuditTestDataAssigned (task_061026_21 Part B)
-        vm.startPrank(modelOwner);
-        assignPlaceholderTestData(ta, address(stake), 1);
-        vm.expectEmit(true, true, false, false, address(tc));
-        emit DINTaskCoordinator.GIStateChanged(1, GI_TEST_DATA_ASSIGNED);
-        tc.setTestDataAssignedFlag(1, true);
-        vm.stopPrank();
+        vm.prank(modelOwner); tc.setTestDataAssignedFlag(1, true);
 
         // LMSevaluationStarted
         vm.expectEmit(true, true, false, false, address(tc));
@@ -637,10 +603,9 @@ contract LifecycleEventsTest is Test {
         emit DINTaskCoordinator.GIStateChanged(1, GI_LMS_EVAL_CLOSED);
         vm.prank(modelOwner); tc.closeLMsubmissionsEvaluation(1);
 
-        // AggSeedLocked (task_061026_21 Part B)
+        // issue #156 H-2: seed lock (emits its own event, so this must land
+        // before the expectEmit below rather than between it and the call)
         vm.roll(block.number + tc.disputeSeedDelay() + 1);
-        vm.expectEmit(true, true, false, false, address(tc));
-        emit DINTaskCoordinator.GIStateChanged(1, GI_AGG_SEED_LOCKED);
         tc.lockAggSeed(1);
 
         // T1nT2Bcreated
@@ -718,123 +683,5 @@ contract LifecycleEventsTest is Test {
         vm.expectEmit(true, true, false, false, address(tc));
         emit DINTaskCoordinator.GIStateChanged(1, GI_ENDED);
         vm.prank(modelOwner); tc.endGI(1);
-    }
-
-    // ── task_061026_21 Part B: progress states ───────────────────────────────
-
-    function test_progressStates_createAuditorsBatchesRevertsBeforeAuditSeedLock() public {
-        _setupToLMS(1, 1_000 ether);
-        _submitAndCloseLMS(1, 3);
-
-        vm.expectRevert(TC_AuditSeedNotLocked.selector);
-        vm.prank(modelOwner);
-        tc.createAuditorsBatches(1);
-        assertEq(uint8(tc.GIstate()), GI_LMS_CLOSED);
-    }
-
-    function test_progressStates_auditSeedReanchorLeavesStateUnchanged() public {
-        _setupToLMS(1, 1_000 ether);
-        _submitAndCloseLMS(1, 3);
-
-        vm.roll(uint256(tc.auditSeedBlock(1)) + 300); // > 256 blocks: re-anchors
-        tc.lockAuditSeed(1);
-        assertEq(tc.auditSeed(1), bytes32(0));
-        assertEq(uint8(tc.GIstate()), GI_LMS_CLOSED);
-
-        vm.roll(uint256(tc.auditSeedBlock(1)) + 1);
-        tc.lockAuditSeed(1);
-        assertTrue(tc.auditSeed(1) != bytes32(0));
-        assertEq(uint8(tc.GIstate()), GI_AUDIT_SEED_LOCKED);
-    }
-
-    /// @dev Regression for the gap task_061026_21 closes: evaluation used to
-    ///      open straight from AuditorsBatchesCreated, with no test data.
-    function test_progressStates_evaluationCannotStartBeforeTestDataAssigned() public {
-        _setupToLMS(1, 1_000 ether);
-        _submitAndCloseLMS(1, 3);
-        vm.roll(block.number + tc.disputeSeedDelay() + 1);
-        tc.lockAuditSeed(1);
-
-        vm.startPrank(modelOwner);
-        tc.createAuditorsBatches(1);
-        vm.expectRevert(TC_LMEvalCannotBeStarted.selector);
-        tc.startLMsubmissionsEvaluation(1);
-        vm.stopPrank();
-        assertEq(uint8(tc.GIstate()), GI_AUDITOR_BATCHES_CREATED);
-    }
-
-    function test_progressStates_oneUnassignedBatchBlocksFlagAndEvaluation() public {
-        _setupToLMS(1, 1_000 ether, 6);
-        _submitAndCloseLMS(1, 6);
-        vm.roll(block.number + tc.disputeSeedDelay() + 1);
-        tc.lockAuditSeed(1);
-        vm.prank(modelOwner);
-        tc.createAuditorsBatches(1);
-        assertEq(ta.AuditorsBatchCount(1), 2);
-
-        vm.mockCall(
-            address(stake), abi.encodeWithSelector(stake.getEncryptionKey.selector), abi.encode(hex"01")
-        );
-        (, address[] memory auds0, , ) = ta.getAuditorsBatch(1, 0);
-        (, address[] memory auds1, , ) = ta.getAuditorsBatch(1, 1);
-
-        vm.startPrank(modelOwner);
-        ta.assignAuditTestDataset(1, 0, hex"01", new bytes[](auds0.length), keccak256("batch0"));
-
-        vm.expectRevert(TA_TestDataNotAssigned.selector);
-        tc.setTestDataAssignedFlag(1, true);
-        vm.expectRevert(TC_LMEvalCannotBeStarted.selector);
-        tc.startLMsubmissionsEvaluation(1);
-        assertEq(uint8(tc.GIstate()), GI_AUDITOR_BATCHES_CREATED);
-
-        ta.assignAuditTestDataset(1, 1, hex"01", new bytes[](auds1.length), keccak256("batch1"));
-        tc.setTestDataAssignedFlag(1, true);
-        assertEq(uint8(tc.GIstate()), GI_TEST_DATA_ASSIGNED);
-
-        // One-way: leaving AuditorsBatchesCreated rejects a second call.
-        vm.expectRevert(TC_CannotSetTestDataAssignedFlag.selector);
-        tc.setTestDataAssignedFlag(1, true);
-
-        tc.startLMsubmissionsEvaluation(1);
-        vm.stopPrank();
-        assertEq(uint8(tc.GIstate()), GI_LMS_EVAL_STARTED);
-    }
-
-    function test_progressStates_autoCreateRevertsBeforeAggSeedLock() public {
-        _setupToLMS(1, 1_000 ether);
-        _advanceToEvalClosed(1, 3);
-
-        vm.expectRevert(TC_AggSeedNotLocked.selector);
-        vm.prank(modelOwner);
-        tc.autoCreateTier1AndTier2(1);
-        assertEq(uint8(tc.GIstate()), GI_LMS_EVAL_CLOSED);
-    }
-
-    function test_progressStates_aggSeedReanchorLeavesStateUnchanged() public {
-        _setupToLMS(1, 1_000 ether);
-        _advanceToEvalClosed(1, 3);
-
-        vm.roll(uint256(tc.aggSeedBlock(1)) + 300);
-        tc.lockAggSeed(1);
-        assertEq(tc.aggSeed(1), bytes32(0));
-        assertEq(uint8(tc.GIstate()), GI_LMS_EVAL_CLOSED);
-
-        vm.roll(uint256(tc.aggSeedBlock(1)) + 1);
-        tc.lockAggSeed(1);
-        assertTrue(tc.aggSeed(1) != bytes32(0));
-        assertEq(uint8(tc.GIstate()), GI_AGG_SEED_LOCKED);
-
-        vm.prank(modelOwner);
-        tc.autoCreateTier1AndTier2(1);
-        assertEq(uint8(tc.GIstate()), GI_T1T2_CREATED);
-    }
-
-    /// @dev The dincli `states` mirror and DINShared.md §2.1 are indexed by
-    ///      these raw ordinals; pin the three inserts and the shifted end.
-    function test_progressStates_ordinals() public pure {
-        assertEq(uint8(GIstates.AuditSeedLocked), GI_AUDIT_SEED_LOCKED);
-        assertEq(uint8(GIstates.AuditTestDataAssigned), GI_TEST_DATA_ASSIGNED);
-        assertEq(uint8(GIstates.AggSeedLocked), GI_AGG_SEED_LOCKED);
-        assertEq(uint8(GIstates.GIended), GI_ENDED);
     }
 }
