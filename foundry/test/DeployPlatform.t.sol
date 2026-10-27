@@ -649,6 +649,11 @@ contract DeployPlatformTokenomicsOverrideTest is PlatformTest {
         assertEq(p.dinValidatorStake.s5JailDuration(), 7 days, "default s5JailDuration");
     }
 
+    function test_dinValidatorStake_defaultS5GlobalParams() public view {
+        assertEq(p.dinValidatorStake.s5GlobalWindow(), 7 days, "default s5GlobalWindow");
+        assertEq(p.dinValidatorStake.s5GlobalThreshold(), 6, "default s5GlobalThreshold");
+    }
+
     function test_dinValidatorStake_defaultS6Threshold() public view {
         assertEq(p.dinValidatorStake.s6NoParticipationThreshold(), 3, "default s6Threshold");
     }
@@ -676,6 +681,12 @@ contract DeployPlatformTokenomicsOverrideTest is PlatformTest {
         assertEq(p.dinValidatorStake.s5RecidivismWindow(), 10, "updated s5Window");
         assertEq(p.dinValidatorStake.s5RecidivismThreshold(), 5, "updated s5Threshold");
         assertEq(p.dinValidatorStake.s5JailDuration(), 14 days, "updated s5JailDuration");
+    }
+
+    function test_dinValidatorStake_overrideS5GlobalParams_appliesAfterDeploy() public {
+        p.dinValidatorStake.setS5GlobalParams(3 days, 9);
+        assertEq(p.dinValidatorStake.s5GlobalWindow(), 3 days, "updated s5GlobalWindow");
+        assertEq(p.dinValidatorStake.s5GlobalThreshold(), 9, "updated s5GlobalThreshold");
     }
 
     function test_dinValidatorStake_overrideS6Threshold_appliesAfterDeploy() public {

@@ -529,6 +529,52 @@ contract DisputeResolutionTest is Test {
         tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
     }
 
+    // Regression: the one-shot rule applies after resolution, not only while a
+    // dispute is open. test_openDispute_revertsIfAlreadyOpen covers the
+    // still-open case; these two cover both upheld=false and upheld=true paths.
+
+    function test_openDispute_revertsAfterRejectedResolution() public {
+        _runToT1Finalized(3);
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, false);
+
+        address secondChallenger = makeAddr("secondChallenger");
+        _fundAndStake(secondChallenger);
+        _fundDinBalance(secondChallenger, 1_000 ether);
+
+        vm.prank(secondChallenger);
+        vm.expectRevert(Shared.TC_DisputeAlreadyOpen.selector);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
+    function test_openDispute_revertsAfterUpheldResolution() public {
+        _runToT1Finalized(6); // 3 in the disputed batch + 3 for the fresh subgroup
+        _fundAndStake(challenger);
+        _fundDinBalance(challenger, 1_000 ether);
+
+        vm.prank(challenger);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        _lockSeed(1, DINTaskCoordinator.TierKind.Tier1, 0);
+
+        vm.prank(modelOwner);
+        tc.resolveDispute(1, DINTaskCoordinator.TierKind.Tier1, 0, true);
+
+        address secondChallenger = makeAddr("secondChallenger");
+        _fundAndStake(secondChallenger);
+        _fundDinBalance(secondChallenger, 1_000 ether);
+
+        vm.prank(secondChallenger);
+        vm.expectRevert(Shared.TC_DisputeAlreadyOpen.selector);
+        tc.openDispute(1, DINTaskCoordinator.TierKind.Tier1, 0);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // resolveDispute
     // ─────────────────────────────────────────────────────────────────────
