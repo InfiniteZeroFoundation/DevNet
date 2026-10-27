@@ -15,12 +15,19 @@ interface IDINTaskAuditor {
     function depositRewards(uint256 gi, uint256 amount) external;
 }
 
+interface IDINModelRegistry {
+    function getModelIdByTaskAuditor(address taskAuditor) external view returns (bool exists, uint256 modelId);
+    function modelDisabled(uint256 modelId) external view returns (bool);
+}
+
 /// @title DIN Emission
 /// @notice Per-GI protocol reward subsidy on a geometric decay schedule.
-///         Emission decays by (decayBps/10000) per epoch, where one epoch is
-///         epochLength completed GIs. After maxEpochs epochs the subsidy is zero —
-///         the "final epoch" design: explicit retirement rather than an asymptotic
-///         tail, consistent with DinCoordinator.faucetRetired semantics.
+///         Each epoch's emission is multiplied by (decayBps/10000), retaining
+///         that fraction of the prior epoch's rate (e.g. 8000 = 80% retained,
+///         20% decay per epoch). One epoch is epochLength completed GIs.
+///         After maxEpochs epochs the subsidy is zero — the "final epoch"
+///         design: explicit retirement rather than an asymptotic tail,
+///         consistent with DinCoordinator.faucetRetired semantics.
 ///
 ///         GI is a per-DINTaskCoordinator counter — every model has its own
 ///         "GI 1", "GI 2", etc., independent of every other model's. This
@@ -45,6 +52,12 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     error InvalidParams();
     error GIAlreadyFunded(uint256 gi);
     error EmissionExhausted();
+    /// @dev issue #226: `taskAuditor` is not a registered task auditor for any
+    ///      approved model per `DINModelRegistry.getModelIdByTaskAuditor`.
+    error UnregisteredTaskAuditor(address taskAuditor);
+    /// @dev issue #226 (A2): the model `taskAuditor` belongs to has been
+    ///      disabled by the DIN-Representative (`DINModelRegistry.disableModel`).
+    error ModelDisabledForEmission(uint256 modelId);
 
     // ── Events ────────────────────────────────────────────────────────────
     event EmissionParamsUpdated(
@@ -59,6 +72,7 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
         uint256 amount,
         uint256 epoch
     );
+    event ModelRegistryUpdated(address indexed registry);
 
     // ── State ─────────────────────────────────────────────────────────────
 
@@ -109,8 +123,13 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     ///         don't collide.
     mapping(address => mapping(uint256 => bool)) public giEmissionFunded;
 
+    /// @notice DINModelRegistry proxy — used to confirm `fundGI`'s
+    ///         `taskAuditor` argument is a real, approved model's task
+    ///         auditor before minting/approving against it (issue #226).
+    IDINModelRegistry public modelRegistry;
+
     // Reserved for future state variables.
-    uint256[40] private __gap;
+    uint256[50] private __gap;
 
     // ── Constructor / initializer ─────────────────────────────────────────
 
@@ -122,6 +141,7 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     /// @notice Initialises the proxy.
     /// @param coordinator_         DinCoordinator proxy address.
     /// @param dinToken_            DinToken proxy address.
+    /// @param modelRegistry_       DINModelRegistry proxy address (issue #226).
     /// @param initialEmissionPerGI_ DIN emitted per GI at epoch 0 (wei).
     /// @param decayBps_            Retention fraction per epoch in bps (1–10000).
     /// @param epochLength_         GIs per epoch (>= 1).
@@ -129,20 +149,33 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     function initialize(
         address coordinator_,
         address dinToken_,
+        address modelRegistry_,
         uint256 initialEmissionPerGI_,
         uint256 decayBps_,
         uint256 epochLength_,
         uint256 maxEpochs_
     ) external initializer {
-        if (coordinator_ == address(0) || dinToken_ == address(0)) revert InvalidAddress();
+        if (coordinator_ == address(0) || dinToken_ == address(0) || modelRegistry_ == address(0))
+            revert InvalidAddress();
         _validateParams(initialEmissionPerGI_, decayBps_, epochLength_, maxEpochs_);
         __Ownable_init(msg.sender);
         coordinator = IDinCoordinator(coordinator_);
         dinToken = IERC20(dinToken_);
+        modelRegistry = IDINModelRegistry(modelRegistry_);
         initialEmissionPerGI = initialEmissionPerGI_;
         decayBps = decayBps_;
         epochLength = epochLength_;
         maxEpochs = maxEpochs_;
+    }
+
+    /// @notice Sets the DINModelRegistry reference, for an already-initialised
+    ///         proxy predating issue #226's fix (no live network currently
+    ///         has one deployed, but this covers that case for completeness).
+    /// @param modelRegistry_ DINModelRegistry proxy address.
+    function setModelRegistry(address modelRegistry_) external onlyOwner {
+        if (modelRegistry_ == address(0)) revert InvalidAddress();
+        modelRegistry = IDINModelRegistry(modelRegistry_);
+        emit ModelRegistryUpdated(modelRegistry_);
     }
 
     // ── Core function ─────────────────────────────────────────────────────
@@ -152,6 +185,11 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     ///
     ///         Callable by anyone — the amount is deterministic from the epoch
     ///         schedule so there is no benefit to restricting the caller.
+    ///         The recipient is not similarly self-certifying, though: `taskAuditor`
+    ///         both receives the minted-DIN allowance and is the target of an
+    ///         external call, so it must be a real, registry-approved task
+    ///         auditor (issue #226) — otherwise anyone could point `taskAuditor`
+    ///         at a throwaway contract and drain the mint through the allowance.
     ///         A GI can only be funded once; subsequent calls revert.
     ///
     ///         If taskAuditor's schedule is exhausted (currentEpoch >=
@@ -163,14 +201,19 @@ contract DinEmission is Initializable, OwnableUpgradeable, ReentrancyGuardTransi
     ///                    model. Must match or exceed the task coordinator's
     ///                    current GI (enforced by depositRewards).
     /// @param taskAuditor Address of the DINTaskAuditor whose depositRewards
-    ///                    will receive the minted DIN. Also identifies which
-    ///                    model's independent epoch/decay schedule and
-    ///                    funded-GI guard this call operates on.
+    ///                    will receive the minted DIN. Must be registered
+    ///                    against an approved, non-disabled model in
+    ///                    DINModelRegistry. Also identifies which model's
+    ///                    independent epoch/decay schedule and funded-GI
+    ///                    guard this call operates on.
     /// @return amount     DIN amount deposited (0 if already retired, never
     ///                    negative — the return value is informational only;
     ///                    the revert paths cover the error cases).
     function fundGI(uint256 gi, address taskAuditor) external nonReentrant returns (uint256 amount) {
         if (taskAuditor == address(0)) revert InvalidAddress();
+        (bool exists, uint256 modelId) = modelRegistry.getModelIdByTaskAuditor(taskAuditor);
+        if (!exists) revert UnregisteredTaskAuditor(taskAuditor);
+        if (modelRegistry.modelDisabled(modelId)) revert ModelDisabledForEmission(modelId);
         if (giEmissionFunded[taskAuditor][gi]) revert GIAlreadyFunded(gi);
 
         EmissionState storage state = emissionState[taskAuditor];

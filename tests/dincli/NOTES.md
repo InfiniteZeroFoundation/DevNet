@@ -16,7 +16,7 @@ script (OZ upgrades plugin) deploys + wires token → coordinator →
 dincli imports the resulting `deployments/<network>.json` via
 `system import-deployments`. This is scaffolding only — the committed decision
 record (`Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md`)
-chose native web3.py proxy deploys in `dindao deploy` (backlog:
+chose native web3.py proxy deploys in `dinrep deploy` (backlog:
 `Developer/issues/dincli-native-proxy-deployment.md`); once implemented,
 Phase 1 returns to per-contract dincli deploy tests.
 
@@ -40,7 +40,7 @@ importer grows a broadcast/run-latest.json parser).
 |------|-------------|
 | `test_deploy_task_coordinator` | `deploy_task_coordinator(network, account, artifact_path) → address` |
 | `test_deploy_task_auditor` | `deploy_task_auditor(network, account, artifact_path) → address` |
-| `test_din_rep_authorizes_*` | `dindao_add_slasher(network, account, task_coordinator=None, task_auditor=None)` |
+| `test_din_rep_authorizes_*` | `dinrep_add_slasher(network, account, task_coordinator=None, task_auditor=None)` |
 | `test_model_owner_registers_*` | `model_owner_add_slasher(network, account, task_coordinator=None, task_auditor=None)` |
 
 ---

@@ -37,6 +37,45 @@ contract MockTaskAuditorReal {
     }
 }
 
+/// @dev issue #226 PoC fixture: an *unregistered* "task auditor" whose
+///      depositRewards immediately pulls the full allowance DinEmission
+///      granted it. Used only to prove fundGI rejects an unregistered
+///      taskAuditor before any state change -- if this contract ever
+///      receives anything, the attacker it models gets away with the
+///      full minted amount.
+contract EvilTaskAuditor {
+    DinToken public immutable din;
+    constructor(DinToken din_) { din = din_; }
+
+    function depositRewards(uint256, uint256 amount) external {
+        din.transferFrom(msg.sender, address(this), amount);
+    }
+}
+
+/// @dev Minimal stand-in for DINModelRegistry's two fundGI-relevant views
+///      (issue #226) -- avoids needing a real registry's full
+///      registration preconditions (slasher auth, ownership, fees) just
+///      to mark a mock task auditor as "a registered model's auditor"
+///      for these tests.
+contract MockModelRegistry {
+    mapping(address => uint256) internal _modelIdPlusOne; // 0 = not registered
+    mapping(uint256 => bool) public modelDisabled;
+
+    function register(address taskAuditor, uint256 modelId) external {
+        _modelIdPlusOne[taskAuditor] = modelId + 1;
+    }
+
+    function getModelIdByTaskAuditor(address taskAuditor) external view returns (bool exists, uint256 modelId) {
+        uint256 val = _modelIdPlusOne[taskAuditor];
+        if (val == 0) return (false, 0);
+        return (true, val - 1);
+    }
+
+    function setModelDisabled(uint256 modelId, bool disabled) external {
+        modelDisabled[modelId] = disabled;
+    }
+}
+
 // ─── Test contract ───────────────────────────────────────────────────────────
 
 contract EmissionTests is Test {
@@ -46,6 +85,8 @@ contract EmissionTests is Test {
     DinCoordinator internal coordinator;
     DinEmission internal emission;
     MockTaskAuditorReal internal auditor;
+    MockModelRegistry internal registry;
+    uint256 internal constant AUDITOR_MODEL_ID = 0;
 
     // Default schedule: 100 DIN/GI, 80% decay per epoch, 10 GIs/epoch, 5 epochs.
     uint256 internal constant INITIAL_EMISSION = 100e18;
@@ -75,6 +116,10 @@ contract EmissionTests is Test {
         coordinator = DinCoordinator(address(coordProxy));
         token.setCoordinator(address(coordinator));
 
+        // Minimal model registry (issue #226) -- deployed before DinEmission
+        // since its address is a required initialize() argument.
+        registry = new MockModelRegistry();
+
         // DinEmission proxy
         DinEmission emissionImpl = new DinEmission();
         TransparentUpgradeableProxy emissionProxy = new TransparentUpgradeableProxy(
@@ -85,6 +130,7 @@ contract EmissionTests is Test {
                 (
                     address(coordinator),
                     address(token),
+                    address(registry),
                     INITIAL_EMISSION,
                     DECAY_BPS,
                     EPOCH_LENGTH,
@@ -97,8 +143,10 @@ contract EmissionTests is Test {
         // Wire emission contract into coordinator
         coordinator.setEmissionContract(address(emission));
 
-        // Mock task auditor
+        // Mock task auditor, registered against a real model ID (issue #226:
+        // fundGI now requires this before it will mint/approve against it).
         auditor = new MockTaskAuditorReal(token);
+        registry.register(address(auditor), AUDITOR_MODEL_ID);
 
         vm.stopPrank();
     }
@@ -138,6 +186,87 @@ contract EmissionTests is Test {
         emission.fundGI(1, address(auditor));
         vm.expectRevert(abi.encodeWithSelector(DinEmission.GIAlreadyFunded.selector, 1));
         emission.fundGI(1, address(auditor));
+    }
+
+    // ── Registry gating (issue #226 regression) ──────────────────────────
+    //
+    // fundGI used to mint, approve, and call into *any* caller-supplied
+    // taskAuditor with no check that it was a real, registered auditor --
+    // a trivial contract could drain the mint through the dangling
+    // allowance, and a fresh address every time reset the decay schedule.
+    // These are the PoCs from the issue, now asserting the fix rejects
+    // them before any state change.
+
+    function test_fundGI_unregisteredTaskAuditor_revertsBeforeAnyStateChange() public {
+        EvilTaskAuditor evil = new EvilTaskAuditor(token);
+        uint256 totalMintedBefore = coordinator.totalMinted();
+        uint256 totalEmittedBefore = emission.totalEmitted();
+
+        vm.expectRevert(abi.encodeWithSelector(DinEmission.UnregisteredTaskAuditor.selector, address(evil)));
+        emission.fundGI(1, address(evil));
+
+        assertEq(coordinator.totalMinted(), totalMintedBefore, "no mint should occur");
+        assertEq(emission.totalEmitted(), totalEmittedBefore, "no emission bookkeeping should advance");
+        assertEq(token.balanceOf(address(evil)), 0, "attacker contract must receive nothing");
+        assertFalse(emission.giEmissionFunded(address(evil), 1), "GI must not be marked funded");
+    }
+
+    function test_fundGI_repeatedFreshUnregisteredAuditors_allRevert() public {
+        // A fresh unregistered address every time used to reset the decay
+        // schedule (emissionState is keyed by taskAuditor) -- confirm none
+        // of them can get even the first, undecayed draw now.
+        for (uint256 i = 0; i < 3; i++) {
+            EvilTaskAuditor evil = new EvilTaskAuditor(token);
+            vm.expectRevert(abi.encodeWithSelector(DinEmission.UnregisteredTaskAuditor.selector, address(evil)));
+            emission.fundGI(1, address(evil));
+        }
+    }
+
+    function test_fundGI_disabledModel_reverts() public {
+        uint256 modelId = 7;
+        MockTaskAuditorReal disabledAuditor = new MockTaskAuditorReal(token);
+        registry.register(address(disabledAuditor), modelId);
+        registry.setModelDisabled(modelId, true);
+
+        vm.expectRevert(abi.encodeWithSelector(DinEmission.ModelDisabledForEmission.selector, modelId));
+        emission.fundGI(1, address(disabledAuditor));
+    }
+
+    function test_fundGI_reregisteredAfterDisable_succeeds() public {
+        // Sanity check the disabled check isn't accidentally sticky/cached.
+        uint256 modelId = 8;
+        MockTaskAuditorReal a = new MockTaskAuditorReal(token);
+        registry.register(address(a), modelId);
+        registry.setModelDisabled(modelId, true);
+        vm.expectRevert(abi.encodeWithSelector(DinEmission.ModelDisabledForEmission.selector, modelId));
+        emission.fundGI(1, address(a));
+
+        registry.setModelDisabled(modelId, false);
+        emission.fundGI(1, address(a));
+        assertEq(a.giRewardPool(1), INITIAL_EMISSION);
+    }
+
+    // ── setModelRegistry ──────────────────────────────────────────────────
+
+    function test_setModelRegistry_ownerOnly() public {
+        vm.prank(address(0xDEAD));
+        vm.expectRevert();
+        emission.setModelRegistry(address(0x1234));
+    }
+
+    function test_setModelRegistry_revertsZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(DinEmission.InvalidAddress.selector);
+        emission.setModelRegistry(address(0));
+    }
+
+    function test_setModelRegistry_updatesAndEmits() public {
+        MockModelRegistry newRegistry = new MockModelRegistry();
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit DinEmission.ModelRegistryUpdated(address(newRegistry));
+        emission.setModelRegistry(address(newRegistry));
+        assertEq(address(emission.modelRegistry()), address(newRegistry));
     }
 
     // ── Decay schedule ───────────────────────────────────────────────────
@@ -250,6 +379,7 @@ contract EmissionTests is Test {
         // A taskAuditor that hasn't funded a GI yet picks up the new
         // schedule on its first call.
         MockTaskAuditorReal freshAuditor = new MockTaskAuditorReal(token);
+        registry.register(address(freshAuditor), 1);
         emission.fundGI(1, address(freshAuditor));
 
         (uint256 currentEpoch, uint256 gisInCurrentEpoch, uint256 currentEmissionPerGI,) =
@@ -325,6 +455,7 @@ contract EmissionTests is Test {
         // Model B is a different taskAuditor with its own, unrelated "GI 1"
         // — must succeed, not revert with GIAlreadyFunded.
         MockTaskAuditorReal auditorB = new MockTaskAuditorReal(token);
+        registry.register(address(auditorB), 2);
         emission.fundGI(1, address(auditorB));
 
         assertEq(auditor.giRewardPool(1), INITIAL_EMISSION, "model A's GI 1 funded");
@@ -342,6 +473,7 @@ contract EmissionTests is Test {
         // Model B has funded nothing yet — its schedule must be untouched by
         // model A's progress (no shared global counter).
         MockTaskAuditorReal auditorB = new MockTaskAuditorReal(token);
+        registry.register(address(auditorB), 3);
         (uint256 epochB,,, bool startedB) = emission.emissionState(address(auditorB));
         assertEq(epochB, 0, "model B's schedule is unaffected by model A's progress");
         assertFalse(startedB, "model B hasn't started yet");

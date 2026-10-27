@@ -59,6 +59,14 @@ dincli auditor register <model_id> [--gi <gi_index>]
 
 Once the Model Owner creates Auditor Batches and assigns you to one, you can view and evaluate your assigned models.
 
+### Lock the Batch-Assignment Seed (optional, recommended)
+
+```bash
+dincli auditor lock-seed <model_id> [--gi <gi_index>]
+```
+
+Between `closeLMsubmissions` and batch creation, the auditor batch assignment is drawn from a seed anchored to a future block. Anyone can lock it once that block is mined. If only the Model Owner locks it, they can decline to lock a draw they dislike and wait ~256 blocks for a fresh one, so locking it yourself as soon as it is available removes that option. The command waits for the seed block, then locks (or skips if someone already has). `lms-evaluation show-batch` does the same automatically when run before batches exist. Only valid while the GI is in `LMSclosed`.
+
 ### Show Your Assigned Batch
 
 ```bash
@@ -81,7 +89,7 @@ dincli auditor lms-evaluation evaluate <model_id> [--gi <gi_index>] [--submit] [
 | Option | Required | Description |
 |---|---|---|
 | `--gi <gi_index>` | No | Global Iteration index. Defaults to the current GI if omitted |
-| `--submit` | No | Submit evaluation scores and eligibility flags to the blockchain |
+| `--submit` | No | **Commit** a hidden hash of each score and eligibility vote on-chain (the score, vote and a random salt are cached locally for the reveal). Omit to evaluate locally only. Re-running skips models you've already committed |
 | `--batch <batch_id>` | No | Evaluate a specific batch. Defaults to your assigned batch if omitted |
 | `--lmi <lmi_index>` | No | Evaluate a single Local Model by index. Evaluates all models in the batch if omitted |
 

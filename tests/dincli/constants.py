@@ -15,6 +15,13 @@ environment first, then `.env` at the repo root):
   IPFS_BIN           ipfs binary (default: `ipfs` on PATH, else /usr/local/bin/ipfs)
   DIN_TEST_TMPDIR    scratch dir for config/cache isolation and logs
                      (default: ~/tempdir/dincli)
+  DIN_TEST_ISOLATED  set to 1 only in a disposable execution environment;
+                     ignores checkout dotenv and host Python/nvm fallbacks
+  DIN_TEST_RESULTS_DIR external log directory, required in isolated mode
+  ANVIL_BIN         explicit Anvil binary for owned isolated startup
+  DIN_TEST_SVM_DIR  isolated mode only: an existing svm directory (e.g. ~/.svm)
+                     whose solc builds are copied into the scratch data dir, so
+                     forge does not download a compiler into fresh state
   PLATFORM_DEPLOY_TOOLCHAIN   "foundry" or "hardhat" — which platform deploy
                      script test_deploy_platform_via_script runs (default:
                      "foundry", matching `dincli system import-deployments`'s
@@ -29,6 +36,7 @@ from pathlib import Path
 HARDHAT_RPC = "http://127.0.0.1:8545"
 
 DEVNET_ROOT = Path(__file__).resolve().parent.parent.parent
+ISOLATED_MODE = os.environ.get("DIN_TEST_ISOLATED") == "1"
 
 
 def _load_dotenv_values(path: Path) -> dict:
@@ -41,7 +49,7 @@ def _load_dotenv_values(path: Path) -> dict:
     return {k: v for k, v in dotenv_values(dotenv_path=path).items() if v is not None}
 
 
-_DOTENV = _load_dotenv_values(DEVNET_ROOT / ".env")
+_DOTENV = {} if ISOLATED_MODE else _load_dotenv_values(DEVNET_ROOT / ".env")
 
 
 def _env(name: str) -> "str | None":
@@ -58,6 +66,8 @@ def _resolve_python(env_var: str, default_venv: str) -> str:
     override = _env(env_var)
     if override:
         return override
+    if ISOLATED_MODE:
+        return sys.executable
     candidate = Path.home() / "my_venvs" / default_venv / "bin" / "python"
     return str(candidate) if candidate.exists() else sys.executable
 
@@ -66,7 +76,10 @@ def _resolve_npx() -> str:
     override = _env("NPX_BIN")
     if override:
         return override
-    nvm_candidates = sorted(Path.home().glob(".nvm/versions/node/*/bin/npx"))
+    nvm_candidates = (
+        [] if ISOLATED_MODE
+        else sorted(Path.home().glob(".nvm/versions/node/*/bin/npx"))
+    )
     if nvm_candidates:
         return str(nvm_candidates[-1])
     return shutil.which("npx") or "npx"
@@ -92,9 +105,24 @@ TORCHENV_SITE_PACKAGES = _env("TORCHENV_SITE_PACKAGES") or _venv_site_packages(T
 
 NPX_BIN = _resolve_npx()
 FORGE_BIN = _env("FORGE_BIN") or shutil.which("forge") or "forge"
+ANVIL_BIN = _env("ANVIL_BIN") or shutil.which("anvil") or "anvil"
 IPFS_BIN = _env("IPFS_BIN") or shutil.which("ipfs") or "/usr/local/bin/ipfs"
 
 DIN_TEMP = Path(_env("DIN_TEST_TMPDIR") or str(Path.home() / "tempdir" / "dincli"))
+RESULTS_DIR = Path(_env("DIN_TEST_RESULTS_DIR") or str(DIN_TEMP / "results"))
+if ISOLATED_MODE:
+    if not os.environ.get("DIN_TEST_TMPDIR") or not os.environ.get("DIN_TEST_RESULTS_DIR"):
+        raise ValueError("Isolated mode requires DIN_TEST_TMPDIR and DIN_TEST_RESULTS_DIR")
+    if not DIN_TEMP.is_absolute() or not RESULTS_DIR.is_absolute():
+        raise ValueError("Isolated scratch and results paths must be absolute")
+    if (DIN_TEMP.resolve() == RESULTS_DIR.resolve()
+            or DIN_TEMP.resolve() in RESULTS_DIR.resolve().parents):
+        raise ValueError("Isolated results must be outside scratch so cleanup preserves logs")
+
+# Pre-installed solc builds to copy into isolated scratch (see _seed_solc in conftest.py).
+SVM_SEED_DIR = Path(_env("DIN_TEST_SVM_DIR")) if _env("DIN_TEST_SVM_DIR") else None
+if ISOLATED_MODE and SVM_SEED_DIR is not None and not SVM_SEED_DIR.is_absolute():
+    raise ValueError("DIN_TEST_SVM_DIR must be an absolute path")
 
 
 # Platform deployment (PR 13: transparent proxies; PR 35: foundry parity).
@@ -123,7 +151,7 @@ _DEPLOY_TOOLCHAIN_DIR = {"hardhat": HARDHAT_DIR, "foundry": FOUNDRY_DIR}[PLATFOR
 DEPLOYMENTS_FILE = _DEPLOY_TOOLCHAIN_DIR / "deployments" / "localhost.json"
 
 # Standard dev-mnemonic account 0 (hardhat node and anvil both derive the same
-# address from "test test test ... junk"). Registered as the "dindao" wallet
+# address from "test test test ... junk"). Registered as the "dinrep" wallet
 # by the bootstrap fixture; used as --sender for the foundry script, which
 # broadcasts via --unlocked rather than signing with a local private key.
 HARDHAT_DEV_ACCOUNT_0 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"

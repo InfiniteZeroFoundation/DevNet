@@ -1,6 +1,6 @@
 # DinToken — Technical Documentation
 
-> **File:** `hardhat/contracts/DinToken.sol`
+> **File:** [`foundry/src/DinToken.sol`](../../../foundry/src/DinToken.sol)
 > **SPDX-License-Identifier:** MIT
 > **Solidity:** `^0.8.28`
 > **Standard:** ERC-20 (OpenZeppelin upgradeable)
@@ -9,9 +9,9 @@
 
 ## 1. Overview
 
-`DinToken` is the native utility token of the DIN Protocol ecosystem. It is a minimal ERC-20 contract deployed **behind an OpenZeppelin Transparent Proxy**, whose minting authority is bound to a single address — the `DinCoordinator` proxy — wired once after deployment via the one-shot `setCoordinator()`. The token carries 18 decimal places (inherited from OpenZeppelin's `ERC20Upgradeable`).
+`DinToken` is the native utility token of the DIN Protocol ecosystem. It is a minimal ERC-20 contract deployed **behind an OpenZeppelin Transparent Proxy**, whose minting authority is bound to a single address — the `DinCoordinator` proxy — wired once after deployment via the one-shot `setCoordinator()`. Any holder can burn their own tokens via `burn()`. The token carries 18 decimal places (inherited from OpenZeppelin's `ERC20Upgradeable`).
 
-The token serves as the staking and slashing currency: validators acquire DIN tokens through `DinCoordinator.depositAndMint()`, then lock them in `DinValidatorStake` to participate in the network.
+The token serves as the staking, slashing and reward currency: validators acquire DIN tokens through `DinCoordinator.depositAndMint()` (the ETH faucet) and lock them in `DinValidatorStake`; new DIN also enters circulation as the per-GI emission subsidy via `DinCoordinator.mintEmission()`, called by `DinEmission`.
 
 ---
 
@@ -55,6 +55,7 @@ Custom errors are preferred over `require` strings for gas efficiency.
 | Event | Parameters | Emitted When |
 |-------|-----------|--------------|
 | `TokensMinted` | `address indexed to`, `uint256 amount` | Every successful `mint()` call, in addition to the inherited ERC-20 `Transfer` event. |
+| `TokensBurned` | `address indexed from`, `uint256 amount` | Every successful `burn()` call, in addition to the inherited ERC-20 `Transfer(from, address(0), amount)` event. |
 | `CoordinatorSet` | `address indexed coordinator` | The one-shot `setCoordinator()` wiring call. |
 
 ---
@@ -69,6 +70,9 @@ owner() — OwnableUpgradeable; set to the account that ran initialize (deployer
 
 coordinator — the DinCoordinator proxy, wired via setCoordinator()
   └── mint()                  ← guarded by onlyCoordinator
+
+any holder
+  └── burn()                  ← burns msg.sender's own balance; no extra access control
 
 ProxyAdmin (proxy level, owned by deployer)
   └── can upgrade the implementation (see §9)
@@ -94,7 +98,7 @@ constructor()
 ```
 
 - Runs only on the raw implementation contract, never through the proxy.
-- Calls `_disableInitializers()`, so the implementation itself can never be initialized — a direct `initialize()` on it reverts with `InvalidInitialization` (covered by `hardhat/test/DinToken.upgrade.test.ts`).
+- Calls `_disableInitializers()`, so the implementation itself can never be initialized — a direct `initialize()` on it reverts with `InvalidInitialization` (covered by `ReInitializerProtectionTest` in `foundry/test/DeployPlatform.t.sol`).
 
 ```solidity
 function initialize() external initializer
@@ -147,7 +151,29 @@ function mint(address to, uint256 amount) external onlyCoordinator
    - Emits `Transfer(address(0), to, amount)`.
 4. Emits `TokensMinted(to, amount)` for off-chain indexing.
 
-Called exclusively by `DinCoordinator.depositAndMint()`.
+Called only by `DinCoordinator`, from two paths:
+- `depositAndMint()` — the ETH→DIN faucet.
+- `mintEmission()` — the per-GI emission subsidy, callable only by the wired `DinEmission` contract.
+
+Both paths go through the coordinator's `faucetRetired` / `mintCap` / `totalMinted` checks before calling `mint` (see [DinCoordinator.md](DinCoordinator.md)).
+
+---
+
+### 7.4 `burn`
+
+```solidity
+function burn(uint256 amount) external
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `amount` | `uint256` | Number of the caller's own tokens to destroy. |
+
+**Algorithm:**
+1. Calls OpenZeppelin's internal `_burn(msg.sender, amount)`, which reverts with `ERC20InsufficientBalance` if the caller holds less than `amount`, decrements `balanceOf[msg.sender]` and `totalSupply`, and emits `Transfer(msg.sender, address(0), amount)`.
+2. Emits `TokensBurned(msg.sender, amount)`.
+
+No extra access control — the same trust model as `transfer`: a holder can only destroy their own balance. In the protocol it is called by `DinFeeRouter` on its own balance, after pulling DIN fees via `transferFrom`, for the burn share of its DIN split (`burnBps`, 0% by default). ETH is never burned.
 
 ---
 
@@ -160,9 +186,10 @@ Called exclusively by `DinCoordinator.depositAndMint()`.
 | Decimals | `18` |
 | Initial Supply | `0` (no pre-mint) |
 | Minting Authority | `DinCoordinator` proxy (one-shot `setCoordinator`) |
-| Burning | Not implemented |
+| Burning | Holder-initiated `burn()` (used by `DinFeeRouter` for its DIN burn share) |
+| Supply cap | None in the token; enforced upstream by `DinCoordinator.mintCap` (0 = uncapped) |
 
-**Minting rate:** Defined entirely by `DinCoordinator.dinPerEth`. Default is `1,000,000 DIN per 1 ETH` (i.e., 1 ETH → 1M × 10¹⁸ raw token units).
+**Minting rate:** Faucet mints are defined by `DinCoordinator.dinPerEth` (default `1,000,000 DIN per 1 ETH`, i.e. 1 ETH → 1M × 10¹⁸ raw token units). Emission mints follow the `DinEmission` schedule.
 
 ---
 
@@ -175,23 +202,25 @@ Called exclusively by `DinCoordinator.depositAndMint()`.
 | Proxy admin (`ProxyAdmin`) | Deployed by the OZ upgrades plugin, owned by the deployer | Swapping the implementation |
 
 - **Proxy kind:** OpenZeppelin Transparent Proxy; the token address that balances live at is permanent, only code changes on upgrade.
-- **Upgrade path:** `CONTRACT=DinToken npx hardhat run scripts/upgrade-platform.ts --network <network>` (reads/writes `hardhat/deployments/<network>.json`).
-- **Storage-layout safety:** the `__gap` array reserves 50 slots; ERC-20 balances live in OZ's namespaced (ERC-7201) storage. `hardhat/test/DinToken.upgrade.test.ts` validates a V2 fixture (`hardhat/contracts/upgrade/DinTokenV2.sol`) with `upgrades.validateUpgrade` and asserts balances, `coordinator` wiring, and both access-control paths survive an upgrade.
+- **Upgrade path:** `cd foundry && CONTRACT=DinToken forge script script/UpgradePlatform.s.sol --rpc-url <rpc> --broadcast ...` (reads the proxy address from `foundry/deployments/<network>.json`; see [UpgradePlatform](foundry/script/UpgradePlatform.md)).
+- **Storage-layout safety:** the `__gap` array reserves 50 slots; ERC-20 balances live in OZ's namespaced (ERC-7201) storage. `foundry/test/UpgradeValidation.t.sol` runs `Upgrades.validateImplementation`, and `DinTokenUpgradeTest` in `foundry/test/DeployPlatform.t.sol` upgrades to `foundry/src/upgrade/DinTokenV2.sol` (`Upgrades.upgradeProxy` validates first) and checks that balances, coordinator wiring and access control survive.
 - **Trust implication:** the "coordinator can never change" guarantee is enforced at the *implementation* level. A ProxyAdmin-authorized upgrade could replace that rule (or the entire token logic), so the guarantee is ultimately bounded by the security of the ProxyAdmin owner key.
 
 ---
 
 ## 10. Deployment & Post-Deploy Wiring
 
-From `hardhat/scripts/deploy-platform.ts`: the token is the **first** platform contract deployed, because everything else references it.
+From `foundry/script/DeployPlatform.s.sol` (see [DeployPlatform](foundry/script/DeployPlatform.md)): the token is deployed right after `DinTreasury`, before everything that references it.
 
 ```
-1. Deploy DinToken proxy          → initialize()            (owner = deployer, no minter yet)
-2. Deploy DinCoordinator proxy    → initialize(dinToken)
-3. dinToken.setCoordinator(dinCoordinator)                  ← minting goes live here
+1. Deploy DinTreasury proxy
+2. Deploy DinToken proxy          → initialize()            (owner = deployer, no minter yet)
+3. Deploy DinFeeRouter proxy      → initialize(dinToken, dinTreasury)
+4. Deploy DinCoordinator proxy    → initialize(dinToken)
+5. dinToken.setCoordinator(dinCoordinator)                  ← minting goes live here
 ```
 
-Between steps 1 and 3 every `mint()` reverts with `Unauthorized()` — including `DinCoordinator.depositAndMint()` — so a half-wired deployment cannot mint. Because `setCoordinator` is one-shot, an attacker who somehow raced step 3 would permanently brick minting rather than gain it (and the call is `onlyOwner` anyway).
+Between steps 2 and 5 every `mint()` reverts with `Unauthorized()` — including `DinCoordinator.depositAndMint()` — so a half-wired deployment cannot mint. Because `setCoordinator` is one-shot, an attacker who somehow raced step 5 would permanently brick minting rather than gain it (and the call is `onlyOwner` anyway).
 
 ---
 
@@ -203,6 +232,7 @@ Between steps 1 and 3 every `mint()` reverts with `Unauthorized()` — including
 | Minting before wiring | `coordinator` defaults to `address(0)`; `mint` fails closed. |
 | Minting to zero address | Explicit `InvalidAddress()` guard before `_mint`. |
 | Re-entrancy | N/A — no ETH is transferred; pure ERC-20 state update. |
+| Burning others' tokens | `burn` only destroys `msg.sender`'s balance; no `burnFrom`. |
 | Owner abuse | `owner()` cannot mint; its only power is the one-shot `setCoordinator` (spent at deployment) — though it persists as a role via `transferOwnership`. |
 | Re-initialization / implementation hijack | `initializer` modifier + `_disableInitializers()` in the constructor. |
 | Malicious upgrade | Governed by ProxyAdmin ownership; no timelock — see §9. |
@@ -212,29 +242,38 @@ Between steps 1 and 3 every `mint()` reverts with `Unauthorized()` — including
 ## 12. Interactions with Other Contracts
 
 ```
-Deploy script (hardhat/scripts/deploy-platform.ts)
-  ├── deploys DinToken proxy first
+Deploy script (foundry/script/DeployPlatform.s.sol)
+  ├── deploys DinToken proxy (after DinTreasury)
   └── wires DinToken.setCoordinator(dinCoordinator) after the coordinator exists
 
 DinCoordinator
-  └── calls DinToken.mint(user, amount) on every depositAndMint()
+  ├── calls DinToken.mint(user, amount) on every depositAndMint()
+  └── calls DinToken.mint(to, amount) on every mintEmission() (from DinEmission)
 
-DinValidatorStake
-  └── holds DIN tokens on behalf of stakers (via ERC-20 transferFrom)
+DinFeeRouter
+  └── calls DinToken.burn(amount) on its own balance for the DIN burn share
+
+DinValidatorStake / DINTaskAuditor / DINTaskCoordinator / DinTreasury
+  └── hold and move DIN (stakes, reward pools, slashed stake) via ERC-20 transfer/transferFrom
 ```
 
 ---
 
 ## 13. Known Limitations & Future Work
 
-- No `burn` function — slashed tokens stay locked in `DinValidatorStake` with no on-chain destruction (see `TODO` in `DinValidatorStake.sol`).
 - No `pause` or emergency stop mechanism.
+- No supply cap in the token itself; the cap lives in `DinCoordinator.mintCap` (0 = uncapped on DevNet).
 - Minting authority cannot be re-pointed at the contract level (one-shot `setCoordinator`); moving it would require an implementation upgrade or a new token proxy.
 - The OZ owner role persists after its single job (`setCoordinator`) is done; renouncing it post-deployment would remove that surface but also forfeit any future admin hooks an upgrade might add.
 
 ---
 
 ## 14. Change Log
+
+### P3 — burn support (foundry)
+
+- Added holder-initiated `burn(uint256)` and the `TokensBurned` event, used by `DinFeeRouter` for the DIN burn share.
+- Mint callers grew a second path: `DinCoordinator.mintEmission()` (from `DinEmission`), in addition to `depositAndMint()`.
 
 ### 2026-07 — Upgradeable conversion (PR 13)
 
@@ -252,4 +291,4 @@ DinValidatorStake
 - **No. 1 — Two roles now share the "owner" vocabulary:** the OZ `owner()` (deployer, admin) and the `coordinator` (minter) are different parties; older docs/tools that equated "owner" with "minter" must be updated.
 - **No. 2 — Deployment gains a mandatory wiring step:** until `setCoordinator` runs, all minting (and therefore `DinCoordinator.depositAndMint`) reverts. Fails closed, but a skipped step looks like a broken exchange.
 - **No. 3 — "Set once, forever" is implementation-level only:** the one-shot guard can be bypassed by a ProxyAdmin-authorized upgrade that resets `coordinator`, so the immutability guarantee is bounded by upgrade-key security (see §9).
-- **No. 4 — Owner role outlives its purpose:** after wiring, `owner()` has no remaining function but stays transferable; consider renouncing or transferring to the DAO multisig as a deliberate post-deployment decision.
+- **No. 4 — Owner role outlives its purpose:** after wiring, `owner()` has no remaining function but stays transferable; consider renouncing or transferring it as a deliberate post-deployment decision (on-chain DIN-DAO governance is deferred to post-mainnet).

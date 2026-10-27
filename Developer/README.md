@@ -15,9 +15,12 @@ Forward-looking material for people building the DIN Protocol: plans, designs, p
 | [`issues/`](issues/) | Backlog of design/implementation write-ups per mechanism or feature (some with `design.md` / `implementation.md` / `simulation.md` subdocs) |
 | [`proposals/`](proposals/) | Tooling proposals — tools that don't exist yet (client labeling, model-owner contract/service builders) |
 | [`tasks/`](tasks/) | Contributor task specs (`task_DDMMYY_n.md`) |
+| [`tasks-plan/`](tasks-plan/) | Per-contributor task plans pending maintainer review (`tasks-plan/<github-user>/task-plan-DDMMYY-n.md`); approved items are forwarded into `tasks/` specs |
 | [`discussion/`](discussion/) | Open discussions (Filecoin support, Foundry migration) |
 | [`rejected-ideas/`](rejected-ideas/) | Ideas evaluated and rejected, with rationale (e.g. TKNN-Shapley) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution process and code standards pointers |
+| [MAINTAINING.md](MAINTAINING.md) | Maintainer process: peer review, merging, issue/task approval and closure, what GitHub enforces |
+| [partner-outreach-checklist.md](partner-outreach-checklist.md) | Conversation checklist for potential DIN partners, with an open question on shared outreach tracking |
 | [CODE_STANDARDS.md](CODE_STANDARDS.md) | Code style and quality expectations |
 | [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) | Setting up a development environment |
 | [GOOD_FIRST_ISSUES.md](GOOD_FIRST_ISSUES.md) | Curated starter tasks for new contributors |
@@ -28,6 +31,7 @@ Forward-looking material for people building the DIN Protocol: plans, designs, p
 2. **A design or spec for something not built yet?** → `design/` (protocol mechanisms) or `proposals/` (tooling).
 3. **A backlog item someone could pick up?** → `issues/`.
 4. **A scoped task for a specific contributor?** → `tasks/`.
+   A contributor's proposed batch of tasks, still awaiting maintainer review? → `tasks-plan/<github-user>/`; once approved, its items become `tasks/` specs.
 5. **An open question or debate?** → `discussion/`. A decision *not* to do something → `rejected-ideas/`.
 
 **Graduation rule:** when a design from `design/` or `issues/` ships, don't move the document — write (or update) the current-state description in `Documentation/technical/` and mark the design here as shipped with a pointer. The design doc remains as the record of intent; `Documentation/` records reality. (Example: `issues/staking-mechanism.md` → `Documentation/technical/mechanisms/staking-mechanism.md`.)

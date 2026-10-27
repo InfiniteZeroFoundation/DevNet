@@ -6,7 +6,6 @@
     "stake": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
     "representative": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     "registry": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
-    "explorer": "https://sepolia-optimism.etherscan.io",
     "default_manifest": "bafybeiacrjxubt2aj2dhegbb6yzsbjm4jrnt2bsd2hbep3vy4uri2xtvg4",
     "default_services": {
       "model.py": "bafybeieoovd7dofejqvc6i5nxcpz5r4ux7o7oakpo2h3gxv4657otpxfpi",

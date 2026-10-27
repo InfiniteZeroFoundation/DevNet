@@ -6,6 +6,8 @@
 
 Welcome to the onboarding guide for **Model_0** on the Infinite Zero Network.
 
+Planning a different model or dataset? Read [What can I train on DIN?](what-can-be-trained.md) to understand the tested reference, custom-service path, and practical limits.
+
 Infinite Zero Network devnet has been launched as `sepolia-op-devnet`.
 
 Model_0 is the first active model registered on the Infinite Zero Network and serves as the pioneer deployment of Infinite Zero's  model-specific smart contracts.
@@ -216,6 +218,40 @@ If you are unable to obtain funds through the faucets above, you may also reques
 ---
 
 
+# 🩺 Environment Preflight Check
+
+> **For contributors working from a clone of this repo.** Participants who
+> installed dincli from the wheel (per [setup.md](setup.md)) can skip this
+> section — forge and anvil are not required for network participation.
+
+Before starting development, verify your environment with:
+
+```bash
+python3 scripts/preflight.py
+```
+
+The script checks each of the following and prints `[OK]`, `[WARN]`, or `[MISSING]` with a fix hint:
+
+| Check | Pass condition |
+|-------|----------------|
+| Python version | ≥ 3.12 |
+| `forge` on PATH | Foundry installed |
+| `anvil` on PATH | Foundry installed |
+| `foundry/node_modules` | `cd foundry && npm ci` has been run |
+| `eth-account`, `py-multibase`, `web3` | importable after `pip install -e .` |
+| `torch` | importable after `pip install -e .[test]` (optional — tests skip without it) |
+
+Exits 0 when all required checks pass; exits 1 on Python version or Foundry failures.
+
+To also verify the configured RPC endpoint (read from `os.environ` or `.env`, the same lookup dincli uses) and the IPFS config:
+
+```bash
+python3 scripts/preflight.py --network sepolia_op_devnet
+# or: python3 scripts/preflight.py --network local
+```
+
+---
+
 # ⚙️ DIN CLI Installation and Setup
 
 Before participating, ensure dincli is correctly installed and configured.
@@ -321,27 +357,35 @@ dincli model-owner aggregation show-t2-batches 0 --detailed
 dincli task gi show-state 0
 ```
 
-### Step 7: Aggregate your T1 Batch (if state = `T1AggregationStarted`)
+### Step 7: Aggregate your T1 Batch (commit if state = `T1AggregationStarted`, reveal if `T1AggregationRevealStarted`)
 
 ```bash
 # show the aggregator its assigned t1 batches if assigned
 dincli aggregator show-t1-batches 0 --detailed
 
-# aggregate the assigned t1 batches
+# aggregate the assigned t1 batches and commit a hidden hash of the result
 dincli aggregator aggregate-t1 0 --submit
+
+# once the model owner opens the T1 reveal window: reveal your commit
+dincli aggregator reveal-t1 0
 ```
 
 ---
 
-### Step 8: Aggregate your T2 Batch (if state = `T2AggregationStarted`)
+### Step 8: Aggregate your T2 Batch (commit if state = `T2AggregationStarted`, reveal if `T2AggregationRevealStarted`)
 
 ```bash
 # show the aggregator its assigned t2 batches if assigned
 dincli aggregator show-t2-batches 0 --detailed
 
-# aggregate the assigned t2 batches
+# aggregate the assigned t2 batches and commit a hidden hash of the result
 dincli aggregator aggregate-t2 0 --submit
+
+# once the model owner opens the T2 reveal window: reveal your commit
+dincli aggregator reveal-t2 0
 ```
+
+> ⚠️ Aggregation is commit-then-reveal: a commit that is never revealed is slashed like a missed submission. Reveal from the same machine you committed from; the salt is cached locally.
 
 > 💡 T1 and T2 batch assignments depend on the current Global Iteration state and protocol allocation logic. A registered aggregator may not receive a batch in every iteration.
 

@@ -13,7 +13,9 @@ pragma solidity ^0.8.28;
 //                    pendingReassignment set
 //   Stale-round binding — same K+plaintext but different gi/batchId → upheld
 //   Window expiry — resolveTestDataDispute after window reverts;
-//                   closeExpiredDispute forfeits bond
+//                   closeExpiredDispute upholds (owner silence, issue #205)
+//   Settlement    — no dispute opens on a settled GI, and an upheld dispute
+//                   takes no pool penalty once the GI is settled
 //   Reassignment  — reassignAuditTestDataset clears pendingReassignment; reverts
 //                   without prior upheld dispute
 //
@@ -29,7 +31,8 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates, TA_NoCommitmentStored, TA_DisputeAlreadyActive, TA_NoActiveDispute, TA_DisputeWindowClosed} from "../src/DINShared.sol";
+import {GIstates, TA_NoCommitmentStored, TA_DisputeAlreadyActive, TA_NoActiveDispute, TA_DisputeWindowClosed, TA_NotAssignedAuditor, TA_RewardsAlreadySettled} from "../src/DINShared.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract EncryptedTestDataTest is Test {
     DinToken tokenImpl;
@@ -52,7 +55,11 @@ contract EncryptedTestDataTest is Test {
     address auditor3   = makeAddr("auditor3");
     address client1    = makeAddr("client1");
     address client2    = makeAddr("client2");
-    address disputer   = makeAddr("disputer");
+    // Issue #205: only an auditor of the disputed batch can open a dispute, so
+    // `disputer` is set to batch 0's first auditor by _assignBatch0. `outsider`
+    // holds no role in the batch.
+    address disputer;
+    address outsider   = makeAddr("outsider");
 
     // Fixed test vectors — not real crypto, just values we control for
     // commitment reconstruction in tests.
@@ -173,6 +180,8 @@ contract EncryptedTestDataTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         vm.stopPrank();
 
@@ -206,6 +215,7 @@ contract EncryptedTestDataTest is Test {
         commitment = _buildCommitment(1, 0, TEST_K, TEST_PLAINTEXT_HASH);
         vm.prank(modelOwner);
         ta.assignAuditTestDataset(1, 0, TEST_ENC_CID, keys, commitment);
+        disputer = auditors[0];
     }
 
     /// @dev Opens a dispute on batch 0 of GI 1 with `from` as disputer.
@@ -251,7 +261,8 @@ contract EncryptedTestDataTest is Test {
 
     function test_openDispute_noCommitment_reverts() public {
         _runToAuditorBatchesCreated();
-        vm.prank(disputer);
+        (, address[] memory auditors,,) = ta.getAuditorsBatch(1, 0);
+        vm.prank(auditors[0]);
         vm.expectRevert(TA_NoCommitmentStored.selector);
         ta.openTestDataDispute(1, 0);
     }
@@ -303,8 +314,10 @@ contract EncryptedTestDataTest is Test {
         vm.prank(modelOwner);
         ta.resolveTestDataDispute(1, 0, TEST_K, TEST_PLAINTEXT_HASH);
 
-        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND / 2, "treasury should receive half the bond");
-        assertEq(token.totalSupply(), supplyBefore - BOND / 2, "half the bond should be burned");
+        // No slash treasury set in this test — _burnAndForward burns both halves;
+        // treasuryAccrued tracks the full forfeited amount as an observability counter.
+        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND, "treasuryAccrued tracks full forfeited bond");
+        assertEq(token.totalSupply(), supplyBefore - BOND, "full bond burned when no slash treasury set");
         assertFalse(_disputeActive(1, 0), "dispute should be inactive after resolution");
     }
 
@@ -322,9 +335,9 @@ contract EncryptedTestDataTest is Test {
         uint256 poolBefore     = ta.giRewardPool(1);
         uint256 disputerBefore = token.balanceOf(disputer);
 
-        // Wrong K — commitment won't match → dispute upheld
+        // The owner reveals a K that doesn't match its own commitment -> upheld.
         bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xBAD)));
-        vm.prank(disputer);
+        vm.prank(modelOwner);
         ta.resolveTestDataDispute(1, 0, wrongK, TEST_PLAINTEXT_HASH);
 
         assertEq(token.balanceOf(disputer), disputerBefore + BOND, "bond should be returned to disputer");
@@ -342,7 +355,7 @@ contract EncryptedTestDataTest is Test {
         _openDispute(disputer);
 
         bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xBAD)));
-        vm.prank(disputer);
+        vm.prank(modelOwner);
         ta.resolveTestDataDispute(1, 0, wrongK, TEST_PLAINTEXT_HASH);
 
         // pendingReassignment is set — opening another dispute should revert
@@ -381,7 +394,7 @@ contract EncryptedTestDataTest is Test {
         // keccak256(abi.encodePacked(1, 0, keccak256(TEST_K), wrongPlaintext))
         // which won't match → upheld.
         bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xBADBAD)));
-        vm.prank(disputer);
+        vm.prank(modelOwner);
         ta.resolveTestDataDispute(1, 0, wrongK, TEST_PLAINTEXT_HASH);
         assertTrue(_disputePending(1, 0));
     }
@@ -405,23 +418,147 @@ contract EncryptedTestDataTest is Test {
         ta.resolveTestDataDispute(1, 0, TEST_K, TEST_PLAINTEXT_HASH);
     }
 
-    function test_closeExpiredDispute_forfeitsBond() public {
+    /// @dev Issue #205: an unanswered dispute is upheld, not forfeited --
+    ///      silence counts against the party who holds the data.
+    function test_closeExpiredDispute_ownerSilent_upholds() public {
         _runToAuditorBatchesCreated();
         _assignBatch0();
         vm.prank(modelOwner);
         ta.setDisputeBondAmount(BOND);
         _openDispute(disputer);
 
-        uint256 expires       = _disputeExpires(1, 0);
-        uint256 supplyBefore  = token.totalSupply();
-        uint256 treasuryBefore = ta.treasuryAccrued();
+        uint256 poolBefore     = ta.giRewardPool(1);
+        uint256 disputerBefore = token.balanceOf(disputer);
+        vm.roll(_disputeExpires(1, 0) + 1);
 
-        vm.roll(expires + 1);
+        vm.expectEmit(true, true, false, true, address(ta));
+        emit DINTaskAuditor.DisputeExpired(1, 0);
+        vm.prank(outsider); // permissionless
         ta.closeExpiredDispute(1, 0);
 
-        assertEq(token.totalSupply(), supplyBefore - BOND / 2, "half bond burned on expiry");
-        assertEq(ta.treasuryAccrued(), treasuryBefore + BOND / 2, "half bond to treasury on expiry");
+        assertEq(token.balanceOf(disputer), disputerBefore + BOND, "bond returned to disputer");
+        uint256 expectedPenalty = (poolBefore * ta.disputePenaltyBps()) / 10000;
+        assertEq(ta.giRewardPool(1), poolBefore - expectedPenalty, "owner's reward pool penalised");
         assertFalse(_disputeActive(1, 0));
+        assertTrue(_disputePending(1, 0), "batch flagged for reassignment");
+    }
+
+    function test_closeExpiredDispute_beforeWindowEnds_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        _openDispute(disputer);
+
+        vm.expectRevert(TA_DisputeWindowClosed.selector);
+        ta.closeExpiredDispute(1, 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Issue #205: nobody but the owner can resolve, nobody but a batch
+    // auditor can open, and the bond is non-zero by default.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    function test_defaultDisputeBond_isNonZero() public {
+        _runToAuditorBatchesCreated();
+        assertEq(ta.disputeBondAmount(), 100 * 1e18);
+    }
+
+    function test_openDispute_nonBatchAuditor_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        _fundDin(outsider, BOND + 10 ether);
+
+        vm.prank(outsider);
+        vm.expectRevert(TA_NotAssignedAuditor.selector);
+        ta.openTestDataDispute(1, 0);
+    }
+
+    function test_resolveDispute_nonOwner_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        _openDispute(disputer);
+
+        bytes memory junkK = abi.encodePacked(bytes32(uint256(0xBAD)));
+        vm.prank(disputer);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, disputer));
+        ta.resolveTestDataDispute(1, 0, junkK, bytes32(0));
+        assertTrue(_disputeActive(1, 0), "dispute still open for the owner to answer");
+    }
+
+    /// @dev The #205 failure scenario: an outsider with no DIN and no role, at
+    ///      the old zero default bond, upheld disputes with a junk K and burned
+    ///      25% of the GI pool per round. Neither step is reachable now: the
+    ///      outsider can't open, and a batch auditor who opens can't resolve.
+    function test_issue205_junkKeyDrain_isClosed() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        vm.prank(modelOwner);
+        ta.setDisputeBondAmount(0); // the old default: free attempts
+        uint256 poolBefore = ta.giRewardPool(1);
+        bytes memory junkK = abi.encodePacked(bytes32(uint256(0xBAD)));
+
+        vm.prank(outsider);
+        vm.expectRevert(TA_NotAssignedAuditor.selector);
+        ta.openTestDataDispute(1, 0);
+
+        vm.prank(disputer);
+        ta.openTestDataDispute(1, 0);
+        vm.prank(disputer);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, disputer));
+        ta.resolveTestDataDispute(1, 0, junkK, bytes32(0));
+
+        assertEq(ta.giRewardPool(1), poolBefore, "pool untouched");
+        assertFalse(_disputePending(1, 0), "batch not blocked");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Settled GI: claims pay from giRewardSnapshot, so a giRewardPool penalty
+    // taken after settleRewards would underfund them (PR No. 215 review).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// @dev Sum of the snapshot pools claimants of `gi` are owed.
+    function _snapshotOwed(uint256 gi) internal view returns (uint256) {
+        (uint256 clientPool, uint256 auditorPool, uint256 aggregatorPool,,) = ta.giRewardSnapshot(gi);
+        return clientPool + auditorPool + aggregatorPool;
+    }
+
+    function test_openDispute_afterSettle_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        vm.prank(address(tc));
+        ta.settleRewards(1, 0);
+        _fundDin(disputer, BOND + 10 ether);
+
+        vm.prank(disputer);
+        vm.expectRevert(TA_RewardsAlreadySettled.selector);
+        ta.openTestDataDispute(1, 0);
+    }
+
+    /// @dev A dispute opened before settlement and upheld after it (owner
+    ///      silent) returns the bond and flags the batch, but takes no penalty,
+    ///      so the contract still holds everything the snapshot owes.
+    function test_upheldAfterSettle_skipsPenalty() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        vm.prank(modelOwner);
+        ta.setDisputeBondAmount(BOND);
+        _openDispute(disputer);
+
+        vm.prank(address(tc));
+        ta.settleRewards(1, 0);
+        uint256 owed = _snapshotOwed(1);
+        assertGt(owed, 0, "snapshot owes claimants");
+        uint256 poolBefore     = ta.giRewardPool(1);
+        uint256 disputerBefore = token.balanceOf(disputer);
+
+        vm.roll(_disputeExpires(1, 0) + 1);
+        vm.expectEmit(true, true, true, true, address(ta));
+        emit DINTaskAuditor.TestDataDisputeUpheld(1, 0, disputer, BOND, 0);
+        ta.closeExpiredDispute(1, 0);
+
+        assertEq(token.balanceOf(disputer), disputerBefore + BOND, "bond returned to disputer");
+        assertEq(ta.giRewardPool(1), poolBefore, "no penalty after settlement");
+        assertGe(token.balanceOf(address(ta)), owed, "claims stay fully funded");
+        assertTrue(_disputePending(1, 0), "batch still flagged for reassignment");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -437,7 +574,7 @@ contract EncryptedTestDataTest is Test {
 
         // Uphold dispute to set pendingReassignment
         bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xBAD)));
-        vm.prank(disputer);
+        vm.prank(modelOwner);
         ta.resolveTestDataDispute(1, 0, wrongK, TEST_PLAINTEXT_HASH);
         assertTrue(_disputePending(1, 0));
 

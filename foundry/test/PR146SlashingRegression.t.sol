@@ -21,6 +21,7 @@ import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
+import {auditCommitHash} from "./utils/AuditCommitHash.sol";
 
 contract PR146SlashingRegressionTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -185,6 +186,8 @@ contract PR146SlashingRegressionTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -192,11 +195,10 @@ contract PR146SlashingRegressionTest is Test {
 
         // Only batch 0 votes -- batch 1's auditors miss their vote entirely.
         (, address[] memory batch0Auditors, uint[] memory batch0Models, ) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batch0Auditors.length; i++) {
             for (uint m = 0; m < batch0Models.length; m++) {
                 vm.prank(batch0Auditors[i]);
-                ta.commitAuditScore(1, 0, batch0Models[m], commitHash);
+                ta.commitAuditScore(1, 0, batch0Models[m], auditCommitHash(uint256(100), true, TEST_SALT, batch0Auditors[i], 1, 0, batch0Models[m]));
             }
         }
 
@@ -212,6 +214,8 @@ contract PR146SlashingRegressionTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissionsEvaluation(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAggSeed(1);
         tc.autoCreateTier1AndTier2(1);
         tc.startT1Aggregation(1);
         vm.stopPrank();
@@ -223,14 +227,28 @@ contract PR146SlashingRegressionTest is Test {
         bytes32 realCID = bytes32(uint256(0xC1D));
         for (uint i = 0; i < t1aggs.length; i++) {
             if (t1aggs[i] == agg3) continue;
+            bytes32 commitHash = keccak256(
+                abi.encode(realCID, TEST_SALT, t1aggs[i], uint(1), DINTaskCoordinator.TierKind.Tier1, uint(0))
+            );
             vm.prank(t1aggs[i]);
-            tc.submitT1Aggregation(1, 0, realCID);
+            tc.commitT1Aggregation(1, 0, commitHash);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.startT1AggregationReveal(1);
+        vm.stopPrank();
+
+        for (uint i = 0; i < t1aggs.length; i++) {
+            if (t1aggs[i] == agg3) continue;
+            vm.prank(t1aggs[i]);
+            tc.revealT1Aggregation(1, 0, realCID, TEST_SALT);
         }
 
         vm.startPrank(modelOwner);
         tc.finalizeT1Aggregation(1);
         tc.startT2Aggregation(1);
-        tc.finalizeT2Aggregation(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.startT2AggregationReveal(1); // trivial: 0 T2 batches at exactly 3 aggregators
+        tc.finalizeT2Aggregation(1);
         vm.stopPrank();
     }
 

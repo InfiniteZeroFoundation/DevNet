@@ -4,6 +4,8 @@
 **Toolchain:** Hardhat + `@openzeppelin/hardhat-upgrades`, solc 0.8.28, EVM `cancun`
 **Proxy pattern:** OpenZeppelin **Transparent Proxy** (`PROXY_KIND = "transparent"`)
 
+> **Secondary toolchain.** `hardhat/contracts/` lags the reference contracts in `foundry/src/` (no treasury, fee router or emission; older registry/coordinator/stake logic). For the current seven-contract platform see [`../foundry/README.md`](../foundry/README.md).
+
 This document explains how and why the four DIN platform contracts were converted from plain constructor-initialized contracts to an upgradeable proxy architecture, contract by contract. The companion test documentation lives in [`test/`](./test/README.md).
 
 ---
@@ -106,14 +108,7 @@ Model registration requests, manifest updates, fee tiers, and per-model disable 
 - **Registration is request/approve:** `requestModelRegistration` (fee-paying) validates that both task contracts are currently authorized slashers and owned by the requester; `approveModel` (owner-only) **re-validates all four conditions at approval time** — slasher status or task-contract ownership changing between request and approval causes a typed revert (`CoordinatorNoLongerSlasher`, `AuditorOwnershipChanged`, …). This closes the TOCTOU gap between submission and review.
 - **Manifest updates** follow the same request/approve pattern with their own fee tier, gated by `onlyModelOwner` + `notDisabled`.
 - **Fees:** individual setters plus an atomic `setFees(...)`; `withdrawFees` uses the `call{value:}` + `TransferFailed` pattern.
-- **Access-model migration + compatibility shims.** The pre-upgrade contract used a bespoke `daoAdmin` field. The upgradeable version standardizes on `OwnableUpgradeable`, but preserves the old ABI surface with two read-through shims:
-  ```solidity
-  function daoAdmin() external view returns (address) { return owner(); }
-  function setDAOAdmin(address newAdmin) external onlyOwner {
-      transferOwnership(newAdmin);         // + emits DAOAdminUpdated
-  }
-  ```
-  `dincli` and off-chain indexers keep working unchanged; the `DAOAdminUpdated` event is still emitted for listeners.
+- **Access model.** The pre-upgrade contract used a bespoke `daoAdmin` field; the upgradeable version standardizes on `OwnableUpgradeable` (`transferOwnership`). The `daoAdmin()` / `setDAOAdmin()` compatibility shims it originally kept, and the `DAOAdminUpdated` event only `setDAOAdmin()` emitted, have since been removed.
 
 ## 5. Deployment order and wiring
 

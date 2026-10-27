@@ -17,6 +17,8 @@ pip install -e .
 
 Create a feature branch, commit your changes, and open a pull request to `develop`.
 
+Every PR is reviewed and merged by someone other than its author. [MAINTAINING.md](MAINTAINING.md) describes how review, merging, and issue/task closure work.
+
 ## A Note On The Developer Docs
 
 The materials in `/Developer` are working design input, not fixed specifications. They represent current thinking, not final decisions.
@@ -42,6 +44,17 @@ For issue-specific contributor packets, review questions, and curated reading li
 - Clear description of what and why
 - Add tests where applicable
 - Keep commits focused
+- **Changed a `foundry/src` contract's interface?** Regenerate the affected bundled ABIs in the same PR, after `forge build`:
+  ```
+  dincli system dump-abi --artifact foundry/out/<Contract>.sol/<Contract>.json --output dincli/abis --official
+  ```
+  `dincli/abis/*.json` is the only ABI dincli has for the platform contracts (`DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`, `DinFeeRouter`), and the fallback for `DINTaskCoordinator`/`DINTaskAuditor` when a model's manifest doesn't supply custom `task_contracts` artifacts. A stale bundle means dincli calls functions that no longer exist (`AttributeError`) or decodes events/structs against the wrong layout. No network or wallet needed to run it. See [issue #177](https://github.com/InfiniteZeroFoundation/DevNet/issues/177) for what drifting looks like when this is skipped.
+- **Contract size budget.** Every deployable `foundry/src` contract must keep at least **1,024 B** of runtime headroom under EIP-170's 24,576 B. Initcode must stay under EIP-3860's 49,152 B. CI enforces both with `.github/scripts/contract_size_gate.py`, and warns when a contract's margin drops below **2,048 B**. Both thresholds are constants at the top of the script (issue #201). Check locally after `forge build`:
+  ```
+  cd foundry && python3 ../.github/scripts/contract_size_gate.py
+  ```
+  `foundry/anvil.sh` lifts the limit on the local chain, so a local deploy is not a size check. A PR that pushes a contract under the 1,024 B fail line needs a size reduction in the same PR. Don't split a contract without raising it with a maintainer first.
+- **Integration suite.** A PR that changes `foundry/src/`, `foundry/script/`, `foundry/anvil.sh`, `hardhat/`, `dincli/` or `tests/dincli/` also runs CI's **Integration (full GI)** job: the `tests/dincli/` suite on Anvil, an offline Kubo and Docker, in isolated mode (issue #228). It is non-blocking for now and does not gate `CI OK`. When it fails, the run's `integration-logs` artifact has the pytest output and the compile, chain and IPFS logs. To reproduce it locally, see [CI integration job](../Documentation/technical/testing/dincli-testing-guide.md#ci-integration-job).
 
 ## Code Standards
 

@@ -2,8 +2,9 @@ from pathlib import Path
 import typer
 from rich.table import Table
 
-from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, get_manifest_key,
-                               require_custom_manifest_service)
+from dincli.cli.utils import (build_and_send_tx, ensure_batch_seed_locked,
+                               get_manifest_key, require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 aggregation_app = typer.Typer(help="Aggregation commands")
@@ -27,7 +28,16 @@ def create_tier1_tier2_batches(
 
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationClosed","Can not create Tier 1 & Tier 2 batches at this time.")
-    
+
+    # issue #156 H-2: autoCreateTier1AndTier2 now requires an ungrindable,
+    # future-block-anchored seed to already be locked. Lock it here (or
+    # skip if someone else already has) before attempting the real call.
+    ensure_batch_seed_locked(
+        ctx, task_coordinator_Contract, ref_gi,
+        seed_getter="aggSeed", seed_block_getter="aggSeedBlock",
+        lock_fn="lockAggSeed", label="T1/T2 batch",
+    )
+
     console.print(f"[bold green]Creating Tier 1 & Tier 2 batches[/bold green]")
     
     try:
@@ -97,7 +107,7 @@ def show_t1_batches(
             final_cid = get_cid_from_bytes32(final_cid_raw.hex()) if final_cid_raw and final_cid_raw != bytes(32) else "Pending"
             
             for validator in validators:
-                submitted_cid_raw = task_coordinator_Contract.functions.t1SubmissionCID(ref_gi, bid, validator).call()
+                submitted_cid_raw = task_coordinator_Contract.functions.getAggregatorSubmission(ref_gi, 0, bid, validator).call()[3]  # 0 = TierKind.Tier1; [3] = revealed cid
                 submitted_cid = get_cid_from_bytes32(submitted_cid_raw.hex()) if submitted_cid_raw and submitted_cid_raw != bytes(32) else "None"
                 idxs_display = ", ".join(map(str, model_idxs))
                 detailed_table.add_row(str(bid), validator, submitted_cid, idxs_display, final_cid)
@@ -142,7 +152,7 @@ def show_t2_batches(
         else:
             submitted_parts = []
             for v in validators:
-                sub_raw = task_coordinator_Contract.functions.t2SubmissionCID(ref_gi, bid, v).call()
+                sub_raw = task_coordinator_Contract.functions.getAggregatorSubmission(ref_gi, 1, bid, v).call()[3]  # 1 = TierKind.Tier2
                 submitted_parts.append(get_cid_from_bytes32(sub_raw.hex()) if sub_raw and sub_raw != bytes(32) else "")
             submitted_cid_display = "\n".join(submitted_parts)
             table.add_row(str(bid), val_display, submitted_cid_display, str(finalized), cid)
@@ -181,6 +191,39 @@ def start_t1_aggregation(
         console.print(f"[red]Error: Tier 1 Aggregation started transaction failed[/red] {e}")
         raise typer.Exit(1)
 
+@t1_app.command("start-reveal")
+def start_t1_aggregation_reveal(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Close the T1 commit window and open the reveal window (commit-then-reveal aggregation, issue #156 M-1)."""
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_Contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationStarted", "Can not start Tier 1 aggregation reveal at this time.")
+
+    console.print(f"[bold green]Starting Tier 1 Aggregation reveal window[/bold green]")
+
+    try:
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.startT1AggregationReveal(ref_gi),
+            "Starting Tier 1 Aggregation reveal",
+            "Tier 1 Aggregation reveal started",
+            "Tier 1 Aggregation reveal start transaction failed",
+            exit_on_failure=False
+        )
+        console.print(f"[dim]Tx hash: {tx_receipt.transactionHash.hex()}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Error: Tier 1 Aggregation reveal start transaction failed[/red] {e}")
+        raise typer.Exit(1)
+
+
 @t1_app.command("close")
 def close_t1_aggregation(
     ctx: typer.Context,
@@ -194,7 +237,7 @@ def close_t1_aggregation(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
     
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationStarted","Can not close Tier 1 aggregation at this time.")
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationRevealStarted","Can not close Tier 1 aggregation at this time.")
     
     console.print(f"[bold green]Finalizing Tier 1 Aggregation[/bold green]")
 
@@ -243,6 +286,39 @@ def start_t2_aggregation(
         raise typer.Exit(1)
 
 
+@t2_app.command("start-reveal")
+def start_t2_aggregation_reveal(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    """Close the T2 commit window and open the reveal window (commit-then-reveal aggregation, issue #156 M-1)."""
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_Contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationStarted", "Can not start Tier 2 aggregation reveal at this time.")
+
+    console.print(f"[bold green]Starting Tier 2 Aggregation reveal window[/bold green]")
+
+    try:
+        tx_receipt = build_and_send_tx(
+            ctx,
+            task_coordinator_Contract.functions.startT2AggregationReveal(ref_gi),
+            "Starting Tier 2 Aggregation reveal",
+            "Tier 2 Aggregation reveal started",
+            "Tier 2 Aggregation reveal start transaction failed",
+            exit_on_failure=False
+        )
+        console.print(f"[dim]Tx hash: {tx_receipt.transactionHash.hex()}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Error: Tier 2 Aggregation reveal start transaction failed[/red] {e}")
+        raise typer.Exit(1)
+
+
 @t2_app.command("close")
 def close_t2_aggregation(
     ctx: typer.Context,
@@ -263,7 +339,7 @@ def close_t2_aggregation(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_Contract)
 
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationStarted", "Can not close Tier 2 aggregation at this time.")
+    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationRevealStarted", "Can not close Tier 2 aggregation at this time.")
 
     console.print(f"[bold green]Finalizing Tier 2 Aggregation[/bold green]")
     try:
@@ -320,19 +396,20 @@ def set_t2_score(
         console.print("[cyan]Calculating score for final GM model...[/cyan]")
 
         manifest = get_manifest_key(effective_network, "getscoreforGM", model_id)
-        model_base_path = Path(CACHE_DIR) / effective_network /  f"model_{model_id}"
-        modelowner_service_path = model_base_path / Path(manifest["path"])
-        model_service_path = model_base_path / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+        model_base_path = ctx.obj.get_model_base_dir(model_id)
+        modelowner_service_path = resolve_manifest_path(model_base_path, manifest["path"], what="getscoreforGM path")
+        model_service_path = resolve_manifest_path(model_base_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
 
         require_custom_manifest_service(manifest, "getscoreforGM")
-        ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "modelowner service")
-        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service")
+        ctx.obj.ensure_file_exists(modelowner_service_path, manifest["ipfs"], "modelowner service", base_dir=model_base_path)
+        ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model architecture service", base_dir=model_base_path)
 
         fn = ctx.obj.load_custom_fn(
         modelowner_service_path,
-        "getscoreforGM")
+        "getscoreforGM",
+        base_dir=model_base_path)
 
-        ctx.obj.ensure_file_exists(Path(model_base_path)/"models"/"genesis_model.pth", get_manifest_key(effective_network,"Genesis_Model_CID", model_id), "genesis model")
+        ctx.obj.ensure_file_exists(Path(model_base_path)/"models"/"genesis_model.pth", get_manifest_key(effective_network,"Genesis_Model_CID", model_id), "genesis model", base_dir=model_base_path)
         if not (Path(model_base_path)/"dataset"/"test"/"test_dataset.pt").exists():
             console.print("[red]Error:[/red] Test dataset not found at ", str(Path(model_base_path)/"dataset"/"test"/"test_dataset.pt"))
             console.print("[yellow]Warning:[/yellow] please ensure the test dataset is present at ", str(Path(model_base_path)/"dataset"/"test"/"test_dataset.pt"))

@@ -248,6 +248,32 @@ def configure_network(ctx: typer.Context):
 # when a command actually needs to sign — see utils.load_account().
 
 
+def _refuse_real_wallet_in_demo_lane(console, resolved: str) -> None:
+    """Refuse connect-demo-wallet on a real (encrypted) wallet, pointing at connect-wallet."""
+    console.print(
+        f"[red]❌ '{resolved}' is not a demo wallet — connect-demo-wallet only "
+        f"connects wallets created via `connect-demo-wallet`.[/red]"
+    )
+    console.print(f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {resolved}")
+    raise typer.Exit(1)
+
+
+def _is_existing_real_wallet(name: str) -> bool:
+    """True if `name` resolves to an existing, readable wallet file that is not demo-format.
+
+    Invalid names, missing files and unreadable files return False so the caller's
+    normal error path reports them.
+    """
+    try:
+        wallet_path, exists = resolve_wallet_path(validate_account_name(name))
+        if not exists:
+            return False
+        with open(wallet_path) as f:
+            return json.load(f).get("demo_mode") is not True
+    except (ValueError, OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
 def _connect_registered_wallet(console, name: str, require_demo: Optional[bool] = None) -> str:
     """Persist `name` as the active wallet (config "wallet_name").
 
@@ -295,12 +321,7 @@ def _connect_registered_wallet(console, name: str, require_demo: Optional[bool] 
     is_demo = wallet_data.get("demo_mode") is True
 
     if require_demo is True and not is_demo:
-        console.print(
-            f"[red]❌ '{resolved}' is not a demo wallet — connect-demo-wallet only "
-            f"connects wallets created via `connect-demo-wallet`.[/red]"
-        )
-        console.print(f"[yellow]Did you mean:[/yellow] dincli system connect-wallet {resolved}")
-        raise typer.Exit(1)
+        _refuse_real_wallet_in_demo_lane(console, resolved)
     if require_demo is False and is_demo:
         console.print(
             f"[red]❌ '{resolved}' is a demo wallet — connect-wallet refuses to activate it, "
@@ -403,6 +424,12 @@ def connect_demo_wallet(ctx: typer.Context,
         name = "demo-default"
     if not isinstance(account, int):
         account = None
+
+    # Reconnecting by name to a real (encrypted) wallet: refuse with the specific
+    # "not a demo wallet" message before the demo-mode check. Turning demo mode
+    # on would not make this command accept it, so "Demo mode is off" misleads.
+    if account is None and _is_existing_real_wallet(name):
+        _refuse_real_wallet_in_demo_lane(console, validate_account_name(name))
 
     if not get_config("demo_mode"):
         console.print(
@@ -949,32 +976,26 @@ def din_info(ctx: typer.Context,
 # ---------------------------------------------------------------------------
 # Platform deployments import
 # ---------------------------------------------------------------------------
-# The platform contracts (DinToken, DinCoordinator, DinValidatorStake,
-# DINModelRegistry) are transparent proxies (PR 13). INTERIM bootstrap flow:
-# proxy deployment + initialize + wiring is done by the toolchain script,
-# which runs through the OpenZeppelin upgrades plugin:
+# The platform contracts (DinTreasury, DinToken, DinCoordinator,
+# DinValidatorStake, DINModelRegistry, DinFeeRouter, DinEmission) are
+# transparent proxies. INTERIM bootstrap flow: proxy deployment + initialize +
+# wiring is done by a toolchain script running the OpenZeppelin upgrades
+# validation:
 #
-#     cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>
+#     cd foundry && forge script script/DeployPlatform.s.sol --rpc-url <rpc> --broadcast ...   # primary
+#     cd hardhat && npx hardhat run scripts/deploy-platform.ts --network <net>              # secondary
 #
-# That script records the proxy addresses in hardhat/deployments/<net>.json;
-# `dincli system import-deployments` maps that file into din_info.json so all
-# dincli commands resolve the deployed platform.
+# Each script records the proxy addresses in <toolchain>/deployments/<net>.json
+# (same schema); `dincli system import-deployments` maps that file into
+# din_info.json so all dincli commands resolve the deployed platform.
 #
 # NOTE — this is not the target architecture. The decision record
 # Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md
-# chose native web3.py proxy deployment inside `dindao deploy` (its Option C;
+# chose native web3.py proxy deployment inside `dinrep deploy` (its Option C;
 # backlog: Developer/issues/dincli-native-proxy-deployment.md). Once that
 # lands, this command demotes to a secondary sync utility for script-driven
-# deployments/upgrades and for adopting already-deployed networks.
-#
-# Foundry migration note: foundry/ carries the same contracts but has no
-# deploy scripts yet. Whatever produces the addresses next (forge script for
-# upgrades, native dincli deploys for bootstrap), keep this command as the
-# single import interface — either have the forge script write the same
-# deployments/<network>.json shape (preferred, trivial with vm.writeJson), or
-# extend _DEPLOYMENTS_TO_DIN_INFO parsing with a reader for foundry's
-# broadcast/<Script>.s.sol/<chainid>/run-latest.json. Only the producer of the
-# addresses changes; din_info.json stays the contract with the rest of dincli.
+# deployments/upgrades and for adopting already-deployed networks. Either way
+# din_info.json stays the contract with the rest of dincli.
 
 # dincli network name → deploy-toolchain network name (standalone `npx hardhat
 # node` / anvil are both "localhost"); networks not listed map to themselves.
@@ -1355,7 +1376,7 @@ def distribute_mnist(
     if model_id:
         base_dir = ctx.obj.get_model_base_dir(model_id)
     elif task_coordinator_address:
-        base_dir = Path(os.getcwd()) / "tasks" / effective_network.lower() / task_coordinator_address
+        base_dir = ctx.obj.get_task_dir(task_coordinator_address)
     else:
         console.print("[red]❌ Model ID or task coordinator address is required.[/red]")
         raise typer.Exit(1)
@@ -1397,8 +1418,8 @@ def distribute_mnist(
     service_path = base_dir / service_entry["path"].lstrip("/")
     requirements_path = base_dir / "requirements" / "distribute_mnist.txt"
 
-    ctx.obj.ensure_file_exists(service_path, service_entry["ipfs"], "distribute_mnist service")
-    ctx.obj.ensure_file_exists(requirements_path, service_entry["requirements"], "distribute_mnist requirements")
+    ctx.obj.ensure_file_exists(service_path, service_entry["ipfs"], "distribute_mnist service", base_dir=base_dir)
+    ctx.obj.ensure_file_exists(requirements_path, service_entry["requirements"], "distribute_mnist requirements", base_dir=base_dir)
 
     _confirm_or_exit(
         f"Have you installed the required dependencies via `pip install -r {requirements_path}`?",
@@ -1412,7 +1433,7 @@ def distribute_mnist(
     if test_train:
         console.print("[cyan]Processing Train/Test Datasets...[/cyan]")
         try:
-            save_test_train_fn = ctx.obj.load_custom_fn(service_path, "save_test_train_datasets")
+            save_test_train_fn = ctx.obj.load_custom_fn(service_path, "save_test_train_datasets", base_dir=base_dir)
             save_test_train_fn(base_dir=base_dir)
         except Exception as e:
             console.print(f"[bold red]Error saving train/test datasets: {e}[/bold red]")
@@ -1425,7 +1446,7 @@ def distribute_mnist(
     if clients:
         console.print("[cyan]Processing Client Datasets... This may take a while.[/cyan]")
         try:
-            distribute_to_clients_fn = ctx.obj.load_custom_fn(service_path, "distribute_to_clients")
+            distribute_to_clients_fn = ctx.obj.load_custom_fn(service_path, "distribute_to_clients", base_dir=base_dir)
             result = distribute_to_clients_fn(
                 base_dir=base_dir,
                 accounts_list=accounts_list,
@@ -1475,12 +1496,13 @@ def dump_abi(
     """
     Extract ABI (and optionally bytecode) from a contract artifact and save it 
     in Hardhat-compatible format to dincli/abis/.
-    
+
     Example:
-      dincli dindao dump-abi --artifact "hardhat/artifacts/contracts/DINCoordinator.sol/DINCoordinator.json" --bytecode
+      dincli system dump-abi --official --artifact "foundry/out/DinCoordinator.sol/DinCoordinator.json" --bytecode
     """
 
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+    # File-only operation: no network, web3 or wallet needed.
+    console = ctx.obj.console
     
     artifact = Path(artifact_path)
     if not artifact.exists():

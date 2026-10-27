@@ -5,9 +5,11 @@ import {Script, console} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {Upgrades} from "@openzeppelin/foundry-upgrades/Upgrades.sol";
 
+import {DeploymentsPath} from "./DeploymentsPath.sol";
+
 /// @notice Upgrades a single platform proxy to its V2 implementation.
-///         Reads the proxy address from foundry/deployments/localhost.json
-///         (written by DeployPlatform.s.sol) and updates the implementation
+///         Reads the proxy address from foundry/deployments/<network>.json
+///         (written by DeployPlatform.s.sol; see DeploymentsPath) and updates the implementation
 ///         slot via the TransparentUpgradeableProxy admin.
 ///
 /// Usage (from repo root; CONTRACT must be one of: DinToken, DinCoordinator,
@@ -18,7 +20,16 @@ import {Upgrades} from "@openzeppelin/foundry-upgrades/Upgrades.sol";
 ///     --broadcast \
 ///     --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
 ///     --unlocked
-contract UpgradePlatform is Script {
+///
+/// On Optimism Sepolia, sign with a keystore account instead of --unlocked
+/// (--unlocked only works against anvil's dev accounts). SEPOLIA_OP_DEVNET_RPC_URL comes
+/// from .env.sepolia_op_devnet (from the repo root: set -a; source .env.sepolia_op_devnet; set +a):
+///   cd foundry && CONTRACT=DinToken forge script script/UpgradePlatform.s.sol \
+///     --rpc-url "$SEPOLIA_OP_DEVNET_RPC_URL" \
+///     --broadcast \
+///     --account <keystore_name> \
+///     --sender <din_representative_address>
+contract UpgradePlatform is DeploymentsPath {
     using stdJson for string;
 
     // Maps contract names to their deployments JSON key
@@ -31,10 +42,7 @@ contract UpgradePlatform is Script {
         string memory contractName = vm.envString("CONTRACT");
         string memory implName = string.concat(contractName, "V2");
 
-        string memory deploymentsPath = string.concat(
-            vm.projectRoot(),
-            "/deployments/localhost.json"
-        );
+        string memory deploymentsPath = _deploymentsFile("");
         string memory raw = vm.readFile(deploymentsPath);
 
         string memory proxyKey = _proxyKey(contractName);

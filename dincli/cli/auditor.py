@@ -7,6 +7,7 @@ from typing import Optional
 import typer
 from rich.table import Table
 from web3 import Web3
+from eth_abi import encode as abi_encode
 from nacl.public import Box, PrivateKey, PublicKey
 import nacl.encoding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -15,7 +16,9 @@ from eth_account import Account
 from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
                                  read_dintoken_stake, stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, require_custom_manifest_service)
+                               get_manifest_key, lock_batch_seed_if_pending,
+                               require_custom_manifest_service,
+                               resolve_manifest_path)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -67,6 +70,18 @@ def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int)
         data = json.load(f)
     data["salt"] = bytes.fromhex(data["salt"])
     return data
+
+
+def _audit_commit_hash(score: int, vote: bool, salt: bytes, sender: str, gi: int, batch_id: int, model_index: int) -> bytes:
+    """keccak256(abi.encode(score, vote, salt, msg.sender, gi, batchId, modelIndex)) --
+    must match DINTaskAuditor.revealAuditScore exactly, including plain
+    (non-packed) ABI encoding. Binding the auditor and the (gi, batch, model)
+    slot stops a peer replaying this auditor's commit and reveal (issue #192)."""
+    encoded = abi_encode(
+        ["uint256", "bool", "bytes32", "address", "uint256", "uint256", "uint256"],
+        [score, vote, salt, Web3.to_checksum_address(sender), gi, batch_id, model_index],
+    )
+    return Web3.keccak(encoded)
 
 app = typer.Typer(help="Commands for Auditors in DIN.")
 
@@ -150,6 +165,24 @@ def register(
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
                 raise typer.Exit()
 
+@app.command("lock-seed", help="Lock the auditor batch-assignment seed for the current GI (permissionless)")
+def lock_seed(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract, True, False, True)
+
+    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSclosed", "Can not lock the auditor batch seed at this time")
+
+    lock_batch_seed_if_pending(ctx, task_coordinator_contract, ref_gi, curr_GI, curr_GIstate, "audit")
+
+
 @lms_evaluation_app.command("show-batch", help="Show LMS evaluation batch")
 def show_batch(
     ctx: typer.Context, 
@@ -164,6 +197,10 @@ def show_batch(
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+
+    # BL-26: batches not created yet -- lock the seed now so the model owner
+    # can't decline to lock it and wait out the window for a re-roll.
+    lock_batch_seed_if_pending(ctx, task_coordinator_contract, ref_gi, curr_GI, curr_GIstate, "audit")
 
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI, curr_GIstate, "AuditorsBatchesCreated", "Can not show auditor batch at this time")
 
@@ -349,7 +386,7 @@ def evaluate_lms(
     requirements_path = get_worker_requirements_path(model_base_dir, "auditors")
     packages_dir = Path(packages_dir) if packages_dir else None
     if auditor_requirements_cid:
-        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements")
+        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements", base_dir=model_base_dir)
         try:
             ensure_worker_image(console)
             if not no_cache and packages_dir is None:
@@ -366,6 +403,7 @@ def evaluate_lms(
         model_base_dir / "models" / "genesis_model.pth",
         genesis_model_cid,
         "genesis model",
+        base_dir=model_base_dir,
     )
 
     found_any = False
@@ -394,6 +432,15 @@ def evaluate_lms(
                 continue
 
             found_any = True
+
+            # A retry must never replace the salt behind an existing on-chain
+            # commitment -- the reveal would then fail TA_RevealHashMismatch
+            # and the auditor be S1-slashed for an honest vote (issue #202).
+            # Skip before re-evaluating, leaving the commit cache untouched.
+            if submit and task_auditor_contract.functions.hasCommittedLM(curr_GI, batch_id, account.address, model_index).call():
+                console.print(f"[yellow]LM {model_index} in audit batch {batch_id} already committed by {account.address}; skipping (reveal with `dincli auditor lms-evaluation reveal`).[/yellow]")
+                continue
+
             console.print(f"[bold green]Evaluating LM {model_index} from Audit batch {batch_id}![/bold green]")
 
             time.sleep(0.5)
@@ -402,19 +449,19 @@ def evaluate_lms(
             lm_cid = get_cid_from_bytes32(lms[1].hex())
 
             manifest = get_manifest_key(effective_network, "Score_model_by_auditor", model_id)
-            auditor_service_path = model_base_dir / Path(manifest["path"])
-            model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+            auditor_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="Score_model_by_auditor path")
+            model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
             scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
-            scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
+            scoring_service_path = resolve_manifest_path(model_base_dir, scoring_manifest["path"], what="ScoringUtils path")
 
             require_custom_manifest_service(manifest, "Score_model_by_auditor")
-            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service")
+            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service", base_dir=model_base_dir)
+            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
             # auditor.py imports `scoring` as a sibling module via sys.path
             # rather than a package import, so it must be materialized at the
             # same local services/ path dincli derives from the manifest
             # before the worker container can import it.
-            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
+            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils", base_dir=model_base_dir)
 
             # Recover K and rawCID via decrypt chain:
             #   Box(auditor_privkey, owner_pubkey).decrypt(encryptedKey) → K
@@ -456,6 +503,7 @@ def evaluate_lms(
                 model_base_dir / "models" / "auditor" / f"lm_{curr_GI}_{model_index}.pth",
                 lm_cid,
                 "local model submission",
+                base_dir=model_base_dir,
             )
 
             metric_bundle_dir = model_base_dir / "audits" / "metric_bundles" / account.address
@@ -508,12 +556,19 @@ def evaluate_lms(
                 score_int = int(score)
                 vote_bool = bool(eligible)
                 salt = secrets.token_bytes(32)
-                commit_hash = Web3.solidity_keccak(
-                    ["uint256", "bool", "bytes32"], [score_int, vote_bool, salt]
+                commit_hash = _audit_commit_hash(
+                    score_int, vote_bool, salt, account.address, curr_GI, batch_id, model_index
                 )
 
                 try:
                     time.sleep(0.5)
+                    # Cache before sending: build_and_send_tx returns None both
+                    # on a revert and when the receipt wait fails for a tx that
+                    # may still mine, so saving only after the send could strand
+                    # a real commit without its preimage. A failed attempt leaves
+                    # a stale cache that the next retry replaces (the LM isn't
+                    # committed yet, so the hasCommittedLM guard lets it through).
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                     build_and_send_tx(
                         ctx,
                         task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
@@ -522,9 +577,6 @@ def evaluate_lms(
                         f"Audit score commit failed for LM {model_index} from batch {batch_id}!",
                         exit_on_failure=False
                     )
-                    # Only cache locally once the commit tx is known to have
-                    # been attempted -- reveal is a no-op without this file.
-                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                 except Exception as e:
                     console.print(f"[bold red]✗ Error committing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
 

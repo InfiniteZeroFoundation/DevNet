@@ -25,36 +25,42 @@ That matters especially for exits, slashing, blacklisting, and controlled unblac
 
 ---
 
-## Implemented Lifecycle and Slashing Semantics (verified July 19, 2026)
+## Implemented Lifecycle and Slashing Semantics (verified against `foundry/src/` on 2026-09-30)
 
 ### Validator state machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Active : stake ≥ MIN_STAKE (10 DIN)
-    Active --> Exiting : unstake() → pending withdrawal\n(7-day unbonding, still slashable)
+    [*] --> Active : stake ≥ MIN_STAKE (default 10 DIN)
+    Active --> Exiting : unstake() → pending withdrawal\n(UNBONDING_PERIOD, default 7 days, still slashable)
+    Active --> Exiting : slashed below MIN_STAKE
     Exiting --> Active : re-stake above floor
     Exiting --> [*] : claimUnstaked() after unbonding
+    Active --> Jailed : S5 recidivism escalation\n(or jailValidator by a slasher)
+    Jailed --> Active : reactivate() after jail period\n(stake ≥ MIN_STAKE)
     Active --> Blacklisted : owner blacklistValidator()
     Exiting --> Blacklisted : owner blacklistValidator()
-    Blacklisted --> Active : owner unblacklistValidator()\n(via status sync)
+    Jailed --> Blacklisted : owner blacklistValidator()
+    Blacklisted --> Active : owner unblacklistValidator()\n(via status sync; Jailed if jail still running)
 ```
 
-`_syncValidatorStatus()` recomputes status on every state-modifying call: `Blacklisted` is sticky until unblacklisted; pending withdrawals force `Exiting`; `activeStake ≥ MIN_STAKE` gives `Active`; a nonzero balance below the floor is `Exiting`; zero is `None`. The `Jailed` status is defined and respected by the sync logic, but **no function currently sets it** — jailing is not reachable on `develop`.
+`_syncValidatorStatus()` recomputes status on every state-modifying call: `Blacklisted` is sticky until unblacklisted; `Jailed` is sticky while `jailedUntil` is in the future; pending withdrawals force `Exiting`; `activeStake ≥ MIN_STAKE` gives `Active`; a nonzero balance below the floor is `Exiting`; zero is `None`.
 
 ### Implemented behaviour reference
 
-| Mechanic | Behaviour on `develop` |
+| Mechanic | Behaviour on `develop` (`foundry/src/`) |
 |---|---|
-| Stake entry | `stake(amount)` requires `amount ≥ MIN_STAKE` (10 DIN constant), rejects blacklisted callers, transfers DIN in, syncs status |
-| Unbonding | `unstake(amount)` moves stake to a **single** pending withdrawal with `withdrawAvailableAt = now + 7 days` (constant); `claimUnstaked()` pays out after maturity; a second `unstake` while one is pending reverts |
+| Stake entry | `stake(amount)` requires `amount ≥ MIN_STAKE` (default 10 DIN, owner-settable via `setMinStake`), rejects blacklisted callers, transfers DIN in, syncs status |
+| Unbonding | `unstake(amount)` moves stake to a **single** pending withdrawal with `withdrawAvailableAt = now + UNBONDING_PERIOD` (default 7 days, owner-settable, not retroactive); `claimUnstaked()` pays out after maturity |
 | Slashability window | `slashableStakeOf = activeStake + pendingWithdrawals` — exit does not escape slashing until the claim |
-| Slashing | `slash(validator, amount, reason)` is **non-blocking**: caps at the slashable balance, consumes active stake before pending withdrawals, returns the actual amount, emits `ValidatorSlashed(validator, amount, reason, slasher)`. Only authorized slasher contracts may call it |
-| Slashed-stake destination | None — slashed DIN remains inside the contract (a de-facto burn; an explicit destination is a design decision, see [`Developer/design/staking-design.md`](../../../Developer/design/staking-design.md)) |
-| Slash amount policy | Task contracts slash a flat `minStake()` per offence (liveness faults only: missed audit vote, missed T1/T2 submission) |
-| Eligibility gates | `DINTaskCoordinator` and `DINTaskAuditor` check `isValidatorActive()` at **registration, batch creation, and submission** — raw `getStake()` is informational only |
-| Threshold source of truth | `minStake()` exposed via the `DINShared` interface; task contracts hold no independent stake-threshold copies |
-| Blacklist | `blacklistValidator`/`unblacklistValidator` are direct `owner()` actions; blacklist freezes `stake`/`unstake`/`claimUnstaked` while funds remain slashable (details in the sections below) |
+| Slashing | Non-blocking: caps at the slashable balance, consumes active stake before pending withdrawals, returns the actual amount, emits `ValidatorSlashed`. Only authorised slasher contracts may call it |
+| Slashed-stake destination | **50% burned** (`DinToken.burn`), **50% to `slashTreasury`** (`DinTreasury`, wired at deploy); if the treasury is unset, both halves are burned |
+| Liveness faults (S1/S2) | `slashPartial`: an audit vote that was never revealed (S1) or a T1/T2 aggregation CID that was never revealed (S2) costs `minStake × s1/s2SlashFractionBps` (default 30%). Committing without revealing counts the same as not committing; whether it should cost more is open in issue #201 |
+| Recidivism (S5) | The same task contract recording `s5RecidivismThreshold` (3) partial slashes within `s5RecidivismWindow` (5) GIs escalates to a full `MIN_STAKE` slash plus a `s5JailDuration` (7 days) jail |
+| Full-severity faults | `slash(minStake)`: aggregator bad consensus, S3 audit-score deviation (behind `s3SlashingEnabled`, off by default), S4 invalid aggregation / fresh-subgroup timeout |
+| No-participation (S6) | `recordNoParticipation` exists (escalating 10%-per-breach slash past a threshold of 3) but **no task contract calls it** |
+| Eligibility gates | Task contracts require `isValidatorActive()` at registration, commit/reveal and submission, and filter inactive registrants at batch creation. When configured they also enforce a per-model stake floor (`getModelStakeMin`) and a concurrent-registration cap (`(stake / minStake) × maxConcurrentRegistrationsPerStakeUnit`) |
+| Blacklist | `blacklistValidator`/`unblacklistValidator` are direct `owner()` (DIN-Representative) actions; blacklist freezes `stake`/`unstake`/`claimUnstaked` while funds remain slashable |
 
 Per-contract references: [`DinValidatorStake.md`](../contracts/DinValidatorStake.md), [`DINTaskCoordinator.md`](../contracts/DINTaskCoordinator.md), [`DINTaskAuditor.md`](../contracts/DINTaskAuditor.md), [`DinCoordinator.md`](../contracts/DinCoordinator.md).
 
@@ -71,31 +77,34 @@ The core staking and validator-lifecycle contract. It:
 - enforces delayed withdrawals with an unbonding period;
 - keeps pending withdrawals slashable;
 - exposes `isValidatorActive()` for downstream eligibility checks;
+- splits every slash 50% burn / 50% treasury (the treasury half is also burned if no treasury is set), tracks S5 recidivism (`slashPartial`) and jails on escalation;
+- stores the governable parameters task contracts read (per-model stake floors, concurrent-registration cap, S5/S6 settings) and validators' X25519 encryption keys;
 - allows emergency blacklist and restoration through direct owner authority.
 
 ### `DINTaskCoordinator.sol`
 
 Manages Aggregator participation and task-round execution. It should:
 - use `isValidatorActive()` when checking whether a validator may register or keep participating;
-- call `slash()` when Aggregators fail liveness or correctness requirements;
+- call `slashPartial()` for missed submissions (S2) and `slash()` for bad consensus or S4 dispute outcomes;
 - refuse blacklisted, jailed, or exiting validators through the shared stake state.
 
 ### `DINTaskAuditor.sol`
 
 Manages Auditor participation. It should:
 - use `isValidatorActive()` as the role eligibility gate;
-- call `slash()` for Auditor faults;
+- call `slashPartial()` for missed votes (S1) and `slash()` for S3 score deviation;
 - refuse blacklisted, jailed, or exiting validators via stake state.
 
 ### `DinCoordinator.sol`
 
 The coordinator is the admin-facing control point for staking-related policy wiring. In the current architecture it:
-- mints DIN against ETH deposits;
+- mints DIN against ETH deposits (faucet) and for the emission subsidy (`mintEmission`, from `DinEmission`), under an optional `mintCap`;
+- forwards faucet ETH to `DinFeeRouter`;
 - registers or removes authorized slasher contracts on `DinValidatorStake`.
 
 Blacklist and unblacklist actions are not routed through `DinCoordinator` in the current implementation. They are direct `owner()` actions on `DinValidatorStake`.
 
-### Governance / DAO Admin
+### Governance (DIN-Representative today)
 
 Governance should not directly act as a slasher for routine faults. Routine faults belong in task contracts via `slash()`.
 
@@ -164,9 +173,9 @@ Those role contracts should:
 
 1. Validator misses work, submits invalid work, or fails a consensus rule.
 2. Authorized task contract determines slash amount and reason.
-3. Task contract calls `DinValidatorStake.slash()`.
+3. Task contract calls `DinValidatorStake.slashPartial()` (liveness faults, with S5 recidivism escalation) or `slash()` (full-severity faults).
 4. Slash is applied first against `activeStake`, then against `pendingWithdrawals` if needed.
-5. Validator status is resynchronized.
+5. Half the slashed DIN is burned, half sent to `DinTreasury` (or also burned if no treasury is set); validator status is resynchronized (or set to `Jailed` on S5 escalation).
 6. Validator may lose `Active` status if stake falls too low or if exit is already in progress.
 
 ### 4. Exit / Unbonding
@@ -235,12 +244,12 @@ In `DinValidatorStake.sol`:
 ### What Does Not Exist Today
 
 - no governance review flow on-chain;
-- no public jail-to-blacklist escalation path;
+- no automatic jail-to-blacklist escalation (jailing comes only from S5 escalation; blacklisting is a manual owner action);
 - no release policy for funds locked under blacklist status.
 
 ### Important Architecture Note
 
-`DinValidatorStake` still uses `DIN_COORDINATOR` for slasher management, but blacklist and unblacklist authority now lives directly on the stake contract owner. This is the intended current model: DIN admin now, DAO-governed owner later.
+`DinValidatorStake` still uses `DIN_COORDINATOR` for slasher management, but blacklist and unblacklist authority now lives directly on the stake contract owner. This is the intended current model: the DIN-Representative's single admin key now; on-chain DIN-DAO governance is deferred to post-mainnet.
 
 ---
 

@@ -1,19 +1,19 @@
 import os
-import time
+from importlib.resources import files
 
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
-                               resolve_task_coordinator_address, save_din_info)
+from dincli.cli.utils import (build_and_send_tx, get_env_key,
+                               resolve_task_coordinator_address)
 
-app = typer.Typer(help="Commands for DIN DAO")
+app = typer.Typer(help="Commands for the DIN-Representative")
 
-registry_app = typer.Typer(help="Registry sub-app (for 'dincli dindao registry to interact with DINRegistry ...')")
-deploy_app = typer.Typer(help="Deploy DIN smart contracts")
+registry_app = typer.Typer(help="Registry sub-app ('dincli dinrep registry ...') to interact with DINModelRegistry")
+coordinator_app = typer.Typer(help="Coordinator sub-app ('dincli dinrep coordinator ...') to interact with DinCoordinator")
 
-app.add_typer(deploy_app, name="deploy")
 app.add_typer(registry_app, name="registry")
+app.add_typer(coordinator_app, name="coordinator")
 
 
 def _request_status(processed: bool, approved: bool) -> str:
@@ -51,145 +51,10 @@ def _print_manifest_request(console, w3, request_id: int, req):
     console.print(f"  Fee Paid: {w3.from_wei(req[3], 'ether')} ETH")
     console.print(f"  Status: {_request_status(req[4], req[5])}")
 
-@deploy_app.command()
-def din_coordinator(
-    ctx: typer.Context,
-    artifact_path: str = typer.Option(None, "--artifact", help="Path to contract artifact JSON (Hardhat format)")
-):
-    
-    """
-    Deploy the DIN Coordinator contract.
-    """
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    
-    DINCoordinator_contract = get_contract_instance(artifact_path, effective_network)
-    
-    tx_receipt = build_and_send_tx(
-        ctx,
-        DINCoordinator_contract.constructor(),
-        "Deploying DIN Coordinator Contract",
-        "DINCoordinator contract deployed successfully",
-        "Failed to deploy DIN Coordinator Contract"
-    )
-    
-    dincoordinator_contract_address = tx_receipt.contractAddress
-        
-    console.print("DINCoordinator contract deployed at:", dincoordinator_contract_address)
-    
-    din_addresses = load_din_info()
-    din_addresses[effective_network]["coordinator"] = dincoordinator_contract_address
-    din_addresses[effective_network]["representative"] = account.address 
-    save_din_info(din_addresses)
-
-    taskCoordinator_contract = ctx.obj.get_deployed_din_coordinator_contract(verbose=False)
-    
-    dintoken_address = taskCoordinator_contract.functions.dinToken().call()
-    console.print("DINtoken contract deployed at:", dintoken_address)
-    din_addresses = load_din_info()
-    din_addresses[effective_network]["token"] = dintoken_address
-    save_din_info(din_addresses)
-
-
-    
-@deploy_app.command("din-validator-stake")
-def din_validator_stake(
-    ctx: typer.Context,
-    artifact_path: str = typer.Option(..., "--artifact", help="Path to contract artifact JSON (Hardhat/Brownie format)"),
-    dinCoordinator: str  = typer.Option(None, "--dinCoordinator", help="the dinCoordinator asddress"),
-    dinToken: str  = typer.Option(None, "--dinToken", help="the dinToken asddress"),
-                                        
-):
-    
-    """
-    Deploy the DIN Validator Stake contract.
-    """
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    
-    DINValidatorStake_contract = get_contract_instance(artifact_path, effective_network)
-    
-    din_addresses = load_din_info()
-    
-    if dinCoordinator:
-        dinCoordinator_address = dinCoordinator
-    else:
-        dinCoordinator_address = din_addresses[effective_network]["coordinator"]
-        
-    if dinToken:
-        dinToken_address = dinToken
-    else:
-        dinToken_address = din_addresses[effective_network]["token"]
-    
-    tx_receipt = build_and_send_tx(
-        ctx,
-        DINValidatorStake_contract.constructor(dinToken_address, dinCoordinator_address),
-        "Deploying DIN Validator Stake Contract",
-        "DINValidatorStake contract deployed successfully",
-        "Failed to deploy DIN Validator Stake Contract"
-    )
-    
-    DINValidatorStake_contract_address = tx_receipt.contractAddress
-        
-    console.print("DINValidatorStake contract deployed at:", DINValidatorStake_contract_address)
-    
-    din_addresses[effective_network]["stake"] = DINValidatorStake_contract_address
-
-    save_din_info(din_addresses)
-    
-    deployed_DINValidatorStake_Contract = ctx.obj.get_deployed_din_stake_contract()
-    
-    
-    DINCoordinator_Contract = ctx.obj.get_deployed_din_coordinator_contract()
-    
-    # add delay to allow the 
-    time.sleep(10)
-
-
-    build_and_send_tx(
-        ctx,
-        DINCoordinator_Contract.functions.updateValidatorStakeContract(deployed_DINValidatorStake_Contract.address),
-        "Adding DinValidatorStake contract to DINCoordinator contract",
-        "DinValidatorStake contract added to DINCoordinator contract successfully",
-        "Failed to add DinValidatorStake contract to DINCoordinator contract"
-    )
-
-
-@deploy_app.command("din-model-registry")
-def deploy_din_model_registry(
-    ctx: typer.Context,
-    artifact_path: str = typer.Option(..., "--artifact", help="Path to contract artifact JSON (Hardhat/Brownie format)"),
-    dinvalidatorstake: str = typer.Option(None, "--dinvalidatorstake", help="the dinvalidatorstake address"),
-):
-    
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    
-    DINModelRegistry_contract = get_contract_instance(artifact_path, effective_network)
-    
-    din_addresses = load_din_info()
-
-    if dinvalidatorstake:
-        dinValidatorStake_address = dinvalidatorstake
-    else:
-        dinValidatorStake_address = din_addresses[effective_network]["stake"]
-    
-    tx_receipt = build_and_send_tx(
-        ctx,
-        DINModelRegistry_contract.constructor(dinValidatorStake_address),
-        "Deploying DIN Model Registry",
-        "DINModelRegistry contract deployed successfully",
-        "Failed to deploy DINModelRegistry contract"
-    )
-    
-    DINModelRegistry_contract_address = tx_receipt.contractAddress
-    console.print("[bold green] ✅ DINModelRegistry contract deployed at:[/bold green]", DINModelRegistry_contract_address)
-    
-    din_addresses[effective_network]["registry"] = DINModelRegistry_contract_address
-    
-    save_din_info(din_addresses)
-    
 @app.command("add-slasher",
-    help="Add a slasher to the DIN SlasherRegistry contract."
-    "You must specify either the task coordinator or the task auditor (from config) to be registered as the slasher."
-    "The contract address can be provided explicitly or loaded from config."
+    help="Authorize a slasher contract via DinCoordinator.addSlasherContract. "
+    "Pass --contract with an explicit address, or --taskCoordinator / --taskAuditor "
+    "to load the task contract address from config."
 )
 def add_slasher(
     ctx: typer.Context,
@@ -206,10 +71,17 @@ def add_slasher(
     ),
 
 ):
-    
+
+    # Check the target before get_en_w3_account_console(), which unlocks the
+    # wallet: a usage error shouldn't cost a password prompt first.
+    if not (contract or task_coordinator_flag or task_auditor_flag):
+        ctx.obj.console.print(
+            "[bold red]✗ No slasher contract given.[/bold red] "
+            "Pass --contract <address>, --taskCoordinator, or --taskAuditor."
+        )
+        raise typer.Exit(1)
+
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    
-    DINCoordinator_Contract = ctx.obj.get_deployed_din_coordinator_contract()
 
     if contract:
         contract_address = contract
@@ -234,6 +106,8 @@ def add_slasher(
             f"[bold green] ✓ Using DINTaskAuditor Address: {contract_address} "
             f"(from {os.getcwd()}/.env)[/bold green]"
         )
+
+    DINCoordinator_Contract = ctx.obj.get_deployed_din_coordinator_contract()
 
     build_and_send_tx(
         ctx,
@@ -398,31 +272,99 @@ def set_fees(
         "Failed to update all fees"
     )
 
-@registry_app.command("withdraw-fees")
-def withdraw_fees(ctx: typer.Context, to: str = typer.Argument(..., help="Address to withdraw fees to")):
+def _sweep_fees_to_router(ctx: typer.Context, contract, name: str, yes: bool):
+    """Preview and send contract.sweepFeesToRouter() for DINModelRegistry or DinCoordinator.
+
+    Both contracts hold collected ETH until the owner sweeps the whole balance to
+    DinFeeRouter, which splits it per its ethSplit: the Treasury share is paid out,
+    the other shares accrue in the router (no withdrawal path yet). The router only
+    accepts sources it has authorised (feeSources), so that is checked before the preview
+    instead of surfacing later as an opaque NotFeeSource() revert.
+    """
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
-    target_address = w3.to_checksum_address(to)
-    build_and_send_tx(
-        ctx, 
-        DINModelRegistry_Contract.functions.withdrawFees(target_address),
-        f"Withdrawing fees to {target_address}",
-        "Fees withdrawn successfully",
-        "Failed to withdraw fees"
+
+    owner = contract.functions.owner().call()
+    if owner.lower() != account.address.lower():
+        console.print(
+            f"[bold red]✗ Active wallet {account.address} is not the DIN-Representative "
+            f"(owner) wallet of {name}.[/bold red] Owner: {owner}"
+        )
+        raise typer.Exit(1)
+
+    fee_router_address = contract.functions.feeRouter().call()
+    if int(fee_router_address, 16) == 0:
+        console.print(
+            f"[bold red]✗ Fee router not set on {name}.[/bold red] It is wired at deploy "
+            "time by foundry/script/DeployPlatform.s.sol; this platform was not deployed "
+            "or wired by that script."
+        )
+        raise typer.Exit(1)
+
+    balance = w3.eth.get_balance(contract.address)
+    if balance == 0:
+        console.print(f"[yellow]No accumulated fees to sweep on {name}.[/yellow]")
+        return
+
+    fee_router = get_contract_instance(
+        str(files("dincli").joinpath("abis", "DinFeeRouter.json")),
+        effective_network,
+        fee_router_address,
+    )
+    if not fee_router.functions.feeSources(contract.address).call():
+        console.print(
+            f"[bold red]✗ {name} ({contract.address}) is not an authorised fee source on "
+            f"DinFeeRouter {fee_router_address}.[/bold red] foundry/script/DeployPlatform.s.sol "
+            "adds it at deploy time; if it was removed since (removeFeeSource), the DinFeeRouter "
+            f"owner must call addFeeSource({contract.address}) — dincli has no command for this yet."
+        )
+        raise typer.Exit(1)
+
+    validator_pool_bps, treasury_bps, storage_bps, _ = fee_router.functions.ethSplit().call()
+    treasury_address = fee_router.functions.treasury().call()
+
+    # Same arithmetic as DinFeeRouter.routeFeeETH: public goods absorbs rounding dust.
+    to_treasury = balance * treasury_bps // 10000
+    to_validator_pool = balance * validator_pool_bps // 10000
+    to_storage = balance * storage_bps // 10000
+    to_public_goods = balance - to_treasury - to_validator_pool - to_storage
+
+    console.print(f"[bold cyan]Sweep {w3.from_wei(balance, 'ether')} ETH from {name} to DinFeeRouter {fee_router_address}:[/bold cyan]")
+    console.print(f"  Treasury ({treasury_address}): {w3.from_wei(to_treasury, 'ether')} ETH — paid out")
+    console.print(f"  Validator pool: {w3.from_wei(to_validator_pool, 'ether')} ETH — accrues in router")
+    console.print(f"  Storage: {w3.from_wei(to_storage, 'ether')} ETH — accrues in router")
+    console.print(f"  Public goods: {w3.from_wei(to_public_goods, 'ether')} ETH — accrues in router")
+    console.print(
+        "[yellow]Shares that accrue in the router have no withdrawal path yet, and a sweep "
+        "cannot be undone.[/yellow]"
     )
 
-@registry_app.command("set-dao-admin")
-def set_dao_admin(ctx: typer.Context, new_admin: str = typer.Argument(..., help="New DAO admin address")):
-    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
-    target_address = w3.to_checksum_address(new_admin)
+    if not yes and not typer.confirm(f"Sweep {name} fees to the fee router?"):
+        console.print("[yellow]Aborted. No transaction sent.[/yellow]")
+        raise typer.Exit(0)
+
     build_and_send_tx(
-        ctx, 
-        DINModelRegistry_Contract.functions.setDAOAdmin(target_address),
-        f"Setting DAO admin to {target_address}",
-        "DAO admin set successfully",
-        "Failed to set DAO admin"
+        ctx,
+        contract.functions.sweepFeesToRouter(),
+        f"Sweeping {w3.from_wei(balance, 'ether')} ETH in fees from {name} to the fee router",
+        f"{name} fees swept to the fee router successfully",
+        f"Failed to sweep {name} fees to the fee router"
     )
+
+@registry_app.command("sweep-fees")
+def sweep_registry_fees(
+    ctx: typer.Context,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+):
+    """Sweep the registry's model registration / manifest update fees to DinFeeRouter."""
+    _sweep_fees_to_router(ctx, ctx.obj.get_deployed_din_registry_contract(), "DINModelRegistry", yes)
+
+@coordinator_app.command("sweep-fees")
+def sweep_coordinator_fees(
+    ctx: typer.Context,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+):
+    """Sweep the ETH DinCoordinator collected from depositAndMint (DIN purchases) to DinFeeRouter."""
+    _sweep_fees_to_router(ctx, ctx.obj.get_deployed_din_coordinator_contract(), "DinCoordinator", yes)
 
 
 @registry_app.command("list-pending-requests")

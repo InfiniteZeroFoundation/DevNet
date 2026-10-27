@@ -8,7 +8,7 @@ InfiniteZero / DIN Protocol DevNet: a federated-learning network coordinated by 
 
 The Solidity tree at `foundry/` (Foundry workflow) is the primary toolchain for building, testing, deploying, and verifying contracts, via `foundry/script/`. `hardhat/` remains in the tree as a complementary/secondary toolchain, not the primary path.
 
-Docs convention: `Documentation/` describes what exists in the code on `develop` (not the live Sepolia deployment) — `Documentation/public/` for network participants, `Documentation/technical/` for code readers. `Developer/` holds forward-looking material: `design/` (planned mechanism designs), `issues/` (backlog), `proposals/` (tooling proposals), `tasks/` (contributor task specs), `discussion/`, `rejected-ideas/`, plus ROADMAP.md and process docs. Placement rules: `Developer/README.md`.
+Docs convention: `Documentation/` describes what exists in the code on `develop` (not the live Sepolia deployment) — `Documentation/public/` for network participants, `Documentation/technical/` for code readers. `Developer/` holds forward-looking material: `design/` (planned mechanism designs), `issues/` (backlog), `proposals/` (tooling proposals), `tasks/` (contributor task specs), `tasks-plan/<github-user>/` (contributor task plans pending maintainer review, forwarded into `tasks/` once approved), `discussion/`, `rejected-ideas/`, plus ROADMAP.md and process docs. Placement rules: `Developer/README.md`.
 
 ## Commands
 
@@ -56,7 +56,7 @@ A model's lifecycle runs in **Global Iterations (GI)**: aggregator/auditor regis
 
 ### CLI structure (`dincli/`)
 
-- `main.py` registers one Typer sub-app per role/concern: `system`, `dindao` (DIN-Representative actions), `model-owner`, `aggregator`, `auditor`, `client`, `dintoken`, `task`, `ipfs`. Role-specific submodules for the model-owner workflow live under `cli/modelownerd/` (deploy, gi, lms, lms_evaluation, aggregation, auditor_batches, slash, model, task, setup).
+- `main.py` registers one Typer sub-app per role/concern: `system`, `dinrep` (DIN-Representative actions), `model-owner`, `aggregator`, `auditor`, `client`, `dintoken`, `task`, `ipfs`. Role-specific submodules for the model-owner workflow live under `cli/modelownerd/` (deploy, gi, lms, lms_evaluation, aggregation, auditor_batches, slash, model, task, setup).
 - `cli/context.py` (`DinContext`) is the shared runtime object injected into commands: lazily resolves network/web3/account, fetches deployed platform contracts, resolves *task* contract artifacts (custom ABIs can be supplied via the manifest's `task_contracts` block, falling back to bundled ABIs in `dincli/abis/`), and tracks per-directory IPFS CID caches (`local.json.cid`) so files are only re-fetched when their CID changes.
 - `cli/utils.py` holds config/cache paths (via `platformdirs`: `CONFIG_DIR`/`CACHE_DIR` under `dincli`), account loading/keystore handling, manifest load/cache/key lookup, GI state enum helpers, and tx building.
 - `services/runtime.py` builds a `ServiceRuntimeContext` (network, manifest, manifest_path, model_id/role) that is auto-injected into model-owner-supplied service functions when they declare a `runtime` parameter.

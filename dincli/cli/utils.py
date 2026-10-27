@@ -37,6 +37,37 @@ CACHE_DIR = Path(user_cache_dir("dincli"))
 # access to the manifest/service/wallet cache that dincli itself manages.
 WORKER_CACHE_DIR = Path(user_cache_dir("dincli-worker"))
 
+
+class ManifestPathEscapesBaseError(ValueError):
+    """issue #227: a manifest-supplied path field would read/write outside
+    the model's own cache directory."""
+
+
+def resolve_manifest_path(base_dir: Path, manifest_path: str | Path, *, what: str = "manifest path") -> Path:
+    """Resolve a manifest-supplied relative path against `base_dir`, raising
+    rather than silently re-anchoring if it would escape it.
+
+    A manifest is fetched from IPFS by a CID a model owner controls, so its
+    "path" fields are attacker-influenced in this threat model (issue #227):
+    an absolute path discards `base_dir` entirely when joined via `/`, and
+    `..` segments walk back out of it. `resolve()` also follows symlinks, so
+    a symlink placed inside `base_dir` that points outside is caught the
+    same way -- that's deliberate, not an oversight.
+    """
+    manifest_path = Path(manifest_path)
+    if manifest_path.is_absolute():
+        raise ManifestPathEscapesBaseError(
+            f"{what} must be relative, got an absolute path: {manifest_path!s}"
+        )
+    resolved_base = base_dir.resolve()
+    resolved = (base_dir / manifest_path).resolve()
+    if not resolved.is_relative_to(resolved_base):
+        raise ManifestPathEscapesBaseError(
+            f"{what} escapes its base directory {resolved_base!s}: {manifest_path!s} -> {resolved!s}"
+        )
+    return resolved
+
+
 CONFIG_FILE = CONFIG_DIR / "config.json"
 WALLET_FILE = CONFIG_DIR / "wallet.json"
 WALLETS_DIR = CONFIG_DIR / "wallets"
@@ -656,13 +687,14 @@ stateDescription = [
         "LM submissions evaluation closed",
         "T1nT2B created",
         "T1B aggregation started",
+        "T1B aggregation reveal started",
         "T1B aggregation done",
         "T2B aggregation started",
+        "T2B aggregation reveal started",
         "T2B aggregation done",
         "Auditors slashed",
         "Validators slashed",
         "GI ended",
-        "LM submissions evaluation reveal started"
     ]
 
 states = [
@@ -684,20 +716,24 @@ states = [
         "LMSevaluationClosed",
         "T1nT2Bcreated",
         "T1AggregationStarted",
+        # issue #156 M-1 (task_240926_18 Part C): inserted in lifecycle
+        # position, same 2026-08-27 precedent LMSevaluationRevealStarted
+        # above set -- this list is a positional mirror of DINShared.sol's
+        # GIstates enum, and that enum's own comment explains why insertion
+        # (not appending) is required to keep this mirror in sync. A stale
+        # duplicate append of LMSevaluationRevealStarted previously sat at
+        # the end of this list from before that precedent was applied here;
+        # removed as part of this same fix.
+        "T1AggregationRevealStarted",
         "T1AggregationDone",
         "T2AggregationStarted",
+        "T2AggregationRevealStarted",
         "T2AggregationDone",
         "AuditorsSlashed",
         "AggregatorsSlashed",
         "GIended",
-        # Appended, not inserted where it chronologically belongs (between
-        # LMSevaluationStarted and LMSevaluationClosed) -- this list is a
-        # positional mirror of DINShared.sol's GIstates enum, which appends
-        # this member for the same reason (see the enum's own comment).
-        # Inserting here would desync every state index below GIended.
-        "LMSevaluationRevealStarted"
     ]
-    
+
 
 GIstate_to_index = {state: idx for idx, state in enumerate(states)}  
 
@@ -990,18 +1026,139 @@ def build_and_send_tx(
 
         return None
     
+def ensure_batch_seed_locked(
+    ctx,
+    task_coordinator_contract,
+    gi: int,
+    seed_getter: str,
+    seed_block_getter: str,
+    lock_fn: str,
+    label: str,
+    poll_interval: float = 2.0,
+):
+    """issue #156 H-2: autoCreateTier1AndTier2 / createAuditorsBatches both
+    require their batch-assignment seed to already be locked -- an
+    ungrindable value anchored to a future block at the preceding GIstate
+    transition (closeLMsubmissionsEvaluation / closeLMsubmissions). Waits
+    for that block to be mined, then locks the seed. The lock is
+    permissionless: if someone else locks it first (or the seed block
+    re-anchors while we're waiting, e.g. because we were offline past the
+    256-block window), this just skips or re-polls rather than erroring.
+
+    seed_getter / seed_block_getter / lock_fn are the DINTaskCoordinator
+    function names for either seed pair -- aggSeed/aggSeedBlock/lockAggSeed
+    (T1/T2 batches) or auditSeed/auditSeedBlock/lockAuditSeed (auditor
+    batches). Same helper, different seed pair per caller.
+    """
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    def _current_seed():
+        return getattr(task_coordinator_contract.functions, seed_getter)(gi).call()
+
+    if _current_seed() != b"\x00" * 32:
+        console.print(f"[dim]{label} seed already locked for GI {gi}[/dim]")
+        return
+
+    seed_block = getattr(task_coordinator_contract.functions, seed_block_getter)(gi).call()
+    console.print(
+        f"[cyan]Waiting for block {seed_block} to lock the {label} seed "
+        f"(current: {w3.eth.block_number})...[/cyan]"
+    )
+    while w3.eth.block_number <= seed_block:
+        time.sleep(poll_interval)
+
+    # A re-anchor (>256 blocks passed while we waited) or someone else's
+    # lock may have happened -- re-check rather than assume.
+    if _current_seed() != b"\x00" * 32:
+        console.print(f"[dim]{label} seed was locked by someone else while waiting[/dim]")
+        return
+
+    # exit_on_failure=False: if someone else locks between our re-check
+    # above and this tx landing, this call reverts with
+    # TC_...SeedAlreadyLocked -- exiting on that would abort the whole
+    # create command even though the seed is now locked and create would
+    # succeed (PR #191 review, finding No. 5). Re-check below covers it.
+    build_and_send_tx(
+        ctx,
+        getattr(task_coordinator_contract.functions, lock_fn)(gi),
+        f"Locking {label} seed",
+        f"{label.capitalize()} seed locked",
+        f"Failed to lock {label} seed",
+        exit_on_failure=False,
+    )
+
+    if _current_seed() != b"\x00" * 32:
+        return
+
+    # Seed is still unset. The only recoverable case is a re-anchor: the lock
+    # call moved the seed block forward (>256 blocks elapsed since the last
+    # anchor) instead of setting the seed -- recurse to wait for the new
+    # block. Any other outcome (no gas funds, RPC down, a non-race revert)
+    # would fail the same way again immediately, since the seed block is
+    # already mined, so exit rather than retry (PR #191 review, No. 6).
+    new_seed_block = getattr(task_coordinator_contract.functions, seed_block_getter)(gi).call()
+    if new_seed_block != seed_block:
+        ensure_batch_seed_locked(
+            ctx, task_coordinator_contract, gi,
+            seed_getter, seed_block_getter, lock_fn, label, poll_interval,
+        )
+        return
+
+    console.print(
+        f"[bold red]{label.capitalize()} seed for GI {gi} is still unlocked after "
+        f"the lock attempt (seed block {seed_block} unchanged); not retrying.[/bold red]"
+    )
+    raise typer.Exit(1)
+
+
+# Per batch-seed pair: (seed getter, seed-block getter, lock fn, label, the
+# GIstate in which the seed is anchored but batches aren't created yet).
+BATCH_SEED_PAIRS = {
+    "agg": ("aggSeed", "aggSeedBlock", "lockAggSeed", "T1/T2 batch", "LMSevaluationClosed"),
+    "audit": ("auditSeed", "auditSeedBlock", "lockAuditSeed", "auditor-batch", "LMSclosed"),
+}
+
+
+def lock_batch_seed_if_pending(ctx, task_coordinator_contract, gi: int, curr_gi: int, curr_GIstate: int, kind: str) -> bool:
+    """Validator-side lock for a batch-assignment seed (BL-26).
+
+    The seed's blockhash is public as soon as the seed block is mined, so if
+    only the model owner ever locks it, they can decline to lock a draw they
+    dislike and wait out the ~256-block window for a re-anchor (a fresh
+    draw). Aggregators/auditors call this from their own commands so the
+    first validator online after the seed block locks it instead.
+
+    No-op (returns False) unless `gi` is the current GI and the GI is in the
+    state where the seed is anchored but batches aren't created yet;
+    otherwise waits for the seed block and locks (returns True).
+    """
+    seed_getter, seed_block_getter, lock_fn, label, pending_state = BATCH_SEED_PAIRS[kind]
+    if gi != curr_gi or GIstateToStr(curr_GIstate) != pending_state:
+        return False
+    ensure_batch_seed_locked(
+        ctx, task_coordinator_contract, gi,
+        seed_getter, seed_block_getter, lock_fn, label,
+    )
+    return True
+
+
 def print_tx_info(tx_hash, network=None, print_url = True):
+    """Print the transaction hash and its URL when an explorer is configured."""
     #ensure tx_hash is hex string
     if isinstance(tx_hash, bytes):
         tx_hash_hex = tx_hash.hex()
     else:
         tx_hash_hex = tx_hash
 
-    #print tx url
     console.print(f"[bold green]Transaction hash:[/bold green] {tx_hash_hex}")
-    if print_url:
-        din_info = load_din_info()
-        console.print(f"[bold green]Transaction url:[/bold green] [cyan]{din_info[network]['explorer']}/tx/{tx_hash_hex}[/cyan]")
+    if not print_url:
+        return
+
+    explorer = load_din_info().get(network, {}).get("explorer")
+    if not explorer:
+        return
+
+    console.print(f"[bold green]Transaction url:[/bold green] [cyan]{explorer.rstrip('/')}/tx/{tx_hash_hex}[/cyan]")
     
 def _confirm_or_exit(question: str, instruction: str, console):
     answer = console.input(f"[bold yellow]{question} (y/n):[/bold yellow] ").strip().lower()

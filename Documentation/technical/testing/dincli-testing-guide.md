@@ -1,16 +1,26 @@
 # dincli Integration Test Guide
 
 This guide explains how to run the `tests/dincli/` integration test harness
-against a local Hardhat node, and documents the architecture of the harness
-itself.
+against a local chain, and documents the architecture of the harness itself.
+
+The chain backend and platform deploy script are chosen by
+`PLATFORM_DEPLOY_TOOLCHAIN` (`tests/dincli/constants.py`): **`foundry`
+(default)** runs Anvil (`foundry/anvil.sh`) and `foundry/script/DeployPlatform.s.sol`;
+`hardhat` runs a Hardhat node and `hardhat/scripts/deploy-platform.ts`. Both use
+chain ID 1337 on `http://127.0.0.1:8545`.
+
+> [!WARNING]
+> `foundry/anvil.sh` starts Anvil with `--code-size-limit 4294967295`, so the local chain accepts contracts above the 24,576-byte EIP-170 limit. A green local run therefore does not show that a contract can be deployed to a real chain. CI enforces the limit instead, with `.github/scripts/contract_size_gate.py` (issue #201).
 
 ---
 
 ## Quick start
 
-The harness is self-contained. All prerequisites (contract compilation, Hardhat
-node, IPFS daemon) are managed automatically by the conftest. The only manual
-requirement is Docker — it must be running before Phase 4 client training begins.
+The conftest manages contract compilation and local chain/IPFS startup.
+Install the Python dependencies and chain/IPFS toolchains first. The existing
+manual path also requires a repo-root `.env` and a packaged
+`dincli/config/accounts.json` containing the public development accounts.
+Docker must be running before Phase 4 client training begins.
 
 ```bash
 # 1. Ensure Docker daemon is running
@@ -27,8 +37,11 @@ python -m pytest tests/dincli/test_01_platform.py \
 ```
 
 That's it. The conftest will:
-- Compile all Solidity contracts via `npx hardhat compile`
-- Kill any existing Hardhat node and start a fresh one (clean EVM state)
+- Compile contracts: `npx hardhat compile` always (the task-contract deploy and
+  `dump-abi` tests still use Hardhat artifacts), plus `forge build` for the
+  default `foundry` toolchain
+- Kill any existing chain node and start a fresh one (clean EVM state): Anvil
+  for `foundry`, a Hardhat node for `hardhat`
 - Start the IPFS daemon if it is not already running
 - Restore `dincli/config/din_info.json` to its committed state after the run
 
@@ -39,14 +52,127 @@ That's it. The conftest will:
 The test suite is structured around a centralized session-scoped `conftest.py`
 that isolates dependencies and coordinates services.
 
+### CI smoke groundwork
+
+The first CI preparation change adds opt-in `DIN_TEST_ISOLATED=1` service
+ownership and corrects demo bootstrap to use `connect-demo-wallet`. It does
+not add a Docker runner or complete seven-contract deployment assertions.
+The Python CI job still selects `not integration`; the suite itself runs in
+the separate [CI integration job](#ci-integration-job).
+Full lifecycle wallet switches and later phases are not verified by this change.
+
+In a disposable checkout/environment, isolated mode requires absolute
+`DIN_TEST_TMPDIR` and `DIN_TEST_RESULTS_DIR` paths. Scratch must not already
+exist; results must be outside scratch. The harness refuses checkout dotenv
+files, uses a local-only subprocess environment, creates a fresh offline Kubo
+repository, and rejects occupied ports without terminating their processes.
+Only newly started process groups are stopped, including when setup fails
+before fixture yield. Startup logs remain in the external results directory.
+Both compiler paths remain enabled at this foundation stage; the Foundry-only
+selection will accompany the later smoke runner.
+
+The isolated Anvil is started through `foundry/anvil.sh` itself, so the chain
+flags have one source: the harness sets `ANVIL_BIN` to the binary it resolved
+and appends `--host 127.0.0.1`. The offline Kubo is configured without an
+HTTP gateway, so the RPC API on 5001 is its only port (dincli never reads
+through the gateway). Isolated compiles get a fresh `HOME` and XDG
+directories, so forge would download solc even for an up-to-date build. Set
+`DIN_TEST_SVM_DIR` to an existing absolute svm directory (`~/.svm`, or
+`~/.local/share/svm` when `~/.svm` does not exist) and its compiler versions
+are copied into scratch before `forge build`; the source is never linked or
+written to. Hardhat needs no equivalent once `hardhat/` has been compiled
+outside the harness: its isolated compile then reports "Nothing to compile"
+and never asks for a compiler.
+
+Isolated bootstrap validates and reuses accounts 0/1 in the checkout's public
+`dincli/config/accounts.json`, preserving the file. If absent, it generates
+those accounts from the public Anvil mnemonic and removes only that generated
+file on teardown. Invalid accounts or symlinks fail setup. `connect-demo-wallet` reads
+this file; setting `ETH_PRIVATE_KEY_N` alone does not supply demo accounts.
+Existing manual runs must provide their own public account file with enough
+entries for the chosen phases. Real-wallet commands deliberately reject demo
+wallets and must not be substituted during bootstrap.
+
+The focused tests below exercise startup failures, process ownership,
+interruption, account setup and retained evidence without launching Anvil or
+IPFS, compiling contracts or contacting a chain:
+
+```bash
+python -m pytest tests/test_integration_demo.py \
+  tests/test_integration_services.py tests/test_integration_harness.py -q
+```
+
+Isolated mode is a harness setting, not a container or a guarantee that an
+arbitrary checkout is disposable. Use it only inside an environment you own
+for testing. In CI that environment is the job's GitHub-hosted runner. The
+forthcoming Docker runner will establish that boundary and provide the shared
+GitHub/local reproduction command.
+
+### CI integration job
+
+`.github/workflows/ci.yml` has an **Integration (full GI)** job (issue #228)
+that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
+`DIN_TEST_ISOLATED=1` on a GitHub-hosted runner.
+
+- **When it runs:** on PRs and pushes to `develop` that change
+  `foundry/src/`, `foundry/script/`, `foundry/anvil.sh`, `hardhat/`,
+  `dincli/`, `tests/dincli/` or `ci.yml`. (`hardhat/` is included while the
+  suite still deploys the task contracts from Hardhat artifacts.) The workflow itself has no path filters
+  because `CI OK` is the single required check, so the small
+  **Integration paths** job decides by diffing against the base. When it
+  cannot diff (a force push, for example), the suite runs.
+- **Non-blocking:** the job has `continue-on-error: true` and `CI OK` does not
+  wait for it. It is expected to fail after `test_01` until task_061026_21
+  moves the suite to the foundry task contracts and demo wallets. Once it has
+  been stable for a couple of weeks it can become required: add it to
+  `ci-ok`'s `needs` and accept `skipped` there.
+- **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
+  Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
+  `npx hardhat compile` run first, in the runner's normal environment, so the
+  harness's isolated compiles are up to date: forge gets solc through
+  `DIN_TEST_SVM_DIR` and hardhat needs no compiler. Without this step the
+  harness would download both compilers and run a full `via_ir` build inside
+  its 180 s compile timeout. The solc and Hardhat compiler downloads are
+  cached between runs, and the `din-worker` image is built before the suite
+  starts rather than inside a Phase 4 command's timeout.
+- **Logs:** when the job fails, the `integration-logs` artifact holds the
+  results directory: `pytest.log`, `hardhat_compile.log`, `forge_build.log`,
+  `chain_node.log` (Anvil), `ipfs_init.log` and `ipfs_daemon.log`. The step
+  summary records the suite's exit status and runtime.
+
+To reproduce the job locally, use a disposable checkout with no `.env*` file
+other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo
+(`ipfs`) on `PATH`, Docker running, and nothing listening on ports 8545 or
+5001:
+
+```bash
+(cd foundry && npm ci && forge build)
+(cd hardhat && npm ci && npx hardhat compile)
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+python -m pip install -e ".[test]"
+docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
+
+svm="$HOME/.svm"; [ -d "$svm" ] || svm="${XDG_DATA_HOME:-$HOME/.local/share}/svm"
+export DIN_TEST_ISOLATED=1 DIN_TEST_SVM_DIR="$svm"
+export DIN_TEST_TMPDIR="$(mktemp -d)/scratch" DIN_TEST_RESULTS_DIR="$(mktemp -d)"
+pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee "$DIN_TEST_RESULTS_DIR/pytest.log"
+```
+
+`DIN_TEST_TMPDIR` must not exist yet: the harness creates it and deletes it
+at the end of the session. The logs stay in `DIN_TEST_RESULTS_DIR`.
+
 ### Managed services (`managed_services` fixture)
 
 Before any test runs, the fixture does the following:
-1. **Solidity compilation** — runs `npx hardhat compile` inside
-   `/path/to/devnet/hardhat` to generate fresh contract ABIs.
-2. **Fresh Hardhat node** — kills any active node process on port `8545` and
-   launches a clean local node (`npx hardhat node`) with the customized
-   account count.
+1. **Solidity compilation** — runs `npx hardhat compile` in `hardhat/` (the
+   task-contract deploys and `dump-abi` tests use Hardhat artifacts), and
+   `forge build` in `foundry/` when the toolchain is `foundry` (the platform is
+   deployed from `foundry/out/` via `DeployPlatform.s.sol`). In isolated mode
+   the `DIN_TEST_SVM_DIR` compilers, if set, are copied into scratch first.
+2. **Fresh chain node** — kills any running node and launches a clean one on
+   port `8545`: `foundry/anvil.sh` (70 accounts, chain ID 1337) for `foundry`,
+   or `npx hardhat node` for `hardhat`. Isolated mode starts the same
+   `foundry/anvil.sh`, but never kills anything: an occupied port fails setup.
 3. **IPFS daemon** — checks if the IPFS API (`http://127.0.0.1:5001`) is
    running, starting it (`ipfs daemon`) if not. If it was already running
    externally, it is left running at teardown.
@@ -118,11 +244,13 @@ between them automatically per command — no manual activation needed:
 `TORCHENV_PYTHON` / `PYDIN_PYTHON` are defined in `tests/dincli/constants.py`.
 If you see torch import errors in Phase 4, confirm those paths are correct.
 
-### Hardhat accounts
+### Chain accounts
 
-The GI harness uses accounts 0–22 and 50–58 (59 accounts total). Hardhat's
-default is 20 accounts. `hardhat.config.ts` must have `accounts.count` set to
-at least 60. If you see an "account index out of range" error:
+The GI harness uses accounts 0–22 and 50–58 (59 accounts total).
+`foundry/anvil.sh` already starts Anvil with `--accounts 70`. For the
+`hardhat` toolchain, Hardhat's default is 20 accounts, so `hardhat.config.ts`
+must set `accounts.count` to at least 60. If you see an "account index out of
+range" error there:
 
 ```ts
 // hardhat/hardhat.config.ts
@@ -276,13 +404,17 @@ used for `ModelArchitecture`. This is handled for `scoring.py` via the
 
 ```python
 scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
-scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
-ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
+scoring_service_path = resolve_manifest_path(model_base_dir, scoring_manifest["path"], what="ScoringUtils path")
+ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils", base_dir=model_base_dir)
 ```
 
 When adding a new reference service with sibling-module imports, follow this
 pattern: add a manifest entry with its own IPFS CID, and fetch it explicitly
-before the worker job runs.
+before the worker job runs. Always build the path with
+`resolve_manifest_path` (never `base / Path(manifest["path"])`) and pass the
+workflow root as `base_dir`. That root is `get_model_base_dir(model_id)` for
+participants, or `get_task_dir(coordinator)` for the model owner before
+registration (issue #227).
 
 ---
 
@@ -315,10 +447,17 @@ All output is written to `~/tempdir/dincli/`:
 |------|----------|
 | `results/last_run.txt` | Full pytest output of the most recent run |
 | `results/hardhat_compile.log` | `npx hardhat compile` output |
-| `results/hardhat_node.log` | Hardhat node stdout/stderr |
+| `results/forge_build.log` | `forge build` output (`foundry` toolchain) |
+| `results/anvil_node.log` | Anvil stdout/stderr (`foundry` toolchain) |
+| `results/hardhat_node.log` | Hardhat node stdout/stderr (`hardhat` toolchain) |
 | `results/ipfs_daemon.log` | IPFS daemon stdout/stderr (if started by conftest) |
 | `config/` | Isolated dincli config for the test session |
 | `cache/` | Isolated dincli cache for the test session |
+
+In isolated mode (and in CI) the logs go to `DIN_TEST_RESULTS_DIR` instead,
+the chain log is `chain_node.log` for either toolchain, and `ipfs_init.log`
+records the fresh Kubo repository setup. See
+[CI integration job](#ci-integration-job).
 
 ---
 
@@ -327,8 +466,8 @@ All output is written to `~/tempdir/dincli/`:
 **Docker not running** — Phase 4 client training uses containerised execution.
 Start Docker before running the suite.
 
-**Hardhat node failed to start** — check
-`~/tempdir/dincli/results/hardhat_node.log`.
+**Chain node failed to start** — check
+`~/tempdir/dincli/results/anvil_node.log` (default) or `hardhat_node.log`.
 
 **IPFS not responding** — check
 `~/tempdir/dincli/results/ipfs_daemon.log`.

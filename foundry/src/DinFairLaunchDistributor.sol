@@ -86,8 +86,8 @@ contract DinFairLaunchDistributor is
     mapping(address => VestingPosition) public positions;
     mapping(address => bool)            public hasClaimed;
 
-    // Reserved for future state variables (50 - 7 current slots).
-    uint256[43] private __gap;
+    // Reserved for future state variables at this inheritance level.
+    uint256[50] private __gap;
 
     // ─── Events ───────────────────────────────────────────────────────────────
 

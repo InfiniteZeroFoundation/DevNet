@@ -17,7 +17,8 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates} from "../src/DINShared.sol";
+import {GIstates, TA_RevealHashMismatch} from "../src/DINShared.sol";
+import {auditCommitHash} from "./utils/AuditCommitHash.sol";
 
 contract AuditorCommitRevealTest is Test {
     DinToken tokenImpl;
@@ -185,6 +186,8 @@ contract AuditorCommitRevealTest is Test {
 
         vm.startPrank(modelOwner);
         tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
+        tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -197,9 +200,8 @@ contract AuditorCommitRevealTest is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     function _commitScore(address who, uint gi, uint batchId, uint modelIdx, uint256 score, bool vote) internal {
-        bytes32 hash = keccak256(abi.encodePacked(score, vote, TEST_SALT));
         vm.prank(who);
-        ta.commitAuditScore(gi, batchId, modelIdx, hash);
+        ta.commitAuditScore(gi, batchId, modelIdx, auditCommitHash(score, vote, TEST_SALT, who, gi, batchId, modelIdx));
     }
 
     function _revealScore(address who, uint gi, uint batchId, uint modelIdx, uint256 score, bool vote) internal {
@@ -289,7 +291,7 @@ contract AuditorCommitRevealTest is Test {
 
         vm.prank(batchAuditors[0]);
         vm.expectRevert(); // TA_AlreadyCommitted
-        ta.commitAuditScore(1, 0, modelIdxs[0], keccak256(abi.encodePacked(uint256(90), true, TEST_SALT)));
+        ta.commitAuditScore(1, 0, modelIdxs[0], auditCommitHash(uint256(90), true, TEST_SALT, batchAuditors[0], 1, 0, modelIdxs[0]));
     }
 
     function test_reveal_twiceReverts() public {
@@ -334,6 +336,87 @@ contract AuditorCommitRevealTest is Test {
         assertEq(finalScore, 50);
         assertTrue(ta.hasCommittedLM(1, 0, batchAuditors[2], modelIdxs[0]), "committed");
         assertFalse(ta.hasAuditedLM(1, 0, batchAuditors[2], modelIdxs[0]), "but never revealed/counted");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Issue #192: the commit hash binds the auditor and (gi, batchId,
+    // modelIndex), so a copied commit can't be revealed by the copier and a
+    // commit can't be reused for another slot.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev The #192 attack: B copies A's public commit hash, waits for A's
+    ///      reveal, then reveals A's exact (score, vote, salt). With the old
+    ///      sender-independent hash this succeeded and B earned a free vote.
+    function test_copyAttack_replayingPeerCommitAndReveal_reverts() public {
+        _runToLMSevaluationStarted();
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        address honest = batchAuditors[0];
+        address copier = batchAuditors[1];
+
+        _commitScore(honest, 1, 0, modelIdxs[0], 80, true);
+        bytes32 honestHash = ta.auditScoreCommits(1, 0, honest, modelIdxs[0]);
+        vm.prank(copier);
+        ta.commitAuditScore(1, 0, modelIdxs[0], honestHash);
+
+        _openRevealPhase(1);
+        _revealScore(honest, 1, 0, modelIdxs[0], 80, true);
+
+        vm.prank(copier);
+        vm.expectRevert(TA_RevealHashMismatch.selector);
+        ta.revealAuditScore(1, 0, modelIdxs[0], 80, true, TEST_SALT);
+        assertFalse(ta.hasAuditedLM(1, 0, copier, modelIdxs[0]), "copier gets no vote");
+    }
+
+    /// @dev A hash built for one (gi, batchId, modelIndex) doesn't reveal for
+    ///      any other: another model, another batch, or another GI.
+    function test_commitHashBoundToSlot_otherModelBatchOrGI_reverts() public {
+        _runToLMSevaluationStarted();
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+        require(modelIdxs.length >= 2, "fixture: need 2 models in batch 0");
+        address a0 = batchAuditors[0];
+        address a1 = batchAuditors[1];
+        address a2 = batchAuditors[2];
+
+        // Each commits on modelIdxs[0] a hash built for a different slot.
+        vm.prank(a0);
+        ta.commitAuditScore(1, 0, modelIdxs[0], auditCommitHash(80, true, TEST_SALT, a0, 1, 0, modelIdxs[1]));
+        vm.prank(a1);
+        ta.commitAuditScore(1, 0, modelIdxs[0], auditCommitHash(80, true, TEST_SALT, a1, 1, 1, modelIdxs[0]));
+        vm.prank(a2);
+        ta.commitAuditScore(1, 0, modelIdxs[0], auditCommitHash(80, true, TEST_SALT, a2, 2, 0, modelIdxs[0]));
+
+        _openRevealPhase(1);
+        for (uint i = 0; i < 3; i++) {
+            vm.prank(batchAuditors[i]);
+            vm.expectRevert(TA_RevealHashMismatch.selector);
+            ta.revealAuditScore(1, 0, modelIdxs[0], 80, true, TEST_SALT);
+        }
+    }
+
+    /// @dev The honest path still works end to end with the bound hash: every
+    ///      auditor commits and reveals its own hash, and evaluation closes
+    ///      with the expected aggregate score.
+    function test_honestPath_boundHash_allRevealAndClose() public {
+        _runToLMSevaluationStarted();
+        (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
+
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                _commitScore(batchAuditors[i], 1, 0, modelIdxs[m], 70, true);
+            }
+        }
+        _openRevealPhase(1);
+        for (uint i = 0; i < batchAuditors.length; i++) {
+            for (uint m = 0; m < modelIdxs.length; m++) {
+                _revealScore(batchAuditors[i], 1, 0, modelIdxs[m], 70, true);
+                assertTrue(ta.hasAuditedLM(1, 0, batchAuditors[i], modelIdxs[m]));
+            }
+        }
+
+        vm.prank(modelOwner);
+        tc.closeLMsubmissionsEvaluation(1);
+        (, , , , , , uint256 finalScore) = ta.lmSubmissions(1, modelIdxs[0]);
+        assertEq(finalScore, 70);
     }
 
     // ─────────────────────────────────────────────────────────────────────

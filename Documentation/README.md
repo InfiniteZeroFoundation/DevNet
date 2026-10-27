@@ -14,6 +14,8 @@ Documentation for the DIN Protocol DevNet as implemented on the `develop` branch
 | Document | Purpose |
 |---|---|
 | [Getting Started](public/getting-started.md) | Onboarding guide for Model_0 on the live devnet (`sepolia-op-devnet`) |
+| [What can I train on DIN?](public/what-can-be-trained.md) | DevNet 2.0 model fit, custom services, practical limits, and the path to trying a new task |
+| [Explore DIN with your community](public/partner-introduction.md) | A short introduction for groups considering a testnet trial |
 | [Setup Guide](public/setup.md) | Installing and configuring `dincli`: venv, wallet, network, logging, demo mode, IPFS |
 | [CLI Reference](public/cli-reference.md) | Common `dincli` reference across all roles |
 | [Manifest](public/manifest.md) | The per-model `manifest.json`: metadata, services, contract addresses |
@@ -21,7 +23,7 @@ Documentation for the DIN Protocol DevNet as implemented on the `develop` branch
 
 ### Role guides — [`public/roles/`](public/roles/)
 
-One guide per network role: [Clients](public/roles/clients.md) · [Auditors](public/roles/auditors.md) · [Aggregators](public/roles/aggregators.md) · [Model Owners](public/roles/model-owner.md) · [DIN-Representative (dindao)](public/roles/dindao.md)
+One guide per network role: [Clients](public/roles/clients.md) · [Auditors](public/roles/auditors.md) · [Aggregators](public/roles/aggregators.md) · [Model Owners](public/roles/model-owner.md) · [DIN-Representative (dinrep)](public/roles/dinrep.md)
 
 ### Workflows — [`public/workflows/`](public/workflows/)
 
@@ -40,10 +42,10 @@ One guide per network role: [Clients](public/roles/clients.md) · [Auditors](pub
 | Area | Contents |
 |---|---|
 | `technical/ARCHITECTURE.md` (not yet written) | System architecture reference (first complete draft tracked as P3-DOC1) |
-| [`contracts/`](technical/contracts/) | Per-contract references: `DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`, `DINTaskCoordinator`, `DINTaskAuditor`, `DINShared` |
+| [`contracts/`](technical/contracts/) | Per-contract references: `DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`, `DINTaskCoordinator`, `DINTaskAuditor`, `DINShared`; [Foundry scripts and V2 fixtures](technical/contracts/foundry/README.md) (deploy/upgrade scripts, `DeploymentsPath`) |
 | [`mechanisms/`](technical/mechanisms/) | Currently implemented protocol mechanisms (e.g. [staking](technical/mechanisms/staking-mechanism.md)) |
 | [`services/`](technical/services/) | Reference service internals (e.g. [client service](technical/services/clients.md)) |
 | [`testing/`](technical/testing/) | [dincli testing guide](technical/testing/dincli-testing-guide.md), [containerization guide](technical/testing/containerization-guide.md) |
-| [`upgradable-contracts/`](technical/upgradable-contracts/) | Transparent Proxy deployment architecture and upgrade test documentation |
+| [`upgradable-contracts/`](technical/upgradable-contracts/) | Transparent Proxy deployment architecture and upgrade test documentation; [Foundry upgradeability reference](technical/upgradable-contracts/foundry/README.md) (deploy, upgrade, validate) |
 | [manifest.md](technical/manifest.md) | Manifest runtime resolution and service loading internals |
 | [requirements.md](technical/requirements.md) | Pinned pip requirements reference |
