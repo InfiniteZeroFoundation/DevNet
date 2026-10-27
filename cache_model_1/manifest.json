@@ -1,0 +1,261 @@
+{
+   "name": "fashion-mnist-cnn",
+   "version": "1.0.0",
+   "description": "CNN model to classify Fashion-MNIST clothing categories (T-shirt, Trouser, Pullover, Dress, Coat, Sandal, Shirt, Sneaker, Bag, Ankle boot)",
+   "author": "",
+   "technical details": "Two-layer CNN: Conv2d(1,32,3) → MaxPool → Conv2d(32,64,3) → MaxPool → Linear(3136,256) → Dropout(0.25) → Linear(256,10). Input: 1×28×28 grayscale. Same service interface as cache_model_0.",
+   "Genesis_Model_CID": "",
+   "DINTaskCoordinator_Contract": "",
+   "DINTaskAuditor_Contract": "",
+   "audit_scoring_policy": {
+      "spec_version": 1,
+      "pass_scoring": {
+         "enabled": true,
+         "threshold": 5
+      },
+      "scenario": "labeled_holdout_classification",
+      "admission_mode": "holdout_delta",
+      "contribution_mode": "none",
+      "fallback_mode": "screening_only",
+      "algorithms": {
+         "eligibility": "eligibility_anomaly_gate",
+         "utility": "holdout_delta_score",
+         "validator_aggregation": "legacy_mean_until_contract_v2"
+      },
+      "normalization": {
+         "contract_score_scale": "percent_0_100",
+         "utility_scale": "basis_points",
+         "max_utility": 10000
+      },
+      "eligibility_checks": {
+         "require_loadable_model": true,
+         "require_architecture_match": true,
+         "reject_nan_tensors": true,
+         "max_update_norm": 100.0,
+         "max_abs_weight": 100.0,
+         "min_eval_examples": 1
+      },
+      "evaluation": {
+         "batch_size": 32,
+         "dataset_mode": "legacy_testDataCID",
+         "metric_bundle_upload": "best_effort"
+      },
+      "metrics": {
+         "primary": [
+            "accuracy",
+            "loss",
+            "macro_f1",
+            "baseline_delta"
+         ],
+         "thresholds": {
+            "min_accuracy": 50.0,
+            "min_baseline_delta_bps": 0,
+            "max_anomaly_score_bps": 5000
+         }
+      },
+      "validator_consensus": {
+         "acceptance_rule": "legacy_contract_quorum",
+         "target_acceptance_rule_v2": "majority_vote",
+         "target_score_rule_v2": "median",
+         "max_disagreement_bps": 800
+      }
+   },
+   "gm_scoring_policy": {
+      "evaluation": {
+         "requires_test_dataset": true,
+         "dataset_mode": "path"
+      }
+   },
+   "dp": {
+      "enabled": false,
+      "mode": "afterTraining",
+      "mechanism": "post_training_gaussian",
+      "parameters": {
+         "clipping_norm": 1.0,
+         "noise_multiplier": 0.5,
+         "laplace_scale": 0.35,
+         "clip_scope": "global"
+      }
+   },
+   "getGenesisModelIpfs": {
+      "type": "custom",
+      "path": "services/modelowner.py",
+      "ipfs": "",
+      "stakeholders": [
+         "modelowner"
+      ]
+   },
+   "getscoreforGM": {
+      "type": "custom",
+      "path": "services/modelowner.py",
+      "ipfs": "",
+      "stakeholders": [
+         "modelowner"
+      ]
+   },
+   "ModelArchitecture": {
+      "type": "custom",
+      "path": "services/model.py",
+      "ipfs": "",
+      "stakeholders": [
+         "modelowner",
+         "auditors",
+         "aggregators",
+         "clients"
+      ]
+   },
+   "train_client_model": {
+      "type": "custom",
+      "path": "services/client.py",
+      "ipfs": "",
+      "stakeholders": [
+         "clients"
+      ]
+   },
+   "create_audit_testDataCIDs": {
+      "type": "custom",
+      "path": "services/modelowner.py",
+      "ipfs": "",
+      "stakeholders": [
+         "modelowner"
+      ]
+   },
+   "Score_model_by_auditor": {
+      "type": "custom",
+      "path": "services/auditor.py",
+      "ipfs": "",
+      "stakeholders": [
+         "auditors"
+      ]
+   },
+   "ScoringUtils": {
+      "type": "custom",
+      "path": "services/scoring.py",
+      "ipfs": "",
+      "stakeholders": [
+         "auditors"
+      ]
+   },
+   "get_aggregated_cid_t1": {
+      "type": "custom",
+      "path": "services/aggregator.py",
+      "ipfs": "",
+      "stakeholders": [
+         "aggregators"
+      ]
+   },
+   "get_aggregated_cid_t2": {
+      "type": "custom",
+      "path": "services/aggregator.py",
+      "ipfs": "",
+      "stakeholders": [
+         "aggregators"
+      ]
+   },
+   "requirements.txt": {
+      "clients": "",
+      "auditors": "",
+      "aggregators": "",
+      "modelowner": ""
+   },
+   "task_contracts": {
+      "DINTaskCoordinator_Contract": {
+         "name": "DINTaskCoordinator",
+         "address": "",
+         "artifact": {
+            "type": "hardhat-artifact",
+            "path": "contracts/abis/DINTaskCoordinator.json",
+            "ipfs": "",
+            "stakeholders": [
+               "modelowner",
+               "auditors",
+               "aggregators",
+               "clients"
+            ]
+         },
+         "source": {
+            "path": "contracts/sources/DINTaskCoordinator.sol",
+            "ipfs": null
+         },
+         "compilation": {
+            "toolchain": "hardhat",
+            "solidity": "0.8.28",
+            "evm_version": "cancun",
+            "optimizer": {
+               "enabled": false,
+               "runs": 200
+            },
+            "config": {
+               "path": "contracts/compilation/hardhat.config.ts",
+               "ipfs": null
+            },
+            "sources": [
+               {
+                  "path": "contracts/sources/DINTaskCoordinator.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINTaskAuditor.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINShared.sol",
+                  "ipfs": null
+               }
+            ],
+            "dependencies": [
+               "@openzeppelin/contracts"
+            ]
+         }
+      },
+      "DINTaskAuditor_Contract": {
+         "name": "DINTaskAuditor",
+         "address": "",
+         "artifact": {
+            "type": "hardhat-artifact",
+            "path": "contracts/abis/DINTaskAuditor.json",
+            "ipfs": "",
+            "stakeholders": [
+               "modelowner",
+               "auditors",
+               "aggregators",
+               "clients"
+            ]
+         },
+         "source": {
+            "path": "contracts/sources/DINTaskAuditor.sol",
+            "ipfs": null
+         },
+         "compilation": {
+            "toolchain": "hardhat",
+            "solidity": "0.8.28",
+            "evm_version": "cancun",
+            "optimizer": {
+               "enabled": false,
+               "runs": 200
+            },
+            "config": {
+               "path": "contracts/compilation/hardhat.config.ts",
+               "ipfs": null
+            },
+            "sources": [
+               {
+                  "path": "contracts/sources/DINTaskCoordinator.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINTaskAuditor.sol",
+                  "ipfs": null
+               },
+               {
+                  "path": "contracts/sources/DINShared.sol",
+                  "ipfs": null
+               }
+            ],
+            "dependencies": [
+               "@openzeppelin/contracts"
+            ]
+         }
+      }
+   }
+}
