@@ -39,7 +39,9 @@ dincli system verify-deployment --slashers 0xTaskCoord1,0xTaskCoord2
 | 2 | EIP-1967 admin slot | Slot value ≠ `proxyAdminXxx` in the JSON |
 | 3 | Implementation extcodehash | `keccak256(eth_getCode(impl))` ≠ `dinXxxImplCodehash` in the JSON |
 | 4 | ProxyAdmin `owner()` | On-chain owner ≠ `owner` in the JSON |
-| 5 | `DinCoordinator` wiring | `dinToken` / `dinValidatorStake` / `dinModelRegistry` addresses mismatch |
+| 5 | `DinCoordinator` wiring | `dinToken` / `dinValidatorStakeContract` / `feeRouter` addresses mismatch |
+| 5b | `DinFeeRouter.treasury()` wiring | Return value ≠ `dinTreasury` in the JSON (checked independently of `dinCoordinator`) |
+| 5c | `DINModelRegistry.dinValidatorStake()` wiring | Return value ≠ `dinValidatorStake` in the JSON |
 | 6 | Slasher authorizations | Expected slasher not authorized (only when `--slashers` is given) |
 
 Checks 1–4 require that `DeployPlatform.s.sol` / `UpgradePlatform.s.sol` was run

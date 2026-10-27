@@ -1152,7 +1152,8 @@ _WIRING_ABI   = [
     {"inputs": [], "name": "feeRouter",                "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
 ]
 _SLASHER_ABI     = [{"inputs": [{"type": "address"}], "name": "slasherContracts", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"}]
-_FEE_ROUTER_ABI  = [{"inputs": [], "name": "treasury", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
+_FEE_ROUTER_ABI  = [{"inputs": [], "name": "treasury",          "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
+_REGISTRY_ABI    = [{"inputs": [], "name": "dinValidatorStake", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]
 
 # Proxy names and the matching JSON keys for proxy / proxyAdmin / impl / codehash
 _PROXIES = [
@@ -1218,7 +1219,9 @@ def verify_deployment(
       2. EIP-1967 admin slot of each proxy
       3. extcodehash of each implementation vs the recorded codehash
       4. owner() of each ProxyAdmin
-      5. DinCoordinator cross-contract wiring
+      5. DinCoordinator cross-contract wiring (dinToken / dinValidatorStakeContract / feeRouter)
+      5b. DinFeeRouter.treasury() points at the recorded dinTreasury proxy
+      5c. DINModelRegistry.dinValidatorStake() points at the recorded dinValidatorStake proxy
       6. DinValidatorStake slasher authorizations (informational when no --slashers given)
 
     Exits 0 when all checks pass, 1 on any DRIFT or ERROR.
@@ -1393,29 +1396,50 @@ def verify_deployment(
                 else:
                     _emit("DRIFT", f"wiring: DinCoordinator.{desc}: recorded {recorded}  actual {actual}")
                     drift = True
-
-            # FeeRouter.treasury() must point at the recorded treasury proxy.
-            fee_router_addr = deps.get("dinFeeRouter", "")
-            treasury_addr   = deps.get("dinTreasury", "")
-            if fee_router_addr and treasury_addr:
-                try:
-                    fee_router_cs = w3.to_checksum_address(fee_router_addr)
-                    treasury_cs   = w3.to_checksum_address(treasury_addr)
-                    if int(fee_router_cs, 16) == 0:
-                        _emit("WARN", "DinFeeRouter address is zero — treasury wiring check skipped")
-                    else:
-                        fee_router = w3.eth.contract(address=fee_router_cs, abi=_FEE_ROUTER_ABI)
-                        actual_treasury = w3.to_checksum_address(fee_router.functions.treasury().call())
-                        if treasury_cs == actual_treasury:
-                            _emit("OK", f"wiring: DinFeeRouter.treasury → {actual_treasury}")
-                        else:
-                            _emit("DRIFT", f"wiring: DinFeeRouter.treasury: recorded {treasury_cs}  actual {actual_treasury}")
-                            drift = True
-                except Exception as exc:
-                    _emit("ERROR", f"DinFeeRouter.treasury() check failed: {exc}")
-                    drift = True
         except Exception as exc:
             _emit("ERROR", f"DinCoordinator wiring check failed: {exc}")
+            drift = True
+
+    # ── Check 5b: FeeRouter.treasury wiring (independent of coordinator) ─────
+    fee_router_addr = deps.get("dinFeeRouter", "")
+    treasury_addr   = deps.get("dinTreasury", "")
+    if fee_router_addr and treasury_addr:
+        try:
+            fee_router_cs = w3.to_checksum_address(fee_router_addr)
+            treasury_cs   = w3.to_checksum_address(treasury_addr)
+            if int(fee_router_cs, 16) == 0:
+                _emit("WARN", "DinFeeRouter address is zero — treasury wiring check skipped")
+            else:
+                fee_router = w3.eth.contract(address=fee_router_cs, abi=_FEE_ROUTER_ABI)
+                actual_treasury = w3.to_checksum_address(fee_router.functions.treasury().call())
+                if treasury_cs == actual_treasury:
+                    _emit("OK", f"wiring: DinFeeRouter.treasury → {actual_treasury}")
+                else:
+                    _emit("DRIFT", f"wiring: DinFeeRouter.treasury: recorded {treasury_cs}  actual {actual_treasury}")
+                    drift = True
+        except Exception as exc:
+            _emit("ERROR", f"DinFeeRouter.treasury() check failed: {exc}")
+            drift = True
+
+    # ── Check 5c: DINModelRegistry.dinValidatorStake wiring ──────────────────
+    registry_addr = deps.get("dinModelRegistry", "")
+    stake_dep     = deps.get("dinValidatorStake", "")
+    if registry_addr and stake_dep:
+        try:
+            registry_cs = w3.to_checksum_address(registry_addr)
+            if int(registry_cs, 16) == 0:
+                pass  # no registry recorded — skip
+            else:
+                stake_cs = w3.to_checksum_address(stake_dep)
+                registry = w3.eth.contract(address=registry_cs, abi=_REGISTRY_ABI)
+                actual_stake = w3.to_checksum_address(registry.functions.dinValidatorStake().call())
+                if stake_cs == actual_stake:
+                    _emit("OK", f"wiring: DINModelRegistry.dinValidatorStake → {actual_stake}")
+                else:
+                    _emit("DRIFT", f"wiring: DINModelRegistry.dinValidatorStake: recorded {stake_cs}  actual {actual_stake}")
+                    drift = True
+        except Exception as exc:
+            _emit("ERROR", f"DINModelRegistry.dinValidatorStake check failed: {exc}")
             drift = True
 
     # ── Check 6: slasher authorizations ──────────────────────────────────────

@@ -61,13 +61,16 @@ def _wired_deps() -> dict:
 
 # ── Dummy web3 ───────────────────────────────────────────────────────────────
 
-_TREASURY = "0xDe2222222222222222222222222222222222222D"
+_TREASURY   = "0xDe2222222222222222222222222222222222222D"
 _FEE_ROUTER = "0xDe3333333333333333333333333333333333333D"
+_STAKE      = "0xDe4444444444444444444444444444444444444D"
+_REGISTRY   = "0xDe5555555555555555555555555555555555555D"
 
 
 class DummyEth:
     def __init__(self, impl=_IMPL, admin=_ADMIN, code=_CODE, owner_ret=_OWNER,
-                 wiring=None, slasher_authorized=True, treasury_ret=None):
+                 wiring=None, slasher_authorized=True, treasury_ret=None,
+                 registry_stake_ret=None):
         self._impl  = impl
         self._admin = admin
         self._code  = code
@@ -79,6 +82,7 @@ class DummyEth:
         }
         self._slasher_authorized = slasher_authorized
         self._treasury = treasury_ret or _TREASURY
+        self._registry_stake = registry_stake_ret or _STAKE
 
     def get_storage_at(self, addr, slot):
         if slot == _IMPL_SLOT:
@@ -128,6 +132,13 @@ class DummyEth:
                         @staticmethod
                         def call():
                             return outer._treasury
+                    return _R
+                @staticmethod
+                def dinValidatorStake():
+                    class _R:
+                        @staticmethod
+                        def call():
+                            return outer._registry_stake
                     return _R
                 @staticmethod
                 def slasherContracts(addr):
@@ -353,6 +364,44 @@ class TestFeeRouterTreasury:
         code, lines = run_cmd(tmp_path, deps)
         assert code == 0
         assert not any("[DRIFT]" in l and "treasury" in l for l in lines)
+
+    def test_fires_without_coordinator(self, tmp_path):
+        """Treasury check must run even when dinCoordinator is absent from deps."""
+        deps = _wired_deps()
+        deps.pop("dinCoordinator", None)
+        w3 = DummyWeb3(treasury_ret=_TREASURY, wiring=_WIRED_WIRING)
+        code, lines = run_cmd(tmp_path, deps, w3=w3)
+        assert code == 0
+        assert any("[OK]" in l and "treasury" in l for l in lines), (
+            "treasury wiring check must fire even when dinCoordinator is absent"
+        )
+
+
+def _registry_deps() -> dict:
+    """Deps with real registry and stake addresses so the registry wiring check fires.
+    dinCoordinator is absent so coordinator wiring does not interfere."""
+    d = _one_proxy_deps()
+    d.pop("dinCoordinator", None)
+    d["dinModelRegistry"] = _REGISTRY
+    d["dinValidatorStake"] = _STAKE
+    return d
+
+
+class TestRegistryWiring:
+    """DINModelRegistry.dinValidatorStake() wiring check."""
+
+    def test_ok_when_stake_matches(self, tmp_path):
+        w3 = DummyWeb3(registry_stake_ret=_STAKE)
+        code, lines = run_cmd(tmp_path, _registry_deps(), w3=w3)
+        assert code == 0
+        assert any("[OK]" in l and "DINModelRegistry" in l for l in lines)
+
+    def test_drift_when_stake_wrong(self, tmp_path):
+        wrong_stake = "0x0000000000000000000000000000000000000099"
+        w3 = DummyWeb3(registry_stake_ret=wrong_stake)
+        code, lines = run_cmd(tmp_path, _registry_deps(), w3=w3)
+        assert code != 0
+        assert any("[DRIFT]" in l and "DINModelRegistry" in l for l in lines)
 
 
 class TestAccountFreeDispatch:
