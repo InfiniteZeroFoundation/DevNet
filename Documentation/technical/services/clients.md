@@ -178,11 +178,25 @@ Why this matters (issue #279 Track B, dp-mechanism-review.md F4): the Laplace
 mechanism's privacy guarantee is calibrated against **L1** sensitivity, not
 L2. `post_training_laplace` reuses the same L2 clip as the Gaussian
 mechanisms, which for model weights can understate the true L1 sensitivity by
-a factor of up to √d (d = parameter count) — effectively claiming far more
-privacy than the noise actually delivers. `update_laplace` clips the delta
-against its L1 norm instead, so `clipping_norm` is the correct sensitivity
-bound for the Laplace noise added on top of it, same shape as
-`update_gaussian` but calibrated correctly for the Laplace distribution.
+a factor of up to √d (d = parameter count) — the √d figure is a worst-case
+norm-conversion bound for a given dimension, not a measured typical ratio or
+a demonstrated privacy loss on this model. `update_laplace` clips the delta
+against its L1 norm instead, so `clipping_norm` bounds the clipped delta's L1
+norm, same shape as `update_gaussian` but calibrated correctly for the
+Laplace distribution.
+
+**What that sensitivity bound actually guarantees, and what it doesn't.**
+"`clipping_norm` is the sensitivity bound" is only meaningful under a stated
+neighbor definition. Under client-level DP — neighboring datasets differ by
+one client's entire contribution, i.e. one neighbor has that client's update
+and the other replaces it with a zero delta — the L1 distance between the two
+possible outputs is at most `clipping_norm` (the clipped delta's own L1 norm
+bound), giving an L1 sensitivity of `clipping_norm` and an (ε, 0)-DP guarantee
+at `laplace_scale = clipping_norm / ε` under that definition. This has not
+had DP-specialist review, and it covers only the floating tensors that are
+actually clipped and noised — non-floating (integer) buffers in the
+`state_dict` pass through unchanged (see **Clipping Behavior** below) and are
+presumed non-sensitive, not privatized by this mechanism.
 
 Use when:
 
@@ -246,8 +260,10 @@ changes.
 (issue #279 F4) since the Laplace mechanism is calibrated against L1
 sensitivity — `post_training_laplace` is an experimental baseline only (F5)
 and makes no claim this resolves. `update_laplace` clips the delta against
-its L1 norm instead, so `clipping_norm` there is the correct sensitivity
-bound for this formula.
+its L1 norm instead, so `clipping_norm` there bounds the clipped delta's L1
+norm for this formula — see the qualification above (`update_laplace`
+section) on what sensitivity bound that does and doesn't establish, and that
+it hasn't had DP-specialist review.
 
 Only floating tensors are clipped/noised. Integer buffers or counters are copied through unchanged.
 
