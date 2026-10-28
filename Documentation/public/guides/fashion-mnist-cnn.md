@@ -17,10 +17,31 @@ Input [batch, 1, 28, 28]
   Linear(3136 → 256)                   → ReLU
   Dropout(0.25)
   Linear(256 → 10)
-Output logits over 10 classes
+Output logits over 10 classes (824 458 parameters)
 ```
 
 Label map: 0 T-shirt/top · 1 Trouser · 2 Pullover · 3 Dress · 4 Coat · 5 Sandal · 6 Shirt · 7 Sneaker · 8 Bag · 9 Ankle boot.
+
+### CNN forward smoke check
+
+```python
+>>> import torch
+>>> from cache_model_1.services.model import ModelArchitecture
+>>> torch.manual_seed(42)
+>>> model = ModelArchitecture(); model.eval()
+>>> x = torch.randn(4, 1, 28, 28)
+>>> with torch.no_grad(): out = model(x)
+>>> out.shape
+torch.Size([4, 10])
+>>> out[0, :5].tolist()
+[0.09661, 0.10927, -0.01073, -0.09551, 0.01840]   # random-init logits, seed 42
+>>> out.argmax(dim=1).tolist()
+[9, 8, 7, 9]
+>>> sum(p.numel() for p in model.parameters())
+824458
+```
+
+Output shape `[4, 10]` and parameter count `824 458` confirm correct wiring of both convolutional stages and the fully-connected head.
 
 ---
 
@@ -32,19 +53,63 @@ Label map: 0 T-shirt/top · 1 Trouser · 2 Pullover · 3 Dress · 4 Coat · 5 Sa
 
 ---
 
-## Step 1 — Download the dataset
+## Step 1 — Download the test dataset
+
+The test split is used by the model owner and auditors to score submitted local
+models.  Download it once before starting the devnet round:
 
 ```bash
 python cache_model_1/prepare_dataset.py
 ```
 
-This downloads the Fashion-MNIST test split (~29 MB) via torchvision and saves it as `cache_model_1/dataset/test/test_dataset.pt`. The file is in the same format as `cache_model_0/dataset/test/test_dataset.pt` so the same `modelowner.py` logic applies unchanged.
+This saves 10 000 test samples to `cache_model_1/dataset/test/test_dataset.pt`.
+The model owner must copy (or re-save) this file into the dincli cache before
+running `model submit-genesis` (see Step 5):
 
-The download cache lands in `cache_model_1/dataset/test/_download_cache/` and can be deleted after the first run.
+```bash
+# find the cache dir
+dincli system get-cache-dir
+# example output: /Users/<you>/Library/Caches/dincli
+
+# place test dataset at the expected path (substitute your network and model_id)
+CACHE=$(dincli system get-cache-dir)
+mkdir -p "$CACHE/local/model_1/dataset/test"
+cp cache_model_1/dataset/test/test_dataset.pt "$CACHE/local/model_1/dataset/test/"
+```
+
+> [!NOTE]
+> `model_1` here is a placeholder — the real model ID is assigned only after
+> `dincli task model-owner register` completes in Step 6.  Repeat this copy
+> step once you know the ID.
 
 ---
 
-## Step 2 — Start a local chain
+## Step 2 — Prepare client training data
+
+Each client needs a separate training-split partition placed in the dincli
+cache.  `prepare_training_data.py` downloads the Fashion-MNIST training split
+(60 000 samples) and splits it evenly across the specified client accounts:
+
+```bash
+python cache_model_1/prepare_training_data.py \
+    --model-id <MODEL_ID> \
+    --network local \
+    --accounts <CLIENT_WALLET_ADDRESS_1> <CLIENT_WALLET_ADDRESS_2>
+```
+
+Each partition is saved at:
+
+```
+<CACHE_DIR>/local/model_<MODEL_ID>/dataset/clients/<CLIENT_WALLET_ADDRESS>/data.pt
+```
+
+Run this after you have the model ID from Step 6.  Keep the training partitions
+and the test holdout (`dataset/test/`) separate — the test set must never be
+used for training.
+
+---
+
+## Step 3 — Start a local chain
 
 ```bash
 ./foundry/anvil.sh
@@ -54,7 +119,7 @@ Leave this running in a separate terminal.
 
 ---
 
-## Step 3 — Configure the network
+## Step 4 — Configure the network and wallet
 
 ```bash
 dincli system configure-network --network local
@@ -63,46 +128,152 @@ dincli system register-wallet --account <your_account_id>
 
 ---
 
-## Step 4 — Deploy task contracts and register the model
+## Step 5 — Deploy task contracts
 
-Follow the same steps as `cache_model_0` in `Documentation/public/workflows/model-workflow.md`:
+From your project root (the directory where `dincli` stores tasks):
 
-1. Deploy `DINTaskCoordinator` and `DINTaskAuditor`.
-2. Request slasher authorization for both contracts via `DinCoordinator`.
-3. Fill in the deployed addresses in `cache_model_1/manifest.json` under `DINTaskCoordinator_Contract` and `DINTaskAuditor_Contract` (and the matching `task_contracts` block).
-4. Upload the service files to IPFS and fill in the CIDs:
-   ```bash
-   dincli model-owner upload-services --manifest cache_model_1/manifest.json
-   ```
-5. Generate the genesis model and upload it:
-   ```bash
-   dincli model-owner genesis --manifest cache_model_1/manifest.json
-   ```
-   Copy the returned CID into `manifest.json` → `Genesis_Model_CID`.
-6. Register the model:
-   ```bash
-   dincli model-owner register --manifest cache_model_1/manifest.json
-   ```
+```bash
+# deploy DINTaskCoordinator
+dincli model-owner deploy task-coordinator \
+    --artifact "hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
+
+# deploy DINTaskAuditor
+dincli model-owner deploy task-auditor \
+    --artifact "hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
+```
+
+Both contract addresses are written to your local `.env` file.  Request
+slasher authorization from the DIN-Representative before proceeding
+(see step 3 in `Documentation/public/workflows/model-workflow.md`).
 
 ---
 
-## Step 5 — Run a global iteration
+## Step 6 — Set up the task directory and manifest
 
-Open a GI, register validators, submit local models, run audit scoring, and close the round — identical to the MNIST walkthrough in `Documentation/public/workflows/model-workflow.md`. The only difference is the manifest path:
-
-```bash
-dincli model-owner open-gi --manifest cache_model_1/manifest.json --gi 1
-# … client trains, auditors score …
-dincli model-owner close-gi --manifest cache_model_1/manifest.json --gi 1
-```
-
-Each client trains with:
+Create the task directory under the project root:
 
 ```bash
-dincli client train --manifest cache_model_1/manifest.json
+dincli model-owner task create-task-dir --taskCoordinator <TASK_COORDINATOR_ADDRESS>
 ```
 
-The `train_client_model` function in `cache_model_1/services/client.py` is identical to the MNIST one: 10 local epochs with Adam, then optional post-training DP if enabled in the manifest. The CNN forward pass handles the 2D feature maps internally; the rest of the training loop is unchanged.
+This creates:
+
+```
+tasks/local/<TASK_COORDINATOR_ADDRESS>/
+```
+
+Copy the cache_model_1 service files and manifest into it:
+
+```bash
+TASK_DIR="tasks/local/<TASK_COORDINATOR_ADDRESS>"
+
+cp cache_model_1/manifest.json             "$TASK_DIR/manifest.json"
+mkdir -p "$TASK_DIR/services"
+cp cache_model_1/services/*.py             "$TASK_DIR/services/"
+```
+
+Upload each service file to IPFS and update the manifest CIDs:
+
+```bash
+dincli ipfs upload -f "$TASK_DIR/services/model.py"
+dincli ipfs upload -f "$TASK_DIR/services/client.py"
+dincli ipfs upload -f "$TASK_DIR/services/modelowner.py"
+dincli ipfs upload -f "$TASK_DIR/services/auditor.py"
+dincli ipfs upload -f "$TASK_DIR/services/aggregator.py"
+```
+
+Fill the returned CIDs into the corresponding `"ipfs"` fields in
+`$TASK_DIR/manifest.json`.  Also fill in `DINTaskCoordinator_Contract` and
+`DINTaskAuditor_Contract` with the deployed addresses from Step 5.
+
+---
+
+## Step 7 — Create and submit the genesis model
+
+```bash
+dincli model-owner model create-genesis
+```
+
+The command calls `getGenesisModelIpfs` from `modelowner.py`, uploads the
+model to IPFS, and stores the resulting CID in your `.env` file.  Copy the
+CID into `Genesis_Model_CID` in the manifest, then submit the genesis model
+score:
+
+```bash
+dincli model-owner model submit-genesis
+```
+
+`submit-genesis` loads the test dataset from
+`<CACHE_DIR>/local/model_1/dataset/test/test_dataset.pt` (adjust the path
+once you know your model ID).
+
+---
+
+## Step 8 — Register the model
+
+```bash
+dincli task model-owner register --isOpenSource false
+```
+
+`dincli` assigns a model ID (e.g. `1`) which is printed to the console.
+Record it — you will use it in every subsequent command.  Update the manifest
+with the model ID and re-upload it to IPFS:
+
+```bash
+dincli task model-owner update-manifest <MODEL_ID> \
+    --manifestpath "$TASK_DIR/manifest.json"
+```
+
+Then place the test dataset and client training data at the correct cache
+paths as described in Steps 1 and 2, substituting the real model ID.
+
+---
+
+## Step 9 — Run a global iteration
+
+A complete GI follows the same phase sequence as `cache_model_0`.  The
+commands are identical; only the model ID differs.
+
+**Model owner — open the round:**
+
+```bash
+dincli model-owner gi start <MODEL_ID>
+dincli model-owner gi reg aggregators-open <MODEL_ID>
+# … aggregators register …
+dincli model-owner gi reg aggregators-close <MODEL_ID>
+dincli model-owner gi reg auditors-open <MODEL_ID>
+# … auditors register …
+dincli model-owner gi reg auditors-close <MODEL_ID>
+dincli model-owner lms open <MODEL_ID>
+```
+
+**Clients — train and submit (repeat for each client wallet):**
+
+```bash
+dincli client train-lms <MODEL_ID> --submit
+```
+
+The client service loads Fashion-MNIST training data from
+`<CACHE_DIR>/local/model_<MODEL_ID>/dataset/clients/<CLIENT_ADDRESS>/data.pt`,
+trains the CNN for 10 epochs with Adam, and (if DP is enabled in the manifest)
+applies post-training noise before uploading the local model to IPFS.
+
+**Model owner — evaluate, aggregate, and close:**
+
+```bash
+dincli model-owner lms close <MODEL_ID>
+dincli model-owner auditor-batches create <MODEL_ID>
+dincli model-owner auditor-batches create-testdataset <MODEL_ID> --submit
+dincli model-owner lms-evaluation start <MODEL_ID>
+# … auditors evaluate …
+dincli model-owner lms-evaluation close <MODEL_ID>
+dincli model-owner aggregation create-t1nt2-batches <MODEL_ID>
+# … aggregators aggregate …
+dincli model-owner gi end <MODEL_ID>
+```
+
+For the full step-by-step including aggregator and auditor commands, see
+`Documentation/public/workflows/model-workflow.md`.
 
 ---
 
@@ -123,13 +294,23 @@ DP is disabled by default (`dp.enabled: false` in `manifest.json`). To enable po
 }
 ```
 
-Refer to `Documentation/public/manifest.md` → "Differential Privacy Parameters" for per-mechanism guidance on choosing `clipping_norm`.
+`post_training_gaussian` and `post_training_laplace` are **experimental** — they
+carry no formal privacy guarantee (see `Documentation/technical/services/clients.md`
+for the F4/F5 caveats).  Use `update_gaussian` for a mechanism with a defined
+sensitivity bound.
+
+Refer to `Documentation/public/manifest.md` → "Differential Privacy Parameters"
+for per-mechanism guidance on choosing `clipping_norm`.
 
 ---
 
 ## Expected accuracy (standalone, no federation)
 
-Training the CNN for 10 epochs on 50 000 Fashion-MNIST images with default Adam (`lr=0.001`) typically reaches ~90 % test accuracy. In a federated setting with a small number of clients and few rounds, expect convergence to be slower; scores above the `min_accuracy: 50.0` threshold in the audit policy are achievable within a handful of GIs.
+Training the CNN for 10 epochs on 50 000 Fashion-MNIST images with default
+Adam (`lr=0.001`) typically reaches ~90 % test accuracy.  In a federated
+setting with a small number of clients and few rounds, expect convergence to
+be slower; scores above the `min_accuracy: 50.0` threshold in the audit
+policy are achievable within a handful of GIs.
 
 ---
 
@@ -137,8 +318,9 @@ Training the CNN for 10 epochs on 50 000 Fashion-MNIST images with default Adam 
 
 | | `cache_model_0` (MNIST) | `cache_model_1` (Fashion-MNIST) |
 |---|---|---|
-| Architecture | FC: 784→128→64→10 | CNN: Conv×2 + FC×2, see above |
+| Architecture | FC: 784→128→64→10 | CNN: Conv×2 + FC×2, 824 458 params |
 | Dataset | `torchvision.datasets.MNIST` | `torchvision.datasets.FashionMNIST` |
-| Dataset prep | committed at `dataset/test/test_dataset.pt` | run `prepare_dataset.py` |
-| Services | — | identical (model-agnostic) |
+| Test dataset prep | committed at `dataset/test/test_dataset.pt` | run `prepare_dataset.py` |
+| Training data prep | manual | run `prepare_training_data.py` |
+| Services | — | identical (model-agnostic copies) |
 | Manifest | deployed CIDs present | CIDs empty until first deploy |
