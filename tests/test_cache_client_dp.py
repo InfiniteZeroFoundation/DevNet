@@ -207,16 +207,20 @@ DP_MECHANISMS = [
     "post_training_gaussian",
     "post_training_laplace",
     "update_gaussian",
+    "update_laplace",
 ]
 
 
 def build_small_state_dict(num_elements=20000):
-    """Build a state_dict whose L2 norm sits well inside every clipping norm
-    used below, so clipping is a no-op and the only difference between input
-    and output is the noise itself."""
+    """Build a state_dict whose L1 *and* L2 norm sit well inside every
+    clipping norm used below, so clipping is a no-op and the only difference
+    between input and output is the noise itself. The L1 norm is the binding
+    constraint here (it is `num_elements * magnitude`, with no sqrt to shrink
+    it), which is why the per-element magnitude is much smaller than the L2
+    case alone would need."""
     return OrderedDict(
         {
-            "weight": torch.full((num_elements,), 1e-3, dtype=torch.float32),
+            "weight": torch.full((num_elements,), 1e-6, dtype=torch.float32),
             "counter": torch.tensor([7], dtype=torch.long),
         }
     )
@@ -367,6 +371,143 @@ def test_global_clip_scope_bounds_the_combined_norm():
         clipping_norm * num_tensors ** 0.5, rel=1e-4
     )
     assert combined_norm(global_state_dict) == pytest.approx(clipping_norm, rel=1e-4)
+
+
+def test_global_clip_scope_bounds_the_combined_l1_norm():
+    """Same composition gap as the L2 case above, but for norm_type='l1'
+    (used by update_laplace, issue #279 F4): clipping n tensors independently
+    to L1 norm `clipping_norm` bounds the combined L1 norm at
+    `clipping_norm * n` (no sqrt -- L1 is exactly additive across tensors),
+    not at `clipping_norm`. Only `global` produces the L1 bound the Laplace
+    mechanism is actually calibrated against."""
+    client = load_client_module()
+    num_tensors = 16
+    clipping_norm = 1.0
+    state_dict = OrderedDict(
+        {
+            f"layer_{index}.weight": torch.full((4,), 1.0, dtype=torch.float32)
+            for index in range(num_tensors)
+        }
+    )
+
+    def combined_l1_norm(candidate_state_dict):
+        return sum(torch.sum(torch.abs(value)).item() for value in candidate_state_dict.values())
+
+    per_layer_state_dict = client.clip_state_dict(state_dict, clipping_norm, "per_layer", norm_type="l1")
+    global_state_dict = client.clip_state_dict(state_dict, clipping_norm, "global", norm_type="l1")
+
+    assert combined_l1_norm(per_layer_state_dict) == pytest.approx(
+        clipping_norm * num_tensors, rel=1e-4
+    )
+    assert combined_l1_norm(global_state_dict) == pytest.approx(clipping_norm, rel=1e-4)
+
+
+def test_update_laplace_preserves_weights_when_noise_is_zero():
+    client = load_client_module()
+    reference_state_dict = OrderedDict(
+        {
+            "weight": torch.tensor([0.2, 0.4], dtype=torch.float32),
+            "counter": torch.tensor([1], dtype=torch.long),
+        }
+    )
+    trained_state_dict = OrderedDict(
+        {
+            "weight": torch.tensor([0.8, 1.0], dtype=torch.float32),
+            "counter": torch.tensor([2], dtype=torch.long),
+        }
+    )
+    dp_config = {
+        "enabled": True,
+        "mode": "afterTraining",
+        "mechanism": "update_laplace",
+        "parameters": {
+            "clipping_norm": 100.0,
+            "laplace_scale": 0.0,
+            "clip_scope": "global",
+        },
+    }
+
+    private_state_dict = client.apply_dp_mechanism(
+        trained_state_dict,
+        dp_config,
+        reference_state_dict=reference_state_dict,
+    )
+
+    assert torch.equal(private_state_dict["weight"], trained_state_dict["weight"])
+    assert torch.equal(private_state_dict["counter"], trained_state_dict["counter"])
+
+
+def test_update_laplace_requires_a_reference_state_dict():
+    client = load_client_module()
+    trained_state_dict = build_small_state_dict()
+    dp_config = {
+        "enabled": True,
+        "mode": "afterTraining",
+        "mechanism": "update_laplace",
+        "parameters": {"clipping_norm": 1.0, "laplace_scale": 0.25},
+    }
+
+    with pytest.raises(ValueError, match="reference_state_dict"):
+        client.apply_dp_mechanism(trained_state_dict, dp_config)
+
+
+def test_update_laplace_requires_an_explicit_scale():
+    """Same requirement as post_training_laplace -- update_laplace's noise is
+    also Laplace-distributed, so it needs its own scale rather than
+    inheriting noise_multiplier."""
+    client = load_client_module()
+    trained_state_dict = build_small_state_dict()
+    reference_state_dict = OrderedDict(
+        {
+            "weight": torch.zeros_like(trained_state_dict["weight"]),
+            "counter": torch.tensor([7], dtype=torch.long),
+        }
+    )
+    dp_config = {
+        "enabled": True,
+        "mode": "afterTraining",
+        "mechanism": "update_laplace",
+        "parameters": {"clipping_norm": 1.0, "noise_multiplier": 0.25},
+    }
+
+    with pytest.raises(ValueError, match="laplace_scale"):
+        client.apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=reference_state_dict)
+
+
+def test_resolve_dp_config_requires_laplace_scale_for_update_laplace():
+    client = load_client_module()
+    runtime = DummyRuntime(
+        {
+            "dp": {
+                "enabled": True,
+                "mode": "afterTraining",
+                "mechanism": "update_laplace",
+                "parameters": {"clipping_norm": 1.0},
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="laplace_scale"):
+        client.resolve_dp_config(runtime=runtime)
+
+
+def test_resolve_dp_config_does_not_warn_for_update_laplace(capsys):
+    client = load_client_module()
+    runtime = DummyRuntime(
+        {
+            "dp": {
+                "enabled": True,
+                "mode": "afterTraining",
+                "mechanism": "update_laplace",
+                "parameters": {"clipping_norm": 1.0, "laplace_scale": 0.25},
+            },
+        }
+    )
+
+    client.resolve_dp_config(runtime=runtime)
+
+    captured = capsys.readouterr()
+    assert "experimental" not in captured.out.lower()
 
 
 def test_resolve_dp_config_defaults_clip_scope_to_global():
