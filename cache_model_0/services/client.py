@@ -34,14 +34,20 @@ from model import ModelArchitecture  # noqa: F401
 
 console = Console()
 
-# The service currently supports three manifest-selectable DP mechanisms:
+# The service currently supports four manifest-selectable DP mechanisms:
 # - post_training_gaussian: perturb final weights directly with Gaussian noise
 # - post_training_laplace: perturb final weights directly with Laplace noise
 # - update_gaussian: perturb the local model delta, then reconstruct weights
+# - update_laplace: L1-clip the local delta, perturb it with Laplace noise,
+#   then reconstruct weights (issue #279 Track B's F4 fix: mirrors
+#   update_gaussian's delta-level clipping, but with the L1 clip the Laplace
+#   mechanism is actually calibrated against, rather than reusing the L2 clip
+#   post_training_laplace uses)
 SUPPORTED_DP_MECHANISMS = {
     "post_training_gaussian",
     "post_training_laplace",
     "update_gaussian",
+    "update_laplace",
 }
 
 # These aliases keep the manifest ergonomic while mapping everything back to a
@@ -51,6 +57,7 @@ DP_MECHANISM_ALIASES = {
     "post-training-gaussian": "post_training_gaussian",
     "laplace": "post_training_laplace",
     "post-training-laplace": "post_training_laplace",
+    "update-laplace": "update_laplace",
     "update": "update_gaussian",
     "update-gaussian": "update_gaussian",
 }
@@ -98,8 +105,17 @@ def add_laplace_noise(weights, scale):
     return weights + noise
 
 
-def clip_weights(weights, clipping_norm):
-    """Clip a tensor to an L2 norm bound and return the clipped copy.
+def _tensor_norm(weights, norm_type="l2"):
+    """L1 or L2 norm of a tensor, flattened. L1 is the sensitivity notion the
+    Laplace mechanism is actually calibrated against (issue #279 F4); L2 is
+    what every other mechanism here uses."""
+    if norm_type == "l1":
+        return torch.sum(torch.abs(weights))
+    return torch.norm(weights)
+
+
+def clip_weights(weights, clipping_norm, norm_type="l2"):
+    """Clip a tensor to an L1 or L2 norm bound and return the clipped copy.
 
     This helper is used for per-layer clipping. If the tensor already fits
     inside the clipping radius, it is simply cloned and returned unchanged.
@@ -108,7 +124,7 @@ def clip_weights(weights, clipping_norm):
     if clipping_norm <= 0:
         return weights.detach().clone()
 
-    norm = torch.norm(weights)
+    norm = _tensor_norm(weights, norm_type)
     if not torch.isfinite(norm) or norm <= clipping_norm:
         return weights.detach().clone()
 
@@ -132,12 +148,17 @@ def clone_state_dict(state_dict):
     return cloned_state_dict
 
 
-def clip_state_dict(state_dict, clipping_norm, clip_scope="per_layer"):
+def clip_state_dict(state_dict, clipping_norm, clip_scope="per_layer", norm_type="l2"):
     """Clip all floating tensors in a state_dict.
 
     `clip_scope` controls whether clipping happens:
     - per_layer: each floating tensor is clipped independently.
     - global: one shared scale factor is computed across all floating tensors.
+
+    `norm_type` selects the sensitivity notion the bound is expressed in:
+    - l2 (default): used by the Gaussian mechanisms.
+    - l1: used by the Laplace mechanisms (issue #279 F4) -- the Laplace
+      mechanism's guarantee is calibrated against L1 sensitivity, not L2.
 
     Non-floating tensors such as counters or integer buffers are copied through
     unchanged because noise/clipping semantics for them would be ill-defined.
@@ -154,10 +175,14 @@ def clip_state_dict(state_dict, clipping_norm, clip_scope="per_layer"):
     ]
 
     if clip_scope == "global" and float_items:
-        # Compute one global L2 norm across all floating tensors, then scale
-        # every floating tensor by the same factor.
-        global_norm_sq = sum(torch.norm(value).item() ** 2 for _, value in float_items)
-        global_norm = global_norm_sq ** 0.5
+        # Compute one global norm across all floating tensors, then scale
+        # every floating tensor by the same factor. L1 is exactly additive
+        # across tensors (no square root needed); L2 needs sum-of-squares.
+        if norm_type == "l1":
+            global_norm = sum(_tensor_norm(value, "l1").item() for _, value in float_items)
+        else:
+            global_norm_sq = sum(torch.norm(value).item() ** 2 for _, value in float_items)
+            global_norm = global_norm_sq ** 0.5
         scale = min(1.0, clipping_norm / (global_norm + 1e-12))
 
         for key, value in state_dict.items():
@@ -173,7 +198,7 @@ def clip_state_dict(state_dict, clipping_norm, clip_scope="per_layer"):
     for key, value in state_dict.items():
         if torch.is_tensor(value):
             if torch.is_floating_point(value):
-                clipped_state_dict[key] = clip_weights(value, clipping_norm)
+                clipped_state_dict[key] = clip_weights(value, clipping_norm, norm_type)
             else:
                 clipped_state_dict[key] = value.detach().clone()
         else:
@@ -356,12 +381,13 @@ def resolve_dp_config(runtime=None):
     parameters.setdefault("noise_multiplier", 0.5)
     parameters["clipping_norm"] = validate_clipping_norm(parameters["clipping_norm"])
 
-    if dp_mechanism == "post_training_laplace":
+    if dp_mechanism in ("post_training_laplace", "update_laplace"):
         require_laplace_scale(parameters)
     # `global` is the only scope whose clip bounds the whole update at
     # `clipping_norm`. `per_layer` clips each of n tensors independently, so
-    # the combined L2 norm is bounded at clipping_norm * sqrt(n), and the
-    # noise added here does not account for n.
+    # the combined norm is bounded at clipping_norm * n (L1) or
+    # clipping_norm * sqrt(n) (L2), and the noise added here does not
+    # account for n.
     parameters.setdefault("clip_scope", "global")
 
     return {
@@ -378,8 +404,14 @@ def apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=None)
     Mechanism summary:
     - post_training_gaussian: clip final weights, then add Gaussian noise.
     - post_training_laplace: clip final weights, then add Laplace noise.
-    - update_gaussian: clip the local delta, add Gaussian noise to that delta,
-      then reconstruct a full weight file from the privatized update.
+      Carries no formal privacy guarantee (issue #279 F5) -- it clips
+      absolute weights rather than the per-client update.
+    - update_gaussian: L2-clip the local delta, add Gaussian noise to that
+      delta, then reconstruct a full weight file from the privatized update.
+    - update_laplace: L1-clip the local delta, add Laplace noise to that
+      delta, then reconstruct a full weight file from the privatized update.
+      Unlike post_training_laplace, the clip here matches the sensitivity
+      notion the Laplace mechanism is calibrated against (issue #279 F4).
     """
 
     mechanism = dp_config["mechanism"]
@@ -396,7 +428,7 @@ def apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=None)
     gaussian_scale = float(params.get("noise_multiplier", 0.5)) * clipping_norm
     laplace_scale = (
         require_laplace_scale(params) * clipping_norm
-        if mechanism == "post_training_laplace"
+        if mechanism in ("post_training_laplace", "update_laplace")
         else 0.0
     )
 
@@ -428,6 +460,23 @@ def apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=None)
             clipped_delta,
             noise_kind="gaussian",
             noise_scale=gaussian_scale,
+        )
+        return reconstruct_state_dict_from_delta(reference_state_dict, noisy_delta, trained_state_dict)
+
+    if mechanism == "update_laplace":
+        if reference_state_dict is None:
+            raise ValueError("update_laplace requires a reference_state_dict")
+
+        # Same delta-level privatization as update_gaussian, but clipped
+        # against the L1 norm the Laplace mechanism's guarantee is actually
+        # calibrated against (issue #279 F4), instead of reusing the L2 clip
+        # post_training_laplace uses.
+        local_delta = compute_state_dict_delta(trained_state_dict, reference_state_dict)
+        clipped_delta = clip_state_dict(local_delta, clipping_norm, clip_scope, norm_type="l1")
+        noisy_delta = add_noise_to_state_dict(
+            clipped_delta,
+            noise_kind="laplace",
+            noise_scale=laplace_scale,
         )
         return reconstruct_state_dict_from_delta(reference_state_dict, noisy_delta, trained_state_dict)
 
@@ -499,7 +548,8 @@ def train_client_model(
         console.print("Initial model loaded and weights initialized from GM")
 
     # Capture the exact starting point before local optimization so
-    # `update_gaussian` can privatize the model delta relative to this state.
+    # `update_gaussian`/`update_laplace` can privatize the model delta
+    # relative to this state.
     reference_state_dict = clone_state_dict(model_architecture.state_dict())
 
     # Standard local training setup for the reference MNIST model.

@@ -154,7 +154,7 @@ Use when:
 Behavior:
 
 1. compute the local update relative to the starting model for the round;
-2. clip that delta;
+2. L2-clip that delta;
 3. add Gaussian noise to the delta;
 4. reconstruct a full weight file from `reference + noisy_delta`;
 5. upload the reconstructed private `state_dict`.
@@ -164,17 +164,51 @@ Why this matters:
 - it is closer to the federated-learning concept of privatizing an update rather than raw final weights;
 - it still preserves compatibility with the current aggregator, which expects full model weights rather than deltas.
 
+### `update_laplace`
+
+Behavior:
+
+1. compute the local update relative to the starting model for the round;
+2. **L1**-clip that delta (see below for why this differs from the other three mechanisms);
+3. add Laplace noise to the delta;
+4. reconstruct a full weight file from `reference + noisy_delta`;
+5. upload the reconstructed private `state_dict`.
+
+Why this matters (issue #279 Track B, dp-mechanism-review.md F4): the Laplace
+mechanism's privacy guarantee is calibrated against **L1** sensitivity, not
+L2. `post_training_laplace` reuses the same L2 clip as the Gaussian
+mechanisms, which for model weights can understate the true L1 sensitivity by
+a factor of up to √d (d = parameter count) — effectively claiming far more
+privacy than the noise actually delivers. `update_laplace` clips the delta
+against its L1 norm instead, so `clipping_norm` is the correct sensitivity
+bound for the Laplace noise added on top of it, same shape as
+`update_gaussian` but calibrated correctly for the Laplace distribution.
+
+Use when:
+
+- you want a non-Gaussian noise option with a sensitivity bound that actually
+  matches the Laplace mechanism's calibration;
+- `post_training_laplace` remains available only as a labelled experimental
+  baseline (see dp-mechanism-review.md F5) — this is its update-level,
+  correctly-calibrated counterpart.
+
 ## Clipping Behavior
 
 The service supports two clipping scopes:
 
-- `global` (default): one combined L2 norm is computed across all floating tensors and one shared scale factor is applied.
+- `global` (default): one combined norm is computed across all floating tensors and one shared scale factor is applied.
 - `per_layer`: each floating tensor is clipped independently.
+
+The norm type depends on the mechanism: `update_laplace` clips against the L1
+norm (the sensitivity notion Laplace noise is calibrated against); every
+other mechanism clips against the L2 norm.
 
 `global` is the default because it is the only scope whose clip bounds the
 whole update at `clipping_norm`. Clipping `n` tensors independently to
-`clipping_norm` bounds the combined L2 norm at `clipping_norm * sqrt(n)`, so
-under `per_layer` the quantity the noise is calibrated against grows with model
+`clipping_norm` bounds the combined norm at `clipping_norm * sqrt(n)` for L2
+mechanisms, or `clipping_norm * n` for `update_laplace`'s L1 clip (L1 is
+exactly additive across tensors, no square root) — either way, under
+`per_layer` the quantity the noise is calibrated against grows with model
 depth. `per_layer` remains available for utility, but it carries no formal
 sensitivity bound and should be treated as experimental.
 
@@ -186,10 +220,10 @@ which produced noise with nothing bounding the quantity it was meant to hide.
 Both `resolve_dp_config` and `apply_dp_mechanism` now reject it, so a
 hand-built config cannot bypass the manifest-level check.
 
-`post_training_laplace` requires an explicit `laplace_scale`. It previously
-defaulted to whatever `noise_multiplier` was set to, which silently produced a
-scale nobody chose, since the two parameters carry different units and are
-calibrated differently.
+`post_training_laplace` and `update_laplace` both require an explicit
+`laplace_scale`. It previously defaulted to whatever `noise_multiplier` was
+set to, which silently produced a scale nobody chose, since the two
+parameters carry different units and are calibrated differently.
 
 **DP is off by default.** With no `dp` block, or `dp.enabled: false`, the
 client uploads raw trained weights. That is a deliberate devnet default, not an
@@ -207,9 +241,13 @@ together. Loosening the clip widens the sensitivity and widens the noise to
 match, instead of leaving the noise fixed while the privacy level silently
 changes.
 
-`laplace_scale` is scaled the same way. Note that Laplace noise calibrated
-against an L2 clip is an open question tracked separately, since the Laplace
-mechanism is normally calibrated against an L1 sensitivity.
+`laplace_scale` is scaled the same way: `laplace_scale * clipping_norm`. For
+`post_training_laplace` this reuses an L2 clip, which is a known mismatch
+(issue #279 F4) since the Laplace mechanism is calibrated against L1
+sensitivity — `post_training_laplace` is an experimental baseline only (F5)
+and makes no claim this resolves. `update_laplace` clips the delta against
+its L1 norm instead, so `clipping_norm` there is the correct sensitivity
+bound for this formula.
 
 Only floating tensors are clipped/noised. Integer buffers or counters are copied through unchanged.
 
