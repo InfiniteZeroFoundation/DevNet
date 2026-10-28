@@ -887,3 +887,56 @@ def test_update_gaussian_delta_norm_fits_clipping_norm_reference():
         )
     )
     assert clipped_delta_norm == pytest.approx(delta_norm, rel=1e-4)
+
+
+def test_update_laplace_binding_clipping_through_apply_dp_mechanism():
+    """End-to-end through apply_dp_mechanism where the delta exceeds global L1 limit.
+
+    Removing norm_type="l1" from the update_laplace branch would fall back to
+    L2 clipping and leave a regression undetected by clip_state_dict-only tests.
+    """
+    client = load_client_module()
+    torch = __import__("torch")
+
+    reference_state_dict = {
+        "w": torch.zeros(10),
+        "b": torch.zeros(5),
+        "counter": torch.tensor(7, dtype=torch.long),
+    }
+    # Large deltas per tensor so global L1 sum exceeds clipping_norm
+    trained_state_dict = {
+        "w": torch.ones(10) * 3.0,   # L1 contribution 30
+        "b": torch.ones(5) * 2.0,    # L1 contribution 10
+        "counter": torch.tensor(7, dtype=torch.long),
+    }
+    dp_config = {
+        "enabled": True,
+        "mechanism": "update_laplace",
+        "parameters": {
+            "clipping_norm": 10.0,
+            "laplace_scale": 0.0,
+            "clip_scope": "global",
+        },
+    }
+
+    out = client.apply_dp_mechanism(trained_state_dict, dp_config, reference_state_dict=reference_state_dict)
+
+    # Compute expected clipped delta with L1
+    local_delta = client.compute_state_dict_delta(trained_state_dict, reference_state_dict)
+    # L1 norms
+    w_l1 = local_delta["w"].abs().sum().item()
+    b_l1 = local_delta["b"].abs().sum().item()
+    total_l1 = w_l1 + b_l1
+    assert total_l1 > 10.0  # should trigger clipping
+
+    scale = 10.0 / (total_l1 + 1e-12)
+    expected_delta_w = local_delta["w"] * scale
+    expected_delta_b = local_delta["b"] * scale
+    expected_out_w = reference_state_dict["w"] + expected_delta_w
+    expected_out_b = reference_state_dict["b"] + expected_delta_b
+
+    torch.testing.assert_close(out["w"], expected_out_w)
+    torch.testing.assert_close(out["b"], expected_out_b)
+    # Integer buffer preserved
+    assert out["counter"].item() == 7
+    assert out["counter"].dtype == torch.long
