@@ -54,7 +54,7 @@ For issue-specific contributor packets, review questions, and curated reading li
   cd foundry && python3 ../.github/scripts/contract_size_gate.py
   ```
   `foundry/anvil.sh` lifts the limit on the local chain, so a local deploy is not a size check. A PR that pushes a contract under the 1,024 B fail line needs a size reduction in the same PR. Don't split a contract without raising it with a maintainer first.
-- **Integration suite.** A PR that changes `foundry/src/`, `foundry/script/`, `foundry/anvil.sh`, `hardhat/`, `dincli/` or `tests/dincli/` also runs CI's **Integration (full GI)** job: the `tests/dincli/` suite on Anvil, an offline Kubo and Docker, in isolated mode (issue #228). It is non-blocking for now and does not gate `CI OK`. When it fails, the run's `integration-logs` artifact has the pytest output and the compile, chain and IPFS logs. To reproduce it locally, see [CI integration job](../Documentation/technical/testing/dincli-testing-guide.md#ci-integration-job).
+- **Integration suite.** Relevant PRs and pushes to `develop` also run CI's advisory **Integration (full GI)** job on Anvil, offline Kubo and Docker in isolated mode (issues #228 and #270). Inputs include CLI/harness code, contract builds and their dependency/configuration files. Integration remains outside the required `CI OK` gate. The run summary distinguishes pass, failure and intentional skip; job logs and any `integration-logs` artifact support troubleshooting. Manual selection is prepared but requires a separate workflow rollout to default branch `main` before GitHub enables dispatch. See [CI integration job](../Documentation/technical/testing/dincli-testing-guide.md#ci-integration-job) for inputs, limitations and reproduction commands.
 
 ## Code Standards
 

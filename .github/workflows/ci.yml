@@ -5,6 +5,13 @@ on:
     branches: [develop]
   push:
     branches: [develop]
+  # Dispatch is available only after this workflow is also on default main.
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: Run advisory integration for troubleshooting
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -153,55 +160,50 @@ jobs:
   # Path filter for the integration job. The workflow itself stays unfiltered
   # (see ci-ok), so the filter is a job: a change that does not touch the
   # suite's inputs skips `integration` rather than the whole run. Anything it
-  # cannot diff (a force push, a missing `before` commit) runs the suite.
+  # cannot diff (for example, a missing `before` commit) runs the suite.
   integration-paths:
     name: Integration paths
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       run: ${{ steps.diff.outputs.run }}
+      reason: ${{ steps.diff.outputs.reason }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2   # a PR's merge commit plus its base parent
-      - name: Diff against the base
+      - name: Select integration inputs
         id: diff
         env:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          base=""
-          if [ "$EVENT" = pull_request ]; then
-            base=HEAD^1
-          elif git fetch -q --depth=1 origin "$BEFORE" 2>/dev/null; then
-            base=$BEFORE
-          fi
-          if [ -z "$base" ]; then
-            echo "no base to diff against; running the suite"
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed.txt"
-          if grep -qE '^(foundry/(src|script)/|foundry/anvil\.sh$|hardhat/|dincli/|tests/dincli/|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed.txt"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-          cat "$RUNNER_TEMP/changed.txt"
+          MANUAL_INTEGRATION: ${{ inputs.run_integration }}
+        run: python3 .github/scripts/integration_ci.py select
 
   # tests/dincli/ full-GI suite on Anvil + offline Kubo + Docker (issue #228).
   # Non-blocking: ci-ok does not wait for it and continue-on-error keeps a red
-  # run from failing the workflow. Make it required once it has been stable for
-  # a couple of weeks: add it to ci-ok's needs and accept `skipped` there.
+  # run from failing the workflow. Promotion requires separate review and
+  # successful full-round evidence under #270; a path skip is not that evidence.
   integration:
     name: Integration (full GI)
     needs: integration-paths
-    if: needs.integration-paths.outputs.run == 'true'
+    # Fail open on detector failure/missing output, but respect manual opt-out.
+    if: >-
+      ${{ !cancelled() &&
+          !(github.event_name == 'workflow_dispatch' && !inputs.run_integration) &&
+          (needs.integration-paths.result != 'success' ||
+           needs.integration-paths.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     # A full GI trains 9 clients and runs auditor and aggregator containers.
     # The measured runtime goes to the step summary; tighten this once known.
     timeout-minutes: 90
     continue-on-error: true
+    outputs:
+      suite_outcome: ${{ steps.evidence.outputs.suite_outcome }}
+      setup_outcome: ${{ steps.evidence.outputs.setup_outcome }}
+      execution_status: ${{ steps.evidence.outputs.execution_status }}
+      upload_outcome: ${{ steps.upload.outcome }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
     env:
       # Kubo for the harness's offline IPFS daemon; the checksum is the sha256
       # of this release asset.
@@ -298,9 +300,12 @@ jobs:
 
       # Scratch must not exist yet (the harness creates and deletes it); the
       # results dir outlives it and holds the compile, chain and IPFS logs.
-      # A step timeout below the job's, so a hung suite fails this step (and
-      # the upload below still runs) instead of the whole job being cancelled.
+      # Reporting/upload are best effort: setup also consumes the job budget.
+      - name: Integration setup complete
+        id: ready
+        run: echo "Integration setup complete"
       - name: Full-GI integration suite
+        id: suite
         timeout-minutes: 85
         env:
           DIN_TEST_ISOLATED: '1'
@@ -319,7 +324,21 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+      # Capture before upload so an artifact failure cannot change suite status.
+      - name: Preserve raw integration outcomes
+        id: evidence
+        if: always()
+        env:
+          SUITE_OUTCOME: ${{ steps.suite.outcome }}
+          SETUP_OUTCOME: ${{ steps.ready.outcome }}
+          EXECUTION_STATUS: ${{ job.status }}
+        run: |
+          echo "suite_outcome=$SUITE_OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "setup_outcome=$SETUP_OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "execution_status=$EXECUTION_STATUS" >> "$GITHUB_OUTPUT"
+
       - name: Upload integration logs
+        id: upload
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -327,6 +346,23 @@ jobs:
           path: ${{ runner.temp }}/din-results
           if-no-files-found: warn
           retention-days: 14
+
+  # Separate from CI OK: raw step evidence survives advisory job masking.
+  integration-summary:
+    name: Integration summary (advisory)
+    if: always()
+    needs: [integration-paths, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Report integration decision and outcome
+        env:
+          INTEGRATION_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/integration_ci.py summary
 
   # The only required status check. Keeps branch protection to one context and
   # avoids the path-filter/required-check deadlock. See plan 2.8.
