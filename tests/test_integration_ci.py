@@ -57,6 +57,7 @@ def local_origin(repo):
     [
         "pyproject.toml",
         "MANIFEST.in",
+        "tests/__init__.py",
         ".github/constraints-ci.txt",
         ".gitmodules",
         ".dockerignore",
@@ -120,6 +121,7 @@ def test_dispatch_does_not_diff_or_fetch(monkeypatch, enabled):
     [
         ("Documentation/guide.md", False),
         ("pyproject.toml", True),
+        ("tests/__init__.py", True),
         ("dincli/space tab\tand newline\n.py", True),
         (os.fsdecode(b"dincli/nonutf8-\xff.py"), True),
     ],

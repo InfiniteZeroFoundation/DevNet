@@ -21,6 +21,7 @@ FILES = frozenset(
     {
         "pyproject.toml",
         "MANIFEST.in",
+        "tests/__init__.py",
         ".github/constraints-ci.txt",
         ".gitmodules",
         ".dockerignore",

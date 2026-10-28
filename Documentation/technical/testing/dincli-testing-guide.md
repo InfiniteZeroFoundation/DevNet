@@ -143,7 +143,7 @@ The filter follows what the current job and harness use:
 
 | Paths | Why they select integration |
 | --- | --- |
-| `dincli/`, `tests/dincli/` | CLI, bundled configuration/ABIs/services, worker Dockerfile/entrypoint and integration harness/tests. |
+| `dincli/`, `tests/dincli/`, `tests/__init__.py` | CLI, bundled configuration/ABIs/services, worker Dockerfile/entrypoint and integration harness/tests, including the imported parent package initializer. |
 | `pyproject.toml`, `MANIFEST.in`, `.github/constraints-ci.txt` | Editable package/test installation, package file rules and CI dependency constraints. |
 | `foundry/src/`, `foundry/script/`, `foundry/test/` | Both CI and the harness run unrestricted `forge build`, including test contracts. |
 | `foundry/foundry.toml`, `foundry/foundry.lock`, `foundry/remappings.txt`, `foundry/package.json`, `foundry/package-lock.json` | Compiler/build configuration, library resolution and npm dependencies used by Foundry/FFI. |
