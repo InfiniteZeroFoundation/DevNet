@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software in your research, please cite it as below."
-title: "InfiniteZero DevNet: the Decentralized Intelligence Network (DIN)"
+title: "InfiniteZero DevNet"
 type: software
 authors:
   - name: "InfiniteZero Foundation"
@@ -8,11 +8,13 @@ authors:
 repository-code: "https://github.com/InfiniteZeroFoundation/DevNet"
 url: "https://github.com/InfiniteZeroFoundation"
 license: Apache-2.0
+version: 0.2.0
+date-released: 2026-08-19
 abstract: >-
   An open protocol for training shared AI models on data where it lives.
   Participants train models locally with federated learning and share model
   updates rather than raw data, while smart contracts on Ethereum coordinate,
-  verify and reward each training round. This repository contains the DIN
+  verify and reward each training round. This repository contains the InfiniteZero
   smart contracts, the dincli command-line tool, reference model services and
   documentation for the DevNet test network.
 keywords:
