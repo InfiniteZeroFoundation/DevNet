@@ -65,6 +65,16 @@ DEPLOYMENT_KEYS = {
     "dinModelRegistry": ("registry", "registry_address"),
 }
 
+# Per-proxy ProxyAdmin keys (OZ v5 deploys one ProxyAdmin per proxy) that both
+# deploy scripts write → the din_info keys import-deployments maps them to.
+# Foundry also writes proxyAdminTreasury/FeeRouter/Emission; hardhat doesn't.
+PROXY_ADMIN_KEYS = {
+    "proxyAdminToken": "proxy_admin_token",
+    "proxyAdminCoordinator": "proxy_admin_coordinator",
+    "proxyAdminStake": "proxy_admin_stake",
+    "proxyAdminRegistry": "proxy_admin_registry",
+}
+
 
 def _assert_artifacts_exist():
     missing = [name for name, path in ARTIFACTS.items() if not path.exists()]
@@ -132,9 +142,8 @@ def test_deploy_platform_via_script(state):
     assert result.returncode == 0, f"{label} failed:\n{result.stderr}"
 
     deployments = json.loads(DEPLOYMENTS_FILE.read_text())
-    for key in (*DEPLOYMENT_KEYS, "proxyAdmin"):
+    for key in (*DEPLOYMENT_KEYS, *PROXY_ADMIN_KEYS):
         assert deployments.get(key, "").startswith("0x"), f"missing {key} in {DEPLOYMENTS_FILE}"
-    state["proxy_admin_address"] = deployments["proxyAdmin"]
 
 
 def test_import_deployments_into_din_info(run, state):
@@ -161,7 +170,10 @@ def test_import_deployments_into_din_info(run, state):
             f"din_info['{info_key}'] not updated from deployments['{dep_key}']"
         )
         state[state_key] = din_info[info_key]
-    assert din_info.get("proxy_admin") == deployments["proxyAdmin"]
+    for dep_key, info_key in PROXY_ADMIN_KEYS.items():
+        assert din_info.get(info_key) == deployments[dep_key], (
+            f"din_info['{info_key}'] not updated from deployments['{dep_key}']"
+        )
 
 
 def test_dump_abi_coordinator(run):
