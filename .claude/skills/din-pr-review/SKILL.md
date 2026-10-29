@@ -49,6 +49,13 @@ The process itself is [`Developer/MAINTAINING.md`](../../../Developer/MAINTAININ
   literally `Soon` in every row — grep the drafted body for
   `Actual merge proposal | ` and confirm before posting. Put any verification
   detail from your own trial merge in "Recommended merge proposal" instead.
+- **Check closing keywords before approving** (MAINTAINING No. 4.3). `develop`
+  is the default branch, so `Closes`/`Fixes`/`Resolves #N` in the PR body or
+  any commit message closes issue N on merge. Grep both
+  (`gh pr view <N> --json body,commits`). For each hit, check the PR against
+  the issue's full scope: its body plus the `din-approve-issue` amendments. If
+  the PR is partial, say so in the verification comment and ask the author to
+  change it to `Part of #N` before merge.
 
 ## 1. Set up an isolated review
 

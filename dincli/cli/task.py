@@ -194,6 +194,8 @@ def register_request(
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     console.print(f"[bold green]Submitting model registration request to DINRegistry ...[/bold green]")
 
+    dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
+
     if not taskCoordinator:
         taskCoordinator = resolve_task_coordinator_address(
             effective_network, None, console, verbose=True
@@ -230,8 +232,6 @@ def register_request(
             )
 
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
-
-        dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
 
     console.print(f"[green]Requesting model registration in DINRegistry[/green]")
     console.print(f"[gray]Manifest CID: {manifestCID}[/gray]")

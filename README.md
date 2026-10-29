@@ -1,5 +1,10 @@
 # InfiniteZero Network — DevNet
 
+> [!IMPORTANT]
+> **You're on `develop`, the development branch.** It holds the next version of the protocol (DevNet 2.0, not deployed yet) and is where all contributions go.
+>
+> **Want to use the live DevNet?** DevNet 1.0 on Optimism Sepolia runs the code on [`main`](https://github.com/InfiniteZeroFoundation/DevNet/tree/main). Start with its [README](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/README.md) and [Getting Started guide](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md), and install [dincli 0.2.0](https://github.com/InfiniteZeroFoundation/DevNet/releases/tag/v0.2.0).
+
 <div align="center">
 
 [![CI](https://github.com/InfiniteZeroFoundation/DevNet/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/InfiniteZeroFoundation/DevNet/actions/workflows/ci.yml)
@@ -21,13 +26,16 @@
 
 ## What is this?
 
-InfiniteZero is building **DIN** (Decentralized Intelligence Network), an open protocol for training shared AI models on data where it lives. Participants train models on their own devices with federated learning and share **model updates, not raw data**. Smart contracts on Ethereum coordinate each training round, check the work, and reward the people who do it.
+InfiniteZero is an open protocol for training shared AI models on data where it lives. Participants train models on their own devices with federated learning and share **model updates, not raw data**. Smart contracts on Ethereum coordinate each training round, check the work, and reward the people who do it.
 
 This repository is the **DevNet**: the smart contracts, the `dincli` command-line tool, the reference model services, and the documentation for everyone building on or running the network.
 
+The protocol was previously called DIN (Decentralized Intelligence Network). You'll still see that name in the code, for example in `dincli`, until the rename to InfiniteZero ([#281](https://github.com/InfiniteZeroFoundation/DevNet/issues/281)) is complete.
+
 **Where we are today**
 
-- **DevNet 2.0 is live and experimental**, on the Optimism Sepolia test network, using test ETH. Validator nodes run 24/7 from Japan to Canada. Expect bugs, changes and resets.
+- **DevNet 1.0 is live and experimental**, on the Optimism Sepolia test network, using test ETH. It runs the code on [`main`](https://github.com/InfiniteZeroFoundation/DevNet/tree/main). Validator nodes run 24/7 from Japan to Canada. Expect bugs, changes and resets.
+- **DevNet 2.0 is next.** This `develop` branch holds it: commit-reveal scoring, the reward engine, fee routing and emissions, on upgradeable contracts. It isn't deployed yet.
 - **One tested example so far:** an MNIST image model runs end to end. Other model types are supported by design but not yet tested.
 - **Next:** a public testnet, then mainnet with a fully decentralised fair launch, with no ICO and no VC allocation.
 - **Privacy:** raw data stays on devices. Optional differential-privacy settings exist but are off by default and still being strengthened, so we make no formal privacy guarantee yet.
@@ -39,10 +47,10 @@ This repository is the **DevNet**: the smart contracts, the `dincli` command-lin
 
 | You want to… | Go to |
 | :--- | :--- |
-| **Run a node or join a training round** | [Getting started on DevNet](Documentation/public/getting-started.md) |
-| **Install and configure `dincli`** (including IPFS) | [Setup guide](Documentation/public/setup.md) |
-| **Train your own model on the network** | [What can I train on DIN?](Documentation/public/what-can-be-trained.md) |
-| **Evaluate DIN for your community or organisation** | [Partner introduction](Documentation/public/partner-introduction.md) |
+| **Run a node or join a training round on the live DevNet 1.0** | [Getting Started guide on `main`](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md) and [dincli 0.2.0](https://github.com/InfiniteZeroFoundation/DevNet/releases/tag/v0.2.0) |
+| **Try the DevNet 2.0 code on `develop`** | [Getting started](Documentation/public/getting-started.md) · [Setup guide](Documentation/public/setup.md) |
+| **Train your own model on the network** | [What can I train?](Documentation/public/what-can-be-trained.md) |
+| **Evaluate InfiniteZero for your community or organisation** | [Partner introduction](Documentation/public/partner-introduction.md) |
 | **Contribute code, docs, research or translations** | [Good first issues](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) · [Contributing guide](Developer/CONTRIBUTING.md) · [Roadmap](Developer/ROADMAP.md) |
 
 All documentation: [`Documentation/`](Documentation/README.md)
@@ -59,7 +67,7 @@ All documentation: [`Documentation/`](Documentation/README.md)
 | `Documentation/` | What exists today: `public/` for participants, `technical/` for code readers and auditors |
 | `Developer/` | Plans, designs, tasks and process docs, including the [roadmap](Developer/ROADMAP.md) and [backlog](Developer/BACK_LOG.md) |
 
-Every change is reviewed by someone other than its author, and CI runs the full contract and Python test suites on every push.
+Since October 2026, every change to `develop` needs an approving review from someone other than its author ([MAINTAINING.md](Developer/MAINTAINING.md)), and CI runs the Solidity test suite and the Python unit tests on every push.
 
 ---
 

@@ -5,9 +5,11 @@ description: Use when deciding whether a GitHub issue in InfiniteZeroFoundation/
 
 # DIN issue closure
 
-Most issues in this repo are implemented by a PR merged into `develop`. `main`
-is the default branch, so a PR's "Closes No. N" never fires and every issue is
-closed by hand. This skill does the closing. It proves that everything the
+Most issues in this repo are implemented by a PR merged into `develop`. `develop`
+became the default branch on 2026-10-29. A PR merged after that with a closing
+keyword closes its issue automatically. Issues whose PRs merged before then never
+auto-closed and are closed by hand. This skill does the closing, and it also
+re-checks auto-closed issues. It proves that everything the
 issue asked for is on `develop`, then either closes the issue with one comment
 that recaps the evidence, or posts a status update that says exactly what is
 done and what is left, and leaves the issue open.
@@ -77,7 +79,10 @@ gh api --paginate repos/$R/issues/<N>/timeline \
 gh api repos/$R/issues/<N>/sub_issues --jq '.[] | {number, title, state}' 2>/dev/null
 ```
 
-If the issue is already closed, stop and ask.
+If the issue is already closed: when a closing keyword closed it automatically
+(the timeline shows `closed` by a merged PR or commit), run the full check anyway.
+If it's not done, reopen it (`gh issue reopen <N>`) with the status-update comment
+from step 6. If someone closed it by hand, stop and ask.
 
 Read every comment. Pay particular attention to:
 
@@ -181,7 +186,7 @@ by-hand note, then bullets grouped by Part/amendment. Link commits as
 **Closing comment:**
 
 ```markdown
-Done by PR No. <P>, merged into `develop` as [`<short>`](<commit url>)<, with review fixes in [`<short>`](<url>)>. <Outcome/CI link if there is one.> Closing by hand, because a merge into `develop` doesn't trigger closing keywords (`main` is the default branch).
+Done by PR No. <P>, merged into `develop` as [`<short>`](<commit url>)<, with review fixes in [`<short>`](<url>)>. <Outcome/CI link if there is one.> <Only if the PR merged before 2026-10-29, when `develop` became the default branch: "Closing by hand, because closing keywords didn't fire on `develop` merges before then.">
 
 Checked on `origin/develop` @ `<short sha>`:
 - **Proposed change 1–N / Part A:** <what exists, file refs, short>
