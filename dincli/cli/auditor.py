@@ -13,8 +13,9 @@ import nacl.encoding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from eth_account.messages import encode_defunct
 from eth_account import Account
-from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
-                                 read_dintoken_stake, stake_dintokens)
+from dincli.cli.dintoken import (approve_din, buy_dintokens,
+                                 read_din_per_eth_rate, read_dintoken_stake,
+                                 stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, lock_batch_seed_if_pending,
                                require_custom_manifest_service,
@@ -31,8 +32,15 @@ from dincli.cli.worker import (
 from dincli.services.cid_utils import get_cid_from_bytes32
 from dincli.services.ipfs import retrieve_from_ipfs
 
-def _load_auditor_x25519_key() -> PrivateKey:
-    key_path = Path(CONFIG_DIR) / "auditor_x25519.key"
+# One X25519 key per wallet: a single shared file broke several auditors
+# (e.g. --demokey accounts) on one machine, since each registers its own
+# public key on DinValidatorStake.
+def _auditor_x25519_key_path(address: str) -> Path:
+    return Path(CONFIG_DIR) / f"auditor_x25519_{Web3.to_checksum_address(address)}.key"
+
+
+def _load_auditor_x25519_key(address: str) -> PrivateKey:
+    key_path = _auditor_x25519_key_path(address)
     if not key_path.exists():
         raise FileNotFoundError(
             f"Auditor X25519 private key not found at {key_path}. "
@@ -164,6 +172,80 @@ def register(
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
                 raise typer.Exit()
+
+@app.command("register-encryption-key", help="Generate this wallet's X25519 key and register its public key on DinValidatorStake")
+def register_encryption_key(ctx: typer.Context):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    stake_contract = ctx.obj.get_deployed_din_stake_contract()
+
+    key_path = _auditor_x25519_key_path(account.address)
+    if key_path.exists():
+        privkey = PrivateKey(bytes.fromhex(key_path.read_text().strip()))
+        console.print(f"[dim]Using existing X25519 key {key_path}[/dim]")
+    else:
+        privkey = PrivateKey.generate()
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(privkey.encode(encoder=nacl.encoding.HexEncoder).decode())
+        console.print(f"[yellow]Generated X25519 key → {key_path}[/yellow]")
+    key_path.chmod(0o600)
+
+    pubkey = bytes(privkey.public_key)
+    if bytes(stake_contract.functions.getEncryptionKey(account.address).call()) == pubkey:
+        console.print("[bold green]✓ This key is already registered on-chain.[/bold green]")
+        return
+
+    build_and_send_tx(
+        ctx,
+        stake_contract.functions.registerEncryptionKey(pubkey),
+        "Registering encryption key",
+        "Encryption key registered.",
+        "Could not register encryption key",
+    )
+
+
+@app.command("dispute-test-data", help="Dispute your batch's test data (posts the DIN bond; batch auditors only)")
+def dispute_test_data(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    batch_id: int = typer.Option(..., "--batch", help="Your auditor batch ID"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+    task_auditor_contract = ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+
+    curr_GI, _ = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
+    ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+
+    # Mirrors openTestDataDispute's checks, so a doomed dispute costs no approval.
+    if not task_auditor_contract.functions.isBatchAuditor(ref_gi, batch_id, account.address).call():
+        console.print(f"[bold red]✗ You aren't an auditor of GI {ref_gi} batch {batch_id}.[/bold red]")
+        raise typer.Exit(1)
+    if task_auditor_contract.functions.giRewardSnapshot(ref_gi).call()[4]:
+        console.print(f"[bold red]✗ GI {ref_gi}'s rewards are already settled; it can't be disputed.[/bold red]")
+        raise typer.Exit(1)
+    if task_auditor_contract.functions.testDataCommitments(ref_gi, batch_id).call() == b"\x00" * 32:
+        console.print(f"[bold red]✗ No test data has been assigned to batch {batch_id} yet.[/bold red]")
+        raise typer.Exit(1)
+    d = task_auditor_contract.functions.testDataDisputes(ref_gi, batch_id).call()
+    if d[3] or d[4]:
+        console.print(f"[bold red]✗ Batch {batch_id} already has an active dispute or is pending reassignment.[/bold red]")
+        raise typer.Exit(1)
+
+    bond = task_auditor_contract.functions.disputeBondAmount().call()
+    if bond > 0:
+        approve_din(ctx, task_auditor_contract.address, bond, purpose="the dispute bond")
+
+    build_and_send_tx(
+        ctx,
+        task_auditor_contract.functions.openTestDataDispute(ref_gi, batch_id),
+        f"Opening a test-data dispute on GI {ref_gi} batch {batch_id} (bond {Web3.from_wei(bond, 'ether')} DIN)",
+        "Dispute opened. The model owner must answer within the window, or anyone can close it as upheld.",
+        "Could not open the dispute",
+    )
+
 
 @app.command("lock-seed", help="Lock the auditor batch-assignment seed for the current GI (permissionless)")
 def lock_seed(
@@ -470,7 +552,7 @@ def evaluate_lms(
             #   fetch ciphertext IPFS(rawCID) → AES-GCM-decrypt(K) → plaintext .pt
             raw_cid = None
             try:
-                auditor_privkey = _load_auditor_x25519_key()
+                auditor_privkey = _load_auditor_x25519_key(account.address)
                 owner_pubkey = PublicKey(bytes.fromhex(
                     get_manifest_key(effective_network, "owner_encryption_pubkey", model_id)
                 ))

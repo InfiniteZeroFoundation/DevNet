@@ -93,6 +93,14 @@ def start(
         console.print(f"[red]❌ Invalid GI request:[/red] Expected {curr_gi + 1}, got {target_gi}")
         raise typer.Exit(1)
 
+    # startGI reverts with TC_GIRewardPoolNotFunded on an empty pool; check
+    # before the pass-score evaluation below.
+    task_auditor = ctx.obj.get_deployed_din_task_auditor_contract(False, model_id)
+    if task_auditor.functions.giRewardPool(target_gi).call() == 0:
+        console.print(f"[red]❌ GI {target_gi}'s reward pool is empty, so it can't start.[/red]")
+        console.print(f"[yellow]Fund it first: dincli model-owner rewards deposit {model_id} --gi {target_gi} --amount <DIN> (or `rewards fund-emission`).[/yellow]")
+        raise typer.Exit(1)
+
     console.print(f"[bold green]🚀 Starting global iteration {target_gi}[/bold green]")
 
     # === 2. Manifest Policy Resolution ===
@@ -368,3 +376,34 @@ def end(
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
+
+
+@gi_app.command("release-slots", help="Release an ended GI's validator registration slots (DINTaskCoordinator.releaseGIRegistrationSlots, once per GI)")
+def release_slots(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Ended GI (default: the current GI, once ended)"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator)
+    ref_gi = gi if gi is not None else curr_GI
+
+    curr_state = GIstate if isinstance(GIstate, str) else GIstateToStr(GIstate)
+    if ref_gi < 1 or ref_gi > curr_GI or (ref_gi == curr_GI and curr_state != "GIended"):
+        console.print(f"[red]❌ GI {ref_gi} has not ended (current GI {curr_GI}, state {curr_state}).[/red]")
+        raise typer.Exit(1)
+
+    if task_coordinator.functions.registrationSlotsReleased(ref_gi).call():
+        console.print(f"[yellow]Registration slots for GI {ref_gi} are already released.[/yellow]")
+        return
+
+    build_and_send_tx(
+        ctx,
+        task_coordinator.functions.releaseGIRegistrationSlots(ref_gi),
+        f"Releasing registration slots for GI {ref_gi}",
+        f"Registration slots for GI {ref_gi} released.",
+        f"Could not release registration slots for GI {ref_gi}",
+    )
