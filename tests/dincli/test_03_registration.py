@@ -41,7 +41,7 @@ def test_model_owner_create_task_dir(run):
 
     SDK candidate: create_task_dir(network, model_owner_account)
     """
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "task", "create-task-dir"])
     assert result.returncode == 0
 
@@ -137,7 +137,7 @@ def test_model_owner_submit_registration_request(run):
 
 def test_din_rep_lists_pending_requests(run):
     """DIN-Representative can see the pending registration request."""
-    run(["system", "connect-wallet", "dinrep"])
+    run(["system", "connect-demo-wallet", "dinrep"])
     result = run(["dinrep", "registry", "list-pending-requests"])
     assert result.returncode == 0
 
@@ -160,7 +160,7 @@ def test_din_rep_approves_registration_request(run, state):
 
 def test_model_owner_checks_request_status(run):
     """Model owner confirms their request was approved."""
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["task", "model-owner", "my-requests", "--ip"])
     assert result.returncode == 0
 
@@ -206,13 +206,13 @@ def test_model_owner_update_manifest_request(run, din_tmp):
 
 
 def test_din_rep_lists_manifest_requests(run):
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["dinrep", "registry", "list-pending-requests"])
     assert result.returncode == 0
 
 
 def test_din_rep_explores_manifest_request(run):
-    run(["system", "connect-wallet", "dinrep"])
+    run(["system", "connect-demo-wallet", "dinrep"])
     result = run(["dinrep", "registry", "explore-request", "0", "-t", "manifest"])
     assert result.returncode == 0
 

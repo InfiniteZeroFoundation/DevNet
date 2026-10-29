@@ -65,7 +65,7 @@ def _gi_state(run) -> str:
 
 def test_show_initial_gi_state(run):
     """Confirm model 0 GI state before starting."""
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["task", "gi", "show-state", MODEL_ID])
     assert result.returncode == 0
 
@@ -125,7 +125,7 @@ def test_aggregator_register(run, acc):
 
 
 def test_show_registered_aggregators(run):
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "gi", "show-registered-aggregators", MODEL_ID])
     assert result.returncode == 0
 
@@ -163,7 +163,7 @@ def test_auditor_register(run, acc):
 
 
 def test_show_registered_auditors(run):
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "gi", "show-registered-auditors", MODEL_ID])
     assert result.returncode == 0
 
@@ -230,7 +230,7 @@ def test_lms_close(run):
 
     SDK candidate: close_lms(network, account, model_id)
     """
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "lms", "close", MODEL_ID])
     assert result.returncode == 0
 
@@ -300,7 +300,7 @@ def test_auditor_evaluate(run, acc):
 
 
 def test_show_lms_evaluation_models_after(run):
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "lms-evaluation", "show", MODEL_ID, "--models"])
     assert result.returncode == 0
 
@@ -366,7 +366,7 @@ def test_aggregator_aggregate_t1(run, acc):
 
 
 def test_show_t1_batches_after_agg(run):
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "aggregation", "show-t1-batches", MODEL_ID, "--detailed"])
     assert result.returncode == 0
 
@@ -419,7 +419,7 @@ def test_aggregator_aggregate_t2(run, acc):
 
 
 def test_show_t2_batches_after_agg(run):
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "aggregation", "show-t2-batches", MODEL_ID, "--detailed"])
     assert result.returncode == 0
 
@@ -476,7 +476,7 @@ def test_gi_end(run):
 
 def test_gi_final_state_is_ended(run):
     """Assert final GI state is GIended (index 23) — the key regression gate."""
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["task", "gi", "show-state", MODEL_ID])
     assert result.returncode == 0
     assert "GIended" in result.stdout or "23" in result.stdout, (
