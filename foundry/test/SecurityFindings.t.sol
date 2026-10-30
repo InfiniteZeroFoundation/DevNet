@@ -18,6 +18,7 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {
     GIstates,
@@ -214,7 +215,7 @@ contract SecurityFindingsTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -621,14 +622,16 @@ contract SecurityFindingsTest is Test {
     function test_DINTaskAuditor_constructor_rejectsZeroStakeAddress() public {
         _deployPlatform();
         DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        address enabledRegistry = address(new EnabledModelRegistry());
         vm.expectRevert(TA_InvalidAddress.selector);
-        new DINTaskAuditor(address(0), address(tcLocal), 1);
+        new DINTaskAuditor(address(0), address(tcLocal), 1, enabledRegistry);
     }
 
     function test_DINTaskAuditor_constructor_rejectsZeroCoordinatorAddress() public {
         _deployPlatform();
+        address enabledRegistry = address(new EnabledModelRegistry());
         vm.expectRevert(TA_InvalidAddress.selector);
-        new DINTaskAuditor(address(stake), address(0), 1);
+        new DINTaskAuditor(address(stake), address(0), 1, enabledRegistry);
     }
 
     function test_setDINTaskAuditorContract_rejectsZeroAddress() public {

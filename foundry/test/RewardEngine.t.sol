@@ -18,7 +18,8 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates} from "../src/DINShared.sol";
+import {GIstates, TA_ModelDisabled, TA_ModelNotRegistered, TA_InvalidAddress,
+    TA_NotTaskCoordinator, TC_GIRewardPoolNotFunded} from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
 
 contract RewardEngineTest is Test {
@@ -36,6 +37,8 @@ contract RewardEngineTest is Test {
 
     DINTaskCoordinator tc;
     DINTaskAuditor ta;
+    bool skipRegistration;
+    bool disableDuringGI;
 
     address admin = makeAddr("admin");
     address modelOwner = makeAddr("modelOwner");
@@ -126,7 +129,7 @@ contract RewardEngineTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(registry));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -140,7 +143,17 @@ contract RewardEngineTest is Test {
         tc.setDINTaskAuditorAsSlasher();
         tc.setGenesisModelIpfsHash(bytes32(uint256(1)));
         ta.setDinToken(address(token));
+        if (skipRegistration) {
+            vm.stopPrank();
+            return;
+        }
+        vm.deal(modelOwner, 1 ether);
+        uint256 requestId = registry.requestModelRegistration{value: registry.openSourceFee()}(
+            bytes32(uint256(1)), address(tc), address(ta), true
+        );
         vm.stopPrank();
+        vm.prank(admin);
+        registry.approveModel(requestId);
     }
 
     /// @dev Drives an entire honest GI from a funded pool through to
@@ -168,6 +181,10 @@ contract RewardEngineTest is Test {
 
         vm.prank(modelOwner);
         tc.startGI(1);
+        if (disableDuringGI) {
+            vm.prank(admin);
+            registry.disableModel(0);
+        }
 
         vm.startPrank(modelOwner);
         tc.startDINaggregatorsRegistration(1);
@@ -410,13 +427,136 @@ contract RewardEngineTest is Test {
         ta.depositRewards(1, 1 ether);
     }
 
+    // Issue #224: real registry integration, including model ID zero. The
+    // fixture's anticipated constructor ID is deliberately 1, not approved ID 0.
+    function _killSwitchFixture() internal {
+        _deployPlatform();
+        _deployTaskPair();
+        _fundDinBalance(modelOwner, 3 ether);
+        vm.prank(modelOwner);
+        ta.depositRewards(1, 1 ether);
+    }
+
+    function test_disabledModel_blocksBothOverloadsAtomically_andReenable() public {
+        _killSwitchFixture();
+        (bool exists, uint256 approvedId) = registry.getModelIdByTaskAuditor(address(ta));
+        assertTrue(exists);
+        assertEq(approvedId, 0);
+        assertEq(ta.modelId(), 1);
+        vm.prank(admin);
+        registry.disableModel(0);
+        (, bytes memory beforeParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        vm.startPrank(modelOwner);
+        vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
+        tc.startGI(1);
+        vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
+        tc.startGI(1, 77);
+        vm.stopPrank();
+        (, bytes memory afterParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        assertEq(afterParams, beforeParams);
+        assertEq(tc.GI(), 0);
+        assertEq(uint256(tc.GIstate()), uint256(GIstates.GenesisModelCreated));
+        assertEq(ta.giRewardPool(1), 1 ether);
+        vm.prank(admin);
+        registry.enableModel(0);
+        vm.prank(modelOwner);
+        tc.startGI(1, 77);
+        assertEq(tc.GI(), 1);
+    }
+
+    function test_disabledModel_blocksPrivateFundingAfterDisable() public {
+        _killSwitchFixture();
+        vm.prank(admin);
+        registry.disableModel(0);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
+        tc.startGI(1);
+        vm.stopPrank();
+        assertEq(ta.giRewardPool(1), 2 ether);
+    }
+
+    function test_unregisteredModel_blocksBothOverloads() public {
+        _deployPlatform();
+        skipRegistration = true;
+        _deployTaskPair();
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(1, 1 ether);
+        vm.expectRevert(TA_ModelNotRegistered.selector);
+        tc.startGI(1);
+        vm.expectRevert(TA_ModelNotRegistered.selector);
+        tc.startGI(1, 77);
+        vm.stopPrank();
+        assertEq(tc.GI(), 0);
+    }
+
+    function test_registryReadFailure_failsClosed() public {
+        _killSwitchFixture();
+        vm.mockCallRevert(address(registry),
+            abi.encodeWithSignature("getModelIdByTaskAuditor(address)", address(ta)), bytes("registry unavailable"));
+        vm.startPrank(modelOwner);
+        vm.expectRevert(bytes("registry unavailable"));
+        tc.startGI(1);
+        vm.expectRevert(bytes("registry unavailable"));
+        tc.startGI(1, 77);
+        vm.stopPrank();
+        assertEq(tc.GI(), 0);
+    }
+
+    function test_registryWiring_rejectsZeroAndEOA() public {
+        vm.expectRevert(TA_InvalidAddress.selector);
+        new DINTaskAuditor(address(1), address(2), 0, address(0));
+        vm.expectRevert(TA_InvalidAddress.selector);
+        new DINTaskAuditor(address(1), address(2), 0, makeAddr("notRegistry"));
+    }
+
+    function test_wrongRegistryContract_failsClosed() public {
+        _deployPlatform();
+        DINTaskAuditor wrong = new DINTaskAuditor(address(stake), address(this), 0, address(token));
+        vm.expectRevert(); // token has no registry selector
+        wrong.validateGIStart(1);
+    }
+
+    function test_validateGIStart_onlyPairedCoordinator() public {
+        _killSwitchFixture();
+        vm.expectRevert(TA_NotTaskCoordinator.selector);
+        ta.validateGIStart(1);
+    }
+
+    function test_disabledInFlight_completesSettlesClaims_butCannotStartNext() public {
+        disableDuringGI = true;
+        _runFullHonestGI(1000 ether);
+        assertTrue(registry.modelDisabled(0));
+        vm.prank(modelOwner);
+        tc.endGI(1);
+        vm.prank(client1);
+        ta.claimReward(1);
+        uint256 amount = ta.claimable(client1);
+        assertGt(amount, 0);
+        uint256 balance = token.balanceOf(client1);
+        vm.prank(client1);
+        ta.claimRewards();
+        assertEq(token.balanceOf(client1), balance + amount);
+        _fundDinBalance(modelOwner, 1 ether);
+        vm.startPrank(modelOwner);
+        ta.depositRewards(2, 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
+        tc.startGI(2);
+        vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
+        tc.startGI(2, 77);
+        vm.stopPrank();
+        assertEq(tc.GI(), 1);
+        assertEq(uint256(tc.GIstate()), uint256(GIstates.GIended));
+    }
+
     function test_startGI_revertsWithoutFundedPool() public {
         _deployPlatform();
         _deployTaskPair();
         // No depositRewards call at all.
 
         vm.prank(modelOwner);
-        vm.expectRevert(); // TC_GIRewardPoolNotFunded
+        vm.expectRevert(TC_GIRewardPoolNotFunded.selector);
         tc.startGI(1);
     }
 

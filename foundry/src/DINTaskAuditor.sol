@@ -18,6 +18,9 @@ interface IBurnableDinToken {
 contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
+    /// @notice Canonical platform registry, fixed at deployment; review wiring before approval.
+    ITaskModelRegistry public immutable modelRegistry;
+
     IDinValidatorStake public dinvalidatorStakeContract;
 
     IDINTaskCoordinator public dintaskcoordinatorContract;
@@ -403,14 +406,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
+    /// @param modelRegistry_ Canonical DINModelRegistry proxy; cannot be changed after deployment.
     constructor(
         address _dinvalidatorStakeContract_address,
         address _dintaskcoordinator_contract_address,
-        uint256 modelId_
+        uint256 modelId_,
+        address modelRegistry_
     ) Ownable(msg.sender) {
         if (
             _dinvalidatorStakeContract_address == address(0) ||
-            _dintaskcoordinator_contract_address == address(0)
+            _dintaskcoordinator_contract_address == address(0) ||
+            modelRegistry_.code.length == 0
         ) revert TA_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
@@ -419,6 +425,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             _dintaskcoordinator_contract_address
         );
         modelId = modelId_;
+        modelRegistry = ITaskModelRegistry(modelRegistry_);
 
         params = Params({
             auditorsPerBatch: 3,
@@ -428,6 +435,19 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             passScore: 50,
             MIN_MODELS_PER_BATCH: 2
         });
+    }
+
+    /// @notice Checks registry approval, enabled status and funding before a new GI.
+    /// @dev Only the paired coordinator calls this, from both startGI overloads,
+    ///      before any mutation. Reverse lookup uses the approved ID rather than
+    ///      the constructor's anticipated stake-floor ID. Registry failures revert
+    ///      closed. In-flight phases, settlement and claims remain available.
+    /// @param gi Next GI whose reward pool must be funded.
+    function validateGIStart(uint256 gi) external view onlyTaskCoordinator {
+        (bool exists, uint256 registeredId) = modelRegistry.getModelIdByTaskAuditor(address(this));
+        if (!exists) revert TA_ModelNotRegistered();
+        if (modelRegistry.modelDisabled(registeredId)) revert TA_ModelDisabled(registeredId);
+        if (giRewardPool[gi] == 0) revert TC_GIRewardPoolNotFunded();
     }
 
     /// @notice Wires the DIN token used for reward deposits and payouts.
@@ -465,7 +485,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      pool (typically the model owner, but not restricted to them --
     ///      matches the "market-set pool" framing in MECHANISM_DESIGN §5,
     ///      nothing stops a third party topping up a pool they care about).
-    ///      DINTaskCoordinator._startGI checks giRewardPool(_GI) > 0 as a
+    ///      DINTaskCoordinator._startGI calls validateGIStart(_GI) as a
     ///      precondition before that GI can start.
     ///
     ///      `gi` must be the current GI or a future one: GI only ever moves

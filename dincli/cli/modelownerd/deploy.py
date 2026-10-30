@@ -6,13 +6,42 @@ from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
                               resolve_task_coordinator_address, set_env_key)
 
+
+def _task_constructor_args(contract, role, stake, *, coordinator=None,
+                           model_id=None, registry=None):
+    """Support explicit released task signatures; refuse unknown custom shapes."""
+    constructors = [item for item in contract.abi if item.get("type") == "constructor"]
+    signature = (
+        tuple(item["type"] for item in constructors[0]["inputs"])
+        if len(constructors) == 1 else ()
+    )
+    supported = {
+        "coordinator": {("address",), ("address", "uint256")},
+        "auditor": {("address", "address"), ("address", "address", "uint256"),
+                    ("address", "address", "uint256", "address")},
+    }
+    if signature not in supported[role]:
+        raise typer.BadParameter(f"Unsupported {role} constructor signature: {signature}")
+    args = [stake] if role == "coordinator" else [stake, coordinator]
+    if "uint256" in signature:
+        if model_id is None or model_id < 0 or model_id >= 2**256:
+            raise typer.BadParameter("This artifact requires --model-id in the uint256 range")
+        args.append(model_id)
+    if role == "auditor" and len(signature) == 4:
+        if not registry:
+            raise typer.BadParameter("Configure the canonical platform registry for this network before deployment")
+        args.append(registry)
+    return args
+
+
 # Deploy sub-app (for 'dincli modelowner deploy ...')
 deploy_app = typer.Typer(help="Deploy task-level smart contracts")
 
 @deploy_app.command()
 def task_coordinator(
     ctx: typer.Context,
-    artifact_path: str = typer.Option(..., "--artifact", help="Path to DINTaskCoordinator contract artifact JSON (Hardhat format). "),
+    artifact_path: str = typer.Option(..., "--artifact", help="Task coordinator artifact JSON (Foundry or Hardhat)."),
+    model_id: int = typer.Option(None, "--model-id", help="Anticipated registry ID; required by current Foundry artifacts."),
 ):
     """
     Deploy the DINTaskCoordinator contract.
@@ -24,15 +53,19 @@ def task_coordinator(
     
     # Resolve DINValidatorStake address
     din_info = load_din_info()
-    if effective_network in din_info and "stake" in din_info[effective_network]:
-        din_validator_stake_address = din_info[effective_network]["stake"]
+    din_validator_stake_address = din_info.get(effective_network, {}).get("stake")
+    if not din_validator_stake_address:
+        raise typer.BadParameter("Configure the platform stake contract before deployment")
     
     console.print(f"[bold green]Deploying DINTaskCoordinator on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake:[/cyan] {din_validator_stake_address}")
     
     tx_receipt = build_and_send_tx(
         ctx,
-        DINTaskCoordinator_contract.constructor(din_validator_stake_address),
+        DINTaskCoordinator_contract.constructor(*_task_constructor_args(
+            DINTaskCoordinator_contract, "coordinator", din_validator_stake_address,
+            model_id=model_id,
+        )),
         "Deploying DINTaskCoordinator",
         "DINTaskCoordinator contract deployed successfully",
         "Failed to deploy DINTaskCoordinator"
@@ -48,7 +81,8 @@ def task_coordinator(
 @deploy_app.command()
 def task_auditor(
     ctx: typer.Context,
-    artifact_path: str = typer.Option(..., "--artifact", help="Path to DINTaskAuditor contract artifact JSON (Hardhat format)."),
+    artifact_path: str = typer.Option(..., "--artifact", help="Task auditor artifact JSON (Foundry or Hardhat)."),
+    model_id: int = typer.Option(None, "--model-id", help="Anticipated registry ID; must match paired coordinator."),
     task_coordinator: str = typer.Option(None, "--taskCoordinator", help="DINTaskCoordinator contract address"),
 ):
     """
@@ -60,21 +94,34 @@ def task_auditor(
     DINTaskAuditor_contract = get_contract_instance(artifact_path, effective_network)
       
     din_info = load_din_info()
-    if effective_network in din_info and "stake" in din_info[effective_network]:
-        din_validator_stake_address = din_info[effective_network]["stake"]
+    din_validator_stake_address = din_info.get(effective_network, {}).get("stake")
+    if not din_validator_stake_address:
+        raise typer.BadParameter("Configure the platform stake contract before deployment")
 
     # Resolve DINTaskCoordinator address
     task_coordinator_address = resolve_task_coordinator_address(
         effective_network, task_coordinator, console
     )
     
+    constructor_args = _task_constructor_args(
+        DINTaskAuditor_contract, "auditor", din_validator_stake_address,
+        coordinator=task_coordinator_address, model_id=model_id,
+        registry=din_info.get(effective_network, {}).get("registry"),
+    )
+    if len(constructor_args) >= 3:
+        model_id_abi = [{"type": "function", "name": "modelId", "inputs": [],
+                         "outputs": [{"type": "uint256"}], "stateMutability": "view"}]
+        paired = w3.eth.contract(address=task_coordinator_address, abi=model_id_abi)
+        if paired.functions.modelId().call() != model_id:
+            raise typer.BadParameter("--model-id must match the paired coordinator modelId()")
+
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
     console.print(f"[cyan]Using DINTaskCoordinator address:[/cyan] {task_coordinator_address}")
     
     tx_receipt = build_and_send_tx(
         ctx,
-        DINTaskAuditor_contract.constructor(din_validator_stake_address, task_coordinator_address),
+        DINTaskAuditor_contract.constructor(*constructor_args),
         "Deploying DINTaskAuditor",
         "DINTaskAuditor contract deployed successfully",
         "Failed to deploy DINTaskAuditor"

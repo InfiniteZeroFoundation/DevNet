@@ -32,7 +32,14 @@ dincli system register-wallet --account <account_id>
 > More on wallet configuration can be found in the [DIN CLI Documentation](../cli-reference.md).
 
 
-In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model. 
+In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model.
+
+For current Foundry artifacts, pass `--model-id <anticipated-id>` to both `model-owner deploy task-coordinator` and `model-owner deploy task-auditor`; their stake-floor IDs must match. Configure the canonical platform registry address in this network's `din_info.json` (`registry`) before deploying the auditor. Its fourth constructor argument is immutable registry wiring. The CLI supports explicit legacy constructor signatures too, but those older contracts do not gain the guard described below; unsupported custom constructor signatures are rejected.
+
+The DIN-Representative must approve the model before **any** GI can start. Both start overloads check the registry-assigned ID by auditor address; do not assume the anticipated constructor ID establishes registration. Coordinate ID allocation with the DIN-Representative for correct stake floors.
+
+Disabling a model prevents future GIs, including those with a pre-funded or privately funded pool. An in-flight GI continues through work, slashing, settlement and reward claims. There is no GI abort or new pool refund/recovery path. The guard requires a newly deployed compatible coordinator/auditor pair with canonical registry wiring and reviewed task code; existing deployments remain unchanged. See [kill-switch scope](../../technical/contracts/DINModelRegistry.md#11-kill-switch).
+
 
 # Workflow
 

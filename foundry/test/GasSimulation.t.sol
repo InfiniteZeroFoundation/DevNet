@@ -10,6 +10,7 @@ import {DinCoordinator}    from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DinTreasury}       from "../src/DinTreasury.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor}     from "../src/DINTaskAuditor.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
 
@@ -79,7 +80,7 @@ contract GasSimulationTest is Test {
 
         // Task contracts
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
 
         // Wire state machine: auditor → coordinator slasher → auditor slasher → genesis
         tc.setDINTaskAuditorContract(address(ta));

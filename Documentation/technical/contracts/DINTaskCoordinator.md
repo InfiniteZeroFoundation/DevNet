@@ -121,6 +121,8 @@ setDinToken(dinToken)                          (needed for dispute bonds)
 
 ---
 
+Registry approval is required after setup and before the first GI. Both start overloads share the auditor's `validateGIStart(gi)` call after the state/index checks and before any mutation. This replaces the direct reward-pool lookup to preserve the coordinator's size budget. See [auditor wiring and future-GI guard](DINTaskAuditor.md#future-gi-guard-and-deployment) for required pair compatibility and registry trust.
+
 ## 6. GI Lifecycle
 
 The numbers are `GIstates` ordinals (see [DINShared §2.1](DINShared.md)).
@@ -152,7 +154,7 @@ Every owner transition after `startGI` takes the expected `_GI` and reverts `TC_
 The three reveal-opening calls (`startLMsubmissionsEvaluationReveal`, `startT1AggregationReveal`, `startT2AggregationReveal`) are manual owner steps. Forgetting one stalls the GI in the commit window (finalize reverts) without corrupting state.
 
 ### 6.1 `startGI`
-Requires `_GI == GI + 1` and a funded reward pool: `dinTaskAuditorContract.giRewardPool(_GI) > 0`, otherwise `TC_GIRewardPoolNotFunded`. The two-argument overload also calls `updatePassScore`. Then `GI++`.
+Requires `_GI == GI + 1` and the genesis/GI-ended state, then calls `dinTaskAuditorContract.validateGIStart(_GI)`: registry approval, enabled status and a nonzero reward pool are required. The auditor preserves `TC_GIRewardPoolNotFunded` for an empty pool. Both overloads check before mutation; the two-argument overload then calls `updatePassScore`, and both increment `GI` and enter `GIstarted`.
 
 ### 6.2 `registerDINaggregator`
 In `DINaggregatorsRegistrationStarted` only, and `onlyCurrentGI`: `_GI` must be the current GI (`TC_WrongGI`), as for `DINTaskAuditor.registerDINAuditor` (issue #206). Checks in order: `isValidatorActive` (`TC_AggregatorNotActive`), not already registered, fewer than 300 registered (`TC_RegistrationCapReached`), stake ≥ `getModelStakeMin(modelId)` when non-zero (`TC_StakeBelowModelFloor`), and — when `maxConcurrentRegistrationsPerStakeUnit > 0` — `activeRegistrationCount < (stake / minStake) × cap` (`TC_ConcurrentRegistrationCapReached`). Then records the aggregator, calls `incrementActiveRegistration`, emits `DINValidatorRegistered`.
@@ -256,7 +258,7 @@ DINTaskCoordinator
   │                      getModelStakeMin, maxConcurrentRegistrationsPerStakeUnit,
   │                      activeRegistrationCount, increment/decrementActiveRegistration,
   │                      slashPartial (S2), slash (bad consensus, S4), slashTreasury
-  ├── DINTaskAuditor:    giRewardPool, updatePassScore, createAuditorsBatches (with the audit seed),
+  ├── DINTaskAuditor:    validateGIStart, updatePassScore, createAuditorsBatches (with the audit seed),
   │                      setTestDataAssignedFlag, finalizeEvaluation, approvedModelIndexes,
   │                      slashAuditors, settleRewards, decrementAuditorRegistrations
   └── DinToken:          safeTransferFrom / safeTransfer / burn (dispute bonds)

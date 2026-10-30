@@ -16,6 +16,7 @@ import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {GIstates} from "../src/DINShared.sol";
 import {
@@ -82,7 +83,7 @@ contract StakingEnforcementTest is Test {
 
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), MODEL_ID);
-        ta = new DINTaskAuditor(address(stake), address(tc), MODEL_ID);
+        ta = new DINTaskAuditor(address(stake), address(tc), MODEL_ID, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         ta.setDinToken(address(token));
         vm.stopPrank();
@@ -232,7 +233,7 @@ contract StakingEnforcementTest is Test {
         // Deploy a second coordinator for the same stake contract
         vm.startPrank(modelOwner);
         DINTaskCoordinator tc2 = new DINTaskCoordinator(address(stake), 2);
-        DINTaskAuditor ta2 = new DINTaskAuditor(address(stake), address(tc2), 2);
+        DINTaskAuditor ta2 = new DINTaskAuditor(address(stake), address(tc2), 2, address(new EnabledModelRegistry()));
         tc2.setDINTaskAuditorContract(address(ta2));
         ta2.setDinToken(address(token));
         vm.stopPrank();

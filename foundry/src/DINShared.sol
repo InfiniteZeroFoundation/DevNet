@@ -126,7 +126,15 @@ interface IDINTaskCoordinator {
     ) external view returns (uint256);
 }
 
+/// @notice Registry reads required by the task's future-GI kill switch.
+interface ITaskModelRegistry {
+    function getModelIdByTaskAuditor(address auditor) external view returns (bool exists, uint256 modelId);
+    function modelDisabled(uint256 modelId) external view returns (bool);
+}
+
 interface IDINTaskAuditor {
+    function validateGIStart(uint256 gi) external view;
+
     function createAuditorsBatches(
         uint _GI,
         bytes32 seed
@@ -475,3 +483,8 @@ error TC_T2EmptyCommitHash();
 error TC_T2NoCommitFound();
 /// @dev The revealed (cid, salt) does not hash to the stored T2 commitment.
 error TC_T2RevealHashMismatch();
+
+/// @notice This auditor has not been approved in its configured registry.
+error TA_ModelNotRegistered();
+/// @notice The registry has disabled the model; no new GI may start.
+error TA_ModelDisabled(uint256 modelId);
