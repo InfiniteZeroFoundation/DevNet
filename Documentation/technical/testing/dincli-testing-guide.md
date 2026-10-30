@@ -154,22 +154,19 @@ coverage additionally lives in `tests/test_integration_diagnostics.py` and
 
 ### CI integration job
 
-`.github/workflows/ci.yml` has an **Integration (full GI)** job (issue #228)
+`.github/workflows/full-gi.yml` has an **Integration (full GI)** job (issue #228)
 that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
 `DIN_TEST_ISOLATED=1` on a GitHub-hosted runner.
 
-- **When it runs:** on PRs and pushes to `develop` that change
-  `foundry/src/`, `foundry/script/`, `foundry/anvil.sh`, `hardhat/`,
-  `dincli/`, `tests/dincli/` or `ci.yml`. (`hardhat/` is included while the
-  suite still deploys the task contracts from Hardhat artifacts.) The workflow itself has no path filters
-  because `CI OK` is the single required check, so the small
-  **Integration paths** job decides by diffing against the base. When it
-  cannot diff (a force push, for example), the suite runs.
-- **Non-blocking:** the job has `continue-on-error: true` and `CI OK` does not
-  wait for it. It is expected to fail after `test_01` until task_061026_21
-  moves the suite to the foundry task contracts and demo wallets. Once it has
-  been stable for a couple of weeks it can become required: add it to
-  `ci-ok`'s `needs` and accept `skipped` there.
+- **When it runs:** only when started by hand. Use the Actions tab ("Full GI" →
+  "Run workflow") or `gh workflow run full-gi.yml --ref <branch>`. A full GI
+  trains 9 clients and runs auditor and aggregator containers, which is too
+  heavy to run on every commit or push. Maintainers run it on demand, for
+  example before merging a change to the GI flow.
+- **Not a required check:** it lives outside `ci.yml`, so `CI OK` never
+  depends on it, and it will not become required. It is expected to fail after
+  `test_01` until task_061026_21 moves the suite to the foundry task contracts
+  and demo wallets.
 - **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
   Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
   `npx hardhat compile` run first, in the runner's normal environment, so the

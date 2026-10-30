@@ -1,0 +1,160 @@
+name: Full GI
+
+# Manual only: start it from the Actions tab ("Run workflow") or with
+#   gh workflow run full-gi.yml --ref <branch>
+# A full GI trains 9 clients and runs auditor and aggregator containers on a
+# fresh Anvil chain, offline Kubo and Docker, so it is too heavy to run on every
+# commit or push. Maintainers run it on demand, e.g. before merging a change to
+# the GI flow. It is not part of CI OK and is never a required check.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Same pins as ci.yml.
+  FOUNDRY_VERSION: v1.7.1
+  PIP_CONSTRAINT: .github/constraints-ci.txt
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # tests/dincli/ full-GI suite on Anvil + offline Kubo + Docker (issue #228).
+  integration:
+    name: Integration (full GI)
+    runs-on: ubuntu-latest
+    # A full GI trains 9 clients and runs auditor and aggregator containers.
+    # The measured runtime goes to the step summary; tighten this once known.
+    timeout-minutes: 90
+    env:
+      # Kubo for the harness's offline IPFS daemon; the checksum is the sha256
+      # of this release asset.
+      KUBO_VERSION: v0.43.1
+      KUBO_SHA256: 3f2bf974ab2a3ec6d997fac7d8cb46f59983a7cddd0b55ef998e6ce379155fb2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            foundry/package-lock.json
+            hardhat/package-lock.json
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # forge (svm-rs) installs solc into ~/.local/share/svm only when ~/.svm is
+      # missing and ~/.local/share already exists, otherwise into ~/.svm (the
+      # fresh-runner case). Which one is only known after forge build, so cache
+      # both; the step after forge build picks the one in use.
+      - name: Cache Solidity compilers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.svm
+            ~/.local/share/svm
+            ~/.cache/hardhat-nodejs
+          key: solc-${{ runner.os }}-${{ hashFiles('foundry/foundry.toml', 'hardhat/hardhat.config.ts') }}
+
+      - name: Install Kubo
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/kubo.tar.gz" \
+            "https://github.com/ipfs/kubo/releases/download/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
+          echo "${KUBO_SHA256}  $RUNNER_TEMP/kubo.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/kubo.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kubo" >> "$GITHUB_PATH"
+
+      - name: Record the toolchain actually installed
+        run: |
+          forge --version
+          anvil --version
+          ipfs --version
+          docker version --format 'docker {{.Server.Version}}'
+
+      # Both trees are built here, in the runner's normal environment, so the
+      # compilers land in the cache above. The harness then rebuilds in fresh
+      # isolated state, where both builds are up to date: hardhat reports
+      # "Nothing to compile" without asking for a compiler, and forge gets solc
+      # from DIN_TEST_SVM_DIR. Without this the harness would download both
+      # compilers and run a full via_ir build inside its 180 s compile timeout.
+      - name: Install foundry npm deps
+        working-directory: foundry
+        run: npm ci
+      - name: forge build
+        working-directory: foundry
+        run: forge build
+      # Same rule as svm-rs, now that forge has created the directory it uses.
+      - name: Locate the solc install directory
+        id: svm
+        run: |
+          if [ -d "$HOME/.svm" ]; then dir="$HOME/.svm"; else dir="${XDG_DATA_HOME:-$HOME/.local/share}/svm"; fi
+          ls -d "$dir"/*/ > /dev/null 2>&1 || { echo "::error::no solc versions in $dir after forge build"; exit 1; }
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+      - name: Install hardhat deps
+        working-directory: hardhat
+        run: npm ci
+      - name: hardhat compile
+        working-directory: hardhat
+        run: npx hardhat compile
+
+      - name: Install torch (CPU)
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Install dincli + test deps
+        run: python -m pip install -e ".[test]"
+
+      # dincli builds this image on first use otherwise, inside a Phase 4
+      # command's 120 s timeout. Same Dockerfile, context and tag as
+      # dincli/cli/worker.py:ensure_worker_image. The tag is read from the
+      # source, not imported: importing dincli prints to stdout without a config.
+      - name: Build the din-worker image
+        run: |
+          image=$(sed -n 's/^WORKER_IMAGE = "\(.*\)"$/\1/p' dincli/cli/worker.py)
+          test -n "$image" || { echo "::error::WORKER_IMAGE not found in dincli/cli/worker.py"; exit 1; }
+          docker build -f dincli/docker/worker/Dockerfile -t "$image" .
+
+      # Scratch must not exist yet (the harness creates and deletes it); the
+      # results dir outlives it and holds the compile, chain and IPFS logs.
+      # A step timeout below the job's, so a hung suite fails this step (and
+      # the upload below still runs) instead of the whole job being cancelled.
+      - name: Full-GI integration suite
+        timeout-minutes: 85
+        env:
+          DIN_TEST_ISOLATED: '1'
+          DIN_TEST_TMPDIR: ${{ runner.temp }}/din-scratch
+          DIN_TEST_RESULTS_DIR: ${{ runner.temp }}/din-results
+          DIN_TEST_SVM_DIR: ${{ steps.svm.outputs.dir }}
+        run: |
+          mkdir -p "$DIN_TEST_RESULTS_DIR"
+          start=$(date +%s)
+          status=0
+          set -o pipefail
+          pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 \
+            | tee "$DIN_TEST_RESULTS_DIR/pytest.log" || status=$?
+          elapsed=$(( $(date +%s) - start ))
+          echo "Full-GI integration suite: exit ${status} after $((elapsed / 60)) min $((elapsed % 60)) s" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Upload integration logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-logs
+          path: ${{ runner.temp }}/din-results
+          if-no-files-found: warn
+          retention-days: 14
