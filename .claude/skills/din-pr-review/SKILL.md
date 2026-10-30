@@ -110,8 +110,9 @@ locally only what CI doesn't cover:**
 
 - storage layout and upgrade safety in `foundry/src/**`
 - deploy and upgrade scripts in `foundry/script/**`
-- `dincli` flows against a live chain or IPFS, until the integration job is a
-  required check (MAINTAINING No. 4.9)
+- `dincli` flows against a live chain or IPFS: start the manual **Full GI**
+  workflow (`gh workflow run full-gi.yml --ref <branch>`) or run the suite
+  locally (MAINTAINING No. 4.9)
 - any claimed behaviour that no test exercises
 
 If CI on the PR is red, stale against `develop`, or never ran, CI isn't

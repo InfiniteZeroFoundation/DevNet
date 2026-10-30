@@ -68,7 +68,7 @@ CODEOWNERS requests reviewers when you open the PR. Check that at least one requ
 
 - storage layout and upgrade safety in `foundry/src/**`
 - deploy and upgrade scripts in `foundry/script/**`
-- `dincli` flows against a live chain or IPFS, until the integration job is a required check ([No. 4.9](#49-ci-as-the-backbone))
+- `dincli` flows against a live chain or IPFS: run the manual **Full GI** workflow, or the suite locally ([No. 4.9](#49-ci-as-the-backbone))
 - any claimed behaviour that no test exercises
 
 The author's part: a clear description of what changed and why, and tests for the change. The reviewer's part: implementation, design, edge cases and coverage, with a concise write-up of findings and any requested fixes.
@@ -118,7 +118,7 @@ Any maintainer may revert a merge that breaks `develop` without waiting for the 
 
 ### 4.9 CI as the backbone
 
-The aim is for CI to carry repeatable verification so reviewers can focus on judgment. The isolated integration harness has landed ([PR 213](https://github.com/InfiniteZeroFoundation/DevNet/pull/213)); a non-blocking full-GI job is in review ([PR 242](https://github.com/InfiniteZeroFoundation/DevNet/pull/242)). The integration job becomes a required check once it has run a full GI green on `develop` for a week. Further CI stages (post-merge checks, a shared develop/testnet environment, validation on `develop` → `main` PRs) are tracked in their own issue.
+The aim is for CI to carry repeatable verification so reviewers can focus on judgment. The isolated integration harness has landed ([PR 213](https://github.com/InfiniteZeroFoundation/DevNet/pull/213)); the full-GI job landed in [PR 242](https://github.com/InfiniteZeroFoundation/DevNet/pull/242) and is a manual-only workflow (`.github/workflows/full-gi.yml`). A full GI is too heavy to run on every push, so it is never a required check: reviewers start it when a PR touches the GI flow. Further CI stages (post-merge checks, a shared develop/testnet environment, validation on `develop` → `main` PRs) are tracked in their own issue.
 
 ## 5. Other administrative work
 
