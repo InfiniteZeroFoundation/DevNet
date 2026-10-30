@@ -5,6 +5,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Callable, IO
@@ -15,41 +16,78 @@ import requests
 class OwnedService:
     """A child session and its log; cleanup is safe to call more than once."""
 
-    def __init__(self, process: subprocess.Popen, log: IO, log_path: Path):
+    def __init__(self, process: subprocess.Popen, log: IO, log_path: Path, diagnostics=None):
         self.process = process
         self.log_path = log_path
         self._log = log
         self._closed = False
+        self._diagnostics = diagnostics
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        primary = None
+
+        def failed(error, stage):
+            nonlocal primary
+            if primary is None:
+                primary = error
+            else:
+                primary.add_note(
+                    f"Service {stage} also failed: {type(error).__name__}"
+                )
+
+        # Attempt every cleanup step independently. An interrupted/failed TERM
+        # must not prevent escalation, reaping, or log closure.
         try:
             # start_new_session makes the child PID its process-group ID.
-            try:
-                os.killpg(self.process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-            finally:
-                # Also reap descendants when the parent exits before them.
-                try:
-                    os.killpg(self.process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                self.process.wait(timeout=5)
-        finally:
+            os.killpg(self.process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except BaseException as error:
+            failed(error, "termination")
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        except BaseException as error:
+            failed(error, "grace wait")
+        try:
+            # Also reap descendants when the parent exits before them.
+            os.killpg(self.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except BaseException as error:
+            failed(error, "escalation")
+        try:
+            self.process.wait(timeout=5)
+        except BaseException as error:
+            failed(error, "reaping")
+        try:
             self._log.close()
+        except BaseException as error:
+            failed(error, "log cleanup")
+        if primary is not None:
+            if self._diagnostics is not None:
+                try:
+                    self._diagnostics.note_failure("service_cleanup", primary)
+                except BaseException as error:
+                    primary.add_note(f"Cleanup recording also failed: {type(error).__name__}")
+            raise primary
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
+        try:
+            self.close()
+        except BaseException as error:
+            if exc_value is None:
+                raise
+            note = f"Owned service cleanup also failed: {type(error).__name__}"
+            exc_value.add_note(note)
+            print(note, file=sys.stderr)
 
 
 def _check_port(port: int) -> None:
@@ -68,6 +106,7 @@ def start_service(
     ready: Callable[[], bool],
     timeout: float = 30,
     port: int | None = None,
+    diagnostics=None,
 ) -> OwnedService:
     """Start a service, returning ownership only after a live child is ready."""
     if port is not None:
@@ -76,7 +115,11 @@ def start_service(
     service = None
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log = log_path.open("w")
+        if diagnostics is None:
+            log = log_path.open("w")
+        else:
+            log = diagnostics.open_stream(log_path.stem)
+            log_path = log.path
         process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -85,9 +128,11 @@ def start_service(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        service = OwnedService(process, log, log_path)
+        service = OwnedService(process, log, log_path, diagnostics=diagnostics)
         deadline = time.monotonic() + timeout
         while True:
+            if diagnostics is not None:
+                log.check()
             if process.poll() is not None:
                 raise RuntimeError("Service exited before readiness")
             if time.monotonic() >= deadline:
@@ -106,7 +151,10 @@ def start_service(
                 service.close()
             elif log is not None:
                 log.close()
-        except Exception as cleanup_exc:
+        except BaseException as cleanup_exc:
+            if not isinstance(exc, Exception):
+                exc.add_note(f"Service startup cleanup also failed: {type(cleanup_exc).__name__}")
+                raise exc
             raise RuntimeError(
                 f"Service startup failed: {exc}; cleanup failed: {cleanup_exc}; log: {log_path}"
             ) from exc
