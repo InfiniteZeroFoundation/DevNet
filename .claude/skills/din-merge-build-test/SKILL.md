@@ -110,7 +110,7 @@ HOME="$CIHOME" XDG_CONFIG_HOME="$CIHOME/.config" \
   "$DIN_PY" -m pytest -m "not integration" -q -p no:cacheprovider
 ```
 Don't run the `integration`-marked / `tests/dincli/` suite here — it needs
-live services and has its own CI job (MAINTAINING No. 4.9).
+live services and has its own manual **Full GI** workflow (MAINTAINING No. 4.9).
 
 **Conditional extras:**
 - **ABIs** — for every contract under `foundry/src/` the PR changed (or that
