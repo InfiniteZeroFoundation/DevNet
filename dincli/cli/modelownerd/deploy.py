@@ -1,6 +1,7 @@
 import os
 import time
 import typer
+from web3.exceptions import ContractLogicError
 
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
@@ -112,7 +113,14 @@ def task_auditor(
         model_id_abi = [{"type": "function", "name": "modelId", "inputs": [],
                          "outputs": [{"type": "uint256"}], "stateMutability": "view"}]
         paired = w3.eth.contract(address=task_coordinator_address, abi=model_id_abi)
-        if paired.functions.modelId().call() != model_id:
+        try:
+            paired_model_id = paired.functions.modelId().call()
+        except ContractLogicError as exc:
+            raise typer.BadParameter(
+                "Cannot read modelId() from the paired coordinator; verify the address "
+                "and that it is a compatible task coordinator."
+            ) from exc
+        if paired_model_id != model_id:
             raise typer.BadParameter("--model-id must match the paired coordinator modelId()")
 
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")

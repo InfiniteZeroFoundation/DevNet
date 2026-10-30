@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 import typer
+from web3.exceptions import ContractLogicError
 
 from dincli.cli.modelownerd import deploy
 
@@ -48,8 +49,9 @@ def test_unknown_signature_rejected(types):
         deploy._task_constructor_args(artifact(*types), "auditor", "stake", model_id=0)
 
 
-def test_auditor_command_supplies_canonical_registry_and_checks_pair(monkeypatch):
-    contract = Mock(abi=artifact("address", "address", "uint256", "address").abi)
+@pytest.fixture
+def auditor_command(monkeypatch):
+    contract = Mock()
     paired = Mock()
     paired.functions.modelId.return_value.call.return_value = 7
     w3 = Mock()
@@ -62,14 +64,121 @@ def test_auditor_command_supplies_canonical_registry_and_checks_pair(monkeypatch
     monkeypatch.setattr(deploy, "resolve_task_coordinator_address", lambda *a: "coordinator")
     send = Mock(return_value=SimpleNamespace(contractAddress="auditor"))
     monkeypatch.setattr(deploy, "build_and_send_tx", send)
-    monkeypatch.setattr(deploy, "set_env_key", Mock())
-    monkeypatch.setattr(deploy.time, "sleep", Mock())
-    deploy.task_auditor(ctx, "artifact.json", 7, "coordinator")
-    contract.constructor.assert_called_once_with("stake", "coordinator", 7, "registry")
-    assert send.call_count == 2
-    contract.constructor.reset_mock()
-    send.reset_mock()
+    write_env = Mock()
+    sleep = Mock()
+    monkeypatch.setattr(deploy, "set_env_key", write_env)
+    monkeypatch.setattr(deploy.time, "sleep", sleep)
+    return SimpleNamespace(
+        contract=contract, paired=paired, w3=w3, ctx=ctx, send=send,
+        write_env=write_env, sleep=sleep,
+    )
+
+
+def assert_no_deployment(command):
+    command.contract.constructor.assert_not_called()
+    command.send.assert_not_called()
+    command.write_env.assert_not_called()
+    command.ctx.obj.get_deployed_din_task_coordinator_contract.assert_not_called()
+    command.sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("with_registry", [False, True])
+def test_auditor_command_checks_pair_and_deploys(auditor_command, with_registry):
+    command = auditor_command
+    types = ("address", "address", "uint256") + (("address",) if with_registry else ())
+    command.contract.abi = artifact(*types).abi
+
+    deploy.task_auditor(command.ctx, "artifact.json", 7, "coordinator")
+
+    expected = ["stake", "coordinator", 7] + (["registry"] if with_registry else [])
+    command.contract.constructor.assert_called_once_with(*expected)
+    command.paired.functions.modelId.assert_called_once_with()
+    command.paired.functions.modelId.return_value.call.assert_called_once_with()
+    assert command.w3.eth.contract.call_args.kwargs["address"] == "coordinator"
+    assert command.send.call_count == 2
+    assert command.send.call_args_list[0].args[1] is command.contract.constructor.return_value
+    setter = command.ctx.obj.get_deployed_din_task_coordinator_contract.return_value
+    setter.functions.setDINTaskAuditorContract.assert_called_once_with("auditor")
+    assert command.send.call_args_list[1].args[1] is setter.functions.setDINTaskAuditorContract.return_value
+    command.write_env.assert_called_once_with(
+        "LOCAL_coordinator_DINTaskAuditor_Contract_Address", "auditor",
+    )
+    command.sleep.assert_called_once_with(10)
+
+
+@pytest.mark.parametrize("with_registry", [False, True])
+def test_auditor_command_rejects_model_id_mismatch(auditor_command, with_registry):
+    command = auditor_command
+    types = ("address", "address", "uint256") + (("address",) if with_registry else ())
+    command.contract.abi = artifact(*types).abi
+
     with pytest.raises(typer.BadParameter, match="match the paired"):
-        deploy.task_auditor(ctx, "artifact.json", 8, "coordinator")
-    contract.constructor.assert_not_called()
-    send.assert_not_called()
+        deploy.task_auditor(command.ctx, "artifact.json", 8, "coordinator")
+
+    assert_no_deployment(command)
+
+
+@pytest.mark.parametrize("with_registry", [False, True])
+def test_auditor_command_reports_model_id_revert(auditor_command, with_registry):
+    command = auditor_command
+    types = ("address", "address", "uint256") + (("address",) if with_registry else ())
+    command.contract.abi = artifact(*types).abi
+    revert = ContractLogicError("execution reverted")
+    command.paired.functions.modelId.return_value.call.side_effect = revert
+
+    with pytest.raises(typer.BadParameter) as caught:
+        deploy.task_auditor(command.ctx, "artifact.json", 7, "coordinator")
+
+    assert str(caught.value) == (
+        "Cannot read modelId() from the paired coordinator; verify the address "
+        "and that it is a compatible task coordinator."
+    )
+    assert caught.value.__cause__ is revert
+    assert_no_deployment(command)
+
+
+@pytest.mark.parametrize("with_registry", [False, True])
+@pytest.mark.parametrize("error_type", [ConnectionError, ValueError])
+def test_auditor_command_preserves_unrelated_read_errors(auditor_command, with_registry, error_type):
+    command = auditor_command
+    types = ("address", "address", "uint256") + (("address",) if with_registry else ())
+    command.contract.abi = artifact(*types).abi
+    error = error_type("modelId read failed")
+    command.paired.functions.modelId.return_value.call.side_effect = error
+
+    with pytest.raises(error_type) as caught:
+        deploy.task_auditor(command.ctx, "artifact.json", 7, "coordinator")
+
+    assert caught.value is error
+    assert_no_deployment(command)
+
+
+def test_auditor_command_does_not_wrap_contract_creation_error(auditor_command):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address", "uint256").abi
+    error = ContractLogicError("contract creation failed")
+    command.w3.eth.contract.side_effect = error
+
+    with pytest.raises(ContractLogicError) as caught:
+        deploy.task_auditor(command.ctx, "artifact.json", 7, "coordinator")
+
+    assert caught.value is error
+    assert_no_deployment(command)
+
+
+def test_legacy_auditor_deploys_without_model_id_read(auditor_command):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address").abi
+    command.paired.functions.modelId.return_value.call.side_effect = AssertionError(
+        "legacy deployment must not read modelId"
+    )
+
+    deploy.task_auditor(command.ctx, "artifact.json", None, "coordinator")
+
+    command.contract.constructor.assert_called_once_with("stake", "coordinator")
+    command.w3.eth.contract.assert_not_called()
+    command.paired.functions.modelId.assert_not_called()
+    assert command.send.call_count == 2
+    command.write_env.assert_called_once_with(
+        "LOCAL_coordinator_DINTaskAuditor_Contract_Address", "auditor",
+    )
