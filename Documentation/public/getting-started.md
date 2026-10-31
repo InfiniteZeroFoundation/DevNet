@@ -241,7 +241,10 @@ The script checks each of the following and prints `[OK]`, `[WARN]`, or `[MISSIN
 | `eth-account`, `py-multibase`, `web3` | importable after `pip install -e .` |
 | `torch` | importable after `pip install -e .[test]` (optional — tests skip without it) |
 
-Exits 0 when all required checks pass; exits 1 on Python version or Foundry failures.
+Exits 0 when all required checks pass; exits 1 if Python is below 3.12,
+`forge` or `anvil` is missing, `foundry/node_modules` is absent, or a core
+package (`eth-account`, `py-multibase`, `web3`) cannot be imported. Missing
+optional `torch` only warns and does not fail preflight.
 
 To also verify the configured RPC endpoint (read from `os.environ` or `.env`, the same lookup dincli uses) and the IPFS config:
 
@@ -249,6 +252,11 @@ To also verify the configured RPC endpoint (read from `os.environ` or `.env`, th
 python3 scripts/preflight.py --network sepolia_op_devnet
 # or: python3 scripts/preflight.py --network local
 ```
+
+Network checks run only with `--network`. When requested, missing RPC
+configuration, an unreachable endpoint or invalid RPC response, and unresolved
+or incomplete IPFS configuration also cause exit 1. A reachable RPC reporting
+an unexpected chain ID remains a warning.
 
 ---
 
