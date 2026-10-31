@@ -17,6 +17,11 @@
           "name": "modelId_",
           "type": "uint256",
           "internalType": "uint256"
+        },
+        {
+          "name": "modelRegistry_",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "nonpayable"
@@ -979,6 +984,19 @@
     },
     {
       "type": "function",
+      "name": "modelRegistry",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract ITaskModelRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "openTestDataDispute",
       "inputs": [
         {
@@ -1567,6 +1585,19 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "validateGIStart",
+      "inputs": [
+        {
+          "name": "gi",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "view"
     },
     {
       "type": "event",
@@ -2545,6 +2576,22 @@
     },
     {
       "type": "error",
+      "name": "TA_ModelDisabled",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "TA_ModelNotRegistered",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TA_NoActiveDispute",
       "inputs": []
     },
@@ -2626,6 +2673,11 @@
     {
       "type": "error",
       "name": "TA_WrongGI",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_GIRewardPoolNotFunded",
       "inputs": []
     }
   ]

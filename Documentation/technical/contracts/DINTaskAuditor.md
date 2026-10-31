@@ -43,6 +43,7 @@ Phase transitions are driven by the paired [`DINTaskCoordinator`](DINTaskCoordin
 |----------|-------------|
 | `dinvalidatorStakeContract` | `DinValidatorStake` proxy (constructor) |
 | `dintaskcoordinatorContract` | Paired coordinator (constructor) |
+| `modelRegistry` (`immutable`) | Canonical platform registry proxy (fourth constructor argument; must contain code; no setter) |
 | `modelId` (`immutable`) | Registry model ID for the stake floor (constructor) |
 | `dinToken` | DIN token (`setDinToken`); required before `depositRewards`, claims or bonded disputes |
 
@@ -92,7 +93,7 @@ Mappings marked *(internal)* have no auto-getter; read them through the view nam
 
 | Caller | Functions |
 |--------|-----------|
-| Paired coordinator (`onlyTaskCoordinator`) | `updatePassScore`, `createAuditorsBatches`, `setTestDataAssignedFlag`, `finalizeEvaluation`, `slashAuditors`, `settleRewards`, `decrementAuditorRegistrations` |
+| Paired coordinator (`onlyTaskCoordinator`) | `validateGIStart`, `updatePassScore`, `createAuditorsBatches`, `setTestDataAssignedFlag`, `finalizeEvaluation`, `slashAuditors`, `settleRewards`, `decrementAuditorRegistrations` |
 | `owner()` (model owner) | `assignAuditTestDataset`, `reassignAuditTestDataset`, all setters |
 | Assigned auditor (`onlyAssignedAuditor`) | `commitAuditScore`, `revealAuditScore` |
 | Auditor of the disputed batch (`isBatchAuditor`) | `openTestDataDispute` |
@@ -100,6 +101,16 @@ Mappings marked *(internal)* have no auto-getter; read them through the view nam
 | Any address | `submitLocalModel`, `depositRewards`, `claimReward`, `claimRewards`, `closeExpiredDispute`, views |
 
 ---
+
+### Future-GI guard and deployment
+
+Constructor: `DINTaskAuditor(stake, coordinator, modelId, modelRegistry)`. A zero/EOA registry reverts `TA_InvalidAddress`; a wrong contract or unavailable registry fails closed at GI start. `validateGIStart(gi)` is coordinator-only (`TA_NotTaskCoordinator`) and reverts `TA_ModelNotRegistered`, `TA_ModelDisabled(registeredId)` or the existing `TC_GIRewardPoolNotFunded` selector. The public `giRewardPool` getter remains an unconditional accounting read.
+
+For the current Foundry task pair, both `startGI(gi)` and `startGI(gi, score)` call the auditor's `validateGIStart(gi)` before changing the pass score, GI counter or state. The auditor requires an approved registry entry for its own address, checks that entry's `modelDisabled` flag, and requires a funded pool. It uses the registry-assigned ID, including ID zero, rather than the constructor's anticipated stake-floor ID. An unregistered model or failed registry read prevents starting a GI. Pre-funding or private funding cannot bypass a disabled flag; reenabling permits starting again if the other prerequisites hold.
+
+Disabling blocks subsequent GI starts, manifest updates and emission funding. It does **not** abort or freeze an in-flight GI: submissions, audits, aggregation, slashing, settlement and reward claims continue. A start ordered before disable may succeed. Existing funds remain in their pools; this change adds no cancellation, refund or recovery path.
+
+Both task contracts are non-upgradeable. Existing deployed pairs keep their previous behavior and need a newly deployed compatible pair to gain this protection; there is no automatic retrofit. Deploy the new coordinator together with the new auditor wired to the canonical platform registry proxy. An old coordinator can bypass the new auditor guard, and a new coordinator cannot call this guard on an old auditor. Immutable wiring prevents later reassignment but does not prove the supplied registry is canonical. The DIN-Representative must review the task code, pairing and registry address before slasher authorization and approval; arbitrary custom or malicious task code is outside this enforcement guarantee.
 
 ## 5. Registration & Submissions
 

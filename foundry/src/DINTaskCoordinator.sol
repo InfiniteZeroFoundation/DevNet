@@ -376,8 +376,9 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         // task_210726_6 §3: a GI cannot start unless its reward pool has
         // been funded via DINTaskAuditor.depositRewards(_GI, ...) first.
         // Prevents a GI running to completion with nothing to settle/claim.
-        if (dinTaskAuditorContract.giRewardPool(_GI) == 0)
-            revert TC_GIRewardPoolNotFunded();
+        // The auditor also checks authoritative registry approval/enabled status.
+        // Keeping these reads there preserves this contract's runtime size budget.
+        dinTaskAuditorContract.validateGIStart(_GI);
         if (updatePassScore) {
             dinTaskAuditorContract.updatePassScore(score);
         }
