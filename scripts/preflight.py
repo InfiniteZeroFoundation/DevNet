@@ -19,6 +19,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import shutil
 import sys
 import urllib.error
@@ -73,21 +74,24 @@ def _check_binary(name: str, install_hint: str) -> int:
     return 1
 
 
-def _check_node_modules() -> None:
+def _check_node_modules() -> int:
     node_modules = _REPO_ROOT / "foundry" / "node_modules"
     if node_modules.is_dir():
         _ok("foundry/node_modules present")
+        return 0
     else:
-        _warn(
+        _missing(
             "foundry/node_modules not found — forge test will race fetching @openzeppelin/upgrades-core",
             fix="cd foundry && npm ci",
         )
+        return 1
 
 
-def _check_importable(module: str, package: str, optional: bool = False) -> None:
+def _check_importable(module: str, package: str, optional: bool = False) -> int:
     try:
         importlib.import_module(module)
         _ok(f"{package} importable")
+        return 0
     except Exception:  # catches ImportError, OSError (native libs), etc.
         if optional:
             _warn(
@@ -95,10 +99,11 @@ def _check_importable(module: str, package: str, optional: bool = False) -> None
                 fix="pip install -e .[test]",
             )
         else:
-            _warn(
+            _missing(
                 f"{package} not importable",
                 fix="pip install -e .",
             )
+        return 0 if optional else 1
 
 
 def _sanitize_url(url: str) -> str:
@@ -157,7 +162,14 @@ def _check_rpc(url: str, network: str | None = None) -> int:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             result = json.loads(resp.read())
-        chain_id = int(result["result"], 16)
+        if not isinstance(result, dict) or "error" in result:
+            raise ValueError("Invalid RPC response")
+        chain_id_hex = result.get("result")
+        if not isinstance(chain_id_hex, str) or not re.fullmatch(
+            r"0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)", chain_id_hex
+        ):
+            raise ValueError("Invalid RPC chain ID")
+        chain_id = int(chain_id_hex, 16)
         expected = _EXPECTED_CHAIN_IDS.get(network or "") if network else None
         if expected is not None and chain_id != expected:
             _warn(
@@ -167,8 +179,9 @@ def _check_rpc(url: str, network: str | None = None) -> int:
         else:
             _ok(f"RPC reachable: {safe_url}  (chainId {chain_id})")
     except Exception:
-        _warn(f"RPC not reachable: {safe_url}", fix="Check your RPC URL and internet connection")
-    return 0  # RPC connectivity is advisory — never a hard failure
+        _missing(f"RPC not reachable: {safe_url}", fix="Check your RPC URL and internet connection")
+        return 1
+    return 0
 
 
 def _check_ipfs_config() -> int:
@@ -186,7 +199,7 @@ def _check_ipfs_config() -> int:
                 ) if not f
             ]
             if missing:
-                _warn(
+                _missing(
                     f"IPFS env provider: {', '.join(missing)} not set",
                     fix=(
                         "Set IPFS_API_URL_ADD / IPFS_API_URL_RETRIEVE in .env, "
@@ -195,32 +208,35 @@ def _check_ipfs_config() -> int:
                 )
             else:
                 _ok("IPFS config resolved (env provider)")
+                return 0
         elif provider == "filebase":
             if not cfg.api_key:
-                _warn(
+                _missing(
                     "IPFS filebase provider: ipfs_api_key not configured",
                     fix="dincli system configure-ipfs --provider filebase",
                 )
             else:
                 _ok("IPFS config resolved (filebase provider)")
+                return 0
         elif provider == "custom":
             if not cfg.service_path:
-                _warn(
+                _missing(
                     "IPFS custom provider: ipfs_service_path not configured",
                     fix="dincli system configure-ipfs --provider custom --service-path <path>",
                 )
             else:
                 _ok("IPFS config resolved (custom provider)")
+                return 0
         else:
-            _warn(
-                f"IPFS unknown provider '{provider}' — IPFS operations will fail",
+            _missing(
+                "IPFS unknown provider — IPFS operations will fail",
                 fix="dincli system configure-ipfs",
             )
     except ImportError:
-        _warn("dincli not importable — skipping IPFS config check", fix="pip install -e .")
-    except Exception as exc:
-        _warn(f"IPFS config not resolved: {exc}", fix="dincli system configure-ipfs")
-    return 0  # IPFS config is advisory
+        _missing("dincli not importable — IPFS configuration cannot be checked", fix="pip install -e .")
+    except Exception:
+        _missing("IPFS config not resolved", fix="dincli system configure-ipfs")
+    return 1
 
 
 def _network_checks(network: str) -> int:
@@ -230,18 +246,19 @@ def _network_checks(network: str) -> int:
     # Resolve RPC URL the same way dincli does: os.environ → .env in cwd
     rpc_url = os.environ.get(env_key, "")
     if not rpc_url:
-        env_file = Path.cwd() / ".env"
-        if env_file.exists():
-            try:
+        try:
+            env_file = Path.cwd() / ".env"
+            if env_file.exists():
                 rpc_url = _read_env_value(env_file, env_key)
-            except Exception as exc:
-                _warn(f".env read failed: {exc} — skipping .env lookup")
+        except Exception:
+            _warn(".env lookup failed — skipping .env lookup")
 
     if not rpc_url:
-        _warn(
+        _missing(
             f"No RPC URL found for {network} (checked os.environ and .env in cwd)",
             fix=f"Set {env_key}=<url> in .env in your working directory",
         )
+        failures += 1
     else:
         failures += _check_rpc(rpc_url, network=network)
 
@@ -266,12 +283,12 @@ def run(network: str | None = None) -> int:
     failures += _check_binary("forge", _FOUNDRY_INSTALL)
     failures += _check_binary("anvil", _FOUNDRY_INSTALL)
 
-    _check_node_modules()
+    failures += _check_node_modules()
 
-    _check_importable("eth_account",  "eth-account")
-    _check_importable("multibase",    "py-multibase")
-    _check_importable("web3",         "web3")
-    _check_importable("torch",        "torch", optional=True)
+    failures += _check_importable("eth_account",  "eth-account")
+    failures += _check_importable("multibase",    "py-multibase")
+    failures += _check_importable("web3",         "web3")
+    failures += _check_importable("torch",        "torch", optional=True)
 
     if network:
         failures += _network_checks(network)
