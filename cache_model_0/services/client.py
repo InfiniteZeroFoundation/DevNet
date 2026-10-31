@@ -397,7 +397,8 @@ def resolve_dp_config(runtime=None):
             "no formal privacy guarantee. It clips absolute trained weights rather than "
             "per-client updates, so it does not bound what an attacker observing "
             "successive rounds can learn (dp-mechanism-review.md findings F4/F5). "
-            "Use 'update_gaussian' for a mechanism with a defined sensitivity bound."
+            "Use 'update_gaussian' or 'update_laplace' for a mechanism with a defined "
+            "sensitivity bound."
             "[/yellow]"
         )
 

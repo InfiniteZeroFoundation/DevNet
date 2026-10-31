@@ -148,7 +148,8 @@ Behavior:
 *absolute trained weights*, not the per-client *update*, so it does not bound
 the quantity an attacker observing successive rounds actually cares about.
 `resolve_dp_config` logs a warning whenever this mechanism is selected.
-`update_gaussian` is the mechanism with a defined sensitivity bound.
+`update_gaussian` and `update_laplace` are the mechanisms with a defined
+sensitivity bound.
 
 Use when:
 
@@ -169,7 +170,9 @@ sized against the L2 `clipping_norm` while the Laplace mechanism's guarantee
 is normally calibrated against L1 sensitivity — for model weights the gap
 between the two can be as large as √d (d = parameter count). Neither gap is
 fixed here; `resolve_dp_config` logs a warning whenever this mechanism is
-selected.
+selected. `update_laplace` (below) is the correctly-calibrated counterpart
+that privatizes the per-client update instead of absolute weights and clips
+against the right (L1) norm for the Laplace mechanism.
 
 Use when:
 
