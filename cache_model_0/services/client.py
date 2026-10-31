@@ -44,6 +44,18 @@ SUPPORTED_DP_MECHANISMS = {
     "update_gaussian",
 }
 
+# issue #279 (F4/F5, dp-mechanism-review.md): both post-training mechanisms
+# clip absolute trained weights rather than per-client updates, so they bound
+# nothing an attacker watching successive rounds cares about -- and
+# post_training_laplace additionally sizes its noise against an L2 clip while
+# the Laplace mechanism's guarantee is calibrated against L1 sensitivity.
+# Neither carries a formal privacy guarantee today; update_gaussian (clips the
+# per-client delta) is the mechanism with a defined sensitivity bound.
+EXPERIMENTAL_DP_MECHANISMS = {
+    "post_training_gaussian",
+    "post_training_laplace",
+}
+
 # These aliases keep the manifest ergonomic while mapping everything back to a
 # small canonical set of mechanism names.
 DP_MECHANISM_ALIASES = {
@@ -349,6 +361,16 @@ def resolve_dp_config(runtime=None):
     if dp_mechanism not in SUPPORTED_DP_MECHANISMS:
         supported = ", ".join(sorted(SUPPORTED_DP_MECHANISMS))
         raise ValueError(f"Unsupported DP mechanism '{dp_mechanism}'. Supported mechanisms: {supported}")
+
+    if dp_mechanism in EXPERIMENTAL_DP_MECHANISMS:
+        console.print(
+            f"[yellow]Warning: DP mechanism '{dp_mechanism}' is experimental and carries "
+            "no formal privacy guarantee. It clips absolute trained weights rather than "
+            "per-client updates, so it does not bound what an attacker observing "
+            "successive rounds can learn (dp-mechanism-review.md findings F4/F5). "
+            "Use 'update_gaussian' for a mechanism with a defined sensitivity bound."
+            "[/yellow]"
+        )
 
     parameters = dict(manifest_dp.get("parameters", {}))
 

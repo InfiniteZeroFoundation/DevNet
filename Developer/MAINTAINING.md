@@ -68,7 +68,7 @@ CODEOWNERS requests reviewers when you open the PR. Check that at least one requ
 
 - storage layout and upgrade safety in `foundry/src/**`
 - deploy and upgrade scripts in `foundry/script/**`
-- `dincli` flows against a live chain or IPFS, until the integration job is a required check ([No. 4.9](#49-ci-as-the-backbone))
+- `dincli` flows against a live chain or IPFS: run the manual **Full GI** workflow, or the suite locally ([No. 4.9](#49-ci-as-the-backbone))
 - any claimed behaviour that no test exercises
 
 The author's part: a clear description of what changed and why, and tests for the change. The reviewer's part: implementation, design, edge cases and coverage, with a concise write-up of findings and any requested fixes.
@@ -87,7 +87,9 @@ The reviewer writes three comments on the PR:
 2. **Merge-proposal table.** Per file: change, lines, diff, functionality (how and why), diff vs current `develop`, recommended merge proposal, actual merge proposal, pending proposal, local/GitHub conflict. "Actual merge proposal" is filled in by whoever performs the merge, not at review time.
 3. **Outcome comment.** Posted after the merge lands, with the real merge SHA(s), the files that deviated from the PR, and final build/test numbers.
 
-Templates: [`.claude/skills/din-pr-review/templates/`](../.claude/skills/din-pr-review/templates/). Use them with or without Claude.
+Templates: [`.claude/skills/din-pr-review/templates/`](../.claude/skills/din-pr-review/templates/).
+
+**Closing keywords.** `develop` is the default branch, so a `Closes #N` / `Fixes #N` / `Resolves #N` in a PR body or a commit message closes issue N automatically when it lands on `develop`. Use one only when the PR completes everything the issue asks, including its approval amendments. Otherwise write `Part of #N` or `Refs #N`. The reviewer checks this before approving and asks for the wording to be changed if the PR is partial. Mergers never put closing keywords in their own merge or fix commit messages (write "No. N").
 
 **Trivial changes** (typo, dead link, comment fix) still need a PR and 1 approval, but a quick approval noting "trivial" replaces the three comments.
 
@@ -116,7 +118,7 @@ Any maintainer may revert a merge that breaks `develop` without waiting for the 
 
 ### 4.9 CI as the backbone
 
-The aim is for CI to carry repeatable verification so reviewers can focus on judgment. The isolated integration harness has landed ([PR 213](https://github.com/InfiniteZeroFoundation/DevNet/pull/213)); a non-blocking full-GI job is in review ([PR 242](https://github.com/InfiniteZeroFoundation/DevNet/pull/242)). The integration job becomes a required check once it has run a full GI green on `develop` for a week. Further CI stages (post-merge checks, a shared develop/testnet environment, validation on `develop` → `main` PRs) are tracked in their own issue.
+The aim is for CI to carry repeatable verification so reviewers can focus on judgment. The isolated integration harness has landed ([PR 213](https://github.com/InfiniteZeroFoundation/DevNet/pull/213)); the full-GI job landed in [PR 242](https://github.com/InfiniteZeroFoundation/DevNet/pull/242) and is a manual-only workflow (`.github/workflows/full-gi.yml`). A full GI is too heavy to run on every push, so it is never a required check: reviewers start it when a PR touches the GI flow. Further CI stages (post-merge checks, a shared develop/testnet environment, validation on `develop` → `main` PRs) are tracked in their own issue.
 
 ## 5. Other administrative work
 
@@ -126,7 +128,7 @@ A new non-trivial issue gets a verdict comment (*Approved / Approved with amendm
 
 ### 5.2 Issues: status updates and closing
 
-Anyone may post progress. Closing as **completed** needs a peer to check every proposed change, every approval amendment, every verification item and every linked PR against `origin/develop`, then post a closing comment listing what landed and where (SHAs). If anything remains, post a "done vs. remaining" status comment and leave the issue open. Closing as **not planned** or **duplicate**: anyone may do it, with a one-line reason and a link to the duplicate.
+Anyone may post progress. Closing as **completed** needs a peer to check every proposed change, every approval amendment, every verification item and every linked PR against `origin/develop`, then post a closing comment listing what landed and where (SHAs). If anything remains, post a "done vs. remaining" status comment and leave the issue open. An issue that a closing keyword closed automatically ([No. 4.3](#43-the-review-record)) gets the same check afterwards. If it closed early, reopen it with that status comment. Closing as **not planned** or **duplicate**: anyone may do it, with a one-line reason and a link to the duplicate.
 
 ### 5.3 Tasks
 
@@ -191,4 +193,4 @@ The `din-*` Claude Code skills under [`.claude/skills/`](../.claude/skills/) imp
 
 **When a local build is needed before merging.** A PR that merges as-is needs no local build: its required `CI OK` runs the full pipeline on GitHub's merge of the PR into `develop`, and the branch has to be up to date, so that run tests exactly what lands. When a reviewer applies fixes, they run `din-merge-build-test` on the fixed branch before pushing it, so the PR doesn't go red in public. CI then re-runs on the pushed fixes and is the gate again. In path B there's no PR CI for the deviation commit, so the local run and `din-push-develop`'s precheck are the gate.
 
-The skills are a convenience, not a requirement. Following this file and the [templates](../.claude/skills/din-pr-review/templates/) by hand is equally valid.
+**Use the skills.** Maintainers do every step in the table above through its skill: PR reviews, review fixes, merges, direct pushes, issue approvals, issue closures and task closures. Each skill runs the peer check and the verification steps this file requires, so the record looks the same whoever does the work. Working by hand is the fallback for when the skills can't run (no Claude Code, a tool outage). Then follow this file and the [templates](../.claude/skills/din-pr-review/templates/) exactly, including running `din_peer_check.py` first.
