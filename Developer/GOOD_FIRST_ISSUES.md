@@ -45,6 +45,7 @@ Core components:
 **Difficulty:** Beginner (review/analysis, not implementation)
 **Area:** Privacy-Preserving Federated Learning / AI Governance
 **Detailed issue:** [issues/dp-governance-review-starter-task.md](issues/dp-governance-review-starter-task.md)
+**Status:** ✅ Done. Completed by @walkonwayvs in [PR #89](https://github.com/InfiniteZeroFoundation/DevNet/pull/89). The review is at [Documentation/technical/audits/dp-mechanism-review.md](../Documentation/technical/audits/dp-mechanism-review.md), and its open findings are tracked in [#279](https://github.com/InfiniteZeroFoundation/DevNet/issues/279). It stays listed here as an example of the work.
 
 A self-contained, no-coding-required entry point for contributors coming from an AI governance / responsible-AI / policy background rather than deep systems engineering. Review the three DP mechanisms already implemented for client model updates and assess them from a "what privacy claims can we honestly make" angle. Good first step before taking on implementation work in issue #1 below.
 
@@ -146,6 +147,28 @@ Current focus areas:
 - [Developer/issues/client-data-labeling.md](../Developer/issues/client-data-labeling.md)
 - [Developer/proposals/client-labeling.md](../Developer/proposals/client-labeling.md)
 - [cache_model_0/services/client.py](../cache_model_0/services/client.py)
+
+---
+
+### 3. Finish the Contributor Setup Checker
+
+**Difficulty:** Beginner
+**Area:** DevOps / Developer Tooling
+**Detailed issue:** [#245](https://github.com/InfiniteZeroFoundation/DevNet/issues/245) (absorbs [#275](https://github.com/InfiniteZeroFoundation/DevNet/issues/275), closed as a duplicate)
+
+[`scripts/preflight.py`](../scripts/preflight.py) already checks a contributor's machine before work starts (landed in [PR #255](https://github.com/InfiniteZeroFoundation/DevNet/pull/255)). What's left: make the remaining failed checks exit non-zero (a missing `foundry/node_modules`, `eth-account`/`py-multibase` not importable, and RPC/IPFS failures under `--network`), update the exit-code line in [getting-started.md](../Documentation/public/getting-started.md), and add a regression test for each. The [status comment on #245](https://github.com/InfiniteZeroFoundation/DevNet/issues/245#issuecomment-6493468129) lists exactly what's done and what's pending. No Solidity needed.
+
+---
+
+### 4. A Second End-to-End Example Model
+
+**Difficulty:** Beginner → Intermediate
+**Area:** Federated Learning / Examples
+**Detailed issue:** [#276](https://github.com/InfiniteZeroFoundation/DevNet/issues/276)
+
+Today the only model tested end-to-end on the network is the MNIST reference in [cache_model_0/](../cache_model_0/). Add a second working example, for instance a small CNN on Fashion-MNIST or CIFAR-10, with the same structure (`manifest.json` plus `services/`). It's done when it completes a full training round on a local devnet and a short doc explains how to run it. A good fit for machine-learning contributors, no Solidity needed. See also [#240](https://github.com/InfiniteZeroFoundation/DevNet/issues/240) and [what-can-be-trained.md](../Documentation/public/what-can-be-trained.md).
+
+Several contributors are already assigned. Comment on the issue to coordinate before starting.
 
 ---
 
