@@ -8,6 +8,26 @@ from dincli.cli.utils import MIN_STAKE, build_and_send_tx, read_after_write
 app = typer.Typer(help="Commands for DIN Token in DIN.")
 
 
+def approve_din(ctx: typer.Context, spender: str, amount: int, purpose: str = "this action"):
+    """Approves `spender` to pull `amount` (wei) DIN from the active wallet.
+
+    Shared by every command that has a contract pull DIN with
+    safeTransferFrom: staking, reward deposits and dispute bonds. Exits on a
+    failed approval, since the call that follows would only revert.
+    """
+    din_token_contract = ctx.obj.get_deployed_din_token_contract(verbose=False)
+    build_and_send_tx(
+        ctx,
+        din_token_contract.functions.approve(spender, amount),
+        f"Approving DINTokens for {purpose}",
+        f"DINTokens approved for {purpose}.",
+        f"Could not approve DINTokens for {purpose}.",
+        exit_on_failure=True,
+    )
+    # Give a lagging RPC time to see the allowance before the pull.
+    time.sleep(5)
+
+
 def buy_dintokens(
     ctx: typer.Context,
     amount: float,
@@ -106,16 +126,7 @@ def stake_dintokens(
     console.print(f"[bold green]Staking {amount} DINTokens...[/bold green]")
 
     try:
-        build_and_send_tx(
-            ctx,
-            din_token_contract.functions.approve(din_stake_contract.address, stake_amount),
-            "Approving DINTokens for staking",
-            "DINTokens approved for staking.",
-            "Could not approve DINTokens for staking.",
-            exit_on_failure=True,
-        )
-
-        time.sleep(5)
+        approve_din(ctx, din_stake_contract.address, stake_amount, purpose="staking")
 
         build_and_send_tx(
             ctx,

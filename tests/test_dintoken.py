@@ -109,7 +109,7 @@ class DummyContextObj:
         self.console.print(f"[bold green]✓ Active Wallet:[/bold green] {self.account.address}")
         return "local", self.w3, self.account, self.console
 
-    def get_deployed_din_token_contract(self):
+    def get_deployed_din_token_contract(self, verbose=True):
         return self.token
 
     def get_deployed_din_stake_contract(self):
