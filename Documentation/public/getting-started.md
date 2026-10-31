@@ -218,6 +218,48 @@ If you are unable to obtain funds through the faucets above, you may also reques
 ---
 
 
+# 🩺 Environment Preflight Check
+
+> **For contributors working from a clone of this repo.** Participants who
+> installed dincli from the wheel (per [setup.md](setup.md)) can skip this
+> section — forge and anvil are not required for network participation.
+
+Before starting development, verify your environment with:
+
+```bash
+python3 scripts/preflight.py
+```
+
+The script checks each of the following and prints `[OK]`, `[WARN]`, or `[MISSING]` with a fix hint:
+
+| Check | Pass condition |
+|-------|----------------|
+| Python version | ≥ 3.12 |
+| `forge` on PATH | Foundry installed |
+| `anvil` on PATH | Foundry installed |
+| `foundry/node_modules` | `cd foundry && npm ci` has been run |
+| `eth-account`, `py-multibase`, `web3` | importable after `pip install -e .` |
+| `torch` | importable after `pip install -e .[test]` (optional — tests skip without it) |
+
+Exits 0 when all required checks pass; exits 1 if Python is below 3.12,
+`forge` or `anvil` is missing, `foundry/node_modules` is absent, or a core
+package (`eth-account`, `py-multibase`, `web3`) cannot be imported. Missing
+optional `torch` only warns and does not fail preflight.
+
+To also verify the configured RPC endpoint (read from `os.environ` or `.env`, the same lookup dincli uses) and the IPFS config:
+
+```bash
+python3 scripts/preflight.py --network sepolia_op_devnet
+# or: python3 scripts/preflight.py --network local
+```
+
+Network checks run only with `--network`. When requested, missing RPC
+configuration, an unreachable endpoint or invalid RPC response, and unresolved
+or incomplete IPFS configuration also cause exit 1. A reachable RPC reporting
+an unexpected chain ID remains a warning.
+
+---
+
 # ⚙️ DIN CLI Installation and Setup
 
 Before participating, ensure dincli is correctly installed and configured.
