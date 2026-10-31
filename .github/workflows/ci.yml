@@ -5,6 +5,11 @@ on:
     branches: [develop]
   push:
     branches: [develop]
+  # Reports `CI OK` on the merge queue's temporary gh-readonly-queue/* branches.
+  # Must land before the ruleset requires the queue, or the queue waits forever
+  # for a check that never runs. Discussion 208.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
