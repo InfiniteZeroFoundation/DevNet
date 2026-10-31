@@ -63,24 +63,8 @@ python cache_model_1/prepare_dataset.py
 ```
 
 This saves 10 000 test samples to `cache_model_1/dataset/test/test_dataset.pt`.
-The model owner must copy (or re-save) this file into the dincli cache before
-running `model submit-genesis` (see Step 5):
-
-```bash
-# find the cache dir
-dincli system get-cache-dir
-# example output: /Users/<you>/Library/Caches/dincli
-
-# place test dataset at the expected path (substitute your network and model_id)
-CACHE=$(dincli system get-cache-dir)
-mkdir -p "$CACHE/local/model_1/dataset/test"
-cp cache_model_1/dataset/test/test_dataset.pt "$CACHE/local/model_1/dataset/test/"
-```
-
-> [!NOTE]
-> `model_1` here is a placeholder — the real model ID is assigned only after
-> `dincli task model-owner register` completes in Step 6.  Repeat this copy
-> step once you know the ID.
+You will copy it into the task directory before genesis scoring (Step 7) and
+into the model cache after you know the model ID (Step 8).
 
 ---
 
@@ -103,7 +87,7 @@ Each partition is saved at:
 <CACHE_DIR>/local/model_<MODEL_ID>/dataset/clients/<CLIENT_WALLET_ADDRESS>/data.pt
 ```
 
-Run this after you have the model ID from Step 6.  Keep the training partitions
+Run this after you have the model ID from Step 8.  Keep the training partitions
 and the test holdout (`dataset/test/`) separate — the test set must never be
 used for training.
 
@@ -191,41 +175,63 @@ Fill the returned CIDs into the corresponding `"ipfs"` fields in
 ## Step 7 — Create and submit the genesis model
 
 ```bash
-dincli model-owner model create-genesis
+dincli model-owner model create-genesis-model
 ```
 
 The command calls `getGenesisModelIpfs` from `modelowner.py`, uploads the
 model to IPFS, and stores the resulting CID in your `.env` file.  Copy the
-CID into `Genesis_Model_CID` in the manifest, then submit the genesis model
-score:
+CID into `Genesis_Model_CID` in the manifest.
+
+Before scoring the genesis model, place the test dataset in the task directory:
 
 ```bash
-dincli model-owner model submit-genesis
+mkdir -p "$TASK_DIR/dataset/test"
+cp cache_model_1/dataset/test/test_dataset.pt "$TASK_DIR/dataset/test/"
 ```
 
-`submit-genesis` loads the test dataset from
-`<CACHE_DIR>/local/model_1/dataset/test/test_dataset.pt` (adjust the path
-once you know your model ID).
+Then submit the genesis model score:
+
+```bash
+dincli model-owner model submit-genesis-model
+```
+
+`submit-genesis-model` loads the test dataset from
+`$TASK_DIR/dataset/test/test_dataset.pt`.
 
 ---
 
 ## Step 8 — Register the model
 
 ```bash
-dincli task model-owner register --isOpenSource false
+dincli task model-owner register-request --isOpenSource false
 ```
 
-`dincli` assigns a model ID (e.g. `1`) which is printed to the console.
-Record it — you will use it in every subsequent command.  Update the manifest
-with the model ID and re-upload it to IPFS:
+This submits a registration request on-chain and prints a request ID.  The
+model is **not** registered yet — the DIN-Representative must approve the
+request before the model ID is assigned.  Once approved, the model ID (e.g.
+`1`) will be printed to the console when you query or receive the approval.
+Record it — you will use it in every subsequent command.
+
+Update the manifest with the model ID and re-upload it to IPFS:
 
 ```bash
-dincli task model-owner update-manifest <MODEL_ID> \
+dincli task model-owner update-manifest-request <MODEL_ID> \
     --manifestpath "$TASK_DIR/manifest.json"
 ```
 
-Then place the test dataset and client training data at the correct cache
-paths as described in Steps 1 and 2, substituting the real model ID.
+Then copy the test dataset to the model cache.  Run `dincli system get-cache-dir`
+and note the **Cache Directory** line (e.g. `~/Library/Caches/dincli` on macOS,
+`~/.cache/dincli` on Linux):
+
+```bash
+# substitute your cache directory and model ID
+CACHE=<cache-directory-from-get-cache-dir>
+mkdir -p "$CACHE/local/model_<MODEL_ID>/dataset/test"
+cp cache_model_1/dataset/test/test_dataset.pt \
+   "$CACHE/local/model_<MODEL_ID>/dataset/test/"
+```
+
+Then prepare client training data for the real model ID as described in Step 2.
 
 ---
 
