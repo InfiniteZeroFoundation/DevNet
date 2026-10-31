@@ -568,15 +568,20 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         _setGIstate(GIstates.LMSevaluationClosed);
     }
 
-    /// @notice Partitions active aggregators and approved models into Tier-1 batches
-    ///         and creates a single Tier-2 batch from the remaining validators.
-    /// @dev Aggregators are filtered to those still Active at call time and shuffled
-    ///      using the locked aggSeed (issue #156 H-2) -- fixed at
+    /// @notice Partitions registered aggregators and approved models into Tier-1 batches
+    ///         and creates a single Tier-2 batch from the remaining slots.
+    /// @dev Shuffles the fixed per-GI registration list (dinAggregators[_GI]) using
+    ///      the locked aggSeed (issue #156 H-2) -- anchored at
     ///      closeLMsubmissionsEvaluation, before this function could possibly be
     ///      called, so the caller (model owner) cannot steer batch assignment by
-    ///      choosing when to call this. Reverts if fewer than
-    ///      T1_AGGREGATORS_PER_BATCH active validators remain, or if fewer than
-    ///      T1_MODELS_PER_BATCH models passed, or if the seed isn't locked yet
+    ///      choosing when to call this. Batch layout is derived from the registered
+    ///      count (not the live active count) so that an unstake between lockAggSeed
+    ///      and this call can only forfeit the leaver's own seat; every other
+    ///      validator's batch and seat position is determined solely by the fixed list
+    ///      and the locked seed (issue #243). Inactive seat-holders are replaced from
+    ///      the first active reserve entry (shuffled positions beyond the last assigned
+    ///      seat). Reverts if fewer than T1_AGGREGATORS_PER_BATCH registered validators
+    ///      exist, if models are insufficient, or if the seed isn't locked yet
     ///      (call lockAggSeed first).
     /// @param _GI Current GI index.
     function autoCreateTier1AndTier2(
@@ -587,35 +592,58 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         bytes32 seed = aggSeed[_GI];
         if (seed == bytes32(0)) revert TC_AggSeedNotLocked();
 
-        // Filter the historical registration list down to currently active validators.
-        address[] memory valPool = _activeAggregatorPool(_GI);
-        uint vLen = valPool.length;
-        if (vLen < T1_AGGREGATORS_PER_BATCH) revert TC_NotEnoughValidators();
+        // ▸ 1. Shuffle the fixed per-GI registration list (issue #243: pool-reshaping fix).
+        //      Storage → memory copy so we can shuffle in-place without touching state.
+        address[] memory regList = dinAggregators[_GI];
+        uint rLen = regList.length;
+        if (rLen < T1_AGGREGATORS_PER_BATCH) revert TC_NotEnoughValidators();
         // Domain-separated derived seeds so the address and index shuffles
         // don't correlate with each other or with DINTaskAuditor's shuffles
         // (which derive from the independently-locked auditSeed).
-        _shuffleAddressArray(valPool, keccak256(abi.encodePacked(seed, "AGG_ADDR")));
+        _shuffleAddressArray(regList, keccak256(abi.encodePacked(seed, "AGG_ADDR")));
 
-        // ▸ 2. Build list of approved model indexes
+        // ▸ 2. Build list of approved model indexes (unchanged).
         uint[] memory modelIdx = _collectApprovedModelIndexes(_GI);
         _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AGG_IDX")));
 
-        // ▸ 3. Greedily fill Tier-1 batches
+        // ▸ 3. Compute batch layout from registered count (not live active count) so the
+        //      batch structure is fixed before active-status is checked.
+        //      t1cnt = batches from model dimension, capped by the validator dimension.
+        uint mLen = modelIdx.length;
+        uint t1cnt = mLen / T1_MODELS_PER_BATCH
+            + (mLen % T1_MODELS_PER_BATCH >= MIN_T1_MODELS_PER_BATCH ? 1 : 0);
+        if (t1cnt * T1_AGGREGATORS_PER_BATCH > rLen)
+            t1cnt = rLen / T1_AGGREGATORS_PER_BATCH;
+        bool hasT2 = (rLen - t1cnt * T1_AGGREGATORS_PER_BATCH >= T1_AGGREGATORS_PER_BATCH);
+        uint totalSeats = (t1cnt + (hasT2 ? 1 : 0)) * T1_AGGREGATORS_PER_BATCH;
+
+        // ▸ 4. Position-stable seat fill. For each primary seat i (0..totalSeats-1),
+        //      if the registered validator at that position is inactive, replace them
+        //      with the first active entry from the reserve (positions totalSeats..rLen-1).
+        //      Any unstake only forfeits the leaver's own seat; no one else shifts.
+        uint resPtr = totalSeats;
+        for (uint i = 0; i < totalSeats; ) {
+            if (!dinvalidatorStakeContract.isValidatorActive(regList[i])) {
+                while (resPtr < rLen && !dinvalidatorStakeContract.isValidatorActive(regList[resPtr])) {
+                    unchecked { resPtr++; }
+                }
+                if (resPtr >= rLen) revert TC_NotEnoughValidators();
+                unchecked { regList[i] = regList[resPtr++]; }
+            }
+            unchecked { i++; }
+        }
+
+        // ▸ 5. Build Tier-1 batches from the position-stable validator array.
         uint vPtr;
         uint mPtr;
-        uint t1cnt;
-        while (
-            vPtr + T1_AGGREGATORS_PER_BATCH <= valPool.length &&
-            (mPtr + T1_MODELS_PER_BATCH <= modelIdx.length ||
-                (mPtr + MIN_T1_MODELS_PER_BATCH <= modelIdx.length &&
-                    mPtr + T1_MODELS_PER_BATCH > modelIdx.length))
-        ) {
-            Tier1Batch storage b = tier1Batches[_GI].push();
-            b.batchId = t1cnt++;
+        for (uint b = 0; b < t1cnt; ) {
+            Tier1Batch storage batch = tier1Batches[_GI].push();
+            batch.batchId = b;
 
-            for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; k++) {
-                b.aggregators.push(valPool[vPtr + k]);
-                isTier1Aggregator[_GI][b.batchId][valPool[vPtr + k]] = true;
+            for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; ) {
+                batch.aggregators.push(regList[vPtr + k]);
+                isTier1Aggregator[_GI][b][regList[vPtr + k]] = true;
+                unchecked { k++; }
             }
 
             uint modelsToAssign = T1_MODELS_PER_BATCH;
@@ -623,26 +651,26 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 modelsToAssign = modelIdx.length - mPtr;
             }
 
-            for (uint256 k = 0; k < modelsToAssign; k++) {
-                b.modelIndexes.push(modelIdx[mPtr + k]);
+            for (uint256 k = 0; k < modelsToAssign; ) {
+                batch.modelIndexes.push(modelIdx[mPtr + k]);
+                unchecked { k++; }
             }
 
-            emit Tier1BatchAuto(_GI, b.batchId);
+            emit Tier1BatchAuto(_GI, b);
 
-            vPtr += T1_AGGREGATORS_PER_BATCH;
-            mPtr += modelsToAssign;
+            unchecked { vPtr += T1_AGGREGATORS_PER_BATCH; }
+            unchecked { mPtr += modelsToAssign; b++; }
         }
 
-        // ▸ 4. Create Tier-2 batch with EXACTLY T1_AGGREGATORS_PER_BATCH validators if enough remain
-        if (valPool.length - vPtr >= T1_AGGREGATORS_PER_BATCH) {
+        // ▸ 6. Create Tier-2 batch from positions immediately after the T1 seats.
+        if (hasT2) {
             Tier2Batch storage t2 = tier2Batches[_GI].push();
             t2.batchId = 0;
             for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; k++) {
-                t2.aggregators.push(valPool[vPtr + k]);
-                isTier2Aggregator[_GI][t2.batchId][valPool[vPtr + k]] = true;
+                t2.aggregators.push(regList[vPtr + k]);
+                isTier2Aggregator[_GI][0][regList[vPtr + k]] = true;
             }
-
-            emit Tier2BatchAuto(_GI, t2.batchId);
+            emit Tier2BatchAuto(_GI, 0);
         }
 
         _setGIstate(GIstates.T1nT2Bcreated);
@@ -660,24 +688,26 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     // ──────────── internal shuffle helpers ────────────
     function _shuffleAddressArray(address[] memory arr, bytes32 seed) internal pure {
         if (arr.length < 2) return;
-        for (uint i = arr.length - 1; i > 0; i--) {
+        for (uint i = arr.length - 1; i > 0; ) {
             uint j = uint(
                 keccak256(
                     abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
+            unchecked { i--; }
         }
     }
 
     function _shuffleUintArray(uint[] memory arr, bytes32 seed) internal pure {
-        for (uint i = arr.length - 1; i > 0; i--) {
+        for (uint i = arr.length - 1; i > 0; ) {
             uint j = uint(
                 keccak256(
                     abi.encodePacked(seed, i, arr.length)
                 )
             ) % (i + 1);
             (arr[i], arr[j]) = (arr[j], arr[i]);
+            unchecked { i--; }
         }
     }
 

@@ -110,12 +110,17 @@ Mappings marked *(internal)* have no auto-getter; read them through the view nam
 
 ## 6. Batches & Test Data
 
-- **`createAuditorsBatches(gi, seed)`** (from the coordinator, state `LMSclosed`) — `seed` is the coordinator's locked `auditSeed[gi]` (see [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock)). A zero seed reverts with `TA_AuditSeedNotLocked`; the coordinator checks this too, so this is a second guard. The function then:
-  1. filters `dinAuditors[gi]` to auditors still `isValidatorActive` at call time (`TA_NotEnoughAuditors` if fewer than `auditorsPerBatch` remain);
-  2. shuffles the active auditors with `keccak256(seed, "AUD_ADDR")` and the model indexes with `keccak256(seed, "AUD_IDX")` (Fisher-Yates, in memory);
-  3. greedily forms batches of 3 auditors × 3 models (the last batch may take 2). Leftover auditors and models are unused.
+- **`createAuditorsBatches(gi, seed)`** (from the coordinator, state `LMSclosed`) — `seed` is the coordinator's locked `auditSeed[gi]` (see [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock)). A zero seed reverts with `TA_AuditSeedNotLocked`; the coordinator checks this too, so this is a second guard.
 
-  Emits `AuditorsBatchAuto` per batch and `AuditorsBatchesCreated`. The seed comes from a block hash, so the residual trust assumptions in the coordinator doc apply here as well; one of them is specific to this function: a validator can still change the active pool by unstaking after the seed is locked and before this call.
+  **Position-stable seat assignment** (issue #243): batch layout is derived from the fixed per-GI registration list (`dinAuditors[_GI]`), not the live active pool. An unstake between seed-lock and this call forfeits only the leaver's own seat; every other auditor's batch and seat position is fixed by the registration list and the locked seed.
+
+  The function:
+  1. Shuffles the fixed per-GI list `dinAuditors[_GI]` in memory with `keccak256(seed, "AUD_ADDR")` and the model indexes with `keccak256(seed, "AUD_IDX")` (Fisher-Yates).
+  2. Computes batch count from registered count and model count: `batchCnt = mLen / modelsPerBatch + (remainder ≥ MIN_MODELS_PER_BATCH ? 1 : 0)`, capped by `rLen / auditorsPerBatch`.
+  3. Position-stable seat fill: for each primary seat i (positions `0..batchCnt*auditorsPerBatch-1`), if the entry is inactive, replaces it with the first active reserve entry (positions `batchCnt*auditorsPerBatch..rLen-1`). Reverts `TA_NotEnoughAuditors` if reserve exhausted.
+  4. Forms batches of `auditorsPerBatch` auditors × `modelsPerBatch` models each (last batch may take `MIN_MODELS_PER_BATCH`). Leftover auditors and models are unused.
+
+  Emits `AuditorsBatchAuto` per batch and `AuditorsBatchesCreated`. Residual trust assumptions (sequencer trust, re-roll by declining to lock) are described in [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock).
 - **`assignAuditTestDataset(gi, batchId, testDataCID, encryptedKeys[], commitment)`** (owner) — stores the encrypted test-data CID (`AES-256-GCM(K, rawCID ‖ Sign(ownerSK, rawCID))`) and one encrypted copy of `K` per auditor, in the batch's auditor order. Every auditor must have an X25519 key on `DinValidatorStake`. Also stores `commitment = keccak256(gi, batchId, keccak256(K), keccak256(plaintext))`. Blocked while the batch awaits reassignment.
 - **`setTestDataAssignedFlag(gi, true)`** (from the coordinator, state `AuditorsBatchesCreated`) — one-shot flag. Informational only: nothing checks it before scoring starts.
 
