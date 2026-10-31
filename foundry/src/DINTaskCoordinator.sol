@@ -412,17 +412,20 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
         // Per-model stake floor: enforced when the model owner has set a non-zero bound.
         uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
-        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
-            revert TC_StakeBelowModelFloor();
-
         // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
         // Formula: each MIN_STAKE unit of stake allows capPerUnit concurrent registrations.
         uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
-        if (capPerUnit > 0) {
-            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
-                dinvalidatorStakeContract.minStake()) * capPerUnit;
-            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
-                revert TC_ConcurrentRegistrationCapReached();
+        if (floorMin > 0 || capPerUnit > 0) {
+            // Single getStake() read shared by both checks below (issue #249 finding 1).
+            uint256 stake = dinvalidatorStakeContract.getStake(msg.sender);
+            if (floorMin > 0 && stake < floorMin)
+                revert TC_StakeBelowModelFloor();
+            if (capPerUnit > 0) {
+                uint256 maxAllowed = (stake /
+                    dinvalidatorStakeContract.minStake()) * capPerUnit;
+                if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                    revert TC_ConcurrentRegistrationCapReached();
+            }
         }
 
         // Add to list and mark as registered
@@ -693,22 +696,25 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint _GI
     ) internal view returns (address[] memory activePool) {
         address[] storage registeredPool = dinAggregators[_GI];
+        uint len = registeredPool.length;
+        // issue #249 finding 2: cache each isValidatorActive result from the
+        // counting pass instead of re-querying it in the fill pass below.
+        bool[] memory active = new bool[](len);
         uint activeCount;
 
-        for (uint i = 0; i < registeredPool.length; i++) {
-            if (
-                dinvalidatorStakeContract.isValidatorActive(registeredPool[i])
-            ) {
+        for (uint i = 0; i < len; i++) {
+            bool isActive = dinvalidatorStakeContract.isValidatorActive(registeredPool[i]);
+            active[i] = isActive;
+            if (isActive) {
                 activeCount++;
             }
         }
 
         activePool = new address[](activeCount);
         uint ptr;
-        for (uint i = 0; i < registeredPool.length; i++) {
-            address validator = registeredPool[i];
-            if (dinvalidatorStakeContract.isValidatorActive(validator)) {
-                activePool[ptr++] = validator;
+        for (uint i = 0; i < len; i++) {
+            if (active[i]) {
+                activePool[ptr++] = registeredPool[i];
             }
         }
     }
@@ -944,21 +950,26 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_NotReadyToFinalizeT1();
 
         Tier1Batch[] storage batches = tier1Batches[_GI];
+        uint batchCount = batches.length;
 
-        for (uint i = 0; i < batches.length; i++) {
+        for (uint i = 0; i < batchCount; i++) {
             Tier1Batch storage b = batches[i];
+            // issue #249 finding 3: batchId/aggregators.length are
+            // loop-invariant per batch; cache instead of re-reading storage.
+            uint batchId = b.batchId;
+            uint aggregatorCount = b.aggregators.length;
 
             // Determine the CID with the most votes
             bytes32 winningCID = "";
             uint maxVotes = 0;
             uint submissionCount = 0;
 
-            for (uint j = 0; j < b.aggregators.length; j++) {
+            for (uint j = 0; j < aggregatorCount; j++) {
                 address aggregator = b.aggregators[j];
-                if (t1Submitted[_GI][b.batchId][aggregator]) {
+                if (t1Submitted[_GI][batchId][aggregator]) {
                     submissionCount++;
-                    bytes32 cid = t1SubmissionCID[_GI][b.batchId][aggregator];
-                    uint votes = t1Votes[_GI][b.batchId][cid];
+                    bytes32 cid = t1SubmissionCID[_GI][batchId][aggregator];
+                    uint votes = t1Votes[_GI][batchId][cid];
                     if (votes > maxVotes) {
                         maxVotes = votes;
                         winningCID = cid;
@@ -981,8 +992,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 revert TC_InsufficientSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
-            tier1FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
-            emit T1BatchFinalized(_GI, b.batchId, winningCID);
+            tier1FinalizedAt[_GI][batchId] = uint64(block.timestamp);
+            emit T1BatchFinalized(_GI, batchId, winningCID);
         }
 
         _setGIstate(GIstates.T1AggregationDone);
@@ -1164,12 +1175,14 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint256 s2Amount = (minStakeAmt * s2SlashFractionBps) / 10_000;
 
         Tier1Batch[] storage t1batches = tier1Batches[_GI];
-        for (uint i = 0; i < t1batches.length; i++) {
+        uint t1Count = t1batches.length;
+        for (uint i = 0; i < t1Count; i++) {
             Tier1Batch storage b = t1batches[i];
             _slashBatch(_GI, b.batchId, b.aggregators, b.finalCID, minStakeAmt, s2Amount, false);
         }
         Tier2Batch[] storage t2batches = tier2Batches[_GI];
-        for (uint i = 0; i < t2batches.length; i++) {
+        uint t2Count = t2batches.length;
+        for (uint i = 0; i < t2Count; i++) {
             Tier2Batch storage b = t2batches[i];
             _slashBatch(_GI, b.batchId, b.aggregators, b.finalCID, minStakeAmt, s2Amount, true);
         }
@@ -1201,7 +1214,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             noSubmission = "AGG_T2_NO_SUBMISSION";
             badConsensus = "AGG_T2_BAD_CONSENSUS";
         }
-        for (uint j = 0; j < aggs.length; j++) {
+        uint aggCount = aggs.length;
+        for (uint j = 0; j < aggCount; j++) {
             address aggregator = aggs[j];
             bool submitted = t2
                 ? t2Submitted[_GI][batchId][aggregator]
@@ -1287,12 +1301,13 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     function releaseGIRegistrationSlots(uint _GI) external onlyOwner {
         bool giEnded = (_GI < GI) ||
             (_GI == GI && GIstate == GIstates.GIended);
-        require(giEnded, "GI has not ended");
-        require(!registrationSlotsReleased[_GI], "slots already released");
+        if (!giEnded) revert TC_GINotEnded();
+        if (registrationSlotsReleased[_GI]) revert TC_SlotsAlreadyReleased();
         registrationSlotsReleased[_GI] = true;
 
         address[] storage aggs = dinAggregators[_GI];
-        for (uint256 i = 0; i < aggs.length; i++) {
+        uint256 aggCount = aggs.length;
+        for (uint256 i = 0; i < aggCount; i++) {
             dinvalidatorStakeContract.decrementActiveRegistration(aggs[i]);
         }
         dinTaskAuditorContract.decrementAuditorRegistrations(_GI);
