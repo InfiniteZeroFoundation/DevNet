@@ -48,16 +48,18 @@ def create(
 
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
-    ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSclosed", "Can not create auditor batches at this time")
-
     # issue #156 H-2: createAuditorsBatches now requires an ungrindable,
     # future-block-anchored seed to already be locked. Lock it here (or
     # skip if someone else already has) before attempting the real call.
-    ensure_batch_seed_locked(
-        ctx, taskCoordinator_contract, ref_gi,
-        seed_getter="auditSeed", seed_block_getter="auditSeedBlock",
-        lock_fn="lockAuditSeed", label="auditor-batch",
-    )
+    # A successful lock moves the GI to AuditSeedLocked (task_061026_21
+    # Part B), so only LMSclosed still needs it.
+    if GIstateToStr(GIstate) != "AuditSeedLocked":
+        ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSclosed", "Can not create auditor batches at this time")
+        ensure_batch_seed_locked(
+            ctx, taskCoordinator_contract, ref_gi,
+            seed_getter="auditSeed", seed_block_getter="auditSeedBlock",
+            lock_fn="lockAuditSeed", label="auditor-batch",
+        )
 
     console.print(f"[bold green]Creating auditor batches [/bold green]")
 

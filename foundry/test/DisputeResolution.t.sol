@@ -21,6 +21,7 @@ import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import "../src/DINShared.sol" as Shared;
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 // Pull the custom errors into scope so vm.expectRevert(Error.selector) compiles.
 error TC_DisputeNotAwaitingRecomputation();
@@ -238,6 +239,7 @@ contract DisputeResolutionTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1); // issue #156 H-2
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
