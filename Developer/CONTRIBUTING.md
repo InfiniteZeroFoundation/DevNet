@@ -10,10 +10,9 @@ git checkout develop
 
 # Install dependencies and set up dincli in editable mode
 pip install -e .
-
-# See full setup guide
-/Developer/DEVELOPMENT_SETUP.md
 ```
+
+See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) for the full setup guide (Python version, Foundry, running tests).
 
 Create a feature branch, commit your changes, and open a pull request to `develop`.
 
