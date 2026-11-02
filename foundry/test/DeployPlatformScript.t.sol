@@ -8,10 +8,10 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 
 import {DeployPlatform} from "../script/DeployPlatform.s.sol";
 
-/// @dev Exposes the internal _writeDeployments for white-box testing.
+/// @dev Exposes the internal _writeDeploymentsTo for white-box testing.
 contract DeployPlatformHarness is DeployPlatform {
-    function writeDeployments(Deployment memory d, address deployer) external {
-        _writeDeployments(d, deployer);
+    function writeDeploymentsTo(Deployment memory d, address deployer, string memory outPath) external {
+        _writeDeploymentsTo(d, deployer, outPath);
     }
 }
 import {DinCoordinator} from "../src/DinCoordinator.sol";
@@ -28,10 +28,10 @@ import {DinEmission} from "../src/DinEmission.sol";
 ///         environment, so no deploy test depends on env. The env-read path
 ///         (readTokenomics) is covered by exactly one test, which is the only
 ///         place in foundry/test that sets these tokenomics keys; see its comment.
-///         test_writeDeployments_writesImplAndCodehashMetadata calls _writeDeployments
-///         via DeployPlatformHarness using DEPLOYMENTS_NETWORK=test-impl-metadata,
-///         so it writes foundry/deployments/test-impl-metadata.json rather than
-///         clobbering foundry/deployments/localhost.json. Run with:
+///         test_writeDeployments_writesImplAndCodehashMetadata calls
+///         _writeDeploymentsTo via DeployPlatformHarness with an explicit path,
+///         foundry/deployments/test-impl-metadata.json, so it never clobbers
+///         localhost.json and never sets DEPLOYMENTS_NETWORK. Run with:
 ///         forge test --match-contract DeployPlatformScriptTest -vv
 contract DeployPlatformScriptTest is Test {
     DeployPlatform internal script;
@@ -169,22 +169,19 @@ contract DeployPlatformScriptTest is Test {
     }
 
     /// @dev Verifies the JSON-writing cycle used by dincli system verify-deployment.
-    ///      Calls _writeDeployments via DeployPlatformHarness (which exposes the
-    ///      internal function) with a DEPLOYMENTS_NETWORK override to avoid
-    ///      clobbering foundry/deployments/localhost.json.
-    ///
-    ///      vm.setEnv cannot unset a key, so DEPLOYMENTS_NETWORK stays set for the
-    ///      rest of the run.  Any future test that reads DEPLOYMENTS_NETWORK MUST
-    ///      go into this function, or it will see "test-impl-metadata".
+    ///      Calls _writeDeploymentsTo via DeployPlatformHarness with this test's
+    ///      own file. It deliberately doesn't set DEPLOYMENTS_NETWORK: the
+    ///      process environment is shared by forge's parallel test contracts, and
+    ///      UpgradePlatformScriptTest setting it to another file name made this
+    ///      test read a file that was never written (PR No. 254).
     function test_writeDeployments_writesImplAndCodehashMetadata() public {
-        vm.setEnv("DEPLOYMENTS_NETWORK", "test-impl-metadata");
         DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
         DeployPlatform.Deployment memory d = script.deploy(t, deployer);
-        harness.writeDeployments(d, deployer);
 
         string memory path = string.concat(
             vm.projectRoot(), "/deployments/test-impl-metadata.json"
         );
+        harness.writeDeploymentsTo(d, deployer, path);
         string memory content = vm.readFile(path);
 
         address implTreasury = vm.parseJsonAddress(content, ".dinTreasuryImpl");
