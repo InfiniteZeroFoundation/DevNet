@@ -439,6 +439,7 @@ contract RewardEngineTest is Test {
 
     function test_disabledModel_blocksBothOverloadsAtomically_andReenable() public {
         _killSwitchFixture();
+        assertEq(tc.taskProtocolVersion(), 1);
         (bool exists, uint256 approvedId) = registry.getModelIdByTaskAuditor(address(ta));
         assertTrue(exists);
         assertEq(approvedId, 0);

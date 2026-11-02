@@ -37,9 +37,10 @@ def _make_w3(coord_model_id: int):
         return SimpleNamespace(
             functions=SimpleNamespace(
                 modelId=lambda: SimpleNamespace(call=lambda: coord_model_id),
+                taskProtocolVersion=lambda: SimpleNamespace(call=lambda: 0),
             )
         )
-    return SimpleNamespace(eth=SimpleNamespace(contract=_contract))
+    return SimpleNamespace(eth=SimpleNamespace(contract=_contract, get_code=lambda address: b"\x60"))
 
 
 class DummyCtxObj:

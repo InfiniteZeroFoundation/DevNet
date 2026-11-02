@@ -56,6 +56,10 @@ def auditor_command(monkeypatch):
     paired.functions.modelId.return_value.call.return_value = 7
     w3 = Mock()
     w3.eth.contract.return_value = paired
+    w3.eth.get_code.return_value = b"\x60"
+    paired.functions.taskProtocolVersion.return_value.call.side_effect = (
+        lambda: 1 if len(contract.abi[0]["inputs"]) == 4 else 0
+    )
     obj = Mock()
     obj.get_en_w3_account_console.return_value = ("local", w3, Mock(), Mock())
     ctx = SimpleNamespace(obj=obj)
@@ -95,6 +99,7 @@ def test_auditor_command_checks_pair_and_deploys(auditor_command, with_registry)
     command.paired.functions.modelId.assert_called_once_with()
     command.paired.functions.modelId.return_value.call.assert_called_once_with()
     assert command.w3.eth.contract.call_args.kwargs["address"] == "coordinator"
+    command.paired.functions.taskProtocolVersion.return_value.call.assert_called_once_with()
     assert command.send.call_count == 2
     assert command.send.call_args_list[0].args[1] is command.contract.constructor.return_value
     setter = command.ctx.obj.get_deployed_din_task_coordinator_contract.return_value
@@ -167,18 +172,17 @@ def test_auditor_command_does_not_wrap_contract_creation_error(auditor_command):
     assert_no_deployment(command)
 
 
-def test_legacy_auditor_deploys_without_model_id_read(auditor_command):
+def test_legacy_auditor_deploys_when_model_id_getter_is_absent(auditor_command):
     command = auditor_command
     command.contract.abi = artifact("address", "address").abi
-    command.paired.functions.modelId.return_value.call.side_effect = AssertionError(
-        "legacy deployment must not read modelId"
-    )
+    command.paired.functions.modelId.return_value.call.side_effect = ContractLogicError("no getter")
 
     deploy.task_auditor(command.ctx, "artifact.json", None, "coordinator")
 
     command.contract.constructor.assert_called_once_with("stake", "coordinator")
-    command.w3.eth.contract.assert_not_called()
-    command.paired.functions.modelId.assert_not_called()
+    command.w3.eth.contract.assert_called_once()
+    command.paired.functions.taskProtocolVersion.return_value.call.assert_called_once_with()
+    command.paired.functions.modelId.return_value.call.assert_called_once_with()
     assert command.send.call_count == 2
     command.write_env.assert_called_once_with(
         "LOCAL_coordinator_DINTaskAuditor_Contract_Address", "auditor",
@@ -248,4 +252,96 @@ def test_invalid_id_sends_no_transaction(auditor_command, role, model_id):
                                 task_coordinator="coordinator")
 
     command.w3.eth.contract.assert_not_called()
+    assert_no_deployment(command)
+
+
+@pytest.mark.parametrize("types,version", [
+    (("address", "address"), 1),
+    (("address", "address", "uint256"), 1),
+    (("address", "address", "uint256", "address"), 0),
+    (("address", "address", "uint256", "address"), 2),
+    (("address", "address", "uint256"), 2),
+])
+def test_incompatible_generations_send_no_transaction(auditor_command, types, version):
+    command = auditor_command
+    command.contract.abi = artifact(*types).abi
+    command.paired.functions.taskProtocolVersion.return_value.call.side_effect = None
+    command.paired.functions.taskProtocolVersion.return_value.call.return_value = version
+
+    with pytest.raises(typer.BadParameter, match="Incompatible task contract generations"):
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
+                            task_coordinator="coordinator")
+
+    assert_no_deployment(command)
+
+
+@pytest.mark.parametrize("error_type", [ContractLogicError, BadFunctionCallOutput])
+@pytest.mark.parametrize("guarded", [False, True])
+def test_missing_version_getter_only_allows_legacy_pairs(auditor_command, error_type, guarded):
+    command = auditor_command
+    types = ("address", "address", "uint256") + (("address",) if guarded else ())
+    command.contract.abi = artifact(*types).abi
+    command.paired.functions.taskProtocolVersion.return_value.call.side_effect = error_type("no getter")
+
+    if guarded:
+        with pytest.raises(typer.BadParameter, match="Incompatible task contract generations"):
+            deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
+                                task_coordinator="coordinator")
+        assert_no_deployment(command)
+    else:
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
+                            task_coordinator="coordinator")
+        command.contract.constructor.assert_called_once_with("stake", "coordinator", 7)
+        assert command.send.call_count == 2
+
+
+@pytest.mark.parametrize("error_type", [ConnectionError, ValueError])
+def test_version_read_rpc_errors_do_not_fall_back_to_legacy(auditor_command, error_type):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address", "uint256").abi
+    error = error_type("RPC failure")
+    command.paired.functions.taskProtocolVersion.return_value.call.side_effect = error
+
+    with pytest.raises(error_type) as caught:
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
+                            task_coordinator="coordinator")
+
+    assert caught.value is error
+    assert_no_deployment(command)
+
+
+def test_legacy_auditor_rejects_coordinator_without_code(auditor_command):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address").abi
+    command.w3.eth.get_code.return_value = b""
+
+    with pytest.raises(typer.BadParameter, match="no deployed code"):
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=None,
+                            task_coordinator="coordinator")
+
+    command.paired.functions.taskProtocolVersion.assert_not_called()
+    assert_no_deployment(command)
+
+
+def test_two_argument_auditor_rejects_previous_model_id_coordinator(auditor_command):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address").abi
+    command.paired.functions.modelId.return_value.call.return_value = 7
+
+    with pytest.raises(typer.BadParameter, match="requires an auditor with a model ID"):
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=None,
+                            task_coordinator="coordinator")
+
+    assert_no_deployment(command)
+
+
+def test_legacy_capability_rpc_error_does_not_deploy(auditor_command):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address").abi
+    command.paired.functions.modelId.return_value.call.side_effect = ConnectionError("RPC failure")
+
+    with pytest.raises(ConnectionError):
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=None,
+                            task_coordinator="coordinator")
+
     assert_no_deployment(command)

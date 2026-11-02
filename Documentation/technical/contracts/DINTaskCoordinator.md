@@ -43,6 +43,7 @@ Auditor registration, client submissions, scoring and rewards live in the paired
 |----------|-------------|
 | `dinvalidatorStakeContract` | `DinValidatorStake` proxy (constructor) |
 | `dinTaskAuditorContract` | Paired auditor (`setDINTaskAuditorContract`) |
+| `taskProtocolVersion()` | Pure getter returning `1`: requires a registry-aware auditor implementing `validateGIStart`; used by CLI deployment preflight |
 | `modelId` (`immutable`) | Registry model ID, used for the per-model stake floor (constructor) |
 | `GI` | Current GI counter (starts at 0; the first GI is 1) |
 | `GIstate` | Current `GIstates` value |

@@ -1443,6 +1443,19 @@
     },
     {
       "type": "function",
+      "name": "taskProtocolVersion",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
       "name": "tier1BatchCount",
       "inputs": [
         {

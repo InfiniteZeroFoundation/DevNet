@@ -19,6 +19,13 @@ interface IBurnableDinToken {
 contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
+    /// @notice Task-pair interface generation: 1 requires the auditor GI-start guard.
+    /// @dev Deployment tooling uses this before the irreversible auditor pairing.
+    ///      Legacy coordinators expose no version getter.
+    function taskProtocolVersion() external pure returns (uint256) {
+        return 1;
+    }
+
     IDinValidatorStake public dinvalidatorStakeContract;
     IDINTaskAuditor public dinTaskAuditorContract;
 

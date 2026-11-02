@@ -7,9 +7,11 @@ from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.utils import (build_and_send_tx, load_din_info,
                               resolve_task_coordinator_address, set_env_key)
 
-_MODEL_ID_ABI = [
+_COORDINATOR_DEPLOYMENT_ABI = [
     {"type": "function", "name": "modelId", "inputs": [],
      "outputs": [{"type": "uint256"}], "stateMutability": "view"},
+    {"type": "function", "name": "taskProtocolVersion", "inputs": [],
+     "outputs": [{"type": "uint256"}], "stateMutability": "pure"},
 ]
 
 
@@ -114,9 +116,9 @@ def task_auditor(
         coordinator=task_coordinator_address, model_id=model_id,
         registry=din_info.get(effective_network, {}).get("registry"),
     )
+    paired = w3.eth.contract(address=task_coordinator_address, abi=_COORDINATOR_DEPLOYMENT_ABI)
     if len(constructor_args) >= 3:
         # IDs select stake floors; both IDs and the one-shot pairing are immutable.
-        paired = w3.eth.contract(address=task_coordinator_address, abi=_MODEL_ID_ABI)
         try:
             paired_model_id = paired.functions.modelId().call()
         except (ContractLogicError, BadFunctionCallOutput) as exc:
@@ -126,6 +128,35 @@ def task_auditor(
             ) from exc
         if paired_model_id != model_id:
             raise typer.BadParameter("--model-id must match the paired coordinator modelId()")
+
+    if not w3.eth.get_code(task_coordinator_address):
+        raise typer.BadParameter("The paired coordinator has no deployed code; verify --taskCoordinator")
+    try:
+        coordinator_version = paired.functions.taskProtocolVersion().call()
+    except (ContractLogicError, BadFunctionCallOutput):
+        # Released legacy coordinators have no version getter. Transport/RPC
+        # failures still propagate, rather than silently taking the legacy path.
+        coordinator_version = 0
+    auditor_version = 1 if len(constructor_args) == 4 else 0
+    if coordinator_version not in (0, 1) or coordinator_version != auditor_version:
+        raise typer.BadParameter(
+            "Incompatible task contract generations: coordinator protocol version "
+            f"{coordinator_version}, auditor protocol version {auditor_version}. "
+            "Deploy a matching task pair; auditor pairing is one-shot."
+        )
+
+    if len(constructor_args) == 2:
+        # The pre-model-ID auditor also lacks the reward-pool interface used by
+        # later coordinators. Keep the two released legacy families separate.
+        try:
+            paired.functions.modelId().call()
+        except (ContractLogicError, BadFunctionCallOutput):
+            pass
+        else:
+            raise typer.BadParameter(
+                "Incompatible task contract generations: a coordinator with modelId() "
+                "requires an auditor with a model ID. Deploy a matching task pair."
+            )
 
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
