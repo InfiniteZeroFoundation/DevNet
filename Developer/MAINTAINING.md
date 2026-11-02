@@ -96,7 +96,7 @@ Templates: [`.claude/skills/din-pr-review/templates/`](../.claude/skills/din-pr-
 
 ### 4.4 Merge paths
 
-- **(A) GitHub-side merge commit — the default.** The reviewer approves, CI is green, and the reviewer clicks **Merge when ready** (or `gh pr merge <N>`) to add the PR to the merge queue. The queue re-runs `CI OK` on the PR merged onto the latest `develop` and lands it with a merge commit. If that run fails, the queue drops the PR and leaves `develop` untouched; fix it on the PR branch and queue it again. If the reviewer wants something changed first, they push the fix onto the PR branch (or open a small follow-up PR). The last-push rule then sends the final approval to someone else.
+- **(A) GitHub-side merge commit — the default.** The reviewer approves, CI is green, and the reviewer clicks **Merge when ready** to add the PR to the merge queue. The queue re-runs `CI OK` on the PR merged onto the latest `develop` and lands it with a merge commit. If that run fails, the queue drops the PR and leaves `develop` untouched; fix it on the PR branch and queue it again. If the reviewer wants something changed first, they push the fix onto the PR branch (or open a small follow-up PR). The last-push rule then sends the final approval to someone else.
 - **(B) Local merge plus follow-up fix commit — exceptional, Umer only.** For PRs that need adapting against a `develop` that has moved (renames, ABI regeneration, docs drift). It needs the admin bypass.
 
 **The admin bypass** is for emergencies and path B only. Each use gets a one-line reason in [Discussion 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170), followed by a normal reviewed PR where possible.

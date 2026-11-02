@@ -115,9 +115,12 @@ locally only what CI doesn't cover:**
   locally (MAINTAINING No. 4.9)
 - any claimed behaviour that no test exercises
 
-If CI on the PR is red, stale against `develop`, or never ran, CI isn't
-evidence: say so, and either ask the author to update the branch or run the
-relevant suite yourself.
+If CI on the PR is red or never ran, CI isn't evidence: say so, and either ask
+the author to fix it or run the relevant suite yourself. A PR whose branch is
+merely behind `develop` is fine: don't ask for an update, since the merge queue
+re-runs CI on the latest `develop` before it lands. Ask the author to merge
+`develop` in only when there's a real conflict, or when `develop` gained
+something the PR's change depends on and you need to review against it.
 
 When you do run things locally:
 

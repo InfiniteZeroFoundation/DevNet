@@ -111,13 +111,17 @@ If any gate fails, report which one and stop. Don't use `--admin`.
 
 ### A3. Merge
 
-On the operator's go-ahead, add the PR to the merge queue. `develop`
-requires the queue, so `gh pr merge` queues it rather than merging directly,
-and the queue picks the merge method (merge commit). Don't pass `--admin`,
-which would skip the queue.
+On the operator's go-ahead, add the PR to the merge queue (the queue merges
+with a merge commit). Don't use `gh pr merge`: with auto-merge disabled on the
+repo it fails with "Auto merge is not allowed for this repository", and
+`--admin` would skip the queue. Enqueue through GraphQL instead (the same as
+clicking **Merge when ready**):
 
 ```bash
-gh pr merge <N> -R $R
+PR_ID=$(gh api graphql -f query="{repository(owner:\"InfiniteZeroFoundation\",name:\"DevNet\"){pullRequest(number:<N>){id}}}" \
+  --jq .data.repository.pullRequest.id)
+gh api graphql -f query='mutation($p:ID!){enqueuePullRequest(input:{pullRequestId:$p}){mergeQueueEntry{state position}}}' \
+  -f p="$PR_ID"
 ```
 
 The queue builds a temporary `gh-readonly-queue/develop/...` branch (latest
@@ -135,8 +139,11 @@ gh pr view <N> -R $R --json state,mergedAt,mergeCommit --jq '{state, mergedAt, s
   re-queue once it's fixed. A fix pushed to the branch needs a fresh approval
   as usual.
 - **`CI OK` never reports on the queue run** (the queue sits waiting): stop
-  and tell Umer. The rollback is turning the merge-queue rule off in the
-  `develop` ruleset (Discussion 208).
+  and tell Umer. The rollback (Discussion 208) is two changes to the
+  `develop` ruleset together: turn the merge-queue rule off **and** turn
+  "Require branches to be up to date before merging" back on, so merged PRs
+  are still tested against the latest `develop`. Then revert this skill and
+  `MAINTAINING.md` to the up-to-date wording.
 
 ---
 
