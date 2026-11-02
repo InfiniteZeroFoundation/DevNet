@@ -127,8 +127,9 @@ host-process cleanup; this does not establish Docker-container cleanup or
 SIGTERM/hosted-cancellation support.
 
 Before isolated scratch is removed, the harness collects sanitized worker
-reports under `worker-reports/` and writes `summary.json`. It recognizes only
-the current local model cache's client, auditor and aggregator output layout.
+reports under `worker-reports/`, including `worker-reports/summary.json`. It
+recognizes only the current local model cache's client, auditor and aggregator
+output layout.
 Reports retain status, pseudonymous participant/job identity and bounded error/
 traceback text; success payloads, job inputs, wallet/config files and commit
 salts are excluded. Symlinks and hardlinked reports are rejected. Collection
@@ -179,9 +180,9 @@ that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
 - **Logs:** when the job fails, the `integration-logs` artifact holds the
   results directory: `pytest.log`, numbered diagnostic logs for commands,
   compiler builds, Kubo initialization and owned services, plus
-  `0001_manifest.jsonl`, `worker-reports/`, `summary.json` and `cleanup.json` when
-  collection and cleanup reach those stages. The step summary records the
-  suite's exit status and runtime. These artifacts do not prove full-GI
+  `0001_manifest.jsonl`, `worker-reports/` (including `summary.json`) and
+  `cleanup.json` when collection and cleanup reach those stages. The step
+  summary records the suite's exit status and runtime. These artifacts do not prove full-GI
   completion or guarantee cleanup of every resource.
 
 To reproduce the job locally, use a disposable checkout with no `.env*` file
