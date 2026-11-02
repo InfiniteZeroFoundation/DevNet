@@ -132,10 +132,26 @@ that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
   its 180 s compile timeout. The solc and Hardhat compiler downloads are
   cached between runs, and the `din-worker` image is built before the suite
   starts rather than inside a Phase 4 command's timeout.
-- **Logs:** when the job fails, the `integration-logs` artifact holds the
-  results directory: `pytest.log`, `hardhat_compile.log`, `forge_build.log`,
-  `chain_node.log` (Anvil), `ipfs_init.log` and `ipfs_daemon.log`. The step
-  summary records the suite's exit status and runtime.
+- **Outcome report:** a small **Full GI summary** job runs after integration,
+  including after failure, and reports the job result, setup completion,
+  recorded pytest exit, log capture exit and suite runtime separately. Missing
+  evidence is unknown, never a successful suite. A completed pytest exit 0
+  does not override a failed or cancelled job, nor prove complete training-round
+  lifecycle coverage. Integration, log capture, upload and reporting failures
+  retain their real failure status; Full GI stays outside `CI OK`.
+- **Logs:** on failure or cancellation, the job attempts a bounded upload of
+  the available results directory as `integration-logs`: `pytest.log`,
+  `hardhat_compile.log`, `forge_build.log`, `chain_node.log` (Anvil),
+  `ipfs_init.log` and `ipfs_daemon.log`. The report links a confirmed artifact
+  separately from the suite result. A successful upload step without an
+  artifact URL does not confirm that files were uploaded. Successful runs do
+  not request an artifact.
+- **Limits:** reporting and uploads are best effort. Setup consumes part of
+  the 90-minute job budget, so the suite's 85-minute timeout does not reserve
+  time for collecting evidence. Cancellation, timeouts or runner loss can
+  prevent outputs, artifacts or even the follow-up report. Use the integration
+  job logs when available; a missing result does not identify a timeout or
+  setup failure by itself.
 
 To reproduce the job locally, use a disposable checkout with no `.env*` file
 other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo
@@ -152,6 +168,7 @@ docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
 svm="$HOME/.svm"; [ -d "$svm" ] || svm="${XDG_DATA_HOME:-$HOME/.local/share}/svm"
 export DIN_TEST_ISOLATED=1 DIN_TEST_SVM_DIR="$svm"
 export DIN_TEST_TMPDIR="$(mktemp -d)/scratch" DIN_TEST_RESULTS_DIR="$(mktemp -d)"
+set -o pipefail
 pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee "$DIN_TEST_RESULTS_DIR/pytest.log"
 ```
 
