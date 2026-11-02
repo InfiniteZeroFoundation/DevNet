@@ -1105,21 +1105,26 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_NotReadyToFinalizeT2();
 
         Tier2Batch[] storage batches = tier2Batches[_GI];
+        uint batchCount = batches.length;
 
-        for (uint i = 0; i < batches.length; i++) {
+        for (uint i = 0; i < batchCount; i++) {
             Tier2Batch storage b = batches[i];
+            // issue #249 finding 3: batchId/aggregators.length are
+            // loop-invariant per batch; cache instead of re-reading storage.
+            uint batchId = b.batchId;
+            uint aggregatorCount = b.aggregators.length;
 
             // Determine the CID with the most votes
             bytes32 winningCID = "";
             uint maxVotes = 0;
             uint submissionCount = 0;
 
-            for (uint j = 0; j < b.aggregators.length; j++) {
+            for (uint j = 0; j < aggregatorCount; j++) {
                 address aggregator = b.aggregators[j];
-                if (t2Submitted[_GI][b.batchId][aggregator]) {
+                if (t2Submitted[_GI][batchId][aggregator]) {
                     submissionCount++;
-                    bytes32 cid = t2SubmissionCID[_GI][b.batchId][aggregator];
-                    uint votes = t2Votes[_GI][b.batchId][cid];
+                    bytes32 cid = t2SubmissionCID[_GI][batchId][aggregator];
+                    uint votes = t2Votes[_GI][batchId][cid];
                     if (votes > maxVotes) {
                         maxVotes = votes;
                         winningCID = cid;
@@ -1140,7 +1145,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                 revert TC_InsufficientSubmissions();
             b.finalized = true;
             b.finalCID = winningCID;
-            tier2FinalizedAt[_GI][b.batchId] = uint64(block.timestamp);
+            tier2FinalizedAt[_GI][batchId] = uint64(block.timestamp);
             emit T2Finalized(_GI, winningCID);
         }
 
