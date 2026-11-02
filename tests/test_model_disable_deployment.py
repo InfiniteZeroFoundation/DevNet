@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 import typer
-from web3.exceptions import ContractLogicError
+from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
 from dincli.cli.modelownerd import deploy
 
@@ -119,11 +119,12 @@ def test_auditor_command_rejects_model_id_mismatch(auditor_command, with_registr
 
 
 @pytest.mark.parametrize("with_registry", [False, True])
-def test_auditor_command_reports_model_id_revert(auditor_command, with_registry):
+@pytest.mark.parametrize("error_type", [ContractLogicError, BadFunctionCallOutput])
+def test_auditor_command_reports_model_id_revert(auditor_command, with_registry, error_type):
     command = auditor_command
     types = ("address", "address", "uint256") + (("address",) if with_registry else ())
     command.contract.abi = artifact(*types).abi
-    revert = ContractLogicError("execution reverted")
+    revert = error_type("incompatible getter")
     command.paired.functions.modelId.return_value.call.side_effect = revert
 
     with pytest.raises(typer.BadParameter) as caught:
@@ -182,3 +183,69 @@ def test_legacy_auditor_deploys_without_model_id_read(auditor_command):
     command.write_env.assert_called_once_with(
         "LOCAL_coordinator_DINTaskAuditor_Contract_Address", "auditor",
     )
+
+
+@pytest.mark.parametrize("role", ["coordinator", "auditor"])
+@pytest.mark.parametrize("config", [{}, {"local": {}}])
+def test_missing_stake_sends_no_transaction(auditor_command, monkeypatch, role, config):
+    command = auditor_command
+    monkeypatch.setattr(deploy, "load_din_info", lambda: config)
+    command.contract.abi = artifact("address", "uint256").abi
+
+    with pytest.raises(typer.BadParameter, match="platform stake"):
+        if role == "coordinator":
+            deploy.task_coordinator(command.ctx, artifact_path="artifact.json", model_id=7)
+        else:
+            deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
+                                task_coordinator="coordinator")
+
+    assert_no_deployment(command)
+
+
+def test_missing_registry_sends_no_transaction(auditor_command, monkeypatch):
+    command = auditor_command
+    command.contract.abi = artifact("address", "address", "uint256", "address").abi
+    monkeypatch.setattr(deploy, "load_din_info", lambda: {"local": {"stake": "stake"}})
+
+    with pytest.raises(typer.BadParameter, match="canonical platform registry"):
+        deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
+                            task_coordinator="coordinator")
+
+    command.w3.eth.contract.assert_not_called()
+    assert_no_deployment(command)
+
+
+@pytest.mark.parametrize("types,model_id,expected", [
+    (("address",), None, ("stake",)),
+    (("address", "uint256"), 0, ("stake", 0)),
+    (("address", "uint256"), 2**256 - 1, ("stake", 2**256 - 1)),
+])
+def test_coordinator_command_deploys_supported_shapes(auditor_command, types, model_id, expected):
+    command = auditor_command
+    command.contract.abi = artifact(*types).abi
+
+    deploy.task_coordinator(command.ctx, artifact_path="artifact.json", model_id=model_id)
+
+    command.contract.constructor.assert_called_once_with(*expected)
+    command.send.assert_called_once()
+    assert command.send.call_args.args[1] is command.contract.constructor.return_value
+    command.write_env.assert_called_once_with("LOCAL_DINTaskCoordinator_Contract_Address", "auditor")
+    command.w3.eth.contract.assert_not_called()
+
+
+@pytest.mark.parametrize("model_id", [None, -1, 2**256])
+@pytest.mark.parametrize("role", ["coordinator", "auditor"])
+def test_invalid_id_sends_no_transaction(auditor_command, role, model_id):
+    command = auditor_command
+    types = ("address", "uint256") if role == "coordinator" else ("address", "address", "uint256", "address")
+    command.contract.abi = artifact(*types).abi
+
+    with pytest.raises(typer.BadParameter, match="--model-id"):
+        if role == "coordinator":
+            deploy.task_coordinator(command.ctx, artifact_path="artifact.json", model_id=model_id)
+        else:
+            deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=model_id,
+                                task_coordinator="coordinator")
+
+    command.w3.eth.contract.assert_not_called()
+    assert_no_deployment(command)

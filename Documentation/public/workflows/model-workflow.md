@@ -36,6 +36,8 @@ In current DIN Protocol, the model owner needs to deploy a taskCoordinator contr
 
 For current Foundry artifacts, pass `--model-id <anticipated-id>` to both `model-owner deploy task-coordinator` and `model-owner deploy task-auditor`; their stake-floor IDs must match. Configure the canonical platform registry address in this network's `din_info.json` (`registry`) before deploying the auditor. Its fourth constructor argument is immutable registry wiring. The CLI supports explicit legacy constructor signatures too, but those older contracts do not gain the guard described below; unsupported custom constructor signatures are rejected.
 
+The checked-in `cache_model_0` artifacts and manifest describe the current reference pair. The `cache-default-artifacts` command instead downloads the manifest and ABIs selected by this network's `din_info.json` (`default_manifest` and `default_abis`); those historical bootstrap CIDs are not refreshed by this change. Verify the downloaded constructor signatures and registry wiring before using them for a new deployment.
+
 The DIN-Representative must approve the model before **any** GI can start. Both start overloads check the registry-assigned ID by auditor address; do not assume the anticipated constructor ID establishes registration. Coordinate ID allocation with the DIN-Representative for correct stake floors.
 
 Disabling a model prevents future GIs, including those with a pre-funded or privately funded pool. An in-flight GI continues through work, slashing, settlement and reward claims. There is no GI abort or new pool refund/recovery path. The guard requires a newly deployed compatible coordinator/auditor pair with canonical registry wiring and reviewed task code; existing deployments remain unchanged. See [kill-switch scope](../../technical/contracts/DINModelRegistry.md#11-kill-switch).
@@ -47,7 +49,7 @@ Disabling a model prevents future GIs, including those with a pre-funded or priv
 
 Model Owner deploys a taskCoordinator contract specific to each model.
 ```bash
-dincli model-owner deploy task-coordinator --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
+dincli model-owner deploy task-coordinator --artifact "/path/to/devnet/foundry/out/DINTaskCoordinator.sol/DINTaskCoordinator.json" --model-id <anticipated-id>
 ```
 
 dincli will store the taskCoordinator contract address in the .env file as `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address` in your local project directory which we call `root_dir`.
@@ -56,7 +58,7 @@ dincli will store the taskCoordinator contract address in the .env file as `SEPO
 
 Model Owner deploys a taskAuditor contract specific to each model.
 ```bash
-dincli model-owner deploy task-auditor --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
+dincli model-owner deploy task-auditor --artifact "/path/to/devnet/foundry/out/DINTaskAuditor.sol/DINTaskAuditor.json" --model-id <same-anticipated-id>
 ```
 
 dincli will store the taskAuditor contract address in the .env file as `SEPOLIA_OP_DEVNET_<task_coordinator_contract_address>_DINTaskAuditor_Contract_Address` in your local project directory which we call `root_dir`.

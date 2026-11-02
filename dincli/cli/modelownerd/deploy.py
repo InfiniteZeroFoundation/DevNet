@@ -1,11 +1,16 @@
 import os
 import time
 import typer
-from web3.exceptions import ContractLogicError
+from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
+from dincli.cli.utils import (build_and_send_tx, load_din_info,
                               resolve_task_coordinator_address, set_env_key)
+
+_MODEL_ID_ABI = [
+    {"type": "function", "name": "modelId", "inputs": [],
+     "outputs": [{"type": "uint256"}], "stateMutability": "view"},
+]
 
 
 def _task_constructor_args(contract, role, stake, *, coordinator=None,
@@ -110,12 +115,11 @@ def task_auditor(
         registry=din_info.get(effective_network, {}).get("registry"),
     )
     if len(constructor_args) >= 3:
-        model_id_abi = [{"type": "function", "name": "modelId", "inputs": [],
-                         "outputs": [{"type": "uint256"}], "stateMutability": "view"}]
-        paired = w3.eth.contract(address=task_coordinator_address, abi=model_id_abi)
+        # IDs select stake floors; both IDs and the one-shot pairing are immutable.
+        paired = w3.eth.contract(address=task_coordinator_address, abi=_MODEL_ID_ABI)
         try:
             paired_model_id = paired.functions.modelId().call()
-        except ContractLogicError as exc:
+        except (ContractLogicError, BadFunctionCallOutput) as exc:
             raise typer.BadParameter(
                 "Cannot read modelId() from the paired coordinator; verify the address "
                 "and that it is a compatible task coordinator."

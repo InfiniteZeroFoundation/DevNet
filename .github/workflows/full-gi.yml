@@ -33,6 +33,14 @@ jobs:
     # A full GI trains 9 clients and runs auditor and aggregator containers.
     # The measured runtime goes to the step summary; tighten this once known.
     timeout-minutes: 90
+    outputs:
+      setup_outcome: ${{ steps.ready.outcome }}
+      suite_outcome: ${{ steps.suite.outcome }}
+      pytest_exit: ${{ steps.suite.outputs.pytest_exit }}
+      log_exit: ${{ steps.suite.outputs.log_exit }}
+      elapsed_seconds: ${{ steps.suite.outputs.elapsed_seconds }}
+      upload_outcome: ${{ steps.upload.outcome }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
     env:
       # Kubo for the harness's offline IPFS daemon; the checksum is the sha256
       # of this release asset.
@@ -129,9 +137,12 @@ jobs:
 
       # Scratch must not exist yet (the harness creates and deletes it); the
       # results dir outlives it and holds the compile, chain and IPFS logs.
-      # A step timeout below the job's, so a hung suite fails this step (and
-      # the upload below still runs) instead of the whole job being cancelled.
+      # Reporting and upload are best effort: setup also consumes the job budget.
+      - name: Integration setup complete
+        id: ready
+        run: echo "Integration setup complete"
       - name: Full-GI integration suite
+        id: suite
         timeout-minutes: 85
         env:
           DIN_TEST_ISOLATED: '1'
@@ -141,20 +152,53 @@ jobs:
         run: |
           mkdir -p "$DIN_TEST_RESULTS_DIR"
           start=$(date +%s)
-          status=0
           set -o pipefail
+          set +e
           pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 \
-            | tee "$DIN_TEST_RESULTS_DIR/pytest.log" || status=$?
+            | tee "$DIN_TEST_RESULTS_DIR/pytest.log"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          pytest_exit=${pipeline_status[0]}
+          log_exit=${pipeline_status[1]}
           elapsed=$(( $(date +%s) - start ))
-          echo "Full-GI integration suite: exit ${status} after $((elapsed / 60)) min $((elapsed % 60)) s" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+          # Evidence-writing failure must also fail this step, without hiding
+          # pytest's original failure when it already returned nonzero.
+          evidence_exit=0
+          {
+            printf 'pytest_exit=%s\n' "$pytest_exit"
+            printf 'log_exit=%s\n' "$log_exit"
+            printf 'elapsed_seconds=%s\n' "$elapsed"
+          } >> "$GITHUB_OUTPUT" || evidence_exit=$?
+          echo "Full-GI: pytest exit $pytest_exit, log capture exit $log_exit, elapsed ${elapsed}s"
+          if [ "$pytest_exit" -ne 0 ]; then exit "$pytest_exit"; fi
+          if [ "$log_exit" -ne 0 ]; then exit "$log_exit"; fi
+          exit "$evidence_exit"
 
       - name: Upload integration logs
-        if: failure()
+        id: upload
+        if: failure() || cancelled()
+        timeout-minutes: 3
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-logs
           path: ${{ runner.temp }}/din-results
           if-no-files-found: warn
           retention-days: 14
+
+  # Independent of the integration runner; missing outputs remain unknown.
+  # Cancellation or runner/platform failure can still prevent this report.
+  integration-summary:
+    name: Full GI summary
+    needs: integration
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
+        with:
+          fetch-depth: 1
+      - name: Report Full GI outcome
+        env:
+          INTEGRATION_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/full_gi_summary.py

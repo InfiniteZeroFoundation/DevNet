@@ -492,16 +492,33 @@ contract RewardEngineTest is Test {
     }
 
     function test_registryReadFailure_failsClosed() public {
+        _assertRegistryReadFailsClosed(false);
+    }
+
+    function test_disabledStatusReadFailure_failsClosed() public {
+        _assertRegistryReadFailsClosed(true);
+    }
+
+    function _assertRegistryReadFailsClosed(bool disabledStatus) internal {
         _killSwitchFixture();
-        vm.mockCallRevert(address(registry),
-            abi.encodeWithSignature("getModelIdByTaskAuditor(address)", address(ta)), bytes("registry unavailable"));
+        bytes memory callData = disabledStatus
+            ? abi.encodeWithSignature("modelDisabled(uint256)", 0)
+            : abi.encodeWithSignature("getModelIdByTaskAuditor(address)", address(ta));
+        (, bytes memory beforeParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        uint256 beforeGI = tc.GI();
+        GIstates beforeState = tc.GIstate();
+        vm.mockCallRevert(address(registry), callData, bytes("registry unavailable"));
         vm.startPrank(modelOwner);
         vm.expectRevert(bytes("registry unavailable"));
         tc.startGI(1);
         vm.expectRevert(bytes("registry unavailable"));
         tc.startGI(1, 77);
         vm.stopPrank();
-        assertEq(tc.GI(), 0);
+        (, bytes memory afterParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        assertEq(afterParams, beforeParams);
+        assertEq(tc.GI(), beforeGI);
+        assertEq(uint256(tc.GIstate()), uint256(beforeState));
+        assertEq(ta.giRewardPool(1), 1 ether);
     }
 
     function test_registryWiring_rejectsZeroAndEOA() public {
