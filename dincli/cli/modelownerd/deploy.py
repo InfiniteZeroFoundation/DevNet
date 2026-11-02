@@ -56,16 +56,16 @@ def task_coordinator(
 
     # Load contract instance
     DINTaskCoordinator_contract = get_contract_instance(artifact_path, effective_network)
-    
+
     # Resolve DINValidatorStake address
     din_info = load_din_info()
     din_validator_stake_address = din_info.get(effective_network, {}).get("stake")
     if not din_validator_stake_address:
         raise typer.BadParameter("Configure the platform stake contract before deployment")
-    
+
     console.print(f"[bold green]Deploying DINTaskCoordinator on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake:[/cyan] {din_validator_stake_address}")
-    
+
     tx_receipt = build_and_send_tx(
         ctx,
         DINTaskCoordinator_contract.constructor(*_task_constructor_args(
@@ -76,11 +76,11 @@ def task_coordinator(
         "DINTaskCoordinator contract deployed successfully",
         "Failed to deploy DINTaskCoordinator"
     )
-    
+
     dintaskcoordinator_contract_address = tx_receipt.contractAddress
-    
+
     console.print(f"[bold green]✓ DINTaskCoordinator contract deployed at:[/bold green] {dintaskcoordinator_contract_address}")
-    
+
     set_env_key(effective_network.upper()+"_DINTaskCoordinator_Contract_Address", dintaskcoordinator_contract_address)
     console.print(f"[green]✓ Saved DINTaskCoordinator address to {os.getcwd()}/.env as {effective_network.upper()}_DINTaskCoordinator_Contract_Address[/green]")
 
@@ -95,10 +95,10 @@ def task_auditor(
     Deploy the DINTaskAuditor contract.
     """
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    
+
     # Load contract instance
     DINTaskAuditor_contract = get_contract_instance(artifact_path, effective_network)
-      
+
     din_info = load_din_info()
     din_validator_stake_address = din_info.get(effective_network, {}).get("stake")
     if not din_validator_stake_address:
@@ -108,7 +108,7 @@ def task_auditor(
     task_coordinator_address = resolve_task_coordinator_address(
         effective_network, task_coordinator, console
     )
-    
+
     constructor_args = _task_constructor_args(
         DINTaskAuditor_contract, "auditor", din_validator_stake_address,
         coordinator=task_coordinator_address, model_id=model_id,
@@ -130,7 +130,7 @@ def task_auditor(
     console.print(f"[bold green]Deploying DINTaskAuditor on network:[/bold green] {effective_network}")
     console.print(f"[cyan]Using DINValidatorStake address:[/cyan] {din_validator_stake_address}")
     console.print(f"[cyan]Using DINTaskCoordinator address:[/cyan] {task_coordinator_address}")
-    
+
     tx_receipt = build_and_send_tx(
         ctx,
         DINTaskAuditor_contract.constructor(*constructor_args),
@@ -138,17 +138,17 @@ def task_auditor(
         "DINTaskAuditor contract deployed successfully",
         "Failed to deploy DINTaskAuditor"
     )
-    
+
     dintaskauditor_contract_address = tx_receipt.contractAddress
-    
+
     console.print(f"[bold green]✓ DINTaskAuditor contract deployed at:[/bold green] {dintaskauditor_contract_address}")
-    
+
     set_env_key(effective_network.upper() + "_"+task_coordinator_address+"_DINTaskAuditor_Contract_Address", dintaskauditor_contract_address)
     console.print(f"[green]✓ Saved DINTaskAuditor address to {os.getcwd()}/.env as {effective_network.upper()}_"+task_coordinator_address+"_DINTaskAuditor_Contract_Address[/green]")
-    
+
     # Set DINTaskAuditor in DINTaskCoordinator
     console.print(f"[cyan]Setting DINTaskAuditor in DINTaskCoordinator...[/cyan]")
-    
+
     DINTaskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(verbose=True, model_id=None, taskCoordinator_address=task_coordinator_address)
 
     time.sleep(10)
