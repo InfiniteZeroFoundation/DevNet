@@ -123,7 +123,7 @@ Resolution rules:
 
 ## Supported DP Mechanisms
 
-### `post_training_gaussian`
+### `post_training_gaussian` — experimental, no formal privacy guarantee
 
 Behavior:
 
@@ -131,12 +131,18 @@ Behavior:
 2. add Gaussian noise tensor-by-tensor;
 3. save and upload the resulting private `state_dict`.
 
+**Experimental baseline (issue #279, dp-mechanism-review.md F5):** this clips
+*absolute trained weights*, not the per-client *update*, so it does not bound
+the quantity an attacker observing successive rounds actually cares about.
+`resolve_dp_config` logs a warning whenever this mechanism is selected.
+`update_gaussian` is the mechanism with a defined sensitivity bound.
+
 Use when:
 
-- you want the simplest post-training baseline;
-- aggregator compatibility matters more than strong privacy guarantees.
+- you want the simplest post-training baseline for experimentation;
+- aggregator compatibility matters more than a privacy guarantee.
 
-### `post_training_laplace`
+### `post_training_laplace` — experimental, no formal privacy guarantee
 
 Behavior:
 
@@ -144,9 +150,17 @@ Behavior:
 2. add Laplace noise tensor-by-tensor;
 3. save and upload the resulting private `state_dict`.
 
+**Experimental baseline (issue #279, dp-mechanism-review.md F4/F5):** same
+weight-vs-update gap as `post_training_gaussian` above, plus its noise is
+sized against the L2 `clipping_norm` while the Laplace mechanism's guarantee
+is normally calibrated against L1 sensitivity — for model weights the gap
+between the two can be as large as √d (d = parameter count). Neither gap is
+fixed here; `resolve_dp_config` logs a warning whenever this mechanism is
+selected.
+
 Use when:
 
-- you want a non-Gaussian noise option for experiments;
+- you want a non-Gaussian noise option for experimentation;
 - you want the same deployment shape as the Gaussian path.
 
 ### `update_gaussian`
@@ -208,8 +222,9 @@ match, instead of leaving the noise fixed while the privacy level silently
 changes.
 
 `laplace_scale` is scaled the same way. Note that Laplace noise calibrated
-against an L2 clip is an open question tracked separately, since the Laplace
-mechanism is normally calibrated against an L1 sensitivity.
+against an L2 clip is a known mismatch, since the Laplace mechanism is
+normally calibrated against an L1 sensitivity — see `post_training_laplace`
+above and [issue #279](https://github.com/InfiniteZeroFoundation/DevNet/issues/279).
 
 Only floating tensors are clipped/noised. Integer buffers or counters are copied through unchanged.
 

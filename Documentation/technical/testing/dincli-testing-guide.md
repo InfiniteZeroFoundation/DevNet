@@ -110,68 +110,19 @@ GitHub/local reproduction command.
 
 ### CI integration job
 
-`.github/workflows/ci.yml` has an **Integration (full GI)** job (issue #228)
+`.github/workflows/full-gi.yml` has an **Integration (full GI)** job (issue #228)
 that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
 `DIN_TEST_ISOLATED=1` on a GitHub-hosted runner.
 
-- **Automatic runs:** PRs and pushes to `develop` run integration when inputs
-  change. The workflow has no path filters; **Integration paths** compares the
-  PR merge preview to its first parent, or the push's `before` commit to the
-  checked-out commit. A missing base, failed fetch or failed diff conservatively
-  selects integration. Detector failure or missing output also selects it,
-  except for explicit manual opt-out or workflow cancellation. Missing detector
-  outputs are never reported as an intentional skip.
-- **Manual runs (pending rollout):** `workflow_dispatch` provides the boolean
-  `run_integration`, default `false`. Once available, choose **Actions → CI →
-  Run workflow**, select the branch to diagnose, and enable **Run advisory
-  integration for troubleshooting** to force the suite without a diff. Leaving
-  it disabled runs only the core checks. GitHub requires the workflow file on
-  the default branch before dispatch is available. The default branch is
-  currently `main`, which has no `ci.yml`; merging this change into `develop`
-  alone does **not** enable manual execution. A separate reviewed rollout to
-  `main` is required; this change does not alter `main` or repository settings.
-- **Non-blocking:** integration and its summary are advisory. `CI OK` still
-  depends only on Solidity, Python and Docs, and does not wait for integration.
-  The known old `proxyAdmin` expectation in `test_01_platform.py` remains suite
-  migration work. A failed or skipped run is not a successful full GI, and a
-  passing pytest result alone does not establish full-round lifecycle coverage
-  or satisfy the promotion criteria in issue #270.
-
-#### Integration inputs
-
-The filter follows what the current job and harness use:
-
-| Paths | Why they select integration |
-| --- | --- |
-| `dincli/`, `tests/dincli/`, `tests/__init__.py` | CLI, bundled configuration/ABIs/services, worker Dockerfile/entrypoint and integration harness/tests, including the imported parent package initializer. |
-| `pyproject.toml`, `MANIFEST.in`, `.github/constraints-ci.txt` | Editable package/test installation, package file rules and CI dependency constraints. |
-| `foundry/src/`, `foundry/script/`, `foundry/test/` | Both CI and the harness run unrestricted `forge build`, including test contracts. |
-| `foundry/foundry.toml`, `foundry/foundry.lock`, `foundry/remappings.txt`, `foundry/package.json`, `foundry/package-lock.json` | Compiler/build configuration, library resolution and npm dependencies used by Foundry/FFI. |
-| `foundry/lib/`, root `.gitmodules` | Recursive checkout's dependency gitlinks, library sources and submodule configuration. |
-| `foundry/anvil.sh`, `hardhat/` | Local chain flags and the Hardhat build/artifacts still used by the suite. |
-| `.dockerignore` | Context rules for the worker image build. |
-| `.github/workflows/ci.yml`, `.github/scripts/integration_ci.py` | Tool versions, setup, selection and reporting logic. |
-
-Ordinary documentation and unrelated top-level Python unit tests are excluded.
-Although `README.md` supplies package description metadata, prose changes alone
-leave integration skipped; the required Python job still installs the package.
-`foundry/.gitmodules` is not used by checkout: `foundry` is an ordinary directory,
-so the root `.gitmodules` controls its library submodules.
-
-`cache_model_0/` is **not a direct input to the current integration run**.
-`test_03_registration.py` calls `cache-default-artifacts`; the CLI retrieves
-manifest, services, ABIs and requirements by CIDs from
-`dincli/config/din_info.json`, rather than copying the reference-model tree.
-The default test dataset is also retrieved by CID from the CLI. Similarly,
-`distribute-mnist` uses CIDs in `dincli/config/cid_services.json`, not the
-root `cid_services/` tree. Both bundled configuration files are covered by
-`dincli/`. The fresh offline Kubo is currently unseeded; changing triggers does
-not repair that suite limitation. Revisit the filter if later fixture work
-starts consuming these local trees. Host `.env*` files are not test inputs:
-isolated mode rejects them (except `.env.example`, which it does not load).
-
-#### Execution and results
-
+- **When it runs:** only when started by hand. Use the Actions tab ("Full GI" →
+  "Run workflow") or `gh workflow run full-gi.yml --ref <branch>`. A full GI
+  trains 9 clients and runs auditor and aggregator containers, which is too
+  heavy to run on every commit or push. Maintainers run it on demand, for
+  example before merging a change to the GI flow.
+- **Not a required check:** it lives outside `ci.yml`, so `CI OK` never
+  depends on it, and it will not become required. It is expected to fail after
+  `test_01` until task_061026_21 moves the suite to the foundry task contracts
+  and demo wallets.
 - **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
   Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
   `npx hardhat compile` run first, in the runner's normal environment, so the
@@ -181,20 +132,26 @@ isolated mode rejects them (except `.env.example`, which it does not load).
   its 180 s compile timeout. The solc and Hardhat compiler downloads are
   cached between runs, and the `din-worker` image is built before the suite
   starts rather than inside a Phase 4 command's timeout.
-- **Logs:** when the job fails, the `integration-logs` artifact holds the
-  results directory: `pytest.log`, `hardhat_compile.log`, `forge_build.log`,
-  `chain_node.log` (Anvil), `ipfs_init.log` and `ipfs_daemon.log`, when those
-  files were created. Early setup failures may have only job logs and no
-  artifact. The pytest step records exit status and elapsed time.
-- **Summary:** **Integration summary (advisory)** distinguishes suite passed,
-  suite failed, intentionally skipped, setup failed, detection failed/incomplete,
-  and cancelled/incomplete runs. It uses raw step outcomes, not the masked
-  advisory job result. Artifact-upload failures are reported separately. Only
-  an explicit successful detector decision to skip is an intentional skip.
-  Cancellation, runner loss or the job timeout can prevent evidence publication
-  or the summary itself; missing evidence is unknown, never a pass. Setup time
-  shares the 90-minute job budget, so the 85-minute suite timeout does not
-  guarantee time for reporting or upload.
+- **Outcome report:** a small **Full GI summary** job runs after integration,
+  including after failure, and reports the job result, setup completion,
+  recorded pytest exit, log capture exit and suite runtime separately. Missing
+  evidence is unknown, never a successful suite. A completed pytest exit 0
+  does not override a failed or cancelled job, nor prove complete training-round
+  lifecycle coverage. Integration, log capture, upload and reporting failures
+  retain their real failure status; Full GI stays outside `CI OK`.
+- **Logs:** on failure or cancellation, the job attempts a bounded upload of
+  the available results directory as `integration-logs`: `pytest.log`,
+  `hardhat_compile.log`, `forge_build.log`, `chain_node.log` (Anvil),
+  `ipfs_init.log` and `ipfs_daemon.log`. The report links a confirmed artifact
+  separately from the suite result. A successful upload step without an
+  artifact URL does not confirm that files were uploaded. Successful runs do
+  not request an artifact.
+- **Limits:** reporting and uploads are best effort. Setup consumes part of
+  the 90-minute job budget, so the suite's 85-minute timeout does not reserve
+  time for collecting evidence. Cancellation, timeouts or runner loss can
+  prevent outputs, artifacts or even the follow-up report. Use the integration
+  job logs when available; a missing result does not identify a timeout or
+  setup failure by itself.
 
 To reproduce the job locally, use a disposable checkout with no `.env*` file
 other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo

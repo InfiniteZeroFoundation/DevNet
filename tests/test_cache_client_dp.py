@@ -93,6 +93,56 @@ def test_post_training_mechanisms_preserve_weights_when_noise_is_zero(mechanism)
     assert torch.equal(private_state_dict["counter"], trained_state_dict["counter"])
 
 
+@pytest.mark.parametrize(
+    "mechanism",
+    [
+        "post_training_gaussian",
+        "post_training_laplace",
+    ],
+)
+def test_resolve_dp_config_warns_for_experimental_post_training_mechanisms(mechanism, capsys):
+    client = load_client_module()
+    parameters = {"clipping_norm": 1.0, "noise_multiplier": 0.5}
+    if mechanism == "post_training_laplace":
+        parameters["laplace_scale"] = 1.0
+    runtime = DummyRuntime(
+        {
+            "dp": {
+                "enabled": True,
+                "mode": "afterTraining",
+                "mechanism": mechanism,
+                "parameters": parameters,
+            },
+        }
+    )
+
+    client.resolve_dp_config(runtime=runtime)
+
+    captured_text = " ".join(capsys.readouterr().out.lower().split())
+    assert "experimental" in captured_text
+    assert "no formal privacy guarantee" in captured_text
+    assert mechanism in captured_text
+
+
+def test_resolve_dp_config_does_not_warn_for_update_gaussian(capsys):
+    client = load_client_module()
+    runtime = DummyRuntime(
+        {
+            "dp": {
+                "enabled": True,
+                "mode": "afterTraining",
+                "mechanism": "update_gaussian",
+                "parameters": {"clipping_norm": 1.0, "noise_multiplier": 0.5},
+            },
+        }
+    )
+
+    client.resolve_dp_config(runtime=runtime)
+
+    captured = capsys.readouterr()
+    assert "experimental" not in captured.out.lower()
+
+
 def test_update_gaussian_preserves_weights_when_noise_is_zero():
     client = load_client_module()
     reference_state_dict = OrderedDict(

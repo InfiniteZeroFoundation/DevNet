@@ -1,5 +1,10 @@
 # InfiniteZero Network — DevNet
 
+> [!IMPORTANT]
+> **You're on `develop`, the development branch.** It holds the next version of the protocol (DevNet 2.0, not deployed yet) and is where all contributions go.
+>
+> **Want to use the live DevNet?** DevNet 1.0 on Optimism Sepolia runs the code on [`main`](https://github.com/InfiniteZeroFoundation/DevNet/tree/main). Start with its [README](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/README.md) and [Getting Started guide](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md), and install [dincli 0.2.0](https://github.com/InfiniteZeroFoundation/DevNet/releases/tag/v0.2.0).
+
 <div align="center">
 
 ![Ethereum](https://img.shields.io/badge/Built%20on-Ethereum-3C3C3D?style=flat&logo=ethereum&logoColor=white)
@@ -27,7 +32,7 @@ This repository contains the DevNet setup and tooling for developers and validat
 
 > Built on Ethereum. Governed by the community. Models belong to the commons.
 
-The DevNet is live. Validator nodes are running 24/7 from Japan to Canada. This is not a simulation — it's real infrastructure, and it needs builders.
+DevNet 1.0 is live (on `main`). Validator nodes are running 24/7 from Japan to Canada. This is not a simulation — it's real infrastructure, and it needs builders.
 
 ---
 
