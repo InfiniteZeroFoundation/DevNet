@@ -103,8 +103,8 @@ list` first — the review may already be set up.
 
 ## 2. What to run locally — and what CI already covers
 
-**Review depth (MAINTAINING No. 4.2).** Required checks green against an
-up-to-date `develop` count as evidence for anything CI covers: cite the run
+**Review depth (MAINTAINING No. 4.2).** Required checks green on the PR
+count as evidence (the merge queue re-runs them on the latest `develop`) for anything CI covers: cite the run
 (`gh pr checks <N>`, link the job) instead of re-running it. **Reproduce
 locally only what CI doesn't cover:**
 
