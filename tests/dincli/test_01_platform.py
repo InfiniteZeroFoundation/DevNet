@@ -40,6 +40,7 @@ from pathlib import Path
 from tests.dincli.constants import (
     ARTIFACT_BASE,
     DIN_INFO_PATH,
+    DUMP_ABI_DIR,
     FOUNDRY_DIR,
     FORGE_BIN,
     HARDHAT_DIR,
@@ -80,8 +81,8 @@ def _assert_artifacts_exist():
     missing = [name for name, path in ARTIFACTS.items() if not path.exists()]
     if missing:
         pytest.skip(
-            f"Hardhat artifacts missing for: {missing}. "
-            "Run:  cd hardhat && npx hardhat compile"
+            f"Foundry artifacts missing for: {missing}. "
+            "Run:  cd foundry && forge build"
         )
 
 
@@ -177,9 +178,9 @@ def test_import_deployments_into_din_info(run, state):
 
 
 def test_dump_abi_coordinator(run):
-    """Dump coordinator ABI into bundled abis/."""
+    """Dump coordinator ABI into scratch (never the tracked dincli/abis/)."""
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["coordinator"]),
     ])
     assert result.returncode == 0
@@ -187,7 +188,7 @@ def test_dump_abi_coordinator(run):
 
 def test_dump_abi_token(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["token"]),
     ])
     assert result.returncode == 0
@@ -195,7 +196,7 @@ def test_dump_abi_token(run):
 
 def test_dump_abi_validator_stake(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["validator_stake"]),
     ])
     assert result.returncode == 0
@@ -203,7 +204,7 @@ def test_dump_abi_validator_stake(run):
 
 def test_dump_abi_registry(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["registry"]),
     ])
     assert result.returncode == 0

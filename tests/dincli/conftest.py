@@ -4,10 +4,10 @@ local Anvil node (chain backend picked by PLATFORM_DEPLOY_TOOLCHAIN, see
 tests/dincli/constants.py).
 
 The conftest automatically handles all prerequisites:
-  1. Compiles Solidity contracts via  npx hardhat compile  (task-level
-     contract deploys and dump-abi tests always need hardhat's ABIs/bytecode,
-     regardless of which toolchain deploys the platform contracts); also runs
-     `forge build` when PLATFORM_DEPLOY_TOOLCHAIN is "foundry"
+  1. Builds Solidity contracts via  forge build  (task-level contract deploys
+     and dump-abi tests read foundry/out/ artifacts, regardless of which
+     toolchain deploys the platform contracts); also runs  npx hardhat compile
+     when PLATFORM_DEPLOY_TOOLCHAIN is "hardhat"
   2. Kills any running chain node and starts a fresh one (clean EVM state) —
      Hardhat node for the "hardhat" toolchain, Anvil for "foundry" (both
      listen on HARDHAT_RPC / chain-id 1337, so the rest of the harness is
@@ -147,8 +147,8 @@ def _seed_solc(din_tmp: Path) -> None:
 def _build_foundry_contracts(results_dir: Path) -> None:
     """Run forge build. Aborts the session on failure.
 
-    Needed only when PLATFORM_DEPLOY_TOOLCHAIN is "foundry" — DeployPlatform.s.sol
-    reads compiled artifacts under foundry/out/, separate from hardhat/artifacts/.
+    Always needed: task-contract deploys and dump-abi tests read foundry/out/
+    (ARTIFACT_BASE), and DeployPlatform.s.sol does too for the foundry toolchain.
     """
     print("\n[setup] Building Foundry contracts...")
     log_path = results_dir / "forge_build.log"
@@ -337,13 +337,14 @@ def managed_services(din_tmp):
     chain_proc = None
     ipfs_proc = None
 
-    # 1. Compile contracts — task-level contract deploys and dump-abi tests
-    #    always need hardhat's ABIs/bytecode, regardless of deploy toolchain.
-    _compile_contracts(results_dir)
-    if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
-        if ISOLATED_MODE:
-            _seed_solc(din_tmp)
-        _build_foundry_contracts(results_dir)
+    # 1. Build contracts — task-level contract deploys and dump-abi tests read
+    #    foundry/out/ regardless of deploy toolchain; hardhat compiles only when
+    #    it deploys the platform.
+    if ISOLATED_MODE:
+        _seed_solc(din_tmp)
+    _build_foundry_contracts(results_dir)
+    if PLATFORM_DEPLOY_TOOLCHAIN == "hardhat":
+        _compile_contracts(results_dir)
 
     if ISOLATED_MODE:
         env = _isolated_env(din_tmp)

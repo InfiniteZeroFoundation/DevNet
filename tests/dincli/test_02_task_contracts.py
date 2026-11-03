@@ -16,7 +16,7 @@ import json
 import pytest
 from pathlib import Path
 
-from tests.dincli.constants import ARTIFACT_BASE, DIN_INFO_PATH
+from tests.dincli.constants import ARTIFACT_BASE, DIN_INFO_PATH, DUMP_ABI_DIR
 
 ARTIFACTS = {
     "task_coordinator": ARTIFACT_BASE / "DINTaskCoordinator.sol/DINTaskCoordinator.json",
@@ -28,7 +28,7 @@ ARTIFACTS = {
 def ensure_artifacts():
     missing = [name for name, path in ARTIFACTS.items() if not path.exists()]
     if missing:
-        pytest.skip(f"Hardhat artifacts missing for: {missing}.")
+        pytest.skip(f"Foundry artifacts missing for: {missing} (run forge build).")
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ def test_deploy_task_coordinator(run, state):
 
 def test_dump_abi_task_coordinator(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["task_coordinator"]),
     ])
     assert result.returncode == 0
@@ -101,7 +101,7 @@ def test_deploy_task_auditor(run, state):
 
 def test_dump_abi_task_auditor(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["task_auditor"]),
     ])
     assert result.returncode == 0

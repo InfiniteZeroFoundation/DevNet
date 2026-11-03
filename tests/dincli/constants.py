@@ -55,7 +55,9 @@ _DOTENV = {} if ISOLATED_MODE else _load_dotenv_values(DEVNET_ROOT / ".env")
 def _env(name: str) -> "str | None":
     """Real environment first, then the repo-root .env file."""
     return os.environ.get(name) or _DOTENV.get(name)
-ARTIFACT_BASE = DEVNET_ROOT / "hardhat" / "artifacts" / "contracts"
+# Contract artifacts come from `forge build` (same X.sol/X.json layout as hardhat;
+# get_contract_instance reads bytecode.object). Hardhat task contracts are off the GI path.
+ARTIFACT_BASE = DEVNET_ROOT / "foundry" / "out"
 # din_info.json lives inside the *imported* dincli package (files("dincli")).
 # PYTHONPATH points the tests at the live devnet checkout, so deploys write there.
 DIN_INFO_PATH = DEVNET_ROOT / "dincli" / "config" / "din_info.json"
@@ -109,6 +111,8 @@ ANVIL_BIN = _env("ANVIL_BIN") or shutil.which("anvil") or "anvil"
 IPFS_BIN = _env("IPFS_BIN") or shutil.which("ipfs") or "/usr/local/bin/ipfs"
 
 DIN_TEMP = Path(_env("DIN_TEST_TMPDIR") or str(Path.home() / "tempdir" / "dincli"))
+# dump-abi tests write here (--output), never to the tracked dincli/abis/ (--official).
+DUMP_ABI_DIR = DIN_TEMP / "abis"
 RESULTS_DIR = Path(_env("DIN_TEST_RESULTS_DIR") or str(DIN_TEMP / "results"))
 if ISOLATED_MODE:
     if not os.environ.get("DIN_TEST_TMPDIR") or not os.environ.get("DIN_TEST_RESULTS_DIR"):
