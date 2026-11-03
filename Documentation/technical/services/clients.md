@@ -4,21 +4,21 @@ Technical documentation for the DevNet reference client service at [cache_model_
 
 ## Overview
 
-The client service is responsible for producing a local model submission for one client and one global iteration.
+The client service trains and saves a local model artifact for one client and one global iteration. `dincli client train-lms` prepares inputs and runs this service in a worker container; the separate `dincli client submit-lm` command uploads the saved artifact to IPFS and submits its CID on-chain.
 
 Its job is to:
 
 1. read the active manifest through the injected runtime context;
-2. download the correct starting model from IPFS;
+2. load the starting model from files staged by the host CLI;
 3. load the client dataset from the local cache;
 4. run local training;
 5. optionally apply a manifest-selected differential privacy mechanism;
-6. upload the resulting `state_dict` to IPFS.
+6. save the resulting `state_dict` locally and return its file path.
 
 The public entrypoint is:
 
 ```python
-train_client_model_and_upload_to_ipfs(
+train_client_model(
     genesis_model_ipfs_hash,
     account_address,
     effective_network="local",
@@ -41,12 +41,22 @@ Relevant call path:
 
 Flow summary:
 
-1. `dincli client train-lms` builds a `ServiceRuntimeContext`.
-2. The runtime loads the model manifest once.
-3. `dincli` resolves the custom client service path from the manifest.
-4. `dincli` loads `train_client_model_and_upload_to_ipfs(...)`.
-5. The runtime object is injected into that function.
-6. The service reads manifest keys through `runtime.get_manifest_key(...)`.
+1. `dincli client train-lms <model_id>` builds a host-side `ServiceRuntimeContext` and reads the model manifest.
+2. The CLI resolves the `train_client_model` service entry and stages the service, model architecture, genesis model, and (when available after GI 1) latest global model from IPFS in the host cache.
+3. The CLI creates a worker job naming `train_client_model` and starts a container with the model cache mounted at `/din/model`.
+4. The [worker runner](../../../dincli/docker/worker/worker.py) loads the mounted manifest and service, then injects a `WorkerRuntime` into `train_client_model(...)`. This runtime exposes manifest access through `runtime.get_manifest_key(...)`.
+5. The service reads the mounted inputs, trains, saves raw weights and optionally a separate private artifact, and returns the selected artifact's path as a string.
+6. The worker writes that path in `result.json` with `status: "ok"`. The host CLI checks the result, maps the `/din/model/...` path back to its model cache, and prints the local path.
+7. A separate `dincli client submit-lm <model_id>` resolves the local artifact using the manifest's DP configuration, uploads it to IPFS, and sends its CID and GI to the task auditor's `submitLocalModel(...)` function.
+
+Run the commands in order for the same model and client wallet:
+
+```bash
+dincli client train-lms <model_id>
+dincli client submit-lm <model_id>
+```
+
+Both commands accept `--gi <gi_index>`; training requires the current GI, while submission defaults to the current GI and also accepts an earlier GI. The transaction must still satisfy the contract's submission rules. Training finishes with a local file; upload and on-chain submission happen only when `submit-lm` runs.
 
 ## Inputs And Local Files
 
@@ -54,20 +64,23 @@ Flow summary:
 
 | Input | Purpose |
 |---|---|
-| `genesis_model_ipfs_hash` | CID of the genesis model object |
+| `genesis_model_ipfs_hash` | identifies the genesis model object staged by the host CLI |
 | `account_address` | client wallet address; also used to locate the dataset |
-| `effective_network` | selects the cache namespace |
-| `initial_model_ipfs_hash` | latest global model CID for rounds after GI 1 |
+| `effective_network` | network name passed by the CLI; local file paths use `model_base_dir` |
+| `initial_model_ipfs_hash` | when present after GI 1, selects the host-staged latest global model weights |
+| `model_base_dir` | root of staged inputs and local outputs; `/din/model` in the worker |
 | `gi` | global iteration index |
-| `runtime` | manifest-aware context provided by `dincli` |
+| `runtime` | manifest-aware `WorkerRuntime` injected by the worker runner |
 
 ### Expected local file layout
 
-The service reads and writes under:
+The host model cache is rooted at:
 
 ```text
 <CACHE_DIR>/<network>/model_<model_id>/
 ```
+
+The worker sees this directory as `/din/model`. The model directory is mounted read-only, with the client's model output subdirectory mounted read-write. Paths below are relative to that root.
 
 Important paths:
 
@@ -83,13 +96,13 @@ Important paths:
 
 The service training path is intentionally simple:
 
-1. fetch genesis model from IPFS;
+1. read the host-staged genesis model from the mounted cache;
 2. deserialize the model object;
 3. optionally load the latest global model weights into that model;
 4. keep a clone of the starting state for update-based privacy;
 5. train with a `DataLoader`, `CrossEntropyLoss`, and `Adam`;
 6. save raw local weights;
-7. if DP is enabled, create a separate private artifact and upload that instead.
+7. if DP is enabled, save a separate private artifact and return its path; otherwise return the raw weights path.
 
 The current implementation applies privacy after local training. It does not implement DP-SGD or per-step privacy accounting.
 
@@ -129,7 +142,7 @@ Behavior:
 
 1. clip floating tensors in the final trained state;
 2. add Gaussian noise tensor-by-tensor;
-3. save and upload the resulting private `state_dict`.
+3. save the resulting private `state_dict` locally.
 
 **Experimental baseline (issue #279, dp-mechanism-review.md F5):** this clips
 *absolute trained weights*, not the per-client *update*, so it does not bound
@@ -148,7 +161,7 @@ Behavior:
 
 1. clip floating tensors in the final trained state;
 2. add Laplace noise tensor-by-tensor;
-3. save and upload the resulting private `state_dict`.
+3. save the resulting private `state_dict` locally.
 
 **Experimental baseline (issue #279, dp-mechanism-review.md F4/F5):** same
 weight-vs-update gap as `post_training_gaussian` above, plus its noise is
@@ -171,7 +184,7 @@ Behavior:
 2. clip that delta;
 3. add Gaussian noise to the delta;
 4. reconstruct a full weight file from `reference + noisy_delta`;
-5. upload the reconstructed private `state_dict`.
+5. save the reconstructed private `state_dict` locally.
 
 Why this matters:
 
@@ -206,8 +219,8 @@ scale nobody chose, since the two parameters carry different units and are
 calibrated differently.
 
 **DP is off by default.** With no `dp` block, or `dp.enabled: false`, the
-client uploads raw trained weights. That is a deliberate devnet default, not an
-oversight, but it means the absence of configuration is the absence of privacy.
+service returns the raw trained weights path; `submit-lm` uploads that file.
+That is a deliberate devnet default, not an oversight, but it means the absence of configuration is the absence of privacy.
 
 ## Noise Calibration
 
@@ -230,7 +243,12 @@ Only floating tensors are clipped/noised. Integer buffers or counters are copied
 
 ## Output Contract
 
-Regardless of mechanism, the service uploads a PyTorch `state_dict`, not a custom delta payload.
+Regardless of mechanism, the service saves a PyTorch `state_dict`, not a custom delta payload, and returns its local file path as a string:
+
+- DP disabled: `models/clients/<account_address>/lm_<gi>.pth`;
+- DP enabled: `models/clients/<account_address>/lm_<gi>_<mechanism>.pth`.
+
+These paths are under `model_base_dir` (`/din/model` in the worker). With DP enabled, the raw file remains local and the returned path points to the separate private file. `submit-lm` independently selects the file according to the manifest's DP configuration, so keep that configuration consistent between training and submission.
 
 That constraint is important because the current aggregator in [cache_model_0/services/aggregator.py](../../../cache_model_0/services/aggregator.py) averages full state dictionaries.
 

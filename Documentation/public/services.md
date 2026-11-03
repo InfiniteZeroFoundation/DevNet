@@ -13,7 +13,7 @@ Each service file must be uploaded and pinned to IPFS. The resulting CID is then
 |---|---|---|
 | `model.py` | All stakeholders | Defines the model architecture |
 | `modelowner.py` | Model Owner | Model owner specific functions (genesis model, scoring, audit test data) |
-| `client.py` | Clients | Client training and model submission logic |
+| `client.py` | Clients | Client training and local model artifact creation |
 | `auditor.py` | Auditors | Model evaluation and scoring logic |
 | `aggregator.py` | Aggregators | T1 and T2 aggregation logic |
 
@@ -122,31 +122,33 @@ Creates audit test data CIDs for auditor batches. The `testData_percentage_per_a
 
 ## 3. `client.py`
 
-This service defines the functions used by the clients to train and submit local models.
+This service trains and saves local models. `dincli client train-lms` stages the inputs and invokes the service in a worker container; the separate `dincli client submit-lm` command selects a saved artifact, uploads it to IPFS, and submits its CID on-chain.
 
 For the current DevNet reference implementation and the manifest-driven DP flow, see [technical/services/clients.md](../technical/services/clients.md).
 
-### 3.1. `train_client_model_and_upload_to_ipfs(...)`
+### 3.1. `train_client_model(...)`
 
-Trains the client model on local data and uploads it to IPFS.
+Trains the client model on local data, saves its weights locally, and returns the selected artifact's path as a string.
 
 | Parameter | Description |
 |---|---|
-| `genesis_model_ipfs_hash` | IPFS CID of the genesis model |
+| `genesis_model_ipfs_hash` | Identifies the genesis model staged by the host CLI |
 | `account_address` | Client's wallet address |
 | `effective_network` | Network identifier (default: `"local"`) |
-| `initial_model_ipfs_hash` | IPFS CID of the initial model (optional) |
-| `model_base_dir` | Base directory for model files |
+| `initial_model_ipfs_hash` | When present after GI 1, selects the host-staged latest global model weights |
+| `model_base_dir` | Root of staged inputs and local outputs; `/din/model` in the worker |
 | `gi` | Global iteration index |
-| `runtime` | Injected manifest-aware service runtime context |
-| **Returns** | IPFS CID of the trained client model |
+| `runtime` | Manifest-aware `WorkerRuntime` injected by the worker runner |
+| **Returns** | Local model artifact path as a string, under `/din/model/...` in the worker |
 
 Model Owner may define Differential Privacy (DP) logic for the model through the nested `dp` manifest block. If `dp.enabled` is `true`, the client service applies the configured mechanism from `client.py`.
+
+`train-lms` maps the returned worker path to the host model cache. `submit-lm` independently selects the artifact for the GI and client wallet using the manifest's DP settings; keep those settings consistent between training and submission.
 
 **Manifest entry:**
 
 ```json
-"train_client_model_and_upload_to_ipfs": {
+"train_client_model": {
     "type": "custom",
     "path": "services/client.py",
     "ipfs": "<IPFS_CID_OF_CLIENT_PY>",
