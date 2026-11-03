@@ -250,6 +250,24 @@ def test_manifest_is_reserved_and_bounded_and_does_not_dump_secrets(tmp_path):
     diag.close()
 
 
+def test_reused_results_directory_preserves_evidence_and_closes_descriptor(tmp_path):
+    results = tmp_path / "results"
+    results.mkdir()
+    # Full GI creates the directory and pytest.log before diagnostics starts.
+    (results / "pytest.log").write_text("pytest evidence\n")
+    with Diagnostics(results) as diag:
+        run(diag, tmp_path, "print('original evidence')")
+    original = {file.name: file.read_bytes() for file in results.iterdir()}
+    before = len(list(Path("/proc/self/fd").iterdir()))
+
+    with pytest.raises(DiagnosticsWriteError, match="use a fresh DIN_TEST_RESULTS_DIR") as caught:
+        Diagnostics(results)
+
+    assert isinstance(caught.value.__cause__, FileExistsError)
+    assert len(list(Path("/proc/self/fd").iterdir())) == before
+    assert {file.name: file.read_bytes() for file in results.iterdir()} == original
+
+
 def test_spawn_failure_is_recorded_and_closes_created_logs(tmp_path):
     diag = Diagnostics(tmp_path / "results")
     with pytest.raises(FileNotFoundError):

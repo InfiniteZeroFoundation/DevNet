@@ -252,6 +252,10 @@ class Diagnostics:
         except OSError as exc:
             os.close(self._dir_fd)
             self._dir_fd = None
+            if isinstance(exc, FileExistsError):
+                raise DiagnosticsWriteError(
+                    "Diagnostics manifest already exists; use a fresh DIN_TEST_RESULTS_DIR"
+                ) from exc
             raise DiagnosticsWriteError("Cannot create diagnostics manifest") from exc
 
     @staticmethod
