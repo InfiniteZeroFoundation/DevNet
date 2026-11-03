@@ -4,11 +4,15 @@ This module is loaded dynamically by `dincli` for the manifest entry
 `train_client_model`. The function exposed at the bottom of
 the file is responsible for:
 
-1. Fetching the genesis or latest global model from mount
+1. Loading the host-staged genesis or latest global model from mounted files.
 2. Loading the client dataset from the cache directory.
 3. Training a local model for the current round.
 4. Optionally applying a manifest-selected differential privacy mechanism.
-5. Generate the local model
+5. Saving the selected local model artifact and returning its file path.
+
+`dincli client train-lms` stages inputs and runs this service in a worker.
+The separate `dincli client submit-lm` command uploads the saved artifact to
+IPFS and submits its CID on-chain.
 
 The DP helpers are deliberately kept framework-light and pure PyTorch so the
 service can run without extra privacy libraries such as Opacus. The current
@@ -465,11 +469,13 @@ def train_client_model(
     gi=None,
     runtime=None,
 ):
-    """Train a client model for the current round and upload the result to IPFS.
+    """Train a client model for the current round and return its local file path.
 
-    The service expects `dincli` to pass a `runtime` object that already knows
+    The worker runner injects a `runtime` object that already knows
     the active manifest. DP configuration is therefore resolved at runtime from
-    the manifest rather than being hardcoded into the service.
+    the manifest rather than being hardcoded into the service. Inputs are read
+    from mounted files; the returned path selects raw or private weights for
+    the separate `dincli client submit-lm` upload and on-chain submission.
     """
 
     # Normalize the incoming model directory and resolve the effective privacy
@@ -551,7 +557,7 @@ def train_client_model(
     console.print(f"Client {account_address} model trained successfully at path :  {raw_model_path}")
 
     # If DP is disabled, the raw locally trained weights are the submission
-    # artifact and we can upload them immediately.
+    # artifact; return their path for the separate submit-lm command.
     if not dp_config["enabled"]:
         return str(raw_model_path)
 
@@ -582,5 +588,5 @@ def train_client_model(
         f"Private client model ({dp_config['mechanism']}) saved successfully at path :  {private_model_path}"
     )
 
-    # Upload the private artifact, not the raw one.
+    # Return the private artifact path for submit-lm to upload and submit.
     return str(private_model_path)

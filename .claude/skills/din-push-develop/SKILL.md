@@ -5,7 +5,7 @@ description: Use whenever an admin pushes directly to `develop` on InfiniteZeroF
 
 # Push to develop, CI-checked
 
-Normal merges land through a PR (`din-pr-merge` path A), where the `develop` ruleset requires an approval, `CI OK` and an up-to-date branch. A direct push skips all of that, so it's reserved for admins using the bypass: path-B local merges and emergency fixes (Developer/MAINTAINING.md No. 4.4). This skill puts the missing checks back around such a push: a local CI mirror before it, and a watch on the GitHub `push` run after it.
+Normal merges land through a PR (`din-pr-merge` path A), where the `develop` ruleset requires an approval, `CI OK` and a green merge-queue run. A direct push skips all of that, so it's reserved for admins using the bypass: path-B local merges and emergency fixes (Developer/MAINTAINING.md No. 4.4). This skill puts the missing checks back around such a push: a local CI mirror before it, and a watch on the GitHub `push` run after it.
 
 The rule ([Developer/MAINTAINING.md](../../../Developer/MAINTAINING.md) No. 4.6, [discussion No. 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170)): whoever pushes or merges owns that push's CI run and makes sure it's fixed the same working day. If a red run is left unaddressed for ~6h and more commits land on top, the other maintainers open an incident thread in No. 170.
 
