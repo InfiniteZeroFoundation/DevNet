@@ -203,7 +203,7 @@ dincli model-owner model submit-genesis-model
 ## Step 8 — Register the model
 
 ```bash
-dincli task model-owner register-request --isOpenSource false
+dincli task model-owner register-request
 ```
 
 This submits a registration request on-chain and prints a request ID.  The
@@ -256,7 +256,8 @@ dincli model-owner lms open <MODEL_ID>
 **Clients — train and submit (repeat for each client wallet):**
 
 ```bash
-dincli client train-lms <MODEL_ID> --submit
+dincli client train-lms <MODEL_ID>
+dincli client submit-lm <MODEL_ID>
 ```
 
 The client service loads Fashion-MNIST training data from
