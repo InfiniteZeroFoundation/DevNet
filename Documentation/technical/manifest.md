@@ -26,11 +26,12 @@ That file is the best concrete example of the fields the current services expect
 
 ## Runtime Resolution Path
 
-The main manifest-loading path is:
+The client manifest-loading path is:
 
 - runtime object: [dincli/services/runtime.py](../../dincli/services/runtime.py)
 - manifest path helpers: [dincli/cli/utils.py](../../dincli/cli/utils.py)
 - client service invocation example: [dincli/cli/client.py](../../dincli/cli/client.py)
+- worker runner: [dincli/docker/worker/worker.py](../../dincli/docker/worker/worker.py)
 
 High-level flow:
 
@@ -38,8 +39,9 @@ High-level flow:
 2. `build_service_runtime_context(...)` resolves the manifest path.
 3. `get_manifest(...)` loads the manifest JSON.
 4. The manifest is attached to a `ServiceRuntimeContext`.
-5. When a custom service is loaded, `dincli` injects that runtime into the function call.
-6. Service code reads keys through `runtime.get_manifest_key(...)` or `runtime.require_manifest_key(...)`.
+5. For `train-lms`, the host uses that context to stage the service and model inputs and create a worker job; the model cache is mounted at `/din/model`.
+6. The worker loads the mounted manifest, imports the service function, and injects a `WorkerRuntime` when the function accepts `runtime` (or `**kwargs`).
+7. Service code reads keys through `runtime.get_manifest_key(...)` or `runtime.require_manifest_key(...)`.
 
 This design keeps manifest access centralized and avoids each service doing its own filesystem or IPFS lookups for configuration.
 
@@ -70,7 +72,7 @@ Each executable service function is represented by a manifest entry that points 
 Example:
 
 ```json
-"train_client_model_and_upload_to_ipfs": {
+"train_client_model": {
   "type": "custom",
   "path": "services/client.py",
   "ipfs": "<cid>",
@@ -116,11 +118,15 @@ For custom services, the manifest entry does more than describe the file. It def
 
 For example, in the client flow:
 
-1. `dincli` reads `train_client_model_and_upload_to_ipfs` from the manifest.
-2. It resolves the local cached file path from the entry's `path`.
-3. It ensures the file exists locally, fetching from IPFS if needed.
-4. It imports the Python function dynamically.
-5. It injects the runtime context when the function accepts `runtime`.
+1. `dincli client train-lms` reads `train_client_model` from the host manifest context and resolves the cached service path from the entry's `path`.
+2. The host ensures the service, model architecture, genesis model, and (when available after GI 1) latest global model are staged locally, fetching from IPFS as needed. The client dataset must already be in the cache.
+3. The host creates a job naming `train_client_model` and starts the worker with the cache mounted at `/din/model`.
+4. The worker reads the mounted manifest, imports the Python function dynamically, and injects a `WorkerRuntime` when the function accepts `runtime` (or `**kwargs`).
+5. The service trains, saves raw weights and optionally a private artifact, and returns the selected artifact's local path as a string. The worker records that path in `result.json`.
+6. `train-lms` maps the returned `/din/model/...` path back to the host model cache and prints it.
+7. The separate `dincli client submit-lm` command independently selects an artifact using the GI, client wallet, and manifest DP settings: `models/clients/<account_address>/lm_<gi>.pth` when DP is disabled, or `lm_<gi>_<mechanism>.pth` in the same directory when enabled. It uploads that file to IPFS and submits its CID and GI to the task auditor's `submitLocalModel(...)` function.
+
+Keep the manifest's DP settings consistent between training and submission for the same model, client wallet, and GI. `submit-lm` selects the file from those settings; it does not consume the worker result directly.
 
 This lets model owners swap in custom task logic without changing `dincli` itself.
 

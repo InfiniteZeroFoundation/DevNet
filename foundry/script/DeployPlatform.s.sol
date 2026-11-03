@@ -406,7 +406,16 @@ contract DeployPlatform is DeploymentsPath {
     ///      extcodehashes (for `dincli system verify-deployment` check 1 and 3),
     ///      the deployer (ProxyAdmin owner, check 4), and the optional git commit
     ///      hash recorded via GIT_COMMIT_HASH env var (check meta).
+    ///      Writes to this chain's foundry/deployments/<network>.json (DeploymentsPath).
     function _writeDeployments(Deployment memory d, address deployer) internal {
+        _writeDeploymentsTo(d, deployer, _deploymentsFile(""));
+    }
+
+    /// @dev _writeDeployments with an explicit output path. Tests call this with
+    ///      their own file instead of setting DEPLOYMENTS_NETWORK: vm.setEnv
+    ///      changes the environment shared by forge's parallel test contracts,
+    ///      so two tests setting it to different values race (PR No. 254).
+    function _writeDeploymentsTo(Deployment memory d, address deployer, string memory outPath) internal {
         // Resolve implementations via EIP-1967 slot reads.
         address implTreasury    = Upgrades.getImplementationAddress(d.dinTreasury);
         address implToken       = Upgrades.getImplementationAddress(d.dinToken);
@@ -461,7 +470,6 @@ contract DeployPlatform is DeploymentsPath {
         string memory outDir = string.concat(vm.projectRoot(), "/deployments");
         vm.createDir(outDir, true);
 
-        string memory outPath = _deploymentsFile("");
         vm.writeJson(finalJson, outPath);
         console.log("Deployments written to:", outPath);
     }
