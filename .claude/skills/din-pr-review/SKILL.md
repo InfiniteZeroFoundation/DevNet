@@ -103,20 +103,24 @@ list` first — the review may already be set up.
 
 ## 2. What to run locally — and what CI already covers
 
-**Review depth (MAINTAINING No. 4.2).** Required checks green against an
-up-to-date `develop` count as evidence for anything CI covers: cite the run
+**Review depth (MAINTAINING No. 4.2).** Required checks green on the PR
+count as evidence (the merge queue re-runs them on the latest `develop`) for anything CI covers: cite the run
 (`gh pr checks <N>`, link the job) instead of re-running it. **Reproduce
 locally only what CI doesn't cover:**
 
 - storage layout and upgrade safety in `foundry/src/**`
 - deploy and upgrade scripts in `foundry/script/**`
-- `dincli` flows against a live chain or IPFS, until the integration job is a
-  required check (MAINTAINING No. 4.9)
+- `dincli` flows against a live chain or IPFS: start the manual **Full GI**
+  workflow (`gh workflow run full-gi.yml --ref <branch>`) or run the suite
+  locally (MAINTAINING No. 4.9)
 - any claimed behaviour that no test exercises
 
-If CI on the PR is red, stale against `develop`, or never ran, CI isn't
-evidence: say so, and either ask the author to update the branch or run the
-relevant suite yourself.
+If CI on the PR is red or never ran, CI isn't evidence: say so, and either ask
+the author to fix it or run the relevant suite yourself. A PR whose branch is
+merely behind `develop` is fine: don't ask for an update, since the merge queue
+re-runs CI on the latest `develop` before it lands. Ask the author to merge
+`develop` in only when there's a real conflict, or when `develop` gained
+something the PR's change depends on and you need to review against it.
 
 When you do run things locally:
 

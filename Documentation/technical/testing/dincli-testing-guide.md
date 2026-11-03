@@ -110,22 +110,19 @@ GitHub/local reproduction command.
 
 ### CI integration job
 
-`.github/workflows/ci.yml` has an **Integration (full GI)** job (issue #228)
+`.github/workflows/full-gi.yml` has an **Integration (full GI)** job (issue #228)
 that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
 `DIN_TEST_ISOLATED=1` on a GitHub-hosted runner.
 
-- **When it runs:** on PRs and pushes to `develop` that change
-  `foundry/src/`, `foundry/script/`, `foundry/anvil.sh`, `hardhat/`,
-  `dincli/`, `tests/dincli/` or `ci.yml`. (`hardhat/` is included while the
-  suite still deploys the task contracts from Hardhat artifacts.) The workflow itself has no path filters
-  because `CI OK` is the single required check, so the small
-  **Integration paths** job decides by diffing against the base. When it
-  cannot diff (a force push, for example), the suite runs.
-- **Non-blocking:** the job has `continue-on-error: true` and `CI OK` does not
-  wait for it. It is expected to fail after `test_01` until task_061026_21
-  moves the suite to the foundry task contracts and demo wallets. Once it has
-  been stable for a couple of weeks it can become required: add it to
-  `ci-ok`'s `needs` and accept `skipped` there.
+- **When it runs:** only when started by hand. Use the Actions tab ("Full GI" →
+  "Run workflow") or `gh workflow run full-gi.yml --ref <branch>`. A full GI
+  trains 9 clients and runs auditor and aggregator containers, which is too
+  heavy to run on every commit or push. Maintainers run it on demand, for
+  example before merging a change to the GI flow.
+- **Not a required check:** it lives outside `ci.yml`, so `CI OK` never
+  depends on it, and it will not become required. It is expected to fail after
+  `test_01` until task_061026_21 moves the suite to the foundry task contracts
+  and demo wallets.
 - **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
   Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
   `npx hardhat compile` run first, in the runner's normal environment, so the
@@ -135,10 +132,26 @@ that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
   its 180 s compile timeout. The solc and Hardhat compiler downloads are
   cached between runs, and the `din-worker` image is built before the suite
   starts rather than inside a Phase 4 command's timeout.
-- **Logs:** when the job fails, the `integration-logs` artifact holds the
-  results directory: `pytest.log`, `hardhat_compile.log`, `forge_build.log`,
-  `chain_node.log` (Anvil), `ipfs_init.log` and `ipfs_daemon.log`. The step
-  summary records the suite's exit status and runtime.
+- **Outcome report:** a small **Full GI summary** job runs after integration,
+  including after failure, and reports the job result, setup completion,
+  recorded pytest exit, log capture exit and suite runtime separately. Missing
+  evidence is unknown, never a successful suite. A completed pytest exit 0
+  does not override a failed or cancelled job, nor prove complete training-round
+  lifecycle coverage. Integration, log capture, upload and reporting failures
+  retain their real failure status; Full GI stays outside `CI OK`.
+- **Logs:** on failure or cancellation, the job attempts a bounded upload of
+  the available results directory as `integration-logs`: `pytest.log`,
+  `hardhat_compile.log`, `forge_build.log`, `chain_node.log` (Anvil),
+  `ipfs_init.log` and `ipfs_daemon.log`. The report links a confirmed artifact
+  separately from the suite result. A successful upload step without an
+  artifact URL does not confirm that files were uploaded. Successful runs do
+  not request an artifact.
+- **Limits:** reporting and uploads are best effort. Setup consumes part of
+  the 90-minute job budget, so the suite's 85-minute timeout does not reserve
+  time for collecting evidence. Cancellation, timeouts or runner loss can
+  prevent outputs, artifacts or even the follow-up report. Use the integration
+  job logs when available; a missing result does not identify a timeout or
+  setup failure by itself.
 
 To reproduce the job locally, use a disposable checkout with no `.env*` file
 other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo
@@ -155,6 +168,7 @@ docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
 svm="$HOME/.svm"; [ -d "$svm" ] || svm="${XDG_DATA_HOME:-$HOME/.local/share}/svm"
 export DIN_TEST_ISOLATED=1 DIN_TEST_SVM_DIR="$svm"
 export DIN_TEST_TMPDIR="$(mktemp -d)/scratch" DIN_TEST_RESULTS_DIR="$(mktemp -d)"
+set -o pipefail
 pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee "$DIN_TEST_RESULTS_DIR/pytest.log"
 ```
 

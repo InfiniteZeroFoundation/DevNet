@@ -21,7 +21,7 @@ setup is [`.claude/scripts/README.md`](../../scripts/README.md).
 
 | Situation | Build/test evidence |
 |---|---|
-| PR merges **as-is** (every "Pending proposal" is `None`) | The PR's green `CI OK`. CI runs the full pipeline on GitHub's merge of the PR into `develop` (via_ir `forge build`, size gate, `forge test`, hardhat, pytest, doc links), and the ruleset requires the branch to be up to date, so that run tests exactly what lands. **Don't run this skill.** |
+| PR merges **as-is** (every "Pending proposal" is `None`) | The PR's green `CI OK`. CI runs the full pipeline on GitHub's merge of the PR into `develop` (via_ir `forge build`, size gate, `forge test`, hardhat, pytest, doc links), and the merge queue re-runs it on the exact commit that lands. **Don't run this skill.** |
 | Fixes applied, **path A** | This skill, in the review worktree, **before** the fixes are pushed. After the push, the PR's CI re-runs and is the gate. |
 | Fixes applied, **path B** | This skill, in the `develop` checkout. There is no PR CI for the deviation, so this run plus `din-push-develop`'s precheck are the gate. |
 
@@ -110,7 +110,7 @@ HOME="$CIHOME" XDG_CONFIG_HOME="$CIHOME/.config" \
   "$DIN_PY" -m pytest -m "not integration" -q -p no:cacheprovider
 ```
 Don't run the `integration`-marked / `tests/dincli/` suite here — it needs
-live services and has its own CI job (MAINTAINING No. 4.9).
+live services and has its own manual **Full GI** workflow (MAINTAINING No. 4.9).
 
 **Conditional extras:**
 - **ABIs** — for every contract under `foundry/src/` the PR changed (or that

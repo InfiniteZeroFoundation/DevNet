@@ -152,7 +152,8 @@ worktree of `origin/develop`: real via_ir `forge build` (the plain build no
 longer compiles `develop`), `forge test --match-contract <Suite>`, and
 `"$DIN_PY" -m pytest -m "not integration"` (`source .claude/scripts/din-env.sh`).
 Never run them in the `develop` checkout. The `tests/dincli/` integration
-suite counts only once its CI job is a required check (MAINTAINING No. 4.9).
+suite counts only from a green manual **Full GI** workflow run on the commit,
+or a local run (MAINTAINING No. 4.9).
 
 Mark each item ✅ done (with evidence), ❌ missing, or ↪️ moved out of scope
 (with where it went).
