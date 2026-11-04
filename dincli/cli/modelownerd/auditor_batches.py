@@ -1,3 +1,4 @@
+import json
 import secrets
 from pathlib import Path
 import time
@@ -33,6 +34,85 @@ def _is_flag_already_set_revert(exc: Exception) -> bool:
         return False
     data_hex = data[2:] if data.startswith("0x") else data
     return data_hex.lower().startswith(_TA_FLAG_ALREADY_SET_SELECTOR)
+
+
+def _load_owner_x25519_key(console) -> PrivateKey:
+    """Loads (or generates) the owner's dedicated X25519 key, owner-only (0600)."""
+    owner_key_path = Path(CONFIG_DIR) / "owner_x25519.key"
+    if not owner_key_path.exists():
+        new_key = PrivateKey.generate()
+        owner_key_path.write_text(
+            new_key.encode(encoder=nacl.encoding.HexEncoder).decode()
+        )
+        console.print(f"[yellow]Generated owner X25519 key → {owner_key_path}[/yellow]")
+    owner_key_path.chmod(0o600)
+    return PrivateKey(bytes.fromhex(owner_key_path.read_text().strip()))
+
+
+# The owner answers a test-data dispute by revealing K and the plaintext hash
+# (DINTaskAuditor.resolveTestDataDispute), so both are kept per (gi, batch)
+# from the moment they're committed on-chain. K decrypts the batch's test
+# data, so the file is owner-only.
+def _testdata_secret_path(model_base_dir: Path, gi: int, batch_id: int) -> Path:
+    return Path(model_base_dir) / "audits" / "testdata_keys" / f"gi_{gi}_batch_{batch_id}.json"
+
+
+def _save_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, K: bytes, plaintext_keccak: bytes) -> None:
+    path = _testdata_secret_path(model_base_dir, gi, batch_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"K": K.hex(), "plaintext_keccak": bytes(plaintext_keccak).hex()}))
+    path.chmod(0o600)
+
+
+def _load_testdata_secret(model_base_dir: Path, gi: int, batch_id: int):
+    path = _testdata_secret_path(model_base_dir, gi, batch_id)
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    return bytes.fromhex(data["K"]), bytes.fromhex(data["plaintext_keccak"])
+
+
+def _auditors_missing_encryption_key(stake_contract, auditors) -> List[str]:
+    """Batch auditors with no X25519 key on DinValidatorStake; assigning test
+    data to their batch reverts with TA_AuditorEncryptionKeyNotRegistered."""
+    return [a for a in auditors if len(stake_contract.functions.getEncryptionKey(a).call()) == 0]
+
+
+def _encrypt_batch_testdata(account, stake_contract, owner_privkey, gi: int, batch_auditors, batch_info):
+    """Builds the assignAuditTestDataset / reassignAuditTestDataset payload for
+    one batch: (encrypted_cid, encrypted_keys, commitment)."""
+    raw_cid = batch_info["raw_cid"]
+    K = batch_info["K"]
+    plaintext_keccak = batch_info["plaintext_keccak"]
+    batch_id = batch_info["batch_id"]
+
+    # encryptedCID = AES-256-GCM(K, rawCID_bytes || eth_sign(ownerSK, rawCID_bytes))
+    raw_cid_bytes = Web3.to_bytes(hexstr=get_bytes32_from_cid(raw_cid))
+    sig = account.sign_message(encode_defunct(raw_cid_bytes)).signature
+    nonce = secrets.token_bytes(12)
+    encrypted_cid = nonce + AESGCM(K).encrypt(nonce, raw_cid_bytes + sig, None)
+
+    # K encrypted to each auditor's registered X25519 pubkey via authenticated Box.
+    # Build address-keyed first, then reorder to the authoritative on-chain ordering
+    # so a future RPC or contract change that returns auditors in a different order
+    # cannot silently mismatch keys to recipients (BL-13, closes #115).
+    encrypted_key_by_addr = {}
+    for auditor_addr in batch_auditors:
+        pubkey_bytes = stake_contract.functions.getEncryptionKey(auditor_addr).call()
+        encrypted_key_by_addr[auditor_addr.lower()] = (
+            Box(owner_privkey, PublicKey(bytes(pubkey_bytes))).encrypt(K)
+        )
+    encrypted_keys = [encrypted_key_by_addr[addr.lower()] for addr in batch_auditors]
+
+    # commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintext_keccak))
+    keccak_K = bytes(Web3.keccak(K))
+    commitment = bytes(Web3.keccak(
+        encode_packed(
+            ["uint256", "uint256", "bytes32", "bytes32"],
+            [gi, batch_id, keccak_K, bytes(plaintext_keccak)],
+        )
+    ))
+    return encrypted_cid, encrypted_keys, commitment
 
 @auditor_batches_app.command()
 def create(
@@ -225,15 +305,7 @@ def create_testdataset(
 
         console.print(f"[bold green]Assigning test dataset![/bold green]")
 
-        # Load (or generate) the owner's dedicated X25519 private key.
-        owner_key_path = Path(CONFIG_DIR) / "owner_x25519.key"
-        if not owner_key_path.exists():
-            new_key = PrivateKey.generate()
-            owner_key_path.write_text(
-                new_key.encode(encoder=nacl.encoding.HexEncoder).decode()
-            )
-            console.print(f"[yellow]Generated owner X25519 key → {owner_key_path}[/yellow]")
-        owner_privkey = PrivateKey(bytes.fromhex(owner_key_path.read_text().strip()))
+        owner_privkey = _load_owner_x25519_key(console)
 
         # Write owner's X25519 pubkey into the local manifest cache so auditors
         # can read it via get_manifest_key("owner_encryption_pubkey"). The owner
@@ -254,42 +326,34 @@ def create_testdataset(
 
         batch_ids_to_process = list(batch) if batch else list(range(audtor_batch_count))
 
+        # Fail before any tx: assignAuditTestDataset reverts with
+        # TA_AuditorEncryptionKeyNotRegistered for a batch with a keyless auditor.
+        batch_auditors_by_id = {
+            batch_id: taskauditor_contract.functions.getAuditorsBatch(ref_gi, batch_id).call()[1]
+            for batch_id in batch_ids_to_process
+        }
+        missing_keys = sorted({
+            a for auditors in batch_auditors_by_id.values()
+            for a in _auditors_missing_encryption_key(stake_contract, auditors)
+        })
+        if missing_keys:
+            console.print("[bold red]✗ These batch auditors haven't registered an encryption key:[/bold red]")
+            for a in missing_keys:
+                console.print(f"  {a}")
+            console.print("[yellow]Each must run `dincli auditor register-encryption-key` before test data can be assigned.[/yellow]")
+            raise typer.Exit(1)
+
         failed_batch_ids = []
         try:
             for batch_id in batch_ids_to_process:
-                batch_info = audit_testDataCIDs[batch_id]
-                raw_cid = batch_info["raw_cid"]
-                K = batch_info["K"]
-                plaintext_keccak = batch_info["plaintext_keccak"]
-
-                # encryptedCID = AES-256-GCM(K, rawCID_bytes || eth_sign(ownerSK, rawCID_bytes))
-                raw_cid_bytes = Web3.to_bytes(hexstr=get_bytes32_from_cid(raw_cid))
-                sig = account.sign_message(encode_defunct(raw_cid_bytes)).signature
-                nonce = secrets.token_bytes(12)
-                encrypted_cid = nonce + AESGCM(K).encrypt(nonce, raw_cid_bytes + sig, None)
-
-                _, batch_auditors, _, _ = taskauditor_contract.functions.getAuditorsBatch(ref_gi, batch_id).call()
-
-                # K encrypted to each auditor's registered X25519 pubkey via authenticated Box.
-                # Build address-keyed first, then reorder to the authoritative on-chain ordering
-                # so a future RPC or contract change that returns auditors in a different order
-                # cannot silently mismatch keys to recipients (BL-13, closes #115).
-                encrypted_key_by_addr = {}
-                for auditor_addr in batch_auditors:
-                    pubkey_bytes = stake_contract.functions.getEncryptionKey(auditor_addr).call()
-                    encrypted_key_by_addr[auditor_addr.lower()] = (
-                        Box(owner_privkey, PublicKey(bytes(pubkey_bytes))).encrypt(K)
-                    )
-                encrypted_keys = [encrypted_key_by_addr[addr.lower()] for addr in batch_auditors]
-
-                # commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintext_keccak))
-                keccak_K = bytes(Web3.keccak(K))
-                commitment = bytes(Web3.keccak(
-                    encode_packed(
-                        ["uint256", "uint256", "bytes32", "bytes32"],
-                        [ref_gi, batch_id, keccak_K, bytes(plaintext_keccak)],
-                    )
-                ))
+                batch_info = dict(audit_testDataCIDs[batch_id], batch_id=batch_id)
+                encrypted_cid, encrypted_keys, commitment = _encrypt_batch_testdata(
+                    account, stake_contract, owner_privkey, ref_gi,
+                    batch_auditors_by_id[batch_id], batch_info,
+                )
+                # Saved before the tx: once the commitment is on-chain, K is
+                # what answers a dispute against it.
+                _save_testdata_secret(model_base_path, ref_gi, batch_id, batch_info["K"], batch_info["plaintext_keccak"])
 
                 time.sleep(5)
                 tx_receipt = build_and_send_tx(
