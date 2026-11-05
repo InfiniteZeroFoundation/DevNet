@@ -58,6 +58,7 @@ from tests.dincli.constants import (
 )
 
 from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
+from tests.dincli.seed import apply_din_info_overrides, seed_default_artifacts
 from tests.dincli.services import start_service, rpc_ready, ipfs_ready
 from tests.dincli.diagnostics import Diagnostics, write_cleanup_summary
 from tests.dincli.reports import collect_worker_reports
@@ -660,8 +661,39 @@ def run(din_env, workdir):
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="session")
+def seeded_default_artifacts(managed_services, din_info_backup, din_tmp):
+    """Isolated mode: add the reference model's default artifacts to the offline
+    Kubo node and point this run's din_info `default_*` entries at them (see
+    tests/dincli/seed.py). Runs after din_info_backup, so the tracked
+    din_info.json is restored unpatched at the end of the session.
+
+    Legacy (non-isolated) runs fetch the published defaults through the
+    host's IPFS node instead, and get None.
+    """
+    if not ISOLATED_MODE:
+        yield None
+        return
+    env = _isolated_env(din_tmp)
+
+    def add(path: Path) -> str:
+        result = _get_diagnostics().run(
+            # Kubo's default layout, the one dincli verifies downloads against
+            # (`ipfs add -n -Q`, dincli/services/ipfs.py); --cid-version 1
+            # switches to a different chunking for multi-chunk files.
+            [IPFS_BIN, "add", "-Q", "--pin", str(path)],
+            cwd=din_tmp, env=env, timeout=60, label="ipfs_seed",
+        )
+        result.check_returncode()
+        return result.stdout.strip()
+
+    overrides = seed_default_artifacts(add, din_tmp)
+    apply_din_info_overrides(DIN_INFO_PATH, "local", overrides)
+    yield overrides
+
+
 @pytest.fixture(scope="session", autouse=True)
-def bootstrap(managed_services, din_info_backup, run):
+def bootstrap(managed_services, din_info_backup, seeded_default_artifacts, run):
     """
     Configure demo mode and local network, and connect the named demo role
     wallets (account 0 = dinrep / DIN-Representative, account 1 = modelowner).
