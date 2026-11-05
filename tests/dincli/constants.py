@@ -19,6 +19,9 @@ environment first, then `.env` at the repo root):
                      ignores checkout dotenv and host Python/nvm fallbacks
   DIN_TEST_RESULTS_DIR external log directory, required in isolated mode
   ANVIL_BIN         explicit Anvil binary for owned isolated startup
+  DIN_TEST_SVM_DIR  isolated mode only: an existing svm directory (e.g. ~/.svm)
+                     whose solc builds are copied into the scratch data dir, so
+                     forge does not download a compiler into fresh state
   PLATFORM_DEPLOY_TOOLCHAIN   "foundry" or "hardhat" — which platform deploy
                      script test_deploy_platform_via_script runs (default:
                      "foundry", matching `dincli system import-deployments`'s
@@ -115,6 +118,11 @@ if ISOLATED_MODE:
     if (DIN_TEMP.resolve() == RESULTS_DIR.resolve()
             or DIN_TEMP.resolve() in RESULTS_DIR.resolve().parents):
         raise ValueError("Isolated results must be outside scratch so cleanup preserves logs")
+
+# Pre-installed solc builds to copy into isolated scratch (see _seed_solc in conftest.py).
+SVM_SEED_DIR = Path(_env("DIN_TEST_SVM_DIR")) if _env("DIN_TEST_SVM_DIR") else None
+if ISOLATED_MODE and SVM_SEED_DIR is not None and not SVM_SEED_DIR.is_absolute():
+    raise ValueError("DIN_TEST_SVM_DIR must be an absolute path")
 
 
 # Platform deployment (PR 13: transparent proxies; PR 35: foundry parity).

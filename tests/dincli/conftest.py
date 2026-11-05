@@ -54,10 +54,43 @@ from tests.dincli.constants import (
     ANVIL_BIN,
     ISOLATED_MODE,
     RESULTS_DIR,
+    SVM_SEED_DIR,
 )
 
 from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
 from tests.dincli.services import start_service, rpc_ready, ipfs_ready
+from tests.dincli.diagnostics import Diagnostics, write_cleanup_summary
+from tests.dincli.reports import collect_worker_reports
+
+
+_DIAGNOSTICS = None
+
+
+def _get_diagnostics():
+    """Share one budget across isolated commands and owned service logs."""
+    global _DIAGNOSTICS
+    if _DIAGNOSTICS is None or _DIAGNOSTICS.results_dir != RESULTS_DIR:
+        _DIAGNOSTICS = Diagnostics(RESULTS_DIR)
+        revision = "unavailable"
+        if (DEVNET_ROOT / ".git").exists():
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=DEVNET_ROOT,
+                    capture_output=True, text=True, timeout=5,
+                )
+                candidate = result.stdout.strip()
+                if result.returncode == 0 and len(candidate) == 40 and all(
+                    character in "0123456789abcdef" for character in candidate
+                ):
+                    revision = candidate
+            except (OSError, subprocess.SubprocessError):
+                pass
+        _DIAGNOSTICS.record(
+            "runtime", "metadata", python=sys.version.split()[0],
+            source_revision=revision,
+            tool_versions="not probed; record actual tool versions during runner provisioning",
+        )
+    return _DIAGNOSTICS
 
 
 # ---------------------------------------------------------------------------
@@ -108,20 +141,41 @@ def _compile_contracts(results_dir: Path) -> None:
     """Run npx hardhat compile. Aborts the session on failure."""
     print("\n[setup] Compiling Solidity contracts...")
     log_path = results_dir / "hardhat_compile.log"
-    result = subprocess.run(
-        [NPX_BIN, "hardhat", "compile"],
-        cwd=str(HARDHAT_DIR),
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=_isolated_env(DIN_TEMP) if ISOLATED_MODE else None,
-    )
-    log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
+    if ISOLATED_MODE:
+        result = _get_diagnostics().run(
+            [NPX_BIN, "hardhat", "compile"], cwd=HARDHAT_DIR,
+            env=_isolated_env(DIN_TEMP), timeout=180, label="hardhat_compile",
+        )
+    else:
+        result = subprocess.run(
+            [NPX_BIN, "hardhat", "compile"], cwd=str(HARDHAT_DIR),
+            capture_output=True, text=True, timeout=180,
+        )
+        log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
     if result.returncode != 0:
         pytest.exit(
-            f"[setup] Contract compilation failed (see {log_path}):\n{result.stderr[-2000:]}"
+            f"[setup] Contract compilation failed (see {results_dir if ISOLATED_MODE else log_path}):\n{result.stderr[-2000:]}"
         )
     print("[setup] Contracts compiled successfully.")
+
+
+def _seed_solc(din_tmp: Path) -> None:
+    """Copy pre-installed solc builds into the isolated svm directory.
+
+    Isolated runs give forge a fresh XDG_DATA_HOME, and forge resolves its
+    pinned compiler before it reads the artifact cache, so even a build with
+    nothing to compile would download solc. DIN_TEST_SVM_DIR points at an
+    existing svm directory (normally ~/.svm on a runner that has already built
+    the contracts). Its version folders are copied, never linked, so nothing
+    is written back to it.
+    """
+    if SVM_SEED_DIR is None:
+        return
+    versions = [d for d in SVM_SEED_DIR.iterdir() if d.is_dir()] if SVM_SEED_DIR.is_dir() else []
+    if not versions:
+        raise RuntimeError(f"DIN_TEST_SVM_DIR has no solc versions: {SVM_SEED_DIR}")
+    for version in versions:
+        shutil.copytree(version, din_tmp / "data" / "svm" / version.name)
 
 
 def _build_foundry_contracts(results_dir: Path) -> None:
@@ -132,18 +186,20 @@ def _build_foundry_contracts(results_dir: Path) -> None:
     """
     print("\n[setup] Building Foundry contracts...")
     log_path = results_dir / "forge_build.log"
-    result = subprocess.run(
-        [FORGE_BIN, "build"],
-        cwd=str(FOUNDRY_DIR),
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=_isolated_env(DIN_TEMP) if ISOLATED_MODE else None,
-    )
-    log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
+    if ISOLATED_MODE:
+        result = _get_diagnostics().run(
+            [FORGE_BIN, "build"], cwd=FOUNDRY_DIR,
+            env=_isolated_env(DIN_TEMP), timeout=180, label="forge_build",
+        )
+    else:
+        result = subprocess.run(
+            [FORGE_BIN, "build"], cwd=str(FOUNDRY_DIR),
+            capture_output=True, text=True, timeout=180,
+        )
+        log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
     if result.returncode != 0:
         pytest.exit(
-            f"[setup] Foundry contract build failed (see {log_path}):\n{result.stderr[-2000:]}"
+            f"[setup] Foundry contract build failed (see {results_dir if ISOLATED_MODE else log_path}):\n{result.stderr[-2000:]}"
         )
     print("[setup] Foundry contracts built successfully.")
 
@@ -274,15 +330,53 @@ def din_tmp():
     config/ and cache/ are wiped at session start; results/ accumulates runs.
     """
     if ISOLATED_MODE:
+        global _DIAGNOSTICS
+        _DIAGNOSTICS = None
         for directory in (DEVNET_ROOT, FOUNDRY_DIR):
             if any(path.name != ".env.example" for path in directory.glob(".env*")):
                 pytest.fail("Isolated mode requires a disposable checkout without dotenv files")
         DIN_TEMP.mkdir(parents=True, exist_ok=False)
         try:
-            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            _get_diagnostics()
             yield DIN_TEMP
         finally:
-            shutil.rmtree(DIN_TEMP)
+            primary_error = sys.exc_info()[1]
+            if isinstance(primary_error, GeneratorExit):
+                primary_error = None
+            cleanup_errors = []
+            cleanup_stages = []
+            try:
+                summary = collect_worker_reports(DIN_TEMP, RESULTS_DIR)
+                if summary.get("collection_failed") or summary.get("errors"):
+                    raise RuntimeError("Worker diagnostic collection failed; see external report summary")
+            except BaseException as error:
+                cleanup_errors.append(error)
+                cleanup_stages.append(f"reports:{type(error).__name__}")
+            try:
+                if _DIAGNOSTICS is not None:
+                    _DIAGNOSTICS.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+                cleanup_stages.append(f"diagnostics:{type(error).__name__}")
+            scratch_removed = False
+            try:
+                shutil.rmtree(DIN_TEMP)
+                scratch_removed = True
+            except BaseException as error:
+                cleanup_errors.append(error)
+                cleanup_stages.append(f"scratch:{type(error).__name__}")
+            try:
+                write_cleanup_summary(
+                    RESULTS_DIR, scratch_removed=scratch_removed, errors=cleanup_stages,
+                )
+            except BaseException as error:
+                cleanup_errors.append(error)
+            for error in cleanup_errors:
+                print(f"[diagnostics] Cleanup failed: {error}", file=sys.stderr)
+                if primary_error is not None:
+                    primary_error.add_note(f"Diagnostic cleanup also failed: {type(error).__name__}")
+            if cleanup_errors and primary_error is None:
+                raise cleanup_errors[0]
         return
     DIN_TEMP.mkdir(parents=True, exist_ok=True)
     for subdir in ("config", "cache"):
@@ -321,36 +415,48 @@ def managed_services(din_tmp):
     #    always need hardhat's ABIs/bytecode, regardless of deploy toolchain.
     _compile_contracts(results_dir)
     if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
+        if ISOLATED_MODE:
+            _seed_solc(din_tmp)
         _build_foundry_contracts(results_dir)
 
     if ISOLATED_MODE:
         env = _isolated_env(din_tmp)
         with ExitStack() as resources:
             if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
-                command = [ANVIL_BIN, "--host", "127.0.0.1", "--chain-id", "1337",
-                           "--accounts", "70", "--balance", "10000", "--block-time", "2",
-                           "--code-size-limit", "4294967295",
-                           "--mnemonic", "test test test test test test test test test test test junk"]
+                # foundry/anvil.sh is the single source of the chain flags (chain id,
+                # funded accounts, --block-time 2, code-size limit, mnemonic). Only the
+                # loopback bind and the resolved binary are added here.
+                command = ["bash", str(FOUNDRY_DIR / "anvil.sh"), "--host", "127.0.0.1"]
+                chain_env = {**env, "ANVIL_BIN": ANVIL_BIN}
                 cwd = FOUNDRY_DIR
             else:
                 command = [NPX_BIN, "hardhat", "node", "--hostname", "127.0.0.1"]
+                chain_env = env
                 cwd = HARDHAT_DIR
-            chain = start_service(command, cwd=cwd, env=env,
+            chain = start_service(command, cwd=cwd, env=chain_env,
                                   log_path=results_dir / "chain_node.log",
-                                  ready=lambda: rpc_ready(HARDHAT_RPC), port=8545)
-            resources.callback(chain.close)
+                                  ready=lambda: rpc_ready(HARDHAT_RPC), port=8545,
+                                  diagnostics=_get_diagnostics())
+            resources.enter_context(chain)
             # Never initialize or reuse an existing IPFS repository.
             if Path(env["IPFS_PATH"]).exists():
                 raise RuntimeError("Isolated IPFS repository already exists")
-            with (results_dir / "ipfs_init.log").open("w") as log:
-                for args in (["init"], ["config", "--json", "Bootstrap", "[]"],
-                             ["config", "--json", "Discovery.MDNS.Enabled", "false"]):
-                    subprocess.run([IPFS_BIN, *args], env=env, check=True,
-                                   stdout=log, stderr=subprocess.STDOUT, timeout=30)
+            # No HTTP gateway: dincli reads through the RPC API on 5001, and the
+            # default gateway port (8080) is neither owned nor checked here, so a
+            # host process already on it would stop the daemon from starting.
+            for args in (["init"], ["config", "--json", "Bootstrap", "[]"],
+                         ["config", "--json", "Discovery.MDNS.Enabled", "false"],
+                         ["config", "--json", "Addresses.Gateway", "[]"]):
+                result = _get_diagnostics().run(
+                    [IPFS_BIN, *args], cwd=din_tmp, env=env,
+                    timeout=30, label="ipfs_init",
+                )
+                result.check_returncode()
             ipfs = start_service([IPFS_BIN, "daemon", "--offline"], cwd=din_tmp, env=env,
                                  log_path=results_dir / "ipfs_daemon.log",
-                                 ready=ipfs_ready, port=5001)
-            resources.callback(ipfs.close)
+                                 ready=ipfs_ready, port=5001,
+                                 diagnostics=_get_diagnostics())
+            resources.enter_context(ipfs)
             yield
         return
 
@@ -486,15 +592,16 @@ def run_cmd(
     the failing command without cascading further (use -x for fail-fast).
     """
     cmd = [python, "-m", "dincli.main"] + args
-    result = subprocess.run(
-        cmd,
-        env=env,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        input=input_text,
-        timeout=timeout,
-    )
+    if ISOLATED_MODE:
+        result = _get_diagnostics().run(
+            cmd, env=env, cwd=cwd, input_text=input_text,
+            timeout=timeout, label="cli",
+        )
+    else:
+        result = subprocess.run(
+            cmd, env=env, cwd=str(cwd), capture_output=True, text=True,
+            input=input_text, timeout=timeout,
+        )
     print(f"\n$ dincli {' '.join(args)}  (exit {result.returncode})")
     if result.stdout:
         print(result.stdout)

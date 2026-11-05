@@ -1,6 +1,6 @@
 ---
 name: din-pr-merge
-description: Use when actually merging a PR into InfiniteZeroFoundation/DevNet's `develop` — "merge PR #N", "merge this into develop", or any request to land a PR after it's been reviewed. Any maintainer who isn't the PR's author or a co-author can run it (checked first with `.claude/scripts/din_peer_check.py`). Path A (the default, per Developer/MAINTAINING.md No. 4.4): push any review fixes onto the PR branch, then merge on GitHub with a merge commit once the approval, `CI OK` and up-to-date gates pass. Path B (Umer only per MAINTAINING No. 4.4, exceptional): the local stash-merge-pop flow plus a deviation commit, pushed through `din-push-develop` with the admin bypass. Either way it ends with the merger watching `develop` CI and posting the outcome comment (`outcome-comment.md`). Runs after `din-pr-review`. Not for reviewing a PR (use `din-pr-review`) and not for generic git merges outside this repo's PR workflow.
+description: Use when actually merging a PR into InfiniteZeroFoundation/DevNet's `develop` — "merge PR #N", "merge this into develop", or any request to land a PR after it's been reviewed. Any maintainer who isn't the PR's author or a co-author can run it (checked first with `.claude/scripts/din_peer_check.py`). Path A (the default, per Developer/MAINTAINING.md No. 4.4): push any review fixes onto the PR branch, then add it to the `develop` merge queue once the approval and `CI OK` gates pass; the queue re-runs CI on the latest `develop` and lands it with a merge commit. Path B (Umer only per MAINTAINING No. 4.4, exceptional): the local stash-merge-pop flow plus a deviation commit, pushed through `din-push-develop` with the admin bypass. Either way it ends with the merger watching `develop` CI and posting the outcome comment (`outcome-comment.md`). Runs after `din-pr-review`. Not for reviewing a PR (use `din-pr-review`) and not for generic git merges outside this repo's PR workflow.
 ---
 
 # DIN DevNet PR merge
@@ -20,7 +20,7 @@ setup is [`.claude/scripts/README.md`](../../scripts/README.md).
 | Who | Any maintainer who isn't the author or a co-author | Umer only (MAINTAINING No. 4.4; `din_peer_check.py path-b`) |
 | When | The default, for every PR | Exceptional: the PR needs adapting against a `develop` that has moved (renames, ABI regeneration, docs drift) and pushing fixes onto the PR branch isn't practical |
 | Fixes | Pushed onto the PR branch (or a small follow-up PR); the last-push rule sends the final approval to someone else | A separate deviation commit on top of the merge, on `develop` |
-| Gate | The `develop` ruleset: 1 approval of the latest push, `CI OK`, branch up to date | The admin bypass; log a one-line reason in [Discussion 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170) |
+| Gate | The `develop` ruleset: 1 approval of the latest push, `CI OK`, then the merge queue's own `CI OK` run | The admin bypass; log a one-line reason in [Discussion 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170) |
 
 Use path A unless the operator explicitly chooses B and is Umer.
 
@@ -97,10 +97,10 @@ All of these must hold:
 - `isDraft` is false.
 - An approval from an eligible peer is **on the current head SHA**.
 - `CI OK` is green on that head.
-- `mergeStateStatus` is `CLEAN`. `BEHIND` means the branch isn't up to date:
-  ask the author to update it, or run `gh pr update-branch <N>`. Updating it
-  makes the operator the last pusher, so the approval then has to come from
-  someone else.
+- `mergeStateStatus` isn't `DIRTY`. `DIRTY` means a merge conflict with
+  `develop`: ask the author to resolve it. Being behind `develop` is fine — the merge queue tests the PR on
+  top of the latest `develop`, so don't run `gh pr update-branch` (it would
+  make the operator the last pusher and reset the approval).
 - **`foundry/src/**` touched?** The second sign-off (MAINTAINING No. 4.2) is
   on the PR, as an approval or a comment from @umeradl, @abrahamnash or a
   security reviewer they named.
@@ -111,14 +111,39 @@ If any gate fails, report which one and stop. Don't use `--admin`.
 
 ### A3. Merge
 
-On the operator's go-ahead:
+On the operator's go-ahead, add the PR to the merge queue (the queue merges
+with a merge commit). Don't use `gh pr merge`: with auto-merge disabled on the
+repo it fails with "Auto merge is not allowed for this repository", and
+`--admin` would skip the queue. Enqueue through GraphQL instead (the same as
+clicking **Merge when ready**):
 
 ```bash
-gh pr merge <N> -R $R --merge
+PR_ID=$(gh api graphql -f query="{repository(owner:\"InfiniteZeroFoundation\",name:\"DevNet\"){pullRequest(number:<N>){id}}}" \
+  --jq .data.repository.pullRequest.id)
+gh api graphql -f query='mutation($p:ID!){enqueuePullRequest(input:{pullRequestId:$p}){mergeQueueEntry{state position}}}' \
+  -f p="$PR_ID"
+```
+
+The queue builds a temporary `gh-readonly-queue/develop/...` branch (latest
+`develop` + any PRs ahead + this PR) and runs `CI OK` on it, about 8 minutes.
+Watch it in the background rather than polling:
+
+```bash
+gh run list -R $R --event merge_group --limit 5   # the queue's CI run
 gh pr view <N> -R $R --json state,mergedAt,mergeCommit --jq '{state, mergedAt, sha: .mergeCommit.oid}'
 ```
 
-Then the outcome steps: **C1–C2** below.
+- **Merged:** `state` is `MERGED`; continue with **C1–C2** below.
+- **Dropped from the queue** (its CI run failed, or a PR ahead of it broke the
+  group): `develop` is untouched. Read the failed run, tell the author, and
+  re-queue once it's fixed. A fix pushed to the branch needs a fresh approval
+  as usual.
+- **`CI OK` never reports on the queue run** (the queue sits waiting): stop
+  and tell Umer. The rollback (Discussion 208) is two changes to the
+  `develop` ruleset together: turn the merge-queue rule off **and** turn
+  "Require branches to be up to date before merging" back on, so merged PRs
+  are still tested against the latest `develop`. Then revert this skill and
+  `MAINTAINING.md` to the up-to-date wording.
 
 ---
 

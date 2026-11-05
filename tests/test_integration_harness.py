@@ -2,12 +2,16 @@
 
 import importlib
 import json
+import os
 import signal
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+
+from tests.dincli.diagnostics import DiagnosticsWriteError
 
 
 @pytest.fixture
@@ -57,6 +61,16 @@ def fake_services(harness, monkeypatch):
     monkeypatch.setattr(harness, "_compile_contracts", lambda path: None)
     monkeypatch.setattr(harness, "_build_foundry_contracts", lambda path: None)
 
+    def capture(command, **kwargs):
+        with (harness.RESULTS_DIR / "ipfs_init.log").open("a") as log:
+            result = harness.subprocess.run(
+                command, stdout=log, stderr=subprocess.STDOUT,
+                env=kwargs["env"], cwd=kwargs["cwd"], timeout=kwargs["timeout"],
+            )
+        return result or subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(harness, "_get_diagnostics", lambda: SimpleNamespace(run=capture))
+
     def start(command, *, log_path, **kwargs):
         log = log_path.open("w", encoding="utf-8")
         log.write("retained service evidence\n")
@@ -101,7 +115,7 @@ def test_successful_service_teardown_closes_both_owned_handles(harness, monkeypa
     next(fixture)
     assert len(handles) == 2
     assert all(not service._log.closed for service in handles)
-    assert len(init_commands) == 3
+    assert len(init_commands) == 4
     fixture.close()
 
     assert all(service._log.closed for service in handles)
@@ -110,6 +124,20 @@ def test_successful_service_teardown_closes_both_owned_handles(harness, monkeypa
         handles[1].process.pid, handles[0].process.pid,
     ]
     assert all(service.log_path.read_text() == "retained service evidence\n" for service in handles)
+
+
+def test_isolated_ipfs_starts_without_a_gateway(harness, monkeypatch):
+    handles, _ = fake_services(harness, monkeypatch)
+    init_commands = []
+    monkeypatch.setattr(harness.subprocess, "run", lambda args, **kwargs: init_commands.append(args))
+    fixture = harness.managed_services.__wrapped__(harness.DIN_TEMP)
+
+    next(fixture)
+    fixture.close()
+
+    # Configured before the daemon starts, so an unowned process on 8080 cannot stop it.
+    assert [harness.IPFS_BIN, "config", "--json", "Addresses.Gateway", "[]"] in init_commands
+    assert init_commands[0] == [harness.IPFS_BIN, "init"]
 
 
 def test_isolated_env_filters_credentials_and_uses_local_config(harness, monkeypatch):
@@ -157,12 +185,15 @@ def test_isolated_scratch_cleanup_retains_external_evidence(harness):
 
     assert not harness.DIN_TEMP.exists()
     assert evidence.read_text() == "retain this"
+    assert json.loads((harness.RESULTS_DIR / "cleanup.json").read_text()) == {
+        "scratch_removed": True, "errors": [], "errors_omitted": 0,
+    }
 
 
 def test_results_creation_failure_cleans_new_scratch(harness):
     harness.RESULTS_DIR.write_text("existing file")
     fixture = harness.din_tmp.__wrapped__()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(DiagnosticsWriteError):
         next(fixture)
     assert not harness.DIN_TEMP.exists()
     assert harness.RESULTS_DIR.read_text() == "existing file"
@@ -214,3 +245,133 @@ def test_isolated_bootstrap_preserves_existing_public_accounts(harness, fail_boo
         next(fixture)
         fixture.close()
     assert accounts_path.read_bytes() == original
+
+
+def test_report_collection_failure_still_removes_scratch(harness, monkeypatch):
+    monkeypatch.setattr(harness, "collect_worker_reports", Mock(side_effect=OSError("disk full")))
+    fixture = harness.din_tmp.__wrapped__()
+    next(fixture)
+    with pytest.raises(OSError, match="disk full"):
+        fixture.close()
+    assert not harness.DIN_TEMP.exists()
+    assert json.loads((harness.RESULTS_DIR / "cleanup.json").read_text())["errors"] == [
+        "reports:OSError",
+    ]
+
+
+def test_prior_service_failure_is_retained_in_final_cleanup(harness):
+    fixture = harness.din_tmp.__wrapped__()
+    next(fixture)
+    failure = PermissionError("simulated service cleanup failure")
+    harness._get_diagnostics().note_failure("service_cleanup", failure)
+    with pytest.raises(PermissionError):
+        fixture.close()
+    assert not harness.DIN_TEMP.exists()
+    summary = json.loads((harness.RESULTS_DIR / "cleanup.json").read_text())
+    assert summary["errors"] == ["diagnostics:PermissionError"]
+
+
+def test_collection_failure_does_not_replace_active_error(harness, monkeypatch, capsys):
+    monkeypatch.setattr(harness, "collect_worker_reports", Mock(side_effect=OSError("disk full")))
+    fixture = harness.din_tmp.__wrapped__()
+    next(fixture)
+    with pytest.raises(ValueError, match="primary"):
+        fixture.throw(ValueError("primary"))
+    assert not harness.DIN_TEMP.exists()
+    assert "disk full" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+def test_run_cmd_preserves_results_and_input_in_both_modes(harness, monkeypatch, isolated):
+    monkeypatch.setattr(harness, "ISOLATED_MODE", isolated)
+    result = subprocess.CompletedProcess(["test"], 7, "stdout", "stderr")
+    capture = Mock(return_value=result)
+    legacy = Mock(return_value=result)
+    monkeypatch.setattr(harness, "_get_diagnostics", lambda: SimpleNamespace(run=capture))
+    monkeypatch.setattr(harness.subprocess, "run", legacy)
+    assert harness.run_cmd(
+        ["system", "where"], {"PATH": "/bin"}, harness.DIN_TEMP,
+        check=False, input_text="yes\n", timeout=3,
+    ) is result
+    called = capture if isolated else legacy
+    unused = legacy if isolated else capture
+    assert called.call_args.kwargs["timeout"] == 3
+    assert called.call_args.kwargs["input_text" if isolated else "input"] == "yes\n"
+    unused.assert_not_called()
+
+
+def test_isolated_foundry_chain_starts_through_anvil_sh(harness, monkeypatch):
+    # foundry/anvil.sh is the single source of the chain flags; the harness only
+    # adds the loopback bind and the Anvil binary it resolved.
+    fake_services(harness, monkeypatch)
+    calls = []
+    fake_start = harness.start_service
+
+    def start(command, **kwargs):
+        calls.append((command, kwargs))
+        return fake_start(command, **kwargs)
+
+    monkeypatch.setattr(harness, "start_service", start)
+    monkeypatch.setattr(harness.subprocess, "run", lambda args, **kwargs: None)
+    fixture = harness.managed_services.__wrapped__(harness.DIN_TEMP)
+
+    next(fixture)
+    command, kwargs = calls[0]
+    assert command == ["bash", str(harness.FOUNDRY_DIR / "anvil.sh"), "--host", "127.0.0.1"]
+    assert kwargs["cwd"] == harness.FOUNDRY_DIR
+    assert kwargs["env"]["ANVIL_BIN"] == harness.ANVIL_BIN
+    fixture.close()
+
+
+def test_anvil_sh_carries_the_chain_flags_and_forwards_arguments(tmp_path):
+    anvil_sh = Path(__file__).resolve().parents[1] / "foundry" / "anvil.sh"
+    fake_anvil = tmp_path / "anvil"
+    fake_anvil.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+    fake_anvil.chmod(0o755)
+
+    args = subprocess.run(
+        ["bash", str(anvil_sh), "--host", "127.0.0.1"],
+        env={"PATH": os.defpath, "ANVIL_BIN": str(fake_anvil)},
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+
+    for flag, value in {"--chain-id": "1337", "--accounts": "70", "--block-time": "2",
+                        "--code-size-limit": "4294967295", "--balance": "10000",
+                        "--mnemonic": "test test test test test test test test test test test junk"}.items():
+        assert args[args.index(flag) + 1] == value
+    assert args[-2:] == ["--host", "127.0.0.1"]
+
+
+def test_isolated_solc_seed_copies_compilers_without_linking(harness, monkeypatch, tmp_path):
+    seed = tmp_path / "svm"
+    (seed / "0.8.28").mkdir(parents=True)
+    (seed / "0.8.28" / "solc-0.8.28").write_text("solc binary")
+    (seed / ".global-version").write_text("0.8.28")
+    monkeypatch.setattr(harness, "SVM_SEED_DIR", seed)
+
+    harness._seed_solc(harness.DIN_TEMP)
+
+    copied = harness.DIN_TEMP / "data" / "svm" / "0.8.28" / "solc-0.8.28"
+    assert copied.read_text() == "solc binary"
+    assert not copied.is_symlink() and not copied.parent.is_symlink()
+    assert not (harness.DIN_TEMP / "data" / "svm" / ".global-version").exists()
+    assert (seed / "0.8.28" / "solc-0.8.28").read_text() == "solc binary"
+
+
+def test_isolated_solc_seed_rejects_a_directory_without_versions(harness, monkeypatch, tmp_path):
+    monkeypatch.setattr(harness, "SVM_SEED_DIR", tmp_path / "empty")
+    with pytest.raises(RuntimeError, match="no solc versions"):
+        harness._seed_solc(harness.DIN_TEMP)
+
+
+def test_isolated_foundry_build_runs_after_the_solc_seed(harness, monkeypatch):
+    fake_services(harness, monkeypatch)
+    order = []
+    monkeypatch.setattr(harness, "_seed_solc", lambda din_tmp: order.append("seed"))
+    monkeypatch.setattr(harness, "_build_foundry_contracts", lambda path: order.append("forge build"))
+    monkeypatch.setattr(harness.subprocess, "run", lambda args, **kwargs: None)
+    fixture = harness.managed_services.__wrapped__(harness.DIN_TEMP)
+
+    next(fixture)
+    assert order == ["seed", "forge build"]
+    fixture.close()

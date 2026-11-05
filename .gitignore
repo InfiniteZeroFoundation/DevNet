@@ -22,6 +22,7 @@ tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
 /bashscripts/*
 /tasks/*
 /scripts/*
+!scripts/preflight.py
 /hardhat/ignition/*
 # /hardhat/scripts/*
 # /hardhat/test/*

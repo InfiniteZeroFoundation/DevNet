@@ -40,7 +40,7 @@ For issue-specific contributor packets, review questions, and curated reading li
 
 ## Submitting PRs
 
-- Reference related issues
+- Reference related issues. Write `Closes #N` only if the PR completes everything issue N asks (it then closes automatically on merge); otherwise write `Part of #N`
 - Clear description of what and why
 - Add tests where applicable
 - Keep commits focused
@@ -54,6 +54,7 @@ For issue-specific contributor packets, review questions, and curated reading li
   cd foundry && python3 ../.github/scripts/contract_size_gate.py
   ```
   `foundry/anvil.sh` lifts the limit on the local chain, so a local deploy is not a size check. A PR that pushes a contract under the 1,024 B fail line needs a size reduction in the same PR. Don't split a contract without raising it with a maintainer first.
+- **Integration suite.** The `tests/dincli/` full-GI suite (Anvil, an offline Kubo and Docker, in isolated mode; issue #228) is too heavy to run on every push, so it runs only when a maintainer starts the **Full GI** workflow by hand, for example before merging a change to the GI flow. It does not gate `CI OK`. Its summary separates setup, pytest, log capture and artifact outcomes. On failure or cancellation, it attempts to upload the available pytest, compile, chain and IPFS logs as `integration-logs`; reporting and upload are best effort. To reproduce it locally, see [CI integration job](../Documentation/technical/testing/dincli-testing-guide.md#ci-integration-job).
 
 ## Code Standards
 

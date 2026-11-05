@@ -1,3 +1,6 @@
+import copy
+import json
+import math
 from collections import OrderedDict
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -6,6 +9,7 @@ import pytest
 
 try:
     import torch
+    import torch.nn as nn
 except ImportError as exc:
     raise ImportError(
         "torch is required for tests/test_cache_client_dp.py but is not installed "
@@ -87,6 +91,56 @@ def test_post_training_mechanisms_preserve_weights_when_noise_is_zero(mechanism)
 
     assert torch.equal(private_state_dict["weight"], trained_state_dict["weight"])
     assert torch.equal(private_state_dict["counter"], trained_state_dict["counter"])
+
+
+@pytest.mark.parametrize(
+    "mechanism",
+    [
+        "post_training_gaussian",
+        "post_training_laplace",
+    ],
+)
+def test_resolve_dp_config_warns_for_experimental_post_training_mechanisms(mechanism, capsys):
+    client = load_client_module()
+    parameters = {"clipping_norm": 1.0, "noise_multiplier": 0.5}
+    if mechanism == "post_training_laplace":
+        parameters["laplace_scale"] = 1.0
+    runtime = DummyRuntime(
+        {
+            "dp": {
+                "enabled": True,
+                "mode": "afterTraining",
+                "mechanism": mechanism,
+                "parameters": parameters,
+            },
+        }
+    )
+
+    client.resolve_dp_config(runtime=runtime)
+
+    captured_text = " ".join(capsys.readouterr().out.lower().split())
+    assert "experimental" in captured_text
+    assert "no formal privacy guarantee" in captured_text
+    assert mechanism in captured_text
+
+
+def test_resolve_dp_config_does_not_warn_for_update_gaussian(capsys):
+    client = load_client_module()
+    runtime = DummyRuntime(
+        {
+            "dp": {
+                "enabled": True,
+                "mode": "afterTraining",
+                "mechanism": "update_gaussian",
+                "parameters": {"clipping_norm": 1.0, "noise_multiplier": 0.5},
+            },
+        }
+    )
+
+    client.resolve_dp_config(runtime=runtime)
+
+    captured = capsys.readouterr()
+    assert "experimental" not in captured.out.lower()
 
 
 def test_update_gaussian_preserves_weights_when_noise_is_zero():
@@ -350,3 +404,395 @@ def test_noise_scales_with_noise_multiplier(mechanism):
 
     assert std_at_low > 0.0
     assert std_at_high / std_at_low == pytest.approx(4.0, rel=0.05)
+
+
+# ---------------------------------------------------------------------------
+# Real-weight norm tests (BL-23 / issue #247)
+# Functions live in cache_model_0/services/client.py and
+# cache_model_0/services/model.py.
+# ---------------------------------------------------------------------------
+
+def load_model_module():
+    model_path = (
+        Path(__file__).resolve().parents[1] / "cache_model_0" / "services" / "model.py"
+    )
+    spec = spec_from_file_location("cache_model_0_model", model_path)
+    module = module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _combined_norm(state_dict):
+    """Global L2 norm across all floating tensors in a state_dict."""
+    return math.sqrt(
+        sum(
+            torch.norm(v).item() ** 2
+            for v in state_dict.values()
+            if torch.is_tensor(v) and torch.is_floating_point(v)
+        )
+    )
+
+
+def _build_and_train(num_epochs=3, num_batches=30, lr=0.01, seed=42):
+    """Build the ModelArchitecture net and train briefly on synthetic
+    MNIST-shaped data (28×28 pixels, 10 classes, batch_size=32).
+
+    Uses manual gradient updates to avoid torch.optim dependencies that
+    require optional packages (sympy) not present in all environments.
+    Returns (reference_state_dict, trained_state_dict) — both detached.
+
+    Measured norms (seed=42, 3 epochs × 30 batches × 32 samples):
+      post-training combined L2 norm  ≈  8.21
+      one-round delta L2 norm         ≈  0.18
+    These numbers justify clipping_norm=10.0 for post_training_* mechanisms
+    and confirm that clipping_norm=1.0 is safe for update_gaussian (delta well
+    below 1.0 so no clipping occurs).
+    """
+    model_module = load_model_module()
+    criterion = nn.CrossEntropyLoss()
+
+    torch.manual_seed(seed)
+    model = model_module.ModelArchitecture()
+    ref_sd = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    torch.manual_seed(seed)
+    for _ in range(num_epochs):
+        for _ in range(num_batches):
+            x = torch.randn(32, 1, 28, 28)
+            y = torch.randint(0, 10, (32,))
+            loss = criterion(model(x), y)
+            loss.backward()
+            with torch.no_grad():
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p -= lr * p.grad
+                        p.grad.zero_()
+
+    trained_sd = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    return ref_sd, trained_sd
+
+
+def _load_manifest_dp():
+    """Return a deep copy of the manifest's dp block with enabled=True for testing."""
+    manifest_path = Path(__file__).resolve().parents[1] / "cache_model_0" / "manifest.json"
+    dp = copy.deepcopy(json.loads(manifest_path.read_text())["dp"])
+    dp["enabled"] = True
+    return dp
+
+
+def _load_test_dataset():
+    """Load cache_model_0/dataset/test/test_dataset.pt without torchvision.
+
+    Stubs the five torchvision classes referenced in the pickle so the raw
+    tensors can be recovered without the torchvision package being installed
+    (CI only installs torch).  Returns (x, y): x float32 (N, 1, 28, 28)
+    normalised to [0, 1], y int64 (N,).
+    """
+    import sys
+    import types
+
+    class _VD:
+        def __setstate__(self, d):
+            self.__dict__.update(d)
+
+    class _MNIST(_VD):
+        pass
+
+    class _ST(_VD):
+        pass
+
+    class _Compose(_VD):
+        pass
+
+    class _ToTensor(_Compose):
+        pass
+
+    class _Normalize(_Compose):
+        pass
+
+    stub_specs = [
+        ("torchvision",                           {}),
+        ("torchvision.datasets",                  {}),
+        ("torchvision.datasets.mnist",            {"MNIST": _MNIST}),
+        ("torchvision.datasets.vision",           {"StandardTransform": _ST}),
+        ("torchvision.transforms",                {}),
+        ("torchvision.transforms.transforms",     {"Compose": _Compose, "ToTensor": _ToTensor, "Normalize": _Normalize}),
+    ]
+    added = {}
+    for name, attrs in stub_specs:
+        if name not in sys.modules:
+            m = types.ModuleType(name)
+            m.__path__ = []
+            m.__package__ = name
+            for attr, cls in attrs.items():
+                setattr(m, attr, cls)
+            sys.modules[name] = m
+            added[name] = m
+
+    try:
+        dataset_path = (
+            Path(__file__).resolve().parents[1]
+            / "cache_model_0" / "dataset" / "test" / "test_dataset.pt"
+        )
+        obj = torch.load(dataset_path, weights_only=False)
+        x = obj.data.float().unsqueeze(1) / 255.0
+        y = obj.targets.clone()
+        return x, y
+    finally:
+        for name in added:
+            sys.modules.pop(name, None)
+
+
+def _evaluate_accuracy(model_module, state_dict, x, y):
+    """Return fraction of correct predictions (correct / total)."""
+    m = model_module.ModelArchitecture()
+    m.load_state_dict(state_dict)
+    m.eval()
+    with torch.no_grad():
+        preds = m(x).argmax(dim=1)
+    return (preds == y).float().mean().item()
+
+
+def _build_and_train_reference(n_samples=2000, num_epochs=20, lr=0.01, seed=42):
+    """Train on a seeded subset of cache_model_0/dataset/test/test_dataset.pt.
+
+    Loads the committed MNIST test split (10 000 images), draws n_samples with
+    a fixed seed, uses 80 % for training and 20 % for held-out evaluation.
+    Returns (ref_sd, trained_sd, x_test, y_test).
+
+    Measured (seed=42, n_samples=2000, 20 epochs, lr=0.01,
+    from dataset/test/test_dataset.pt):
+      post-training combined L2 norm  ≈  9.44
+      one-round delta L2 norm         ≈  3.62
+      baseline accuracy               ≈  0.86
+    """
+    model_module = load_model_module()
+    criterion = nn.CrossEntropyLoss()
+
+    x_all, y_all = _load_test_dataset()
+    rng_sample = torch.Generator().manual_seed(seed)
+    idx = torch.randperm(len(x_all), generator=rng_sample)[:n_samples]
+    x_sub, y_sub = x_all[idx], y_all[idx]
+
+    n_train = int(0.8 * n_samples)
+    x_train, y_train = x_sub[:n_train], y_sub[:n_train]
+    x_test, y_test = x_sub[n_train:], y_sub[n_train:]
+
+    torch.manual_seed(seed)
+    model = model_module.ModelArchitecture()
+    ref_sd = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    batch_size = 32
+    rng_train = torch.Generator().manual_seed(seed)
+    for _ in range(num_epochs):
+        perm = torch.randperm(len(x_train), generator=rng_train)
+        for start in range(0, len(x_train) - batch_size + 1, batch_size):
+            batch_idx = perm[start:start + batch_size]
+            loss = criterion(model(x_train[batch_idx]), y_train[batch_idx])
+            loss.backward()
+            with torch.no_grad():
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p -= lr * p.grad
+                        p.grad.zero_()
+
+    trained_sd = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    return ref_sd, trained_sd, x_test, y_test
+
+
+def _prediction_agreement(model_module, sd_a, sd_b, x):
+    """Fraction of inputs where sd_a and sd_b produce identical argmax predictions."""
+    def _predict(sd):
+        m = model_module.ModelArchitecture()
+        m.load_state_dict(sd)
+        m.eval()
+        with torch.no_grad():
+            return m(x).argmax(dim=1)
+    return (_predict(sd_a) == _predict(sd_b)).float().mean().item()
+
+
+def test_real_weights_combined_norm_fits_manifest_clipping_norm():
+    """The manifest's clipping_norm must cover the model's real post-training
+    combined L2 norm so that post_training_* mechanisms do not over-clip.
+
+    With the old value of 1.0 the scale factor was ≈ 0.12 (88% of each
+    weight discarded).  With 10.0 the trained model passes through unclipped.
+
+    This test loads clipping_norm directly from cache_model_0/manifest.json.
+    Reverting the manifest to clipping_norm=1.0 causes this test to fail,
+    which is the regression it guards.
+    """
+    client = load_client_module()
+    dp = _load_manifest_dp()
+    manifest_clipping_norm = dp["parameters"]["clipping_norm"]
+    clip_scope = dp["parameters"]["clip_scope"]
+
+    _ref_sd, trained_sd = _build_and_train()
+    pre_norm = _combined_norm(trained_sd)
+
+    assert pre_norm < manifest_clipping_norm, (
+        f"Combined L2 norm of trained weights ({pre_norm:.4f}) exceeds "
+        f"manifest clipping_norm ({manifest_clipping_norm}). "
+        "Raise clipping_norm in cache_model_0/manifest.json."
+    )
+
+    # Verify no over-clipping: clip at manifest value must leave norm unchanged.
+    clipped_sd = client.clip_state_dict(trained_sd, manifest_clipping_norm, clip_scope)
+    post_norm = _combined_norm(clipped_sd)
+
+    assert post_norm == pytest.approx(pre_norm, rel=1e-4), (
+        f"clip_state_dict with clipping_norm={manifest_clipping_norm} "
+        f"scaled weights: pre={pre_norm:.4f}, post={post_norm:.4f}."
+    )
+
+    # Applying full dp_config (clip + noise at manifest parameters) must not
+    # produce NaN or Inf in the output.
+    torch.manual_seed(0)
+    private_sd = client.apply_dp_mechanism(trained_sd, dp)
+    for key, tensor in private_sd.items():
+        if torch.is_tensor(tensor) and torch.is_floating_point(tensor):
+            assert torch.isfinite(tensor).all(), f"Non-finite values in '{key}' after DP"
+
+
+def test_clip_only_at_manifest_clipping_norm_preserves_model_outputs():
+    """Clip-only at the manifest's clipping_norm must not degrade test accuracy
+    (amendment No. 2-3 accuracy evidence, clip-only comparison).
+
+    Trains on structured reference data (10 classes, linearly separable) and
+    evaluates on a held-out labeled test split.  Since the trained combined
+    norm (≈ 8.2) is below clipping_norm (10.0), clip_state_dict is a no-op
+    and clip-only accuracy must match baseline accuracy exactly.
+
+    With the old clipping_norm=1.0 the scale factor was ≈ 0.12 (88 % of each
+    weight discarded), truncating the combined weight norm from ≈ 8.6 to 1.0.
+    """
+    client = load_client_module()
+    model_module = load_model_module()
+    dp = _load_manifest_dp()
+    manifest_clipping_norm = dp["parameters"]["clipping_norm"]
+    clip_scope = dp["parameters"]["clip_scope"]
+
+    _ref_sd, trained_sd, x_test, y_test = _build_and_train_reference()
+
+    baseline_acc = _evaluate_accuracy(model_module, trained_sd, x_test, y_test)
+    assert baseline_acc > 0.85, (
+        f"Reference training did not converge: baseline accuracy {baseline_acc:.3f}. "
+        "Increase num_epochs in _build_and_train_reference."
+    )
+
+    clipped_sd = client.clip_state_dict(trained_sd, manifest_clipping_norm, clip_scope)
+    clip_acc = _evaluate_accuracy(model_module, clipped_sd, x_test, y_test)
+
+    assert clip_acc == pytest.approx(baseline_acc, abs=0.0), (
+        f"Clip-only accuracy ({clip_acc:.3f}) differs from baseline ({baseline_acc:.3f}); "
+        f"clipping_norm={manifest_clipping_norm} over-clips the trained model. "
+        "The combined norm must be below clipping_norm."
+    )
+
+    print(
+        f"\n[Clip accuracy report] baseline={baseline_acc:.3f}, "
+        f"clip_only={clip_acc:.3f} (clipping_norm={manifest_clipping_norm})"
+    )
+
+
+def test_manifest_dp_full_noise_impact():
+    """Documents the accuracy impact of the manifest's DP parameters
+    (amendment No. 2-3 accuracy evidence, full-DP comparison).
+
+    Trains on structured reference data and evaluates baseline, clip-only,
+    and post-DP accuracy on a held-out labeled test split so the utility
+    tradeoff is expressed as correct/total accuracy rather than prediction
+    agreement between models.
+
+    The manifest has dp.enabled=False; noise_multiplier=0.5 was chosen to
+    keep σ=0.5 under the old clipping_norm=1.0 config.  At clipping_norm=10.0
+    it gives σ=5.0 (noise_multiplier × clipping_norm), which dwarfs typical
+    parameter magnitudes (≈ 0.025) and collapses accuracy to near-chance.
+
+    Reducing noise_multiplier proportionally (to ~0.05) would restore σ≈0.5
+    (noise_multiplier × clipping_norm); whether that preserves model utility
+    is not evaluated here and requires a separate assessment.
+    """
+    client = load_client_module()
+    model_module = load_model_module()
+    dp = _load_manifest_dp()
+    clipping_norm    = dp["parameters"]["clipping_norm"]
+    noise_multiplier = dp["parameters"]["noise_multiplier"]
+    noise_std        = noise_multiplier * clipping_norm
+
+    _ref_sd, trained_sd, x_test, y_test = _build_and_train_reference()
+
+    baseline_acc = _evaluate_accuracy(model_module, trained_sd, x_test, y_test)
+    assert baseline_acc > 0.85, (
+        f"Reference training did not converge: baseline accuracy {baseline_acc:.3f}."
+    )
+
+    clipped_sd = client.clip_state_dict(trained_sd, clipping_norm, dp["parameters"]["clip_scope"])
+    clip_acc = _evaluate_accuracy(model_module, clipped_sd, x_test, y_test)
+
+    torch.manual_seed(42)
+    dp_sd = client.apply_dp_mechanism(trained_sd, dp)
+
+    for key, tensor in dp_sd.items():
+        if torch.is_tensor(tensor) and torch.is_floating_point(tensor):
+            assert torch.isfinite(tensor).all(), f"Non-finite values in '{key}' after DP"
+
+    dp_acc = _evaluate_accuracy(model_module, dp_sd, x_test, y_test)
+
+    # With σ=5.0 (SNR ≪ 1) accuracy must drop well below baseline.
+    assert dp_acc < baseline_acc - 0.3, (
+        f"Expected σ={noise_std:.1f} to degrade accuracy by >30 pp, but "
+        f"post-DP accuracy ({dp_acc:.3f}) is too close to baseline ({baseline_acc:.3f}). "
+        "Review the manifest's noise_multiplier setting."
+    )
+
+    print(
+        f"\n[DP accuracy report] noise_std={noise_std:.2f} "
+        f"(noise_multiplier={noise_multiplier} × clipping_norm={clipping_norm}); "
+        f"baseline={baseline_acc:.3f}, clip_only={clip_acc:.3f}, post_dp={dp_acc:.3f}"
+    )
+
+
+def test_update_gaussian_delta_norm_fits_clipping_norm_reference():
+    """The one-round update delta for the reference model is measured using
+    dataset/test/test_dataset.pt (seed=42, n_samples=2000, 20 epochs, lr=0.01).
+
+    post_training_* clips absolute weights (combined norm ≈ 9.44, see
+    test_real_weights_combined_norm_fits_manifest_clipping_norm) and needs
+    clipping_norm ≥ 10.0.  update_gaussian clips the per-round delta; measured
+    here as ≈ 3.62 for the reference training settings, so clipping_norm=4.0
+    leaves the delta unclipped for that training configuration.
+
+    The delta does not have to be below 1.0 — update_gaussian clips whatever
+    delta the training produces.  The right clipping_norm depends on the
+    training settings; this test documents the measured value for the reference
+    configuration.
+    """
+    client = load_client_module()
+    ref_sd, trained_sd, _x_test, _y_test = _build_and_train_reference()
+
+    delta_norm = math.sqrt(
+        sum(
+            (trained_sd[k] - ref_sd[k]).norm().item() ** 2
+            for k in trained_sd
+            if torch.is_tensor(trained_sd[k]) and torch.is_floating_point(trained_sd[k])
+        )
+    )
+
+    # Measured delta for the reference training is ≈ 3.62; verify the
+    # calculation is stable to within 5 % across environments.
+    assert delta_norm == pytest.approx(3.62, rel=0.05), (
+        f"One-round delta norm ({delta_norm:.4f}) deviates from the expected "
+        "≈ 3.62; re-run _build_and_train_reference and update this test."
+    )
+
+    # Verify that clipping at 4.0 leaves the delta intact (scale factor ≈ 1.0).
+    clipped_delta_norm = _combined_norm(
+        client.clip_state_dict(
+            {k: trained_sd[k] - ref_sd[k] for k in trained_sd},
+            4.0,
+            "global",
+        )
+    )
+    assert clipped_delta_norm == pytest.approx(delta_norm, rel=1e-4)
