@@ -108,6 +108,12 @@ def test_add_default_test_data_for_gi(run):
     assert result.returncode == 0
 
 
+def _assert_no_failures(result):
+    """A command that skips its work (✗ lines, failed txs) can still exit 0."""
+    assert "✗" not in result.stdout, result.stdout
+    assert "failed" not in result.stdout.lower(), result.stdout
+
+
 def test_fund_gi_reward_pool(run):
     """Step 1: the model owner buys DIN and deposits it into GI 1's reward pool.
 
@@ -370,6 +376,7 @@ def test_auditor_evaluate(run, acc):
         timeout=300,
     )
     assert result.returncode == 0
+    _assert_no_failures(result)
 
 
 def test_show_lms_evaluation_models_after(run):
@@ -390,7 +397,9 @@ def test_auditor_reveal(run, acc):
     """Each auditor reveals the scores it committed (from its own per-wallet commit cache)."""
     result = run(["--demokey", str(acc), "auditor", "lms-evaluation", "reveal", MODEL_ID])
     assert result.returncode == 0
-    assert "Error revealing" not in result.stdout, result.stdout
+    _assert_no_failures(result)
+    # Every LM in this auditor's batch must have a commit to reveal.
+    assert "No local commit found for LM" not in result.stdout, result.stdout
 
 
 def test_lms_evaluation_close(run):
@@ -463,6 +472,7 @@ def test_aggregator_aggregate_t1(run, acc):
         timeout=300,
     )
     assert result.returncode == 0
+    _assert_no_failures(result)
 
 
 def test_show_t1_batches_after_agg(run):
@@ -482,6 +492,7 @@ def test_aggregator_reveal_t1(run, acc):
     """Each aggregator reveals its T1 commits (a no-op for one outside every T1 batch)."""
     result = run(["--demokey", str(acc), "aggregator", "reveal-t1", MODEL_ID])
     assert result.returncode == 0
+    _assert_no_failures(result)
 
 
 def test_t1_aggregation_close(run):
@@ -527,6 +538,7 @@ def test_aggregator_aggregate_t2(run, acc):
         timeout=300,
     )
     assert result.returncode == 0
+    _assert_no_failures(result)
 
 
 def test_show_t2_batches_after_agg(run):
@@ -546,6 +558,7 @@ def test_aggregator_reveal_t2(run, acc):
     """Each aggregator reveals its T2 commit (a no-op for one outside the T2 batch)."""
     result = run(["--demokey", str(acc), "aggregator", "reveal-t2", MODEL_ID])
     assert result.returncode == 0
+    _assert_no_failures(result)
 
 
 def test_t2_aggregation_close(run):
