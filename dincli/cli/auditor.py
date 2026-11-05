@@ -583,7 +583,7 @@ def evaluate_lms(
                     console.print(f"[bold red]✗ Batch {batch_id}: owner signature on rawCID invalid — skipping.[/bold red]")
                     continue
 
-                raw_cid = get_cid_from_bytes32("0x" + raw_cid_bytes.hex())
+                raw_cid = get_cid_from_bytes32(raw_cid_bytes.hex())
 
                 pt_path = model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt"
                 if not pt_path.exists():
