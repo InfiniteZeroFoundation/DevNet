@@ -1,61 +1,90 @@
 """
-Phase 4 — Complete Global Iteration (GI).
+Phase 4 — one complete Global Iteration (GI) on the foundry task contracts.
 
-Drives a full GI lifecycle for model 0:
-  GI start → aggregator registration → auditor registration →
-  LMS open → client training + submission → LMS close →
-  auditor batches → LMS evaluation → aggregation T1+T2 →
-  slash → GI end
+Walks GI 1 of model 0 end to end (task_061026_21 Part D, Decision 3) and
+asserts the GI state by name after every phase:
 
-Expected final state: GIended (index 23).
+  1. fund GI 1 (rewards deposit)          → gi start              GIstarted
+  2. aggregator / auditor registration (+ auditor encryption keys;
+     an aggregator registering as an auditor is refused)
+  3. LMS → auditor lock-seed               AuditSeedLocked
+         → auditor-batches create          AuditorsBatchesCreated
+         → create-testdataset --submit     AuditTestDataAssigned
+  4. lms-evaluation start → evaluate --submit → start-reveal → reveal → close
+  5. aggregator lock-seed                  AggSeedLocked
+         → create-t1nt2-batches            T1nT2Bcreated
+  6. T1 start → aggregate-t1 --submit → start-reveal → reveal-t1 → close;
+     the same for T2; then T2 set-score
+  7. slash auditors → slash aggregators → gi end                GIended
+  8. rewards claim + withdraw for one client, one auditor and one
+     aggregator (DIN balance rises) → gi release-slots
 
-Account map:
+Account map (anvil, 70 accounts):
   0    = DIN-Representative
   1    = model owner
-  2–10 = clients (9 accounts; account 3 is skipped — matches task description)
+  2–10 = clients (9 accounts)
   11–22 = aggregators (12 accounts)
   50–58 = auditors (9 accounts)
 
 Confirmation-prompt map (input_text reference):
-  model-owner gi start        : 1 × y  (test dataset for GM evaluation)
-  client train-lms            : 3 × y  (dataset placed? confirm containerised training × 2)
-  model-owner slash auditors  : 1 × y  (only if tier2_score == 0; pass extra y to be safe)
-  model-owner slash aggregators: 1 × y (same guard)
-
-SDK candidates:
-  start_gi(network, account, model_id)
-  register_aggregator(network, account, model_id)
-  register_auditor(network, account, model_id)
-  open_lms / close_lms(network, account, model_id)
-  train_and_submit_lm(network, account, model_id)
-  create_auditor_batches(network, account, model_id)
-  start_lms_evaluation / close_lms_evaluation(network, account, model_id)
-  evaluate_lms(network, account, model_id)
-  start_t1_aggregation / close_t1_aggregation(network, account, model_id)
-  aggregate_t1(network, account, model_id)
-  start_t2_aggregation / close_t2_aggregation(network, account, model_id)
-  aggregate_t2(network, account, model_id)
-  slash_auditors / slash_aggregators(network, account, model_id)
-  end_gi(network, account, model_id)
+  model-owner gi start         : 1 × y  (test dataset for GM evaluation)
+  client train-lms             : 3 × y  (dataset placed? confirm containerised training × 2)
+  model-owner slash auditors   : 1 × y  (only if tier2_score == 0; pass extra y to be safe)
+  model-owner slash aggregators: 1 × y  (same guard)
 """
 
+import json
+import re
+
 import pytest
-from tests.dincli.constants import TORCHENV_PYTHON, TORCHENV_SITE_PACKAGES
+from eth_account import Account
+from web3 import Web3
+
+from tests.dincli.constants import DIN_INFO_PATH, HARDHAT_RPC, TORCHENV_PYTHON, TORCHENV_SITE_PACKAGES
+from tests.dincli.demo import DEMO_MNEMONIC
 
 MODEL_ID = "0"
+GI = "1"
 
 AGGREGATOR_ACCOUNTS = list(range(11, 23))   # 11..22 inclusive
 AUDITOR_ACCOUNTS    = list(range(50, 59))   # 50..58 inclusive
-CLIENT_ACCOUNTS     = list(range(2, 11))  # 2, 4..10 (account 3 is skipped per task)
+CLIENT_ACCOUNTS     = list(range(2, 11))    # 2..10 inclusive
+
+REWARD_DEPOSIT_DIN = "50"
+MODEL_OWNER_DIN_BUY_ETH = "0.001"
+
+_BALANCE_OF_ABI = [{
+    "inputs": [{"name": "account", "type": "address"}],
+    "name": "balanceOf",
+    "outputs": [{"name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function",
+}]
 
 
 def _gi_state(run) -> str:
-    result = run(["task", "gi", "show-state", MODEL_ID], check=False)
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line and not line.startswith("["):
-            return line
-    return result.stdout.strip()
+    """The GI state name printed by `task gi show-state` ("Global iteration state: <name>")."""
+    result = run(["task", "gi", "show-state", MODEL_ID])
+    match = re.search(r"Global iteration state:\s*(\w+)", result.stdout)
+    assert match, f"No GI state in show-state output:\n{result.stdout}"
+    return match.group(1)
+
+
+def _assert_state(run, expected: str) -> None:
+    actual = _gi_state(run)
+    assert actual == expected, f"Expected GI state {expected}, got {actual}"
+
+
+def _address(acc: int) -> str:
+    Account.enable_unaudited_hdwallet_features()
+    return Account.from_mnemonic(DEMO_MNEMONIC, account_path=f"m/44'/60'/0'/0/{acc}").address
+
+
+def _din_balance(acc: int) -> int:
+    token = json.loads(DIN_INFO_PATH.read_text(encoding="utf-8"))["local"]["token"]
+    w3 = Web3(Web3.HTTPProvider(HARDHAT_RPC))
+    contract = w3.eth.contract(address=Web3.to_checksum_address(token), abi=_BALANCE_OF_ABI)
+    return contract.functions.balanceOf(_address(acc)).call()
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +108,19 @@ def test_add_default_test_data_for_gi(run):
     assert result.returncode == 0
 
 
+def test_fund_gi_reward_pool(run):
+    """Step 1: the model owner buys DIN and deposits it into GI 1's reward pool.
+
+    `gi start` refuses an unfunded GI. The deposit needs `setDinToken` on
+    DINTaskAuditor, which `model-owner deploy task-auditor` sends.
+    """
+    run(["system", "connect-demo-wallet", "modelowner"])
+    run(["dintoken", "buy", MODEL_OWNER_DIN_BUY_ETH])
+    result = run(["model-owner", "rewards", "deposit", MODEL_ID, "--amount", REWARD_DEPOSIT_DIN])
+    assert result.returncode == 0
+    assert f"GI {GI} reward pool" in result.stdout
+
+
 def test_gi_start(run):
     """Model owner starts GI for model 0.
 
@@ -93,6 +135,7 @@ def test_gi_start(run):
         input_text="y\n",
     )
     assert result.returncode == 0
+    _assert_state(run, "GIstarted")
 
 
 def test_gi_aggregators_open(run):
@@ -162,6 +205,22 @@ def test_auditor_register(run, acc):
     assert result.returncode == 0
 
 
+@pytest.mark.parametrize("acc", AUDITOR_ACCOUNTS)
+def test_auditor_register_encryption_key(run, acc):
+    """Each auditor registers an X25519 key. create-testdataset --submit refuses keyless auditors."""
+    result = run(["--demokey", str(acc), "auditor", "register-encryption-key"])
+    assert result.returncode == 0
+
+
+def test_aggregator_cannot_register_as_auditor(run):
+    """task_061026_20 Part B (#180): an aggregator of this GI can't also be an auditor."""
+    result = run(
+        ["--demokey", str(AGGREGATOR_ACCOUNTS[0]), "auditor", "register", MODEL_ID],
+        check=False,
+    )
+    assert result.returncode != 0, f"Dual-role registration was not refused:\n{result.stdout}"
+
+
 def test_show_registered_auditors(run):
     run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "gi", "show-registered-auditors", MODEL_ID])
@@ -171,6 +230,7 @@ def test_show_registered_auditors(run):
 def test_gi_auditors_close(run):
     result = run(["model-owner", "gi", "reg", "auditors-close", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "DINauditorsRegistrationClosed")
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +245,7 @@ def test_lms_open(run):
     """
     result = run(["model-owner", "lms", "open", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "LMSstarted")
 
 
 def test_distribute_mnist(run):
@@ -233,11 +294,20 @@ def test_lms_close(run):
     run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "lms", "close", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "LMSclosed")
 
 
 # ---------------------------------------------------------------------------
 # Auditor batches + LMS evaluation
 # ---------------------------------------------------------------------------
+
+
+def test_auditor_lock_seed(run):
+    """An auditor (permissionless) locks the auditor batch-assignment seed once its block is mined."""
+    result = run(["--demokey", str(AUDITOR_ACCOUNTS[0]), "auditor", "lock-seed", MODEL_ID], timeout=180)
+    assert result.returncode == 0
+    run(["system", "connect-demo-wallet", "modelowner"])
+    _assert_state(run, "AuditSeedLocked")
 
 
 def test_create_auditor_batches(run):
@@ -247,6 +317,7 @@ def test_create_auditor_batches(run):
     """
     result = run(["model-owner", "auditor-batches", "create", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "AuditorsBatchesCreated")
 
 
 def test_show_auditor_batches(run):
@@ -260,6 +331,7 @@ def test_create_testdataset_and_submit(run):
         "model-owner", "auditor-batches", "create-testdataset", MODEL_ID, "--submit",
     ], python=TORCHENV_PYTHON, timeout=300)
     assert result.returncode == 0
+    _assert_state(run, "AuditTestDataAssigned")
 
 
 def test_lms_evaluation_start(run):
@@ -269,6 +341,7 @@ def test_lms_evaluation_start(run):
     """
     result = run(["model-owner", "lms-evaluation", "start", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "LMSevaluationStarted")
 
 
 def test_show_lms_evaluation(run):
@@ -305,18 +378,43 @@ def test_show_lms_evaluation_models_after(run):
     assert result.returncode == 0
 
 
+def test_lms_evaluation_start_reveal(run):
+    """Close the commit window and open the reveal window."""
+    result = run(["model-owner", "lms-evaluation", "start-reveal", MODEL_ID])
+    assert result.returncode == 0
+    _assert_state(run, "LMSevaluationRevealStarted")
+
+
+@pytest.mark.parametrize("acc", AUDITOR_ACCOUNTS)
+def test_auditor_reveal(run, acc):
+    """Each auditor reveals the scores it committed (from its own per-wallet commit cache)."""
+    result = run(["--demokey", str(acc), "auditor", "lms-evaluation", "reveal", MODEL_ID])
+    assert result.returncode == 0
+    assert "Error revealing" not in result.stdout, result.stdout
+
+
 def test_lms_evaluation_close(run):
     """Close LMS evaluation window.
 
     SDK candidate: close_lms_evaluation(network, account, model_id)
     """
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "lms-evaluation", "close", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "LMSevaluationClosed")
 
 
 # ---------------------------------------------------------------------------
 # T1 aggregation
 # ---------------------------------------------------------------------------
+
+
+def test_aggregator_lock_seed(run):
+    """An aggregator (permissionless) locks the T1/T2 batch-assignment seed once its block is mined."""
+    result = run(["--demokey", str(AGGREGATOR_ACCOUNTS[0]), "aggregator", "lock-seed", MODEL_ID], timeout=180)
+    assert result.returncode == 0
+    run(["system", "connect-demo-wallet", "modelowner"])
+    _assert_state(run, "AggSeedLocked")
 
 
 def test_create_t1nt2_batches(run):
@@ -326,6 +424,7 @@ def test_create_t1nt2_batches(run):
     """
     result = run(["model-owner", "aggregation", "create-t1nt2-batches", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "T1nT2Bcreated")
 
 
 def test_show_t1_batches_before_agg(run):
@@ -345,6 +444,7 @@ def test_t1_aggregation_start(run):
     """
     result = run(["model-owner", "aggregation", "T1", "start", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "T1AggregationStarted")
 
 
 @pytest.mark.parametrize("acc", AGGREGATOR_ACCOUNTS)
@@ -371,13 +471,28 @@ def test_show_t1_batches_after_agg(run):
     assert result.returncode == 0
 
 
+def test_t1_aggregation_start_reveal(run):
+    result = run(["model-owner", "aggregation", "T1", "start-reveal", MODEL_ID])
+    assert result.returncode == 0
+    _assert_state(run, "T1AggregationRevealStarted")
+
+
+@pytest.mark.parametrize("acc", AGGREGATOR_ACCOUNTS)
+def test_aggregator_reveal_t1(run, acc):
+    """Each aggregator reveals its T1 commits (a no-op for one outside every T1 batch)."""
+    result = run(["--demokey", str(acc), "aggregator", "reveal-t1", MODEL_ID])
+    assert result.returncode == 0
+
+
 def test_t1_aggregation_close(run):
     """Close T1 aggregation.
 
     SDK candidate: close_t1_aggregation(network, account, model_id)
     """
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "aggregation", "T1", "close", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "T1AggregationDone")
 
 
 # ---------------------------------------------------------------------------
@@ -388,11 +503,7 @@ def test_t1_aggregation_close(run):
 def test_t2_aggregation_start(run):
     result = run(["model-owner", "aggregation", "T2", "start", MODEL_ID])
     assert result.returncode == 0
-
-
-def test_show_gi_state_t2(run):
-    result = run(["task", "gi", "show-state", MODEL_ID])
-    assert result.returncode == 0
+    _assert_state(run, "T2AggregationStarted")
 
 
 def test_show_t2_batches(run):
@@ -424,13 +535,39 @@ def test_show_t2_batches_after_agg(run):
     assert result.returncode == 0
 
 
+def test_t2_aggregation_start_reveal(run):
+    result = run(["model-owner", "aggregation", "T2", "start-reveal", MODEL_ID])
+    assert result.returncode == 0
+    _assert_state(run, "T2AggregationRevealStarted")
+
+
+@pytest.mark.parametrize("acc", AGGREGATOR_ACCOUNTS)
+def test_aggregator_reveal_t2(run, acc):
+    """Each aggregator reveals its T2 commit (a no-op for one outside the T2 batch)."""
+    result = run(["--demokey", str(acc), "aggregator", "reveal-t2", MODEL_ID])
+    assert result.returncode == 0
+
+
 def test_t2_aggregation_close(run):
     """Close T2 aggregation.
 
     SDK candidate: close_t2_aggregation(network, account, model_id)
     """
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "aggregation", "T2", "close", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "T2AggregationDone")
+
+
+def test_t2_set_score(run):
+    """Score the final GM on the owner's test data and record it on-chain."""
+    result = run(
+        ["model-owner", "aggregation", "T2", "set-score", MODEL_ID],
+        python=TORCHENV_PYTHON,
+        timeout=300,
+    )
+    assert result.returncode == 0
+    assert "Tier 2 score set" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +588,7 @@ def test_slash_auditors(run):
         input_text="y\n",
     )
     assert result.returncode == 0
+    _assert_state(run, "AuditorsSlashed")
 
 
 def test_slash_aggregators(run):
@@ -463,6 +601,7 @@ def test_slash_aggregators(run):
         input_text="y\n",
     )
     assert result.returncode == 0
+    _assert_state(run, "AggregatorsSlashed")
 
 
 def test_gi_end(run):
@@ -475,10 +614,47 @@ def test_gi_end(run):
 
 
 def test_gi_final_state_is_ended(run):
-    """Assert final GI state is GIended (index 23) — the key regression gate."""
+    """The GI ends in GIended (ordinal 28) — the key regression gate."""
     run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["task", "gi", "show-state", MODEL_ID])
+    assert "Global iteration state: GIended" in result.stdout, result.stdout
+    assert "Global iteration numerical state: 28" in result.stdout, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Rewards + release slots
+# ---------------------------------------------------------------------------
+
+
+def _claim_and_withdraw(run, acc) -> bool:
+    """Claim and withdraw GI 1's reward for `acc`; True if its DIN balance rose."""
+    before = _din_balance(acc)
+    claim = run(["--demokey", str(acc), "rewards", "claim", MODEL_ID, "--gi", GI], check=False)
+    if claim.returncode != 0:
+        return False
+    withdraw = run(["--demokey", str(acc), "rewards", "withdraw", MODEL_ID], check=False)
+    return withdraw.returncode == 0 and _din_balance(acc) > before
+
+
+@pytest.mark.parametrize("role,accounts", [
+    ("client", CLIENT_ACCOUNTS),
+    ("auditor", AUDITOR_ACCOUNTS),
+    ("aggregator", AGGREGATOR_ACCOUNTS),
+])
+def test_reward_claim_and_withdraw(run, role, accounts):
+    """One participant of each role claims and withdraws GI 1's reward, and its DIN balance rises.
+
+    Tries the role's accounts in order: a participant whose work was rejected
+    or slashed, or that sat outside every batch, has no share.
+    """
+    for acc in accounts:
+        if _claim_and_withdraw(run, acc):
+            return
+    pytest.fail(f"No {role} in {accounts} could claim and withdraw a GI {GI} reward")
+
+
+def test_gi_release_slots(run):
+    """Release the ended GI's validator registration slots (once per GI)."""
+    run(["system", "connect-demo-wallet", "modelowner"])
+    result = run(["model-owner", "gi", "release-slots", MODEL_ID, "--gi", GI])
     assert result.returncode == 0
-    assert "GIended" in result.stdout or "23" in result.stdout, (
-        f"Expected GIended state, got:\n{result.stdout}"
-    )

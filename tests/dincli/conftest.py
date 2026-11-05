@@ -508,6 +508,9 @@ def _isolated_env(din_tmp):
         "IPFS_API_URL_ADD": "http://127.0.0.1:5001/api/v0/add",
         "IPFS_API_URL_RETRIEVE": "http://127.0.0.1:5001/api/v0",
         "NO_COLOR": "1", "TERM": "dumb",
+        # Rich wraps at 80 columns without a TTY; the suite matches whole
+        # output lines (addresses, GI state), so keep them on one line.
+        "COLUMNS": "250",
     }
 
 
@@ -532,6 +535,7 @@ def din_env(din_tmp):
     env["PYTHONPATH"] = str(DEVNET_ROOT) + (":" + existing if existing else "")
     env["NO_COLOR"] = "1"
     env["TERM"]     = "dumb"
+    env["COLUMNS"]  = "250"  # see _isolated_env
     return env
 
 
