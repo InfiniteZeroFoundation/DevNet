@@ -222,7 +222,10 @@ one client's entire contribution, i.e. one neighbor has that client's update
 and the other replaces it with a zero delta — the L1 distance between the two
 possible outputs is at most `clipping_norm` (the clipped delta's own L1 norm
 bound), giving an L1 sensitivity of `clipping_norm` and an (ε, 0)-DP guarantee
-at `laplace_scale = clipping_norm / ε` under that definition. This has not
+at `laplace_scale = 1 / ε` (noise scale `b = clipping_norm / ε`) under that
+definition. Which neighbor definition DevNet should claim is still open — under
+a replace-one definition (any clipped delta vs. any other) the sensitivity is
+`2 * clipping_norm`, which halves the ε for the same noise. This has not
 had DP-specialist review, and it covers only the floating tensors that are
 actually clipped and noised — non-floating (integer) buffers in the
 `state_dict` pass through unchanged (see **Clipping Behavior** below) and are
@@ -285,10 +288,13 @@ together. Loosening the clip widens the sensitivity and widens the noise to
 match, instead of leaving the noise fixed while the privacy level silently
 changes.
 
-`laplace_scale` is scaled the same way: `laplace_scale * clipping_norm`. For
-`post_training_laplace` this reuses an L2 clip, which is a known mismatch
-(issue #279 F4) since the Laplace mechanism is calibrated against L1
-sensitivity — see `post_training_laplace` above and
+`laplace_scale` is scaled the same way: the noise scale is
+`b = laplace_scale * clipping_norm`. For `update_laplace`, where
+`clipping_norm` is the L1 sensitivity `Δ`, `ε = Δ / b = 1 / laplace_scale`, so
+the equivalent recipe is `laplace_scale = 1 / ε` (independent of
+`clipping_norm`). For `post_training_laplace` this reuses an L2 clip, which is
+a known mismatch (issue #279 F4) since the Laplace mechanism is calibrated
+against L1 sensitivity — see `post_training_laplace` above and
 [issue #279](https://github.com/InfiniteZeroFoundation/DevNet/issues/279);
 `post_training_laplace` is an experimental baseline only (F5) and makes no
 claim this resolves. `update_laplace` clips the delta against its L1 norm

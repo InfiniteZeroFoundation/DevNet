@@ -992,3 +992,48 @@ def test_update_laplace_binding_clipping_through_apply_dp_mechanism():
     # Integer buffer preserved
     assert out["counter"].item() == 7
     assert out["counter"].dtype == torch.long
+
+
+@pytest.mark.parametrize(
+    "clipping_norm, laplace_scale",
+    [
+        (10.0, 10.0),
+        (0.5, 0.5),
+        (2.0, 0.25),
+    ],
+)
+def test_update_laplace_noise_scale_is_laplace_scale_times_clipping_norm(
+    clipping_norm, laplace_scale
+):
+    """Pin the realised Laplace noise scale to `laplace_scale * clipping_norm`.
+
+    With a zero delta the clip is a no-op, so the deviation from the reference
+    is pure noise. For Laplace noise the mean absolute deviation equals the
+    scale `b`, which the code sets to `laplace_scale * clipping_norm`. This is
+    also what makes the epsilon recipe `laplace_scale = 1 / ε` independent of
+    `clipping_norm` (ε = Δ / b = clipping_norm / (laplace_scale *
+    clipping_norm)). A docs/code drift like `laplace_scale = clipping_norm / ε`
+    changes the realised ε and is caught here.
+    """
+    client = load_client_module()
+    num_coordinates = 200_000
+    reference_state_dict = {"w": torch.zeros(num_coordinates)}
+    trained_state_dict = {"w": torch.zeros(num_coordinates)}
+    dp_config = {
+        "enabled": True,
+        "mechanism": "update_laplace",
+        "parameters": {
+            "clipping_norm": clipping_norm,
+            "laplace_scale": laplace_scale,
+            "clip_scope": "global",
+        },
+    }
+
+    torch.manual_seed(0)
+    out = client.apply_dp_mechanism(
+        trained_state_dict, dp_config, reference_state_dict=reference_state_dict
+    )
+
+    noise = out["w"] - trained_state_dict["w"]
+    expected_scale = laplace_scale * clipping_norm
+    assert noise.abs().mean().item() == pytest.approx(expected_scale, rel=0.02)
