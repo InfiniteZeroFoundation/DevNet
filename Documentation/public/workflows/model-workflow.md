@@ -38,10 +38,14 @@ In current DIN Protocol, the model owner needs to deploy a taskCoordinator contr
 
 ## 1. Deploy TaskCoordinator - Model Owner
 
-Model Owner deploys a taskCoordinator contract specific to each model.
+Model Owner deploys a taskCoordinator contract specific to each model, from the Foundry build output (`cd foundry && forge build`):
 ```bash
-dincli model-owner deploy task-coordinator --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
+dincli model-owner deploy task-coordinator \
+    --artifact "/path/to/devnet/foundry/out/DINTaskCoordinator.sol/DINTaskCoordinator.json" \
+    [--model-id <model_id>]
 ```
+
+`--model-id` is the ID `DINModelRegistry` will assign when your registration is approved. It is fixed in the contract and can't be changed later. If you leave it out, dincli uses `DINModelRegistry.totalModels()`, the ID the next approval assigns, and warns you that this only holds if no other registration request is approved before yours. The deploy also points the contract at the platform `DinToken` (`setDinToken`), which dispute bonds need.
 
 dincli will store the taskCoordinator contract address in the .env file as `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address` in your local project directory which we call `root_dir`.
 
@@ -49,8 +53,12 @@ dincli will store the taskCoordinator contract address in the .env file as `SEPO
 
 Model Owner deploys a taskAuditor contract specific to each model.
 ```bash
-dincli model-owner deploy task-auditor --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
+dincli model-owner deploy task-auditor \
+    --artifact "/path/to/devnet/foundry/out/DINTaskAuditor.sol/DINTaskAuditor.json" \
+    [--model-id <model_id>]
 ```
+
+`--model-id` defaults to the coordinator's `modelId()`, and dincli refuses a value that doesn't match it. The deploy sets the auditor's `DinToken` (reward deposits and claims need it) and links the auditor to the coordinator.
 
 dincli will store the taskAuditor contract address in the .env file as `SEPOLIA_OP_DEVNET_<task_coordinator_contract_address>_DINTaskAuditor_Contract_Address` in your local project directory which we call `root_dir`.
 
@@ -159,10 +167,17 @@ Each service file must be uploaded and pinned to IPFS. The resulting CID is refe
 
 ### 6.2. Create Manifest File
 
-The manifest is a JSON file containing model metadata, contract addresses, and service entries. It must be placed at:
+The manifest is a JSON file containing model metadata, contract addresses, and service entries. It must be placed in the task directory:
 
 ```
-<root_dir>/tasks/<network>/task_<coordinator_address>/manifest.json
+<root_dir>/tasks/<network>/<coordinator_address>/manifest.json
+```
+
+To start from the reference MNIST model, create the task directory and cache the default manifest, services, ABIs and requirements into it, then edit them for your model:
+
+```bash
+dincli model-owner task create-task-dir
+dincli model-owner task cache-default-artifacts
 ```
 
 > For the full manifest schema, field descriptions, and an example manifest, see [manifest.md](../manifest.md).
@@ -175,7 +190,7 @@ Model Owner creates and submits the genesis model to the TaskCoordinator contrac
 The following dincli command is used to create the genesis model:
 
 ```bash
-dincli model-owner model create-genesis
+dincli model-owner model create-genesis-model
 ```
 
 > make sure that the manifest.json file is present at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json` before running the above command. The above dincli command will use `getGenesisModelIpfs` in `modelowner.py` service  to create the genesis model and upload it to IPFS and store the IPFS CID in the .env file as `SEPOLIA_OP_DEVNET_<TASK_COORDINATOR_CONTRACT_ADDRESS>_GENESIS_MODEL_IPFS_HASH`. Please note that dincli can automatically fetch the service from IPFS using the coressponding entry for `getGenesisModelIpfs` in the manifest.json file.
@@ -183,38 +198,76 @@ dincli model-owner model create-genesis
 The model owner can submit the genesis model to the TaskCoordinator contract using the following dincli command:
 
 ```bash
-dincli model-owner model submit-genesis
+dincli model-owner model submit-genesis-model [--ipfs-hash <cid>] [--score <score>]
 ```
 
-> make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command. The test dataset will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
+> make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command (`dincli model-owner model add-default-test-data --default-test-data` fetches the reference MNIST one). The test dataset will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
 
 > this command is safe to re-run. If the genesis model hash was already submitted on-chain (e.g. a prior run submitted the hash but failed before or during the score submission), re-running it detects that the hash is already set, verifies it still matches the CID you're scoring, and (re-)submits only the tier 2 score. If the on-chain hash doesn't match the CID you're submitting, it exits with an error instead of attaching a score to the wrong genesis model.
 
-## 8. Register Model - Model Owner
+## 8. Register Model - Model Owner & DIN-Representative
 
-Model Owner updates the manisfest file at`<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, specially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract`  fields with the IPFS CID of the genesis model, DINTaskCoordinator contract address and DINTaskAuditor contract address respectively.
-
-Model Owner then register the model with the DIN Protocolat DINModelRegistry contract using the following dincli command:
+Model Owner updates the manifest file at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, especially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract` fields with the IPFS CID of the genesis model, the DINTaskCoordinator contract address and the DINTaskAuditor contract address respectively. `validate-update-manifest` compares these fields with your `.env` and offers to fix any that differ:
 
 ```bash
-dincli task model-owner register --isOpenSource [true/false]
+dincli model-owner model validate-update-manifest
 ```
 
-Once the model is registered, the model is assigned a model ID. The manifest file may be updated with the model id field `Model ID` and uploaded to IPFS again. Other fields in manifest file can also be updated as per requirement. The following dincli command can be used to update the model CID in DINModelRegistry contract:
+Registration is a request that the DIN-Representative approves. It costs a fee in ETH, paid with the request; check it first:
 
 ```bash
-dincli task model-owner update-manifest <model_id> [--modelCID <model_cid>] [--manifestpath <manifest_path>]
+dincli system get-registry-fee --fee-type model-registry --model-type open-source   # or proprietary
 ```
 
-## 9. Start Global Iteration (GI) - Model Owner
+**Model Owner** submits the registration request (uploads the manifest to IPFS and pays the fee):
+
+```bash
+dincli task model-owner register-request [--isOpenSource]
+# check its status
+dincli task model-owner my-requests --include-processed
+dincli task model-owner show-registration-request <request_id>
+```
+
+**DIN-Representative** reviews and approves (or rejects) it:
+
+```bash
+dincli dinrep registry list-pending-requests --type model
+dincli dinrep registry explore-request <request_id> --type model
+dincli dinrep registry approve-registration-request <request_id>
+```
+
+Approval assigns the model ID, which is `totalModels()` at that moment. `approve-registration-request` checks that both task contracts' `modelId()` match it and refuses a mismatch unless `--force` is given.
+
+To change the manifest later (new service CIDs, new parameters), upload the edited manifest with a manifest-update request (it has its own fee, `--fee-type manifest-update`), which the DIN-Representative approves the same way:
+
+```bash
+# model owner
+dincli task model-owner update-manifest-request <model_id> [--manifestpath <manifest_path> | --manifestCID <manifest_cid>]
+# DIN-Representative
+dincli dinrep registry list-pending-requests --type manifest
+dincli dinrep registry approve-manifest-update <request_id>
+```
+
+## 9. Fund and Start the Global Iteration (GI) - Model Owner
 
 After the model is registered, the Model Owner can initiate the Federated Learning process. The FL process is organized into Global Iterations (GI) where aggregators, auditors, and clients interact with the protocol.
 
-The Model Owner starts a new Global Iteration for the specific model.
+Each GI pays its participants from a reward pool, and `gi start` refuses a GI whose pool is empty. Fund the next GI first, either by depositing your own DIN or from the protocol emission schedule:
 
 ```bash
-dincli model-owner gi start <model_id>
+# deposit DIN (buy some first with `dincli dintoken buy <eth_amount>`)
+dincli model-owner rewards deposit <model_id> --amount <din_amount> [--gi <gi>]
+# or fund it from the DinEmission schedule
+dincli model-owner rewards fund-emission <model_id> [--gi <gi>]
 ```
+
+`--gi` defaults to the next GI. Then start it:
+
+```bash
+dincli model-owner gi start <model_id> [--threshold <accuracy_deduction>]
+```
+
+When pass scoring is enabled, `gi start` uses the test dataset at `<CACHE_DIR>/sepolia_op_devnet/model_<model_id>/dataset/test/test_dataset.pt` to set the pass score. `--threshold` overrides the manifest's accuracy deduction (default 5).
 
 ---
 
@@ -264,7 +317,7 @@ Similar to aggregators, the Model Owner opens auditor registration. Auditors sta
 dincli model-owner gi reg auditors-open <model_id>
 ```
 
-**Auditors** buy tokens, stake, and register (repeat for each auditor):
+**Auditors** buy tokens, stake, register, and register an encryption key (repeat for each auditor):
 
 ```bash
 # buy DIN tokens
@@ -275,7 +328,11 @@ dincli auditor dintoken stake 10
 dincli auditor dintoken read-stake
 # register auditor in current GI
 dincli auditor register <model_id>
+# once per wallet: generate an X25519 key and register its public key on DinValidatorStake
+dincli auditor register-encryption-key
 ```
+
+The model owner encrypts each batch's test data to its auditors' keys, so an auditor without a registered key can't be given test data: `create-testdataset --submit` stops before sending anything and names any keyless auditor. A wallet that is an aggregator in this GI can't also register as an auditor.
 
 **Model Owner** reviews and closes auditor registration:
 
@@ -298,11 +355,13 @@ The Model Owner opens the LMS phase allowing clients to download the genesis/glo
 dincli model-owner lms open <model_id>
 ```
 
-**Clients** train and submit their local models (repeat for each client):
+**Clients** train and then submit their local models (repeat for each client):
 
 ```bash
-# train and submit local model
-dincli client train-lms <model_id> --submit
+# train a local model in the worker container (nothing is sent on-chain)
+dincli client train-lms <model_id>
+# upload the trained model to IPFS and submit its CID
+dincli client submit-lm <model_id>
 # show submitted local model
 dincli client lms show-models <model_id>
 ```
@@ -327,33 +386,32 @@ dincli model-owner lms close <model_id>
 
 The Model Owner prepares evaluation batches and test data, then auditors evaluate the submitted local models to determine their quality and assign scores.
 
-**Model Owner** prepares evaluation batches and starts evaluation:
+Scores use commit-then-reveal: `evaluate --submit` commits a hidden hash of each score, and auditors reveal them in a separate window the model owner opens. Only revealed scores count.
+
+**Model Owner** prepares evaluation batches and test data, and starts evaluation. The GI state moves `LMSclosed` → `AuditSeedLocked` → `AuditorsBatchesCreated` → `AuditTestDataAssigned` → `LMSevaluationStarted`:
 
 > [!NOTE]
-> `auditor-batches create` now waits for and locks an ungrindable,
-> future-block-anchored seed before it creates the batches (issue #156 —
-> prevents the model owner from timing this call to steer which auditors
-> land in which batch). This adds a short automatic pause (a handful of
-> blocks, ~seconds on Optimism Sepolia) before the command proceeds — no
-> extra action needed, and if another process already locked the seed
-> first, the wait is skipped entirely. Auditors lock the same seed from
-> their side (`dincli auditor lock-seed`, or automatically via
-> `lms-evaluation show-batch`), so the seed usually is already locked by
-> the time the Model Owner runs this. On the `local` network this
-> requires an anvil instance producing blocks on its own (`foundry/anvil.sh`
-> passes `--block-time`) — an idle anvil started without block production
-> never mines the anchor block, and the wait never ends.
+> Auditor batches are drawn from a seed anchored to a future block when LMS
+> closes (issue #156), so the model owner can't time the draw. Locking it is
+> permissionless: any auditor can run `dincli auditor lock-seed <model_id>`
+> once the anchor block is mined, and `lms-evaluation show-batch` does it
+> automatically. A successful lock moves the GI to `AuditSeedLocked`. If
+> nobody has locked it yet, `auditor-batches create` waits for the block
+> (a few seconds on Optimism Sepolia) and locks it first. On the `local`
+> network this needs an anvil that produces blocks on its own
+> (`foundry/anvil.sh` passes `--block-time`); on an idle anvil the anchor
+> block is never mined and the wait never ends.
 
 ```bash
-# create evaluation batches
+# create evaluation batches (locks the seed first if needed)
 dincli model-owner auditor-batches create <model_id>
 # show evaluation batches
 dincli model-owner auditor-batches show <model_id>
-# create test dataset
+# encrypt each batch's test data to its auditors' keys and assign it on-chain
 dincli model-owner auditor-batches create-testdataset <model_id> --submit
-# start evaluation
+# start evaluation (opens the commit window)
 dincli model-owner lms-evaluation start <model_id>
-# show evaluation results
+# show evaluation progress
 dincli model-owner lms-evaluation show <model_id> --auditors --models
 ```
 
@@ -368,15 +426,33 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 > exits non-zero. Retry just those batches with the repeatable `--batch <id>` option,
 > e.g. `dincli model-owner auditor-batches create-testdataset <model_id> --submit --batch 2 --batch 5`.
 > The flag itself is one-shot on-chain; re-running after it's already set is detected
-> and skipped rather than treated as an error.
+> and skipped rather than treated as an error. Setting it moves the GI to
+> `AuditTestDataAssigned`, which `lms-evaluation start` requires.
 
-**Auditors** evaluate their assigned batches (repeat for each auditor):
+> [!NOTE]
+> `create-testdataset --submit` saves each batch's key and plaintext hash to
+> `<model dir>/audits/testdata_keys/` (mode 0600). Keep them: you need them
+> to answer a test-data dispute (`dincli model-owner disputes resolve-test-data`).
+
+**Auditors** evaluate their assigned batches and commit the scores (repeat for each auditor):
 
 ```bash
 # show the auditor its assigned auditor batches
 dincli auditor lms-evaluation show-batch <model_id>
-# evaluate the assigned auditor batches, automatically evalates all lms in assigned batch
+# evaluate every LM in the assigned batches and commit the scores
 dincli auditor lms-evaluation evaluate <model_id> --submit
+```
+
+**Model Owner** closes the commit window and opens the reveal window:
+
+```bash
+dincli model-owner lms-evaluation start-reveal <model_id>
+```
+
+**Auditors** reveal their committed scores (repeat for each auditor, from the same machine the commit was made from: the salt is in the local commit cache):
+
+```bash
+dincli auditor lms-evaluation reveal <model_id> [--batch <batch_id>] [--lmi <lm_index>]
 ```
 
 **Model Owner** reviews and closes evaluation:
@@ -387,6 +463,8 @@ dincli model-owner lms-evaluation show <model_id> --models
 # close evaluation
 dincli model-owner lms-evaluation close <model_id>
 ```
+
+An auditor who believes its batch's test data is wrong can open a bonded dispute: `dincli auditor dispute-test-data <model_id> --batch <batch_id>`. See [Disputes](#17-disputes).
 
 ---
 
@@ -405,15 +483,15 @@ Eligible local models are aggregated hierarchically. Tier 1 (T1) aggregation com
 > and is still slashable for a missed submission, exactly as if they had
 > never submitted at all.
 
-**Model Owner** generates T1 & T2 batches and starts T1 aggregation:
+**Model Owner** generates T1 & T2 batches and starts T1 aggregation. The GI state moves `LMSevaluationClosed` → `AggSeedLocked` → `T1nT2Bcreated` → `T1AggregationStarted`:
 
 > [!NOTE]
-> Same as `auditor-batches create` above, `aggregation create-t1nt2-batches`
-> waits for and locks its own ungrindable, future-block-anchored seed
-> (issue #156) before creating T1/T2 batches. Automatic short pause, no
-> extra action needed — same `local`-network block-production caveat.
-> Aggregators lock it from their side too (`dincli aggregator lock-seed`,
-> or automatically via `show-t1-batches` / `show-t2-batches`).
+> Same as auditor batches above: T1/T2 batches are drawn from a seed
+> anchored when evaluation closes. Any aggregator can lock it
+> (`dincli aggregator lock-seed <model_id>`, or automatically via
+> `show-t1-batches` / `show-t2-batches`), which moves the GI to
+> `AggSeedLocked`; otherwise `create-t1nt2-batches` waits and locks it
+> first. Same `local`-network block-production caveat.
 
 ```bash
 # create t1 and t2 batches
@@ -480,14 +558,20 @@ dincli model-owner aggregation T2 start-reveal <model_id>
 dincli aggregator reveal-t2 <model_id>
 ```
 
-**Model Owner** closes T2 aggregation:
+**Model Owner** closes T2 aggregation and scores the new global model:
 
 ```bash
 # show t2 batches
 dincli model-owner aggregation show-t2-batches <model_id> --detailed
 # close t2 aggregation
 dincli model-owner aggregation T2 close <model_id>
+# score the final global model on your test dataset and record the score on-chain
+dincli model-owner aggregation T2 set-score <model_id>
 ```
+
+`set-score` doesn't change the GI state, so run it before slashing: `slash auditors` uses the score, and asks you to confirm if it still reads 0.
+
+Any active validator can dispute a finalized T1 or T2 batch's result within the dispute window by posting a bond: `dincli aggregator dispute <model_id> --tier t1|t2 --batch <batch_id>`. See [Disputes](#17-disputes).
 
 ---
 
@@ -502,6 +586,57 @@ dincli task gi show-state <model_id>
 dincli model-owner slash auditors <model_id>
 # slash aggregators
 dincli model-owner slash aggregators <model_id>
-# end global iteration
+# end global iteration (settles the GI's rewards)
 dincli model-owner gi end <model_id>
 ```
+
+The GI is now `GIended`. Fund the next GI (step 9) to start it.
+
+## 16. Claim Rewards and Release Slots - Participants & Model Owner
+
+Ending the GI settles its reward pool. Each client, auditor and aggregator credits its share and then withdraws it:
+
+```bash
+# credit your share of a settled GI
+dincli rewards claim <model_id> --gi <gi>
+# transfer your whole claimable balance to your wallet
+dincli rewards withdraw <model_id>
+```
+
+**Model Owner** releases the ended GI's validator registration slots, once per GI. Until then those registrations count against each validator's concurrent-registration cap:
+
+```bash
+dincli model-owner gi release-slots <model_id> [--gi <gi>]
+```
+
+## 17. Disputes
+
+Both kinds of dispute are bonded: the challenger posts a DIN bond, which is forfeited if the dispute fails.
+
+**Test data.** An auditor of a batch can dispute that batch's test data (for example, it received no key) until the GI's rewards settle at `gi end`:
+
+```bash
+# auditor
+dincli auditor dispute-test-data <model_id> --batch <batch_id>
+# model owner, within the dispute window: reveal the batch key and plaintext hash
+dincli model-owner disputes resolve-test-data <model_id> --gi <gi> --batch <batch_id>
+# anyone, once the window has passed without an answer
+dincli model-owner disputes close-expired <model_id> --gi <gi> --batch <batch_id>
+```
+
+If the revealed key matches the commitment, the dispute fails and the bond is forfeited. If it doesn't, or the owner never answers (`close-expired`), the dispute is upheld: the bond goes back to the auditor, part of the GI's reward pool is taken as a penalty, and the owner must assign new test data with `dincli model-owner disputes reassign-test-data <model_id> --batch <batch_id>`.
+
+**Aggregation.** Any active validator can dispute a finalized T1 or T2 batch's CID within the dispute window:
+
+```bash
+# challenger
+dincli aggregator dispute <model_id> --tier t1|t2 --batch <batch_id>
+# model owner: reject it (bond forfeited), or uphold it, which assigns a fresh subgroup of 3 aggregators
+dincli model-owner disputes resolve-aggregation <model_id> --gi <gi> --tier t1|t2 --batch <batch_id> --upheld|--rejected
+# model owner, after the recomputation: confirm (the original aggregators are slashed) or dismiss (bond forfeited)
+dincli model-owner disputes settle-recomputation <model_id> --gi <gi> --tier t1|t2 --batch <batch_id> --confirmed|--dismissed
+# anyone, past the resolution deadline: the fresh subgroup is slashed
+dincli model-owner disputes expire <model_id> --gi <gi> --tier t1|t2 --batch <batch_id>
+```
+
+A confirmed recomputation or an expired dispute credits the bond back to the challenger, who withdraws it with `dincli aggregator claim-dispute-bond <model_id>`. A batch can be disputed only once.

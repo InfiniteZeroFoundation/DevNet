@@ -94,7 +94,7 @@ To select a named wallet at runtime, add `DIN_WALLET_NAME` to the `.env` used by
 `docker-compose`, or pass `--wallet` with each command:
 
 ```bash
-docker compose exec din-node dincli --wallet validator client train-lms 0 --submit
+docker compose exec din-node dincli --wallet validator client submit-lm 0
 ```
 
 ### Host install
@@ -108,7 +108,7 @@ DIN_WALLET_NAME=validator
 Or use the top-level flag:
 
 ```bash
-dincli --wallet validator client train-lms 0 --submit
+dincli --wallet validator client submit-lm 0
 ```
 
 ---
