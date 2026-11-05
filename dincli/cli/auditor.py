@@ -59,19 +59,31 @@ def _decrypt_aes_gcm(ciphertext: bytes, K: bytes) -> bytes:
 # time must be reproduced exactly at reveal time, so it's cached to disk
 # between the two commands rather than recomputed (recomputing would also
 # require re-running the scoring worker a second time).
-def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Path:
-    return model_base_dir / "audits" / "commits" / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
+#
+# The store is per wallet (commits/<address>/...): an audit batch has
+# several auditors, who may run from one machine (one cache dir), and a
+# shared file would let the last committer overwrite the others' salts,
+# failing their reveals with TA_RevealHashMismatch. _load_commit still
+# reads the old shared path, so a commit made before this change can be
+# revealed after upgrading.
+def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int, address: Optional[str]) -> Path:
+    commits_dir = model_base_dir / "audits" / "commits"
+    if address is not None:
+        commits_dir = commits_dir / address
+    return commits_dir / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
 
 
-def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes) -> None:
-    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes, address: str) -> None:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index, address)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump({"score": score, "vote": vote, "salt": salt.hex()}, f)
 
 
-def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Optional[dict]:
-    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, address: str) -> Optional[dict]:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index, address)
+    if not path.exists():
+        path = _commit_store_path(model_base_dir, gi, batch_id, model_index, None)  # pre-per-wallet layout
     if not path.exists():
         return None
     with open(path) as f:
@@ -650,7 +662,7 @@ def evaluate_lms(
                     # a real commit without its preimage. A failed attempt leaves
                     # a stale cache that the next retry replaces (the LM isn't
                     # committed yet, so the hasCommittedLM guard lets it through).
-                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt, account.address)
                     build_and_send_tx(
                         ctx,
                         task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
@@ -708,7 +720,7 @@ def reveal_lms(
             if lmi is not None and lmi != model_index:
                 continue
 
-            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index)
+            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index, account.address)
             if commit is None:
                 console.print(f"[yellow]No local commit found for LM {model_index} from batch {batch_id} -- skipping.[/yellow]")
                 continue
