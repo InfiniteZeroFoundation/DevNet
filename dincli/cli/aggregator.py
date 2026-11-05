@@ -7,10 +7,12 @@ import typer
 from rich.table import Table
 from web3 import Web3
 from eth_abi import encode as abi_encode
-from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
-                                 read_dintoken_stake, stake_dintokens)
+from dincli.cli.dintoken import (approve_din, buy_dintokens,
+                                 read_din_per_eth_rate, read_dintoken_stake,
+                                 stake_dintokens)
 from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
                                get_manifest_key, lock_batch_seed_if_pending,
+                               parse_tier_kind,
                                require_custom_manifest_service,
                                resolve_manifest_path)
 from dincli.cli.worker import (
@@ -688,3 +690,64 @@ def reveal_t2(
         )
     except Exception as e:
         console.print(f"[bold red]✗ Error revealing T2 aggregation: {e}[/bold red]")
+
+
+@app.command("dispute", help="Dispute a finalized T1/T2 batch's CID (posts the DIN bond; any active validator)")
+def dispute(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="GI of the batch (default: current GI)"),
+    tier: str = typer.Option(..., "--tier", help="t1 or t2"),
+    batch_id: int = typer.Option(..., "--batch", help="Batch ID within its tier"),
+):
+    tier_kind = parse_tier_kind(tier)
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, _ = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
+    ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+
+    # disputes getter: (challenger, bond, openedAt, ...). One dispute per batch, ever.
+    if task_coordinator_contract.functions.disputes(ref_gi, tier_kind, batch_id).call()[0] != "0x0000000000000000000000000000000000000000":
+        console.print(f"[bold red]✗ GI {ref_gi} {tier.upper()} batch {batch_id} has already been disputed.[/bold red]")
+        raise typer.Exit(1)
+
+    din_token_address = task_coordinator_contract.functions.dinToken().call()
+    if din_token_address == "0x0000000000000000000000000000000000000000":
+        console.print("[bold red]✗ DINTaskCoordinator has no DIN token set, so it can't take a bond. The model owner must call setDinToken first.[/bold red]")
+        raise typer.Exit(1)
+
+    bond = task_coordinator_contract.functions.disputeBond().call()
+    approve_din(ctx, task_coordinator_contract.address, bond, purpose="the dispute bond")
+
+    build_and_send_tx(
+        ctx,
+        task_coordinator_contract.functions.openDispute(ref_gi, tier_kind, batch_id),
+        f"Disputing GI {ref_gi} {tier.upper()} batch {batch_id} (bond {Web3.from_wei(bond, 'ether')} DIN)",
+        "Dispute opened. The model owner resolves it.",
+        "Could not open the dispute (TC_BatchNotFinalized / TC_DisputeWindowClosed if the batch isn't in its dispute window)",
+    )
+
+
+@app.command("claim-dispute-bond", help="Withdraw dispute bonds returned to you (DINTaskCoordinator.claimDisputeBond)")
+def claim_dispute_bond(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    amount = task_coordinator_contract.functions.disputeBondClaimable(account.address).call()
+    if amount == 0:
+        console.print("[bold red]✗ No dispute bond to claim.[/bold red]")
+        raise typer.Exit(1)
+
+    build_and_send_tx(
+        ctx,
+        task_coordinator_contract.functions.claimDisputeBond(),
+        f"Claiming {Web3.from_wei(amount, 'ether')} DIN of dispute bond",
+        "Dispute bond claimed.",
+        "Could not claim the dispute bond",
+    )

@@ -104,9 +104,54 @@ python -m pytest tests/test_integration_demo.py \
 
 Isolated mode is a harness setting, not a container or a guarantee that an
 arbitrary checkout is disposable. Use it only inside an environment you own
-for testing. In CI that environment is the job's GitHub-hosted runner. The
-forthcoming Docker runner will establish that boundary and provide the shared
-GitHub/local reproduction command.
+for testing. In CI that environment is the job's GitHub-hosted runner. A future
+Docker runner must establish a container boundary and provide a shared
+GitHub/local reproduction command; isolated mode itself does not do so.
+
+### Isolated failure diagnostics
+
+In isolated mode, CLI commands, compiler builds and Kubo initialization retain
+stdout/stderr as numbered logs in `DIN_TEST_RESULTS_DIR` while they execute.
+Owned chain/Kubo output uses the same bounded capture budget. The JSONL manifest
+records outcomes, duration, return codes, truncation and log filenames; it does
+not record command arguments, stdin or environment variables. It records the
+Python version and checkout SHA when available. Actual chain/compiler tool
+versions are not probed by this change and must be recorded when provisioning
+a future reproducible runner.
+
+Each output stream is limited to 10 MiB and the run's retained logs to 100 MiB.
+Exceeding a limit fails the run, with a truncation outcome in the separately
+bounded 64 KiB manifest. A timed-out command retains partial output and its
+owned host process group is stopped. Python exceptions and SIGINT use the same
+host-process cleanup; this does not establish Docker-container cleanup or
+SIGTERM/hosted-cancellation support.
+
+Before isolated scratch is removed, the harness collects sanitized worker
+reports under `worker-reports/`, including `worker-reports/summary.json`. It
+recognizes only the current local model cache's client, auditor and aggregator
+output layout.
+Reports retain status, pseudonymous participant/job identity and bounded error/
+traceback text; success payloads, job inputs, wallet/config files and commit
+salts are excluded. Symlinks and hardlinked reports are rejected. Collection
+is limited to 200 reports, 1 MiB per input report and 20 MiB total; malformed,
+missing discovered results and collection failures are reported and fail an
+otherwise successful run. Cleanup is still attempted when collection fails.
+After log closure and scratch removal, `cleanup.json` records whether scratch
+was removed and any cleanup failure stages/types, without exception messages.
+Each isolated run needs its own results directory; existing evidence is never
+overwritten.
+
+There is no expected-job inventory yet: collecting reports does not prove that
+every participant ran successfully. Auditor/aggregator CLI exit codes alone
+also do not establish that. Full-GI success assertions and Docker ownership
+remain follow-up work. Error/traceback and CLI text are untrusted application
+output; the collection exclusions are not general secret redaction. Use only
+public demo state in an owned disposable checkout.
+
+The legacy non-isolated capture and retention behavior is unchanged. These
+diagnostics do not repair the later lifecycle phases. Focused
+coverage additionally lives in `tests/test_integration_diagnostics.py` and
+`tests/test_integration_reports.py`.
 
 ### CI integration job
 
@@ -141,11 +186,12 @@ that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
   retain their real failure status; Full GI stays outside `CI OK`.
 - **Logs:** on failure or cancellation, the job attempts a bounded upload of
   the available results directory as `integration-logs`: `pytest.log`,
-  `hardhat_compile.log`, `forge_build.log`, `chain_node.log` (Anvil),
-  `ipfs_init.log` and `ipfs_daemon.log`. The report links a confirmed artifact
-  separately from the suite result. A successful upload step without an
-  artifact URL does not confirm that files were uploaded. Successful runs do
-  not request an artifact.
+  numbered diagnostic logs for commands, compiler builds, Kubo initialization
+  and owned services, plus `0001_manifest.jsonl`, `worker-reports/` (including
+  `summary.json`) and `cleanup.json` when collection and cleanup reach those
+  stages. The report links a confirmed artifact separately from the suite
+  result. A successful upload step without an artifact URL does not confirm
+  that files were uploaded. Successful runs do not request an artifact.
 - **Limits:** reporting and uploads are best effort. Setup consumes part of
   the 90-minute job budget, so the suite's 85-minute timeout does not reserve
   time for collecting evidence. Cancellation, timeouts or runner loss can
@@ -455,7 +501,7 @@ pytest tests/dincli/test_04_gi.py::test_gi_start -v -m integration
 
 ## Output / logs
 
-All output is written to `~/tempdir/dincli/`:
+In non-isolated mode, output is written to `~/tempdir/dincli/`:
 
 | Path | Contents |
 |------|----------|
@@ -468,9 +514,10 @@ All output is written to `~/tempdir/dincli/`:
 | `config/` | Isolated dincli config for the test session |
 | `cache/` | Isolated dincli cache for the test session |
 
-In isolated mode (and in CI) the logs go to `DIN_TEST_RESULTS_DIR` instead,
-the chain log is `chain_node.log` for either toolchain, and `ipfs_init.log`
-records the fresh Kubo repository setup. See
+In isolated mode (and in CI), `DIN_TEST_RESULTS_DIR` retains numbered command,
+compiler, Kubo initialization and owned-service logs, the JSONL manifest,
+worker summaries and cleanup evidence described under
+[Isolated failure diagnostics](#isolated-failure-diagnostics) and
 [CI integration job](#ci-integration-job).
 
 ---

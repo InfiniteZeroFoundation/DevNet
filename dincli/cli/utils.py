@@ -975,6 +975,17 @@ def resolve_task_coordinator_address(
     return None
 
 
+# DINTaskCoordinator.TierKind ordinals.
+TIER_KINDS = {"t1": 0, "t2": 1}
+
+
+def parse_tier_kind(tier: str) -> int:
+    try:
+        return TIER_KINDS[tier.strip().lower()]
+    except KeyError:
+        raise typer.BadParameter("--tier must be t1 or t2")
+
+
 def build_and_send_tx(
     ctx,
     contract_function,

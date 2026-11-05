@@ -206,6 +206,15 @@ class DinContext:
         artifact_path = files("dincli").joinpath("abis", "DINModelRegistry.json")
         return get_contract_instance(str(artifact_path), self.network, dinregistry_address)
 
+    def get_deployed_din_emission_contract(self, verbose: bool = True):
+        dinemission_address = load_din_info()[self.network].get("emission")
+        if not dinemission_address:
+            raise ValueError(f"No DinEmission address in din_info for network '{self.network}'")
+        if verbose:
+            self.console.print("[bold green]✓ DIN Emission contract address:[/bold green] ", dinemission_address)
+        artifact_path = files("dincli").joinpath("abis", "DinEmission.json")
+        return get_contract_instance(str(artifact_path), self.network, dinemission_address)
+
     def _get_task_manifest_context(
         self,
         model_id: Optional[int],
