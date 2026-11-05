@@ -143,12 +143,12 @@ def register(
             
         if stake < MIN_STAKE:
             console.print(f"[bold red]✗ Aggregator does not have enough stake.[/bold red]")
-            return
+            raise typer.Exit(1)
         else:
             console.print(f"[bold green]✓ Aggregator has enough stake.[/bold green]")
 
             try:
-                build_and_send_tx(
+                receipt = build_and_send_tx(
                     ctx,
                     taskCoordinator_contract.functions.registerDINaggregator(curr_GI),
                     "Registering aggregator",
@@ -158,9 +158,12 @@ def register(
                 )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register aggregator. {e}[/bold red]")
-    
-  
-   
+                raise typer.Exit(1)
+            # A refused registration (e.g. TA_DualRoleNotAllowed) must not exit 0.
+            if receipt is None:
+                raise typer.Exit(1)
+
+
 @app.command("lock-seed", help="Lock the T1/T2 batch-assignment seed for the current GI (permissionless)")
 def lock_seed(
     ctx: typer.Context,

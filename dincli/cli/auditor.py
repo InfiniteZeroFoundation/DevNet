@@ -168,12 +168,12 @@ def register(
             
         if stake < MIN_STAKE:
             console.print(f"[bold red]✗ Auditor does not have enough stake.[/bold red]")
-            return
+            raise typer.Exit(1)
         else:
             console.print(f"[bold green]✓ Auditor has enough stake.[/bold green]")
 
             try:
-                build_and_send_tx(
+                receipt = build_and_send_tx(
                     ctx,
                     taskAuditor_contract.functions.registerDINAuditor(curr_GI),
                     "Registering auditor",
@@ -183,7 +183,10 @@ def register(
                 )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
-                raise typer.Exit()
+                raise typer.Exit(1)
+            # A refused registration (e.g. TA_DualRoleNotAllowed) must not exit 0.
+            if receipt is None:
+                raise typer.Exit(1)
 
 @app.command("register-encryption-key", help="Generate this wallet's X25519 key and register its public key on DinValidatorStake")
 def register_encryption_key(ctx: typer.Context):
