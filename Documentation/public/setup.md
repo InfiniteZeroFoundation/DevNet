@@ -31,16 +31,18 @@ source venv/bin/activate
 
 ```bash
 # Download the wheel file
-wget https://github.com/InfiniteZeroFoundation/DevNet/raw/refs/heads/main/dist/dincli-0.1.0-py3-none-any.whl
+wget https://github.com/InfiniteZeroFoundation/DevNet/raw/refs/heads/main/dist/dincli-0.2.0-py3-none-any.whl
 # Install it
-pip install dincli-0.1.0-py3-none-any.whl
+pip install dincli-0.2.0-py3-none-any.whl
 ```
 
 ### Option B — Install Directly from GitHub
 
 ```bash
-pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@main#subdirectory=dist
+pip install "git+https://github.com/InfiniteZeroFoundation/DevNet.git@main"
 ```
+
+This builds `dincli` from the repository root (`pyproject.toml`) on `main`, the live-DevNet branch.
 
 > for any missing dependency please install it using pip. Please see a complete dependency list in [requirements.txt](../../cache_model_0/requirements.txt)
 

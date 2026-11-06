@@ -10,16 +10,16 @@ The manifest is a JSON file containing the metadata for your model and task. It 
 The manifest file must be placed at:
 
 ```
-<root_dir>/tasks/<network>/task_<coordinator_address>/manifest.json
+<root_dir>/tasks/<network>/<coordinator_address>/manifest.json
 ```
 
 For example:
 ```
-<root_dir>/tasks/sepolia_op_devnet/task_0x1e31...4b133/manifest.json
+<root_dir>/tasks/sepolia_op_devnet/0x1e31...4b133/manifest.json
 ```
 
 > [!NOTE]
-> If the manifest file is absent when the genesis setup (`dincli task model-owner create-genesis`) runs, it is automatically created with default values from the default manifest CID (`bafybeibbhrefnamky7vmgcrhfx4ptxb3bdemh5dtnvwfkpualoganvnuve`).
+> `dincli model-owner model create-genesis-model` needs the manifest in the task directory. To start from the reference MNIST model, run `dincli model-owner task create-task-dir` and then `dincli model-owner task cache-default-artifacts`, which fetches the default manifest, services, ABIs and requirements (their CIDs are the `default_*` entries in `dincli/config/din_info.json`).
 
 ---
 
@@ -39,7 +39,7 @@ For example:
 
 | Field | Required | Description |
 |---|---|---|
-| `Genesis_Model_CID` | Yes | IPFS CID of the genesis model. Set after running `dincli model-owner model create-genesis` |
+| `Genesis_Model_CID` | Yes | IPFS CID of the genesis model. Set after running `dincli model-owner model create-genesis-model` |
 | `DINTaskCoordinator_Contract` | Yes | Address of the deployed TaskCoordinator contract |
 | `DINTaskAuditor_Contract` | Yes | Address of the deployed TaskAuditor contract |
 | `dp` | No | Nested Differential Privacy configuration block used by services at runtime. See [Differential Privacy Parameters](#differential-privacy-parameters) below. |
@@ -152,8 +152,12 @@ Please find the example/template manifest file at [cache_model_0/manifest.json](
 
 ## Updating the Manifest
 
-Once the model is registered and assigned a model ID, the manifest file should be updated with the `Model ID` field and re-uploaded to IPFS. The following dincli command can be used to update the model CID in the DINModelRegistry contract:
+Once the model is registered and assigned a model ID, the manifest file can be updated (for example, with the `Model ID` field or new service CIDs) and re-uploaded. Changing the manifest CID in `DINModelRegistry` is a request, with its own fee, that the DIN-Representative approves:
 
 ```bash
-dincli task model-owner update-manifest <model_id> [--modelCID <model_cid>] [--manifestpath <manifest_path>]
+# model owner: upload the manifest and submit the update request
+dincli task model-owner update-manifest-request <model_id> [--manifestpath <manifest_path> | --manifestCID <manifest_cid>]
+
+# DIN-Representative
+dincli dinrep registry approve-manifest-update <request_id>
 ```
