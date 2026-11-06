@@ -103,7 +103,7 @@ dincli aggregator reveal-t1 <model_id> [--gi <gi_index>] [--batch <batch_id>]
 | `--gi <gi_index>` | No | Global Iteration index. Defaults to the current GI if omitted |
 | `--batch <batch_id>` | No | Reveal only this batch. Defaults to every batch you have a local commit for |
 
-> ⚠️ Aggregation is commit-then-reveal: your CID only counts once revealed. **A commit that is never revealed is slashed like a missed submission.** Reveal from the same machine you committed from, since the salt lives in the local commit cache (`<model dir>/aggregations/commits/`).
+> ⚠️ Aggregation is commit-then-reveal: your CID only counts once revealed. **A commit that is never revealed is slashed like a missed submission.** Reveal from the same machine you committed from, since the salt lives in the local commit cache (`<model dir>/aggregations/commits/<your address>/`).
 
 ---
 
