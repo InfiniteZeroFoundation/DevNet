@@ -17,6 +17,7 @@ from dincli.cli.modelownerd import deploy
 COORD_ADDR  = "0x000000000000000000000000000000000000000C"
 AUDITOR_ADDR = "0x000000000000000000000000000000000000000A"
 STAKE_ADDR  = "0x0000000000000000000000000000000000000001"
+TOKEN_ADDR  = "0x0000000000000000000000000000000000000002"
 
 
 class DummyConsole:
@@ -46,7 +47,7 @@ class DummyCtxObj:
         self.console = DummyConsole()
         self._w3 = _make_w3(coord_model_id)
 
-    def get_en_w3_account_console(self):
+    def get_en_w3_account_console(self, model_id=None):
         return "local", self._w3, SimpleNamespace(address=COORD_ADDR), self.console
 
     def get_deployed_din_task_coordinator_contract(self, verbose=False, model_id=None, taskCoordinator_address=None):
@@ -62,11 +63,14 @@ def _patch_deploy(monkeypatch):
     """Stub out I/O so tests run without real artifacts, chain, or filesystem."""
     monkeypatch.setattr(
         deploy, "get_contract_instance",
-        lambda path, net: SimpleNamespace(constructor=lambda *a: "ctor"),
+        lambda path, net, address=None: SimpleNamespace(
+            constructor=lambda *a: "ctor",
+            functions=SimpleNamespace(setDinToken=lambda addr: ("setDinToken", addr)),
+        ),
     )
     monkeypatch.setattr(
         deploy, "load_din_info",
-        lambda: {"local": {"stake": STAKE_ADDR}},
+        lambda: {"local": {"stake": STAKE_ADDR, "token": TOKEN_ADDR}},
     )
     monkeypatch.setattr(
         deploy, "resolve_task_coordinator_address",
