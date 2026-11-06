@@ -168,7 +168,7 @@
          "artifact": {
             "type": "foundry-artifact",
             "path": "contracts/abis/DINTaskCoordinator.json",
-            "ipfs": "bafybeie4fki5rhunywzk5rybd6cfrqf4oce4u6xyzgq3uyxobsmlml43hi",
+            "ipfs": "bafkreigjv7cxzpakuvq5v37qxeepwgj5aqyhq7vr46l7wagp7sdh2ziovq",
             "stakeholders": [
                "modelowner",
                "auditors",
@@ -218,7 +218,7 @@
          "artifact": {
             "type": "foundry-artifact",
             "path": "contracts/abis/DINTaskAuditor.json",
-            "ipfs": "bafybeic5e3e4b5ydtoicquggczta2ywxwoir4j53mutprfji5w4bjuzpj4",
+            "ipfs": "bafkreidgp65wdj2yjwkvbc5iyxb6hckg2pmp46rt3q3tetgk62z3obwlny",
             "stakeholders": [
                "modelowner",
                "auditors",
