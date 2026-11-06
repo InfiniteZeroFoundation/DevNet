@@ -1,18 +1,18 @@
-# Model_0 — Infinite Zero Network Protocol
+# Model_0 — InfiniteZero Network Protocol
 
 > [!TIP]
 > Hit an error or get stuck anywhere in this guide? Post it in the
 > [DevNet 2.0 pre-launch discussion](https://github.com/InfiniteZeroFoundation/DevNet/discussions/102).
 
-Welcome to the onboarding guide for **Model_0** on the Infinite Zero Network.
+Welcome to the onboarding guide for **Model_0** on the InfiniteZero Network.
 
 Planning a different model or dataset? Read [What can I train on DIN?](what-can-be-trained.md) to understand the tested reference, custom-service path, and practical limits.
 
-Infinite Zero Network devnet has been launched as `sepolia-op-devnet`.
+InfiniteZero Network devnet has been launched as `sepolia_op_devnet`.
 
-Model_0 is the first active model registered on the Infinite Zero Network and serves as the pioneer deployment of Infinite Zero's  model-specific smart contracts.
+Model_0 is the first active model registered on the InfiniteZero Network and serves as the pioneer deployment of InfiniteZero's  model-specific smart contracts.
 
-The Infinite Zero Network coordinates decentralized AI training, auditing, aggregation, and validation through Ethereum smart contracts, off-chain distributed compute, and decentralized storage.
+The InfiniteZero Network coordinates decentralized AI training, auditing, aggregation, and validation through Ethereum smart contracts, off-chain distributed compute, and decentralized storage.
 
 ---
 
@@ -36,11 +36,11 @@ This process enables decentralized, verifiable, and scalable collaborative AI tr
 
 ---
 
-# 🌐 What is `sepolia-op-devnet`?
+# 🌐 What is `sepolia_op_devnet`?
 
 To simplify onboarding, we refer to our devnet as:
 
-> **`sepolia-op-devnet` = Optimism Sepolia testnet + DIN deployed contracts**
+> **`sepolia_op_devnet` = Optimism Sepolia testnet + DIN deployed contracts**
 
 So when you see:
 
@@ -58,14 +58,23 @@ It means:
 
 # Current Status
 
-* ✅ Global Iteration 1 completed
-* 🔄 Global Iteration 2 in progress
+> [!NOTE]
+> This guide documents Model_0's protocol flow as implemented on the
+> `develop` branch, which can be ahead of what is actually deployed on the
+> live `sepolia_op_devnet` network — including which Global Iteration is
+> open and whether aggregator/auditor steps use the commit-then-reveal flow
+> described below (added after the initial devnet deployment). Always
+> confirm the live state yourself before acting:
+>
+> ```bash
+> dincli task gi show-state 0
+> ```
 
 ---
 
 # 🔐 Security Model
 
-The Infinite Zero Network is secured by Ethereum smart contracts deployed on Sepolia OP Devnet.
+The InfiniteZero Network is secured by Ethereum smart contracts deployed on Sepolia OP Devnet.
 
 Ethereum acts as the source of truth for:
 
@@ -89,13 +98,13 @@ Ethereum acts as the source of truth for:
 
 ### Core guarantee
 
-The system is **fully verifiable end-to-end**:
+The system is **verifiable end-to-end**:
 
 - Ethereum enforces correctness, coordination, and finality  
 - IPFS ensures reproducible and distributed data availability  
 - Off-chain compute enables scalable ML execution  
 
-> 💡 Trust is shifted from participants to cryptographic and economic enforcement.
+> 💡 Trust is shifted from participants to cryptographic enforcement on-chain. Staking exists to add economic enforcement on top of that, but the reward/slashing economics are still under active development — see "Current Devnet Scope" further down this guide — so treat "economic enforcement" as a protocol goal, not yet a fully live guarantee.
 
 # 📦 Data Availability Layer (IPFS via Filebase)
 
@@ -131,7 +140,7 @@ Participants may operate as one or more of the following roles simultaneously:
 
 This system does not use mining or Proof-of-Work.
 
-Instead, it uses a role-based validation model coordinated through Ethereum smart contracts on `sepolia-op-devnet`.
+Instead, it uses a role-based validation model coordinated through Ethereum smart contracts on `sepolia_op_devnet`.
 
 * Clients train and submit local model updates
 * Auditors independently evaluate the submitted local models and approve (or reject) them.
@@ -145,7 +154,7 @@ Instead, it uses a role-based validation model coordinated through Ethereum smar
 
 # 💻 System Requirements
 
-Participating in Model_0 on the Infinite Zero Network is lightweight and does not require specialized hardware.
+Participating in Model_0 on the InfiniteZero Network is lightweight and does not require specialized hardware.
 
 ### Minimum Requirements
 
@@ -187,7 +196,7 @@ Economic and reward distribution mechanisms are still under active development a
 * Coordination
 * Community support
 
-https://t.me/+I4Tl7foCVwwwM2Vk
+https://t.me/+h46VS3AnO384ZGI8
 
 ### Signal
 
@@ -203,7 +212,7 @@ https://signal.group/#CjQKICVqJ0Ri3KGCZOsf8A3dhmg8GC_vc1MBmBrq0JV7lIr6EhBCOwElVH
 
 ## Faucet Access (Sepolia Optimism)
 
-To participate in the Infinite Zero Network devnet, you will need Sepolia Optimism ETH for transaction fees.
+To participate in the InfiniteZero Network devnet, you will need Sepolia Optimism ETH for transaction fees.
 
 You can request testnet tokens from the following official faucets:
 
@@ -213,7 +222,7 @@ You can request testnet tokens from the following official faucets:
 * [ETHGlobal OP Sepolia Faucet](https://ethglobal.com/faucet/op-sepolia-11155420)
 * [Alchemy Optimism Sepolia Faucet](https://www.alchemy.com/faucets/optimism-sepolia)
 
-If you are unable to obtain funds through the faucets above, you may also request Sepolia Optimism ETH through the Infinite Zero Foundation Telegram and Signal community groups.
+If you are unable to obtain funds through the faucets above, you may also request Sepolia Optimism ETH through the InfiniteZero Foundation Telegram and Signal community groups.
 
 ---
 
@@ -604,4 +613,4 @@ dincli client lms show-models 0
 
 ---
 
-> 🚀 You are now ready to participate in **Model_0** and contribute to decentralized AI on the Infinite Zero Network.
+> 🚀 You are now ready to participate in **Model_0** and contribute to decentralized AI on the InfiniteZero Network.

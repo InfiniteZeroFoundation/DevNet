@@ -1,6 +1,6 @@
 # DIN CLI — Common Reference
 
-The DIN CLI (`dincli`) is the primary command-line interface for interacting with the Decentralized Intelligence Network. It supports all participant roles: Clients, Auditors, Model Owners, Aggregators, and DAO administrators.
+The DIN CLI (`dincli`) is the primary command-line interface for interacting with the Decentralized Intelligence Network. It supports all participant roles: Clients, Auditors, Model Owners, Aggregators, and the DIN-Representative.
 
 ---
 
@@ -10,7 +10,7 @@ These flags can be prepended to any command:
 
 | Option | Description |
 |---|---|
-| `--network <network>` | Override the default network (`local`, `sepolia_devnet`, `sepolia_op_devnet`, `mainnet`) |
+| `--network <network>` | Override the default network (`local`, `sepolia_op_devnet`) |
 | `--help` | Display help for any command |
 
 **Check CLI version:**
@@ -35,14 +35,15 @@ The `system` command group manages configuration, wallet connections, and genera
 dincli system init
 ```
 
-**Set the default network:** (`local`, `sepolia_devnet`, `sepolia_op_devnet`, `mainnet`)
+**Set the default network:** (`local`, `sepolia_op_devnet`)
 
 ```bash
 dincli system configure-network --network <network>
 ```
 
 > [!NOTE]
-> Use `sepolia_op_devnet` for devnet. Testnet and Mainnet support will be rolled out in a future release.
+> `sepolia_op_devnet` is the live DevNet. `local` is for a self-hosted
+> `anvil` chain. `mainnet` is not available yet.
 
 **Set the log level** (`debug`, `info`, `warning`, `error`, `critical`):
 

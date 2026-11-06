@@ -27,20 +27,31 @@ source venv/bin/activate
 
 ## 2. Install `dincli`
 
-### Option A — Install from a Downloaded Wheel
+### Install from Source (recommended for now)
 
 ```bash
-# Download the wheel file
-wget https://github.com/InfiniteZeroFoundation/DevNet/raw/refs/heads/main/dist/dincli-0.1.0-py3-none-any.whl
-# Install it
-pip install dincli-0.1.0-py3-none-any.whl
+git clone https://github.com/InfiniteZeroFoundation/DevNet.git
+cd DevNet
+git checkout develop
+pip install -e .
 ```
 
-### Option B — Install Directly from GitHub
+Cloning alone checks out `main`, not `develop` — the explicit `git checkout
+develop` matters. `-e` (editable) installs `dincli` from whatever commit is
+checked out *at install time*; it does not automatically track upstream
+updates afterwards. If `develop` moves on, re-run `git pull` in that same
+clone to pick up the changes (no reinstall needed).
 
-```bash
-pip install git+https://github.com/InfiniteZeroFoundation/devnet.git@main#subdirectory=dist
-```
+> [!NOTE]
+> This is unreleased code from `develop`, not a packaged release — it can be
+> ahead of what's actually deployed on the live `sepolia_op_devnet` network
+> (see [issue #282](https://github.com/InfiniteZeroFoundation/DevNet/issues/282)
+> for the plan to bring main's packaged release up to date with develop and
+> fix this install path to point at a real release asset instead). Installing
+> a packaged wheel (`pip install dincli-*.whl`) or directly from GitHub's
+> `dist/` subdirectory is broken today — the previous instructions here
+> pointed at a wheel file and a `dist/` layout that no longer match what's
+> published — so use the source install above until #282 lands.
 
 > for any missing dependency please install it using pip. Please see a complete dependency list in [requirements.txt](../../cache_model_0/requirements.txt)
 
@@ -70,12 +81,15 @@ Creates the required `config` and `cache` directories and generates an empty con
 # Disable demo mode to use your own wallet and private keys
 dincli system configure-demo --mode no
 
-# Set the default network  [local | sepolia_devnet | sepolia_op_devnet | mainnet]
+# Set the default network  [local | sepolia_op_devnet]
 dincli system configure-network --network sepolia_op_devnet
+```
 
 > [!NOTE]
-> Use `sepolia_op_devnet` for devnet. Testnet and Mainnet support will be rolled out in a future release.
+> `sepolia_op_devnet` is the live DevNet. `local` is for a self-hosted
+> `anvil` chain. `sepolia_devnet` and `mainnet` are not available yet.
 
+```bash
 # Set the log level  [debug | info | warning | error | critical]
 dincli system configure-logging --level info
 ```
