@@ -64,7 +64,7 @@ def auditor_command(monkeypatch):
     obj.get_en_w3_account_console.return_value = ("local", w3, Mock(), Mock())
     ctx = SimpleNamespace(obj=obj)
     monkeypatch.setattr(deploy, "get_contract_instance", lambda *a: contract)
-    monkeypatch.setattr(deploy, "load_din_info", lambda: {"local": {"stake": "stake", "registry": "registry"}})
+    monkeypatch.setattr(deploy, "load_din_info", lambda: {"local": {"stake": "stake", "registry": "registry", "token": "token"}})
     monkeypatch.setattr(deploy, "resolve_task_coordinator_address", lambda *a: "coordinator")
     send = Mock(return_value=SimpleNamespace(contractAddress="auditor"))
     monkeypatch.setattr(deploy, "build_and_send_tx", send)
@@ -100,11 +100,13 @@ def test_auditor_command_checks_pair_and_deploys(auditor_command, with_registry)
     command.paired.functions.modelId.return_value.call.assert_called_once_with()
     assert command.w3.eth.contract.call_args.kwargs["address"] == "coordinator"
     command.paired.functions.taskProtocolVersion.return_value.call.assert_called_once_with()
-    assert command.send.call_count == 2
+    assert command.send.call_count == 3
     assert command.send.call_args_list[0].args[1] is command.contract.constructor.return_value
     setter = command.ctx.obj.get_deployed_din_task_coordinator_contract.return_value
     setter.functions.setDINTaskAuditorContract.assert_called_once_with("auditor")
-    assert command.send.call_args_list[1].args[1] is setter.functions.setDINTaskAuditorContract.return_value
+    command.contract.functions.setDinToken.assert_called_once_with("token")
+    assert command.send.call_args_list[1].args[1] is command.contract.functions.setDinToken.return_value
+    assert command.send.call_args_list[2].args[1] is setter.functions.setDINTaskAuditorContract.return_value
     command.write_env.assert_called_once_with(
         "LOCAL_coordinator_DINTaskAuditor_Contract_Address", "auditor",
     )
@@ -196,7 +198,7 @@ def test_missing_stake_sends_no_transaction(auditor_command, monkeypatch, role, 
     monkeypatch.setattr(deploy, "load_din_info", lambda: config)
     command.contract.abi = artifact("address", "uint256").abi
 
-    with pytest.raises(typer.BadParameter, match="platform stake"):
+    with pytest.raises(typer.Exit):
         if role == "coordinator":
             deploy.task_coordinator(command.ctx, artifact_path="artifact.json", model_id=7)
         else:
@@ -231,13 +233,13 @@ def test_coordinator_command_deploys_supported_shapes(auditor_command, types, mo
     deploy.task_coordinator(command.ctx, artifact_path="artifact.json", model_id=model_id)
 
     command.contract.constructor.assert_called_once_with(*expected)
-    command.send.assert_called_once()
-    assert command.send.call_args.args[1] is command.contract.constructor.return_value
+    assert command.send.call_count == (2 if "uint256" in types else 1)
+    assert command.send.call_args_list[0].args[1] is command.contract.constructor.return_value
     command.write_env.assert_called_once_with("LOCAL_DINTaskCoordinator_Contract_Address", "auditor")
     command.w3.eth.contract.assert_not_called()
 
 
-@pytest.mark.parametrize("model_id", [None, -1, 2**256])
+@pytest.mark.parametrize("model_id", [-1, 2**256])
 @pytest.mark.parametrize("role", ["coordinator", "auditor"])
 def test_invalid_id_sends_no_transaction(auditor_command, role, model_id):
     command = auditor_command
@@ -292,7 +294,7 @@ def test_missing_version_getter_only_allows_legacy_pairs(auditor_command, error_
         deploy.task_auditor(command.ctx, artifact_path="artifact.json", model_id=7,
                             task_coordinator="coordinator")
         command.contract.constructor.assert_called_once_with("stake", "coordinator", 7)
-        assert command.send.call_count == 2
+        assert command.send.call_count == 3
 
 
 @pytest.mark.parametrize("error_type", [ConnectionError, ValueError])
@@ -345,3 +347,30 @@ def test_legacy_capability_rpc_error_does_not_deploy(auditor_command):
                             task_coordinator="coordinator")
 
     assert_no_deployment(command)
+
+@pytest.mark.parametrize("types,version", [
+    (("address", "address", "uint256"), 1),
+    (("address", "address", "uint256", "address"), 0),
+])
+def test_default_model_id_does_not_bypass_generation_guard(auditor_command, types, version):
+    command = auditor_command
+    command.contract.abi = artifact(*types).abi
+    command.paired.functions.taskProtocolVersion.return_value.call.side_effect = None
+    command.paired.functions.taskProtocolVersion.return_value.call.return_value = version
+    with pytest.raises(typer.BadParameter, match="Incompatible task contract generations"):
+        deploy.task_auditor(command.ctx, "artifact.json", None, "coordinator")
+    assert_no_deployment(command)
+
+
+@pytest.mark.parametrize("role", ["coordinator", "auditor"])
+def test_oldest_artifacts_need_neither_token_nor_registry(auditor_command, monkeypatch, role):
+    command = auditor_command
+    monkeypatch.setattr(deploy, "load_din_info", lambda: {"local": {"stake": "stake"}})
+    command.contract.abi = artifact(*(("address",) if role == "coordinator" else ("address", "address"))).abi
+    command.paired.functions.modelId.return_value.call.side_effect = ContractLogicError("no getter")
+    if role == "coordinator":
+        deploy.task_coordinator(command.ctx, "artifact.json", None)
+    else:
+        deploy.task_auditor(command.ctx, "artifact.json", None, "coordinator")
+    command.contract.functions.setDinToken.assert_not_called()
+    command.ctx.obj.get_deployed_din_registry_contract.assert_not_called()

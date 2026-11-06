@@ -117,7 +117,7 @@ setDINTaskCoordinatorAsSlasher()               → AwaitingDINTaskAuditorAsSlash
   [DIN-Representative: DinCoordinator.addSlasherContract(auditor)]
 setDINTaskAuditorAsSlasher()                   → AwaitingGenesisModel
 setGenesisModelIpfsHash(cid)                   → GenesisModelCreated
-setDinToken(dinToken)                          (needed for dispute bonds)
+setDinToken(dinToken)                          (needed for dispute bonds; dincli's deploy sends it)
 ```
 
 ---
@@ -285,7 +285,7 @@ Earlier findings from the [foundry/src security review](../audits/foundry-src-se
 - **No. 7 — Stale NatSpec:** comments around the dispute scaffold still say `DinTreasury` "doesn't exist on develop yet" (forfeitures are already forwarded). Several parameters are described as "DAO-settable"; they are `onlyOwner`, i.e. set by the model owner.
 - **No. 8 — Leftovers:** `networkFeeFloor` is stored but not enforced.
 - **No. 9 — Not upgradeable:** a bug in a model's task contracts requires redeploying them and re-registering the model.
-- **No. 10 — Fixed: dincli supports the current constructor.** `dincli model-owner deploy task-coordinator` passes the anticipated `--model-id` for current Foundry artifacts. Legacy one-argument artifacts remain supported and do not acquire new behavior. (`dincli aggregator aggregate-t2` used to name its working directory, worker job and container after the last T1 batch id; fixed in issue No. 202 Part 2.)
+- **No. 10 — Fixed: dincli supports the current two-argument constructor.** `dincli model-owner deploy task-coordinator` defaults `--model-id` to `DINModelRegistry.totalModels()`, with a warning that this ID only holds if no other registration is approved first. It then sets the platform `DinToken`. Legacy one-argument artifacts remain supported and skip token setup because they have no `setDinToken` function. (`dincli aggregator aggregate-t2` used to name its working directory, worker job and container after the last T1 batch id; fixed in issue No. 202 Part 2.)
 - **No. 11 — Fixed: `registerDINaggregator` now checks the GI.** It used to have no `onlyCurrentGI`, so during GI N's window a validator could register for GI N+1. Up to 300 addresses could fill that list, which locked out honest registrants and handed the attacker every T1/T2 batch. Registering for a released past GI also leaked the caller's own slot. Fixed by adding `onlyCurrentGI` (issue #206); it cost 9 bytes inside the No. 1 budget.
 
 ---

@@ -18,7 +18,7 @@ dincli model-owner deploy task-coordinator --artifact /path/to/devnet/foundry/ou
 dincli model-owner deploy task-auditor --artifact /path/to/devnet/foundry/out/DINTaskAuditor.sol/DINTaskAuditor.json --model-id <same-anticipated-id>
 ```
 
-The `--artifact` flag points to compiled JSON containing ABI and deployment bytecode. Use matching anticipated model IDs and configure the canonical platform `registry` in this network's `din_info.json` before deploying the current Foundry auditor. Coordinate ID allocation with the DIN-Representative; registration approval assigns the authoritative ID later. Supported legacy Hardhat artifacts do not gain the future-GI guard. See the [model workflow](../workflows/model-workflow.md) for registration and deployment requirements.
+The `--artifact` flag points to compiled JSON containing ABI and deployment bytecode. The coordinator defaults to the registry’s next model ID; the auditor defaults to the coordinator’s ID. Explicit IDs must match. Configure the platform `stake`, `token`, and canonical `registry` in this network's `din_info.json` before deploying the current Foundry auditor. Coordinate ID allocation with the DIN-Representative; registration approval assigns the authoritative ID later. Supported legacy Hardhat artifacts do not gain the future-GI guard. See the [model workflow](../workflows/model-workflow.md) for registration and deployment requirements.
 
 ---
 
