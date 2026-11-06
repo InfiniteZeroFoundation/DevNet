@@ -494,26 +494,29 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
     /// @notice Delegates auditor batch creation to DINTaskAuditor and advances GI state.
     /// @dev Reverts if the auditor contract returns false (e.g. insufficient auditors).
-    ///      Requires auditSeed[_GI] to already be locked via lockAuditSeed
-    ///      (issue #156 H-2) -- the locked seed is passed across the interface
-    ///      so DINTaskAuditor's shuffles are ungrindable without duplicating
-    ///      the seed-anchoring logic in that contract.
+    ///      Requires the AuditSeedLocked state, i.e. auditSeed[_GI] already
+    ///      locked via lockAuditSeed (issue #156 H-2) -- the locked seed is
+    ///      passed across the interface so DINTaskAuditor's shuffles are
+    ///      ungrindable without duplicating the seed-anchoring logic in that
+    ///      contract.
     /// @param _GI Current GI index.
     function createAuditorsBatches(
         uint _GI
     ) public onlyOwner onlyCurrentGI(_GI) {
-        if (GIstate != GIstates.LMSclosed) revert TC_LMEvalCannotBeStarted();
-        bytes32 seed = auditSeed[_GI];
-        if (seed == bytes32(0)) revert TC_AuditSeedNotLocked();
+        if (GIstate != GIstates.AuditSeedLocked) revert TC_AuditSeedNotLocked();
 
-        bool success = dinTaskAuditorContract.createAuditorsBatches(_GI, seed);
+        bool success = dinTaskAuditorContract.createAuditorsBatches(_GI, auditSeed[_GI]);
         if (!success) revert TC_FailedToCreateAuditorsBatches();
 
         _setGIstate(GIstates.AuditorsBatchesCreated);
     }
 
-    /// @notice Propagates the test data assignment flag to DINTaskAuditor.
-    /// @dev Must be called while GI state is AuditorsBatchesCreated.
+    /// @notice Propagates the test data assignment flag to DINTaskAuditor and
+    ///         advances to AuditTestDataAssigned.
+    /// @dev Must be called while GI state is AuditorsBatchesCreated. The
+    ///      auditor side reverts TA_TestDataNotAssigned unless every batch of
+    ///      the GI has a stored test-data commitment. Leaving
+    ///      AuditorsBatchesCreated is what makes the flag one-way.
     /// @param _GI Current GI index.
     /// @param flag True once test datasets have been distributed to auditors.
     function setTestDataAssignedFlag(
@@ -524,15 +527,18 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_CannotSetTestDataAssignedFlag();
 
         dinTaskAuditorContract.setTestDataAssignedFlag(_GI, flag);
+        _setGIstate(GIstates.AuditTestDataAssigned);
     }
 
     /// @notice Opens the LMS evaluation COMMIT phase so auditors can begin
     ///         committing (hidden) scores via DINTaskAuditor.commitAuditScore.
+    /// @dev Requires AuditTestDataAssigned, so evaluation can't start before
+    ///      every batch has test data (task_061026_21 Part B).
     /// @param _GI Current GI index.
     function startLMsubmissionsEvaluation(
         uint _GI
     ) public onlyOwner onlyCurrentGI(_GI) {
-        if (GIstate != GIstates.AuditorsBatchesCreated)
+        if (GIstate != GIstates.AuditTestDataAssigned)
             revert TC_LMEvalCannotBeStarted();
         _setGIstate(GIstates.LMSevaluationStarted);
     }
@@ -577,15 +583,13 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ///      choosing when to call this. Reverts if fewer than
     ///      T1_AGGREGATORS_PER_BATCH active validators remain, or if fewer than
     ///      T1_MODELS_PER_BATCH models passed, or if the seed isn't locked yet
-    ///      (call lockAggSeed first).
+    ///      (call lockAggSeed first, which moves the GI to AggSeedLocked).
     /// @param _GI Current GI index.
     function autoCreateTier1AndTier2(
         uint _GI
     ) external onlyOwner onlyCurrentGI(_GI) {
-        if (GIstate != GIstates.LMSevaluationClosed)
-            revert TC_EvalPhaseNotClosed();
+        if (GIstate != GIstates.AggSeedLocked) revert TC_AggSeedNotLocked();
         bytes32 seed = aggSeed[_GI];
-        if (seed == bytes32(0)) revert TC_AggSeedNotLocked();
 
         // Filter the historical registration list down to currently active validators.
         address[] memory valPool = _activeAggregatorPool(_GI);
@@ -1287,8 +1291,8 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     function releaseGIRegistrationSlots(uint _GI) external onlyOwner {
         bool giEnded = (_GI < GI) ||
             (_GI == GI && GIstate == GIstates.GIended);
-        require(giEnded, "GI has not ended");
-        require(!registrationSlotsReleased[_GI], "slots already released");
+        if (!giEnded) revert TC_GINotEnded();
+        if (registrationSlotsReleased[_GI]) revert TC_SlotsAlreadyReleased();
         registrationSlotsReleased[_GI] = true;
 
         address[] storage aggs = dinAggregators[_GI];
@@ -1477,6 +1481,9 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
         aggSeed[_GI] = keccak256(abi.encodePacked(bh, _GI, "AGG"));
         emit AggSeedLocked(_GI, aggSeed[_GI]);
+        // aggSeedBlock is only anchored by closeLMsubmissionsEvaluation and
+        // the seed locks once, so the GI is in LMSevaluationClosed here.
+        _setGIstate(GIstates.AggSeedLocked);
     }
 
     /// @notice Permissionless: locks the entropy seed for the current GI's
@@ -1501,6 +1508,9 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
 
         auditSeed[_GI] = keccak256(abi.encodePacked(bh, _GI, "AUD"));
         emit AuditSeedLocked(_GI, auditSeed[_GI]);
+        // auditSeedBlock is only anchored by closeLMsubmissions and the seed
+        // locks once, so the GI is in LMSclosed here.
+        _setGIstate(GIstates.AuditSeedLocked);
     }
 
     /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury

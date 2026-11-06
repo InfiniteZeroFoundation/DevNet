@@ -2,7 +2,8 @@
 
 Posted first, before the merge-proposal table. Goal: a "Claimed / Verified"
 pair for every checkable claim in the PR. A claim is verified by linking the
-CI job that covers it (green against an up-to-date `develop`), or by running it
+CI job that covers it (green on the PR; the merge queue re-runs it on the
+latest `develop`), or by running it
 locally where `Developer/MAINTAINING.md` No. 4.2 requires that: storage layout
 and upgrade safety in `foundry/src/**`, deploy/upgrade scripts, `dincli` flows
 against a live chain or IPFS, and any behaviour no test exercises.

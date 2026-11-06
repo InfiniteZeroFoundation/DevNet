@@ -3,10 +3,12 @@ import typer
 from dincli.cli.modelownerd.aggregation import aggregation_app
 from dincli.cli.modelownerd.auditor_batches import auditor_batches_app
 from dincli.cli.modelownerd.deploy import deploy_app
+from dincli.cli.modelownerd.disputes import disputes_app
 from dincli.cli.modelownerd.gi import gi_app
 from dincli.cli.modelownerd.lms import lms_app
 from dincli.cli.modelownerd.lms_evaluation import lms_evaluation_app
 from dincli.cli.modelownerd.model import model_app
+from dincli.cli.modelownerd.rewards import rewards_app
 from dincli.cli.modelownerd.setup import (add_slasher)
 from dincli.cli.modelownerd.slash import slash_app
 from dincli.cli.modelownerd.task import task_app
@@ -23,6 +25,8 @@ app.add_typer(aggregation_app, name="aggregation")
 app.add_typer(slash_app, name="slash")
 app.command("add-slasher")(add_slasher)
 app.add_typer(task_app, name="task")
+app.add_typer(rewards_app, name="rewards")
+app.add_typer(disputes_app, name="disputes")
 
 if __name__ == "__main__":
     app()

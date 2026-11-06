@@ -65,6 +65,30 @@ contract UpgradePlatform is DeploymentsPath {
 
         address newImpl = Upgrades.getImplementationAddress(proxyAddress);
         console.log("Implementation: ", newImpl);
+
+        _writeUpgradeMetadata(newImpl, proxyKey, deploymentsPath, vm.envOr("GIT_COMMIT_HASH", string("")));
+    }
+
+    /// @dev Writes the new implementation address, its extcodehash, and (when
+    ///      non-empty) the git commit hash to the deployments JSON.
+    ///      Extracted so UpgradePlatformScriptTest can call it directly without
+    ///      going through the broadcast/upgrade path.
+    function _writeUpgradeMetadata(
+        address newImpl,
+        string memory proxyKey,
+        string memory deploymentsPath,
+        string memory gitCommit
+    ) internal {
+        bytes32 newCodehash;
+        assembly { newCodehash := extcodehash(newImpl) }
+        string memory implKey = string.concat(proxyKey, "Impl");
+        string memory codehashKey = string.concat(proxyKey, "ImplCodehash");
+        vm.writeJson(vm.toString(newImpl), deploymentsPath, string.concat(".", implKey));
+        vm.writeJson(vm.toString(newCodehash), deploymentsPath, string.concat(".", codehashKey));
+        if (bytes(gitCommit).length > 0) {
+            vm.writeJson(gitCommit, deploymentsPath, ".deployedAtCommit");
+        }
+        console.log("Deployments updated:", deploymentsPath);
     }
 
     function _proxyKey(

@@ -22,11 +22,13 @@ import {
     TC_StakeBelowModelFloor,
     TC_ConcurrentRegistrationCapReached,
     TC_WrongGI,
+    TC_SlotsAlreadyReleased,
     TA_StakeBelowModelFloor,
     TA_ConcurrentRegistrationCapReached,
     TA_DualRoleNotAllowed
 } from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract StakingEnforcementTest is Test {
     DinToken token;
@@ -394,6 +396,7 @@ contract StakingEnforcementTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -482,7 +485,7 @@ contract StakingEnforcementTest is Test {
 
         vm.startPrank(modelOwner);
         tc.releaseGIRegistrationSlots(1);
-        vm.expectRevert(bytes("slots already released"));
+        vm.expectRevert(TC_SlotsAlreadyReleased.selector);
         tc.releaseGIRegistrationSlots(1);
         vm.stopPrank();
     }
