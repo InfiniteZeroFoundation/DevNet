@@ -13,6 +13,7 @@ import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor}     from "../src/DINTaskAuditor.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 /// @notice Gas simulation for issue #78 — validator network-fee sizing.
 ///
@@ -155,6 +156,7 @@ contract GasSimulationTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(gi);
         tc.createAuditorsBatches(gi);
+        assignPlaceholderTestData(ta, address(stake), gi);
         tc.setTestDataAssignedFlag(gi, true);
         tc.startLMsubmissionsEvaluation(gi);
     }

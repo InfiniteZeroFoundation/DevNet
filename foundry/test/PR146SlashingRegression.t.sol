@@ -23,6 +23,7 @@ import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract PR146SlashingRegressionTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -190,6 +191,7 @@ contract PR146SlashingRegressionTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();

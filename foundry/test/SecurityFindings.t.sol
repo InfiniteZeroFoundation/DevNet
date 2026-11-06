@@ -36,6 +36,7 @@ import {
     TA_AuditSeedNotLocked
 } from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract SecurityFindingsTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -298,6 +299,7 @@ contract SecurityFindingsTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -435,6 +437,7 @@ contract SecurityFindingsTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -909,6 +912,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -963,6 +967,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -1008,6 +1013,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -1045,6 +1051,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
