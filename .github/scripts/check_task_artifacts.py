@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,6 +13,47 @@ CONTRACTS = ("DINTaskCoordinator", "DINTaskAuditor")
 def canonical_abi(abi: list) -> list[str]:
     # ABI entry order is not semantically significant; preserve nested ordering.
     return sorted(json.dumps(entry, sort_keys=True, separators=(",", ":")) for entry in abi)
+
+
+def bytecode_diagnostics(bundled: object, expected: str, artifact: dict) -> str:
+    """Expose reproducibility differences without relaxing exact bytecode parity."""
+    if not isinstance(bundled, str):
+        return "bundled creation bytecode is not a string"
+    actual = bytes.fromhex(expected.removeprefix("0x"))
+    try:
+        saved = bytes.fromhex(bundled.removeprefix("0x"))
+    except ValueError:
+        return "bundled creation bytecode is not valid hex"
+    if saved == actual:
+        difference = "decoded bytes identical; textual representation differs"
+    else:
+        first = next((i for i, (a, b) in enumerate(zip(saved, actual)) if a != b), min(len(saved), len(actual)))
+        difference = f"first differing byte: {first}"
+    metadata = artifact.get("metadata", {})
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            metadata = None
+    if not isinstance(metadata, dict):
+        details = "build metadata: unavailable"
+    else:
+        sources = metadata.get("sources", {})
+        source_hashes = {
+            path: source.get("keccak256")
+            for path, source in sources.items() if isinstance(source, dict)
+        } if isinstance(sources, dict) else {}
+        details = (
+            f"build compiler: {json.dumps(metadata.get('compiler', {}), sort_keys=True)}; "
+            f"build settings: {json.dumps(metadata.get('settings', {}), sort_keys=True)}; "
+            f"build source hashes: {json.dumps(source_hashes, sort_keys=True)}"
+        )
+    return (
+        f"{difference}; bundled length: {len(saved)}; build length: {len(actual)}; "
+        f"bundled sha256: {hashlib.sha256(saved).hexdigest()}; "
+        f"build sha256: {hashlib.sha256(actual).hexdigest()}; "
+        f"{details}"
+    )
 
 
 def check_artifacts(root: Path) -> list[str]:
@@ -36,6 +78,7 @@ def check_artifacts(root: Path) -> list[str]:
                     errors.append(f"{directory}/{name}.json: ABI differs from build")
                 if directory == "cache_model_0/abis" and bundled.get("bytecode") != expected_bytecode:
                     errors.append(f"{directory}/{name}.json: creation bytecode differs from build")
+                    errors.append(f"{name}: {bytecode_diagnostics(bundled.get('bytecode'), expected_bytecode, artifact)}")
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 errors.append(f"{directory}/{name}.json: invalid artifact ({exc})")
     return errors
