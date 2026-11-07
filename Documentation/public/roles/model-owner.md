@@ -26,6 +26,8 @@ dincli model-owner deploy task-auditor --artifact foundry/out/DINTaskAuditor.sol
 
 Both deploys also set the platform `DinToken` on the new contract (`setDinToken`), which reward deposits, claims and dispute bonds need. The auditor deploy then links the auditor to the coordinator.
 
+Before deploying, set the platform `stake` and `token` addresses in this network's `din_info.json`, and `registry` too for the current auditor, which takes the registry as an immutable constructor argument. The auditor deploy also refuses a coordinator from a different contract generation (`taskProtocolVersion()`; the current pair is version `1`), because pairing is one-shot. Released legacy Hardhat artifacts can still be deployed, but they don't get the guard that stops a disabled model from starting new GIs. Agree the anticipated ID with the DIN-Representative; the registry assigns the authoritative ID at approval. See the [model workflow](../workflows/model-workflow.md) for registration and deployment requirements.
+
 ---
 
 

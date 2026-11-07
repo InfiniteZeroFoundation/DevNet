@@ -32,7 +32,16 @@ dincli system register-wallet --account <account_id>
 > More on wallet configuration can be found in the [DIN CLI Documentation](../cli-reference.md).
 
 
-In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model. 
+In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model.
+
+For current Foundry artifacts, `model-owner deploy task-coordinator` defaults `--model-id` to `DINModelRegistry.totalModels()`, the ID the next approval assigns. This assumes no other registration is approved first. `model-owner deploy task-auditor` defaults to the paired coordinator’s `modelId()`; explicit IDs must match. Both commands configure the platform `DinToken` from this network’s `din_info.json` (`token`), with auditor token setup completed before pairing. Configure the canonical platform registry address in this network's `din_info.json` (`registry`) before deploying the auditor. Its fourth constructor argument is immutable registry wiring. The coordinator reports `taskProtocolVersion() == 1`, identifying the interface that requires the auditor GI-start guard. Before deploying an auditor, the CLI checks this version as well as matching model IDs: version 1 requires the registry-aware four-argument auditor. Released unversioned coordinators remain supported with matching legacy auditors: coordinators without `modelId()` use the two-argument auditor, and those with `modelId()` use the three-argument auditor; unknown versions and mixed generations are rejected before deployment or pairing. Legacy pairs do not gain the guard described below. Unsupported custom constructor signatures are rejected.
+
+The checked-in `cache_model_0` artifacts and manifest describe the current reference pair. The `cache-default-artifacts` command instead downloads the manifest and ABIs selected by this network's `din_info.json` (`default_manifest` and `default_abis`); those historical bootstrap CIDs are not refreshed by this change. Verify the downloaded constructor signatures and registry wiring before using them for a new deployment.
+
+The DIN-Representative must approve the model before **any** GI can start. Both start overloads check the registry-assigned ID by auditor address; do not assume the anticipated constructor ID establishes registration. Coordinate ID allocation with the DIN-Representative for correct stake floors.
+
+Disabling a model prevents future GIs, including those with a pre-funded or privately funded pool. An in-flight GI continues through work, slashing, settlement and reward claims. There is no GI abort or new pool refund/recovery path. The guard requires a newly deployed compatible coordinator/auditor pair with canonical registry wiring and reviewed task code; existing deployments remain unchanged. See [kill-switch scope](../../technical/contracts/DINModelRegistry.md#11-kill-switch).
+
 
 # Workflow
 
