@@ -43,7 +43,7 @@ dincli system configure-network --network <network>
 
 > [!NOTE]
 > `sepolia_op_devnet` is the live DevNet. `local` is for a self-hosted
-> `anvil` chain. `mainnet` is not available yet.
+> `anvil` chain. `sepolia_devnet` and `mainnet` are not available yet.
 
 **Set the log level** (`debug`, `info`, `warning`, `error`, `critical`):
 

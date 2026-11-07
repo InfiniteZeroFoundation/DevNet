@@ -47,11 +47,12 @@ clone to pick up the changes (no reinstall needed).
 > ahead of what's actually deployed on the live `sepolia_op_devnet` network
 > (see [issue #282](https://github.com/InfiniteZeroFoundation/DevNet/issues/282)
 > for the plan to bring main's packaged release up to date with develop and
-> fix this install path to point at a real release asset instead). Installing
-> a packaged wheel (`pip install dincli-*.whl`) or directly from GitHub's
-> `dist/` subdirectory is broken today — the previous instructions here
-> pointed at a wheel file and a `dist/` layout that no longer match what's
-> published — so use the source install above until #282 lands.
+> fix this install path to point at a real release asset instead). The
+> previous instructions here pointed at a `0.1.0` wheel filename and a
+> `dist/` subdirectory layout that don't exist anymore. `main`'s packaged
+> release (`0.2.0`) still works, but it's behind `develop` — these guides
+> describe `develop`'s protocol flow — so use the source install above
+> until #282 lands.
 
 > for any missing dependency please install it using pip. Please see a complete dependency list in [requirements.txt](../../cache_model_0/requirements.txt)
 

@@ -22,8 +22,9 @@ needs even outside the ML/DP service code.
 
 Run the unit test suite the same way CI's Python job does — `-m "not
 integration"` excludes `tests/dincli/`'s integration harness, which needs a
-live Hardhat node, IPFS daemon, and Docker, and which otherwise autouse-starts
-and restarts local chain/IPFS processes as a side effect of being collected:
+local chain (Anvil by default), an IPFS daemon, and Docker, and which
+otherwise autouse-starts and restarts local chain/IPFS processes as a side
+effect of being collected:
 
 ```bash
 pytest -m "not integration" -q                              # run all unit tests
