@@ -506,3 +506,47 @@ def test_cli_flag_other_revert_exits_1(monkeypatch, tmp_path):
     result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
 
     assert result.exit_code == 1, result.output
+
+
+# ---------------------------------------------------------------------------
+# task_061026_21 Part C: fail fast on a keyless batch auditor, and keep each
+# batch's K so the owner can answer a test-data dispute later.
+# ---------------------------------------------------------------------------
+
+class _KeylessStakeFunctions:
+    def getEncryptionKey(self, address):
+        return DummyCall(b"")
+
+
+def test_missing_auditor_encryption_key_exits_before_any_tx(monkeypatch, tmp_path):
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    ctx.obj.stake_contract.functions = _KeylessStakeFunctions()
+
+    sent = []
+    monkeypatch.setattr(atb, "build_and_send_tx", lambda ctx, fn, *a, **kw: sent.append(fn))
+
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx)
+
+    assert sent == []
+    out = "\n".join(ctx.obj.console.messages)
+    assert _AUDITOR_ADDRESS in out
+    assert "register-encryption-key" in out
+
+
+def test_submit_saves_each_batch_secret_owner_only(monkeypatch, tmp_path):
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    monkeypatch.setattr(
+        atb, "build_and_send_tx",
+        lambda *a, **kw: SimpleNamespace(transactionHash=b"\xab" * 32),
+    )
+
+    _invoke(tmp_path, ctx)
+
+    for batch_id in (0, 1):
+        path = atb._testdata_secret_path(tmp_path, 0, batch_id)
+        assert path.stat().st_mode & 0o777 == 0o600
+        K, plaintext_keccak = atb._load_testdata_secret(tmp_path, 0, batch_id)
+        assert len(K) == 32
+        assert plaintext_keccak == b"\x00" * 32
+    assert (tmp_path / "config" / "owner_x25519.key").stat().st_mode & 0o777 == 0o600

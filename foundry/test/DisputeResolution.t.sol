@@ -18,9 +18,11 @@ import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import "../src/DINShared.sol" as Shared;
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 // Pull the custom errors into scope so vm.expectRevert(Error.selector) compiles.
 error TC_DisputeNotAwaitingRecomputation();
@@ -129,7 +131,7 @@ contract DisputeResolutionTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -238,6 +240,7 @@ contract DisputeResolutionTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1); // issue #156 H-2
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();

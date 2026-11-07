@@ -5,6 +5,11 @@ on:
     branches: [develop]
   push:
     branches: [develop]
+  # Reports `CI OK` on the merge queue's temporary gh-readonly-queue/* branches.
+  # Must land before the ruleset requires the queue, or the queue waits forever
+  # for a check that never runs. Discussion 208.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -60,6 +65,9 @@ jobs:
       - name: forge build
         working-directory: foundry
         run: forge build
+
+      - name: Verify task artifact bundles
+        run: python3 .github/scripts/check_task_artifacts.py
 
       # EIP-170/EIP-3860 budget for every foundry/src contract: fails below a
       # 1,024 B runtime margin, warns below 2,048 B. Reads artifacts directly

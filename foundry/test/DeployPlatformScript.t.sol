@@ -7,6 +7,13 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {DeployPlatform} from "../script/DeployPlatform.s.sol";
+
+/// @dev Exposes the internal _writeDeploymentsTo for white-box testing.
+contract DeployPlatformHarness is DeployPlatform {
+    function writeDeploymentsTo(Deployment memory d, address deployer, string memory outPath) external {
+        _writeDeploymentsTo(d, deployer, outPath);
+    }
+}
 import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DinEmission} from "../src/DinEmission.sol";
@@ -20,15 +27,20 @@ import {DinEmission} from "../src/DinEmission.sol";
 ///         deploy() takes the values as an argument instead of reading the
 ///         environment, so no deploy test depends on env. The env-read path
 ///         (readTokenomics) is covered by exactly one test, which is the only
-///         place in foundry/test that sets these keys; see its comment. No test
-///         calls run(), which would overwrite foundry/deployments/*.json. Run with:
+///         place in foundry/test that sets these tokenomics keys; see its comment.
+///         test_writeDeployments_writesImplAndCodehashMetadata calls
+///         _writeDeploymentsTo via DeployPlatformHarness with an explicit path,
+///         foundry/deployments/test-impl-metadata.json, so it never clobbers
+///         localhost.json and never sets DEPLOYMENTS_NETWORK. Run with:
 ///         forge test --match-contract DeployPlatformScriptTest -vv
 contract DeployPlatformScriptTest is Test {
     DeployPlatform internal script;
+    DeployPlatformHarness internal harness;
     address internal deployer = makeAddr("deployer");
 
     function setUp() public {
         script = new DeployPlatform();
+        harness = new DeployPlatformHarness();
     }
 
     function _overrides() internal pure returns (DeployPlatform.Tokenomics memory) {
@@ -154,6 +166,31 @@ contract DeployPlatformScriptTest is Test {
         t.s6Threshold = 0;
         vm.expectRevert(DinValidatorStake.InvalidS6Params.selector);
         script.deploy(t, deployer);
+    }
+
+    /// @dev Verifies the JSON-writing cycle used by dincli system verify-deployment.
+    ///      Calls _writeDeploymentsTo via DeployPlatformHarness with this test's
+    ///      own file. It deliberately doesn't set DEPLOYMENTS_NETWORK: the
+    ///      process environment is shared by forge's parallel test contracts, and
+    ///      UpgradePlatformScriptTest setting it to another file name made this
+    ///      test read a file that was never written (PR No. 254).
+    function test_writeDeployments_writesImplAndCodehashMetadata() public {
+        DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
+        DeployPlatform.Deployment memory d = script.deploy(t, deployer);
+
+        string memory path = string.concat(
+            vm.projectRoot(), "/deployments/test-impl-metadata.json"
+        );
+        harness.writeDeploymentsTo(d, deployer, path);
+        string memory content = vm.readFile(path);
+
+        address implTreasury = vm.parseJsonAddress(content, ".dinTreasuryImpl");
+        bytes32 chTreasury   = vm.parseJsonBytes32(content, ".dinTreasuryImplCodehash");
+        address owner_       = vm.parseJsonAddress(content, ".owner");
+
+        assertNotEq(implTreasury, address(0), "dinTreasuryImpl not written");
+        assertNotEq(chTreasury, bytes32(0),   "dinTreasuryImplCodehash not written");
+        assertEq(owner_, deployer,            "owner must be the deployer");
     }
 
     /// @dev readTokenomics() returns the defaults with no key set, and exactly

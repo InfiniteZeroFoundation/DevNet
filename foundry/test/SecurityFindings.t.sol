@@ -18,6 +18,7 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {
     GIstates,
@@ -35,6 +36,7 @@ import {
     TA_AuditSeedNotLocked
 } from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract SecurityFindingsTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -214,7 +216,7 @@ contract SecurityFindingsTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -297,6 +299,7 @@ contract SecurityFindingsTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -434,6 +437,7 @@ contract SecurityFindingsTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -621,14 +625,16 @@ contract SecurityFindingsTest is Test {
     function test_DINTaskAuditor_constructor_rejectsZeroStakeAddress() public {
         _deployPlatform();
         DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        address enabledRegistry = address(new EnabledModelRegistry());
         vm.expectRevert(TA_InvalidAddress.selector);
-        new DINTaskAuditor(address(0), address(tcLocal), 1);
+        new DINTaskAuditor(address(0), address(tcLocal), 1, enabledRegistry);
     }
 
     function test_DINTaskAuditor_constructor_rejectsZeroCoordinatorAddress() public {
         _deployPlatform();
+        address enabledRegistry = address(new EnabledModelRegistry());
         vm.expectRevert(TA_InvalidAddress.selector);
-        new DINTaskAuditor(address(stake), address(0), 1);
+        new DINTaskAuditor(address(stake), address(0), 1, enabledRegistry);
     }
 
     function test_setDINTaskAuditorContract_rejectsZeroAddress() public {
@@ -906,6 +912,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -960,6 +967,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -1005,6 +1013,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -1042,6 +1051,7 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
