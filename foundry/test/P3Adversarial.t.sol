@@ -27,6 +27,8 @@ error TC_DisputeSeedBlockNotMined();
 error TC_DisputeSeedAlreadyLocked();
 error TC_AggregatorNotActive();
 import {TA_DualRoleNotAllowed} from "../src/DINShared.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 
 contract P3AdversarialTest is Test {
 
@@ -89,7 +91,7 @@ contract P3AdversarialTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
         vm.startPrank(admin);
@@ -241,6 +243,7 @@ contract P3AdversarialTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -355,6 +358,7 @@ contract P3AdversarialTest is Test {
         _lockAuditSeedNow(gi);
         vm.startPrank(modelOwner);
         tc.createAuditorsBatches(gi);
+        assignPlaceholderTestData(ta, address(stake), gi);
         tc.setTestDataAssignedFlag(gi, true);
         tc.startLMsubmissionsEvaluation(gi);
         vm.stopPrank();
@@ -590,6 +594,7 @@ contract P3AdversarialTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -895,6 +900,7 @@ contract P3AdversarialTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -959,6 +965,7 @@ contract P3AdversarialTest is Test {
         tc.closeLMsubmissions(1);
         _lockAuditSeedNow(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -1016,7 +1023,7 @@ contract P3AdversarialTest is Test {
         // Deploy second task pair (tc2 / ta2) for model-2.
         vm.startPrank(modelOwner);
         tc2 = new DINTaskCoordinator(address(stake), 2);
-        ta2 = new DINTaskAuditor(address(stake), address(tc2), 2);
+        ta2 = new DINTaskAuditor(address(stake), address(tc2), 2, address(new EnabledModelRegistry()));
         tc2.setDINTaskAuditorContract(address(ta2));
         vm.stopPrank();
         vm.startPrank(admin);
