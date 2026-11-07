@@ -36,9 +36,15 @@ class Call(tuple):
     """A contract call as (name, *args); doubles as the tx passed to build_and_send_tx."""
 
 
-def _contract(address=None):
+def _contract(address=None, role="coordinator", guarded=False):
     return SimpleNamespace(
         address=address,
+        abi=[{"type": "constructor", "inputs": [
+            {"type": t} for t in (
+                ("address", "uint256") if role == "coordinator" else
+                ("address", "address", "uint256") + (("address",) if guarded else ())
+            )
+        ]}],
         constructor=lambda *a: Call(("constructor", *a)),
         functions=SimpleNamespace(
             setDinToken=lambda addr: Call(("setDinToken", address, addr)),
@@ -48,11 +54,13 @@ def _contract(address=None):
 
 
 class DummyCtxObj:
-    def __init__(self, total_models=3, coord_model_id=3):
+    def __init__(self, total_models=3, coord_model_id=3, guarded=False):
         self.console = DummyConsole()
         self._total_models = total_models
         self.w3 = SimpleNamespace(eth=SimpleNamespace(
+            get_code=lambda address: b"\x60",
             contract=lambda address, abi: SimpleNamespace(functions=SimpleNamespace(
+                taskProtocolVersion=lambda: SimpleNamespace(call=lambda: int(guarded)),
                 modelId=lambda: SimpleNamespace(call=lambda: coord_model_id),
             )),
         ))
@@ -71,7 +79,7 @@ class DummyCtxObj:
 
 @pytest.fixture
 def din_info(monkeypatch):
-    info = {"local": {"stake": STAKE_ADDR, "token": TOKEN_ADDR}}
+    info = {"local": {"stake": STAKE_ADDR, "token": TOKEN_ADDR, "registry": "registry"}}
     monkeypatch.setattr(deploy, "load_din_info", lambda: info)
     return info["local"]
 
@@ -88,7 +96,7 @@ def sent(monkeypatch, din_info):
         return SimpleNamespace(status=1)
 
     monkeypatch.setattr(deploy, "build_and_send_tx", fake_build_and_send_tx)
-    monkeypatch.setattr(deploy, "get_contract_instance", lambda path, net, address=None: _contract(address))
+    monkeypatch.setattr(deploy, "get_contract_instance", lambda path, net, address=None: _contract(address, "coordinator" if path == "c.json" else "auditor", path == "guarded.json"))
     monkeypatch.setattr(deploy, "resolve_task_coordinator_address", lambda net, addr, console: COORD_ADDR)
     monkeypatch.setattr(deploy, "set_env_key", lambda *a, **kw: None)
     monkeypatch.setattr(time, "sleep", lambda _: None)
@@ -152,3 +160,20 @@ class TestAuditorDeploy:
         with pytest.raises(typer.Exit):
             deploy.task_auditor(_ctx(coord_model_id=0), artifact_path="a.json", task_coordinator=COORD_ADDR, model_id=0)
         assert sent == []
+
+@pytest.mark.parametrize("model_id", [None, 4])
+def test_guarded_auditor_defaults_and_sets_token_before_pairing(sent, model_id):
+    deploy.task_auditor(_ctx(coord_model_id=4, guarded=True),
+                        artifact_path="guarded.json", task_coordinator=COORD_ADDR, model_id=model_id)
+    assert sent == [
+        ("constructor", STAKE_ADDR, COORD_ADDR, 4, "registry"),
+        ("setDinToken", AUDITOR_ADDR, TOKEN_ADDR),
+        ("setDINTaskAuditorContract", AUDITOR_ADDR),
+    ]
+
+
+def test_missing_coordinator_token_sends_no_transaction(sent, din_info):
+    del din_info["token"]
+    with pytest.raises(typer.Exit):
+        deploy.task_coordinator(_ctx(), artifact_path="c.json", model_id=None)
+    assert sent == []

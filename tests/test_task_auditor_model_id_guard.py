@@ -7,6 +7,7 @@ and pairing is one-shot, so a mismatched deploy can't be corrected without a ful
 redeployment.
 """
 import time
+from unittest.mock import Mock
 from types import SimpleNamespace
 
 import pytest
@@ -37,9 +38,10 @@ def _make_w3(coord_model_id: int):
         return SimpleNamespace(
             functions=SimpleNamespace(
                 modelId=lambda: SimpleNamespace(call=lambda: coord_model_id),
+                taskProtocolVersion=lambda: SimpleNamespace(call=lambda: 0),
             )
         )
-    return SimpleNamespace(eth=SimpleNamespace(contract=_contract))
+    return SimpleNamespace(eth=SimpleNamespace(contract=_contract, get_code=lambda address: b"\x60"))
 
 
 class DummyCtxObj:
@@ -61,13 +63,14 @@ class DummyCtxObj:
 @pytest.fixture(autouse=True)
 def _patch_deploy(monkeypatch):
     """Stub out I/O so tests run without real artifacts, chain, or filesystem."""
-    monkeypatch.setattr(
-        deploy, "get_contract_instance",
-        lambda path, net, address=None: SimpleNamespace(
-            constructor=lambda *a: "ctor",
-            functions=SimpleNamespace(setDinToken=lambda addr: ("setDinToken", addr)),
-        ),
+    contract = SimpleNamespace(
+        abi=[{"type": "constructor", "inputs": [
+            {"type": kind} for kind in ("address", "address", "uint256")
+        ]}],
+        constructor=Mock(return_value="ctor"),
+        functions=SimpleNamespace(setDinToken=lambda addr: ("setDinToken", addr)),
     )
+    monkeypatch.setattr(deploy, "get_contract_instance", lambda path, net, address=None: contract)
     monkeypatch.setattr(
         deploy, "load_din_info",
         lambda: {"local": {"stake": STAKE_ADDR, "token": TOKEN_ADDR}},
@@ -78,6 +81,7 @@ def _patch_deploy(monkeypatch):
     )
     monkeypatch.setattr(deploy, "set_env_key", lambda *a, **kw: None)
     monkeypatch.setattr(time, "sleep", lambda _: None)
+    return contract
 
 
 @pytest.fixture
@@ -93,10 +97,10 @@ def sent(monkeypatch):
 
 
 class TestModelIdGuard:
-    def test_mismatch_sends_no_transaction(self, sent):
+    def test_mismatch_sends_no_transaction(self, sent, _patch_deploy):
         ctx = SimpleNamespace(obj=DummyCtxObj(coord_model_id=0))
 
-        with pytest.raises(typer.Exit) as exc:
+        with pytest.raises(typer.BadParameter, match="match the paired coordinator") as exc:
             deploy.task_auditor(
                 ctx,
                 artifact_path="dummy.json",
@@ -104,14 +108,12 @@ class TestModelIdGuard:
                 model_id=1,
             )
 
-        assert exc.value.exit_code == 1
+        assert "--model-id" in str(exc.value)
         assert sent == [], "No transaction must be sent on a model-ID mismatch"
-        assert any(
-            "does not match" in m or "mismatch" in m.lower()
-            for m in ctx.obj.console.messages
-        ), f"Expected mismatch error in output, got: {ctx.obj.console.messages}"
+        _patch_deploy.constructor.assert_not_called()
 
-    def test_match_sends_deployment_transaction(self, sent):
+
+    def test_match_sends_deployment_transaction(self, sent, _patch_deploy):
         ctx = SimpleNamespace(obj=DummyCtxObj(coord_model_id=1))
 
         deploy.task_auditor(
@@ -121,4 +123,8 @@ class TestModelIdGuard:
             model_id=1,
         )
 
-        assert len(sent) >= 1, "Deployment transaction must be sent when model IDs match"
+        _patch_deploy.constructor.assert_called_once_with(STAKE_ADDR, COORD_ADDR, 1)
+        assert len(sent) == 3, "Matching IDs deploy, configure the token, then pair"
+        assert sent[0][1] == "ctor"
+        assert sent[1][1] == ("setDinToken", TOKEN_ADDR)
+        assert sent[2][1] == ("set", AUDITOR_ADDR)

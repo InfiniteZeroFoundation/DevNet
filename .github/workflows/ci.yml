@@ -66,6 +66,9 @@ jobs:
         working-directory: foundry
         run: forge build
 
+      - name: Verify task artifact bundles
+        run: python3 .github/scripts/check_task_artifacts.py
+
       # EIP-170/EIP-3860 budget for every foundry/src contract: fails below a
       # 1,024 B runtime margin, warns below 2,048 B. Reads artifacts directly
       # because `forge build --sizes` omits DINTaskAuditor. Issue #201 Part A.
