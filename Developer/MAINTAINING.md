@@ -65,11 +65,11 @@ CODEOWNERS requests reviewers when you open the PR. Check that at least one requ
 **The 2-working-day window covers every review request**, not just the first response: the `foundry/src/**` second sign-off ([No. 4.2](#42-review-depth)) and re-reviews after the author pushes new commits (which dismiss stale approvals, [No. 2](#2-what-github-enforces)) count too. It's a window to respond or escalate in, not a deadline to finish the review:
 
 - If a review needs more time, the reviewer says so on the PR within the window and states what's left to check.
-- If a second sign-off has waited more than 2 working days, the peer reviewer pings it on the PR. Umer or Abraham can then route it to a security reviewer ([No. 4.2](#42-review-depth)), by default @Abidoyesimze.
+- If a second sign-off has waited more than 2 working days, the peer reviewer pings @umeradl and @abrahamnash on the PR. For PRs from other authors, Umer or Abraham can instead route it to a security reviewer ([No. 4.2](#42-review-depth)) who isn't the PR's author or its peer reviewer.
 
 ### 4.2 Review depth
 
-- **Any PR touching `foundry/src/**`** (contract logic, storage layout, upgrade paths) needs the peer's review **plus a second sign-off** from @umeradl or @abrahamnash, or from a security reviewer they route it to. Mechanism changes also need the [mechanism sign-off](#mechanism-sign-off) below.
+- **Any PR touching `foundry/src/**`** (contract logic, storage layout, upgrade paths) needs the peer's review **plus a second sign-off** from @umeradl or @abrahamnash. When the author is @robertocarlous or @Abidoyesimze, the second sign-off is always @umeradl or @abrahamnash. For other authors, Umer or Abraham may route it to a security reviewer who isn't the PR's author or its peer reviewer. Mechanism changes also need the [mechanism sign-off](#mechanism-sign-off) below.
 - Docs-only, test-only, Python and tooling PRs need one peer.
 
 **What counts as evidence.** Required checks that are green on the PR count as evidence for anything CI covers. The merge queue re-runs them against the latest `develop` before anything lands. The reviewer cites the CI run and doesn't re-run it. **Local reproduction is required only for what CI doesn't cover:**
