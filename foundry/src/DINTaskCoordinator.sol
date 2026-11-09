@@ -630,53 +630,38 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint t2Start = t1cntMax * T1_AGGREGATORS_PER_BATCH; // T2 always begins here (fixed)
         uint maxTotalSeats = t2Start + (maxHasT2 ? T1_AGGREGATORS_PER_BATCH : 0);
 
-        // ▸ 4. Count active validators and cap t1cnt/hasT2 by active count so the seat
-        //      fill below can never exhaust the reserve.
+        // ▸ 4. Single-pass active-status cache (one isValidatorActive call site).
+        bool[] memory active = new bool[](rLen);
         uint activeCount;
         for (uint i = 0; i < rLen;) {
-            if (dinvalidatorStakeContract.isValidatorActive(regList[i])) activeCount++;
+            bool a = dinvalidatorStakeContract.isValidatorActive(regList[i]);
+            active[i] = a;
+            if (a) activeCount++;
             unchecked { i++; }
         }
         uint t1cnt = t1cntMax;
         if (t1cnt * T1_AGGREGATORS_PER_BATCH > activeCount)
             t1cnt = activeCount / T1_AGGREGATORS_PER_BATCH;
         bool hasT2 = maxHasT2 && activeCount >= (t1cnt + 1) * T1_AGGREGATORS_PER_BATCH;
+        uint t1Seats = t1cnt * T1_AGGREGATORS_PER_BATCH;
 
-        // ▸ 5. Position-stable seat fill.
-        //      T1 seats: 0..t1cnt*T1_PER_BATCH-1 (may be fewer than the full t1cntMax layout).
+        // ▸ 5. Build compact reserve (gap first, then true-reserve) so fill loops
+        //      need no nested pointer advance — just sequential array reads.
+        //      T1 seats: 0..t1Seats-1.
         //      T2 seats: t2Start..maxTotalSeats-1 (fixed offset, independent of t1cnt).
-        //      Reserve draws from: gap [t1cnt*T1_PER_BATCH..t2Start) first,
-        //      then true reserve [maxTotalSeats..rLen).  The activeCount guarantee
-        //      ensures neither region is exhausted.
-        uint gapPtr = t1cnt * T1_AGGREGATORS_PER_BATCH;
-        uint trueResPtr = maxTotalSeats;
-        for (uint i = 0; i < t1cnt * T1_AGGREGATORS_PER_BATCH;) {
-            if (!dinvalidatorStakeContract.isValidatorActive(regList[i])) {
-                while (gapPtr < t2Start && !dinvalidatorStakeContract.isValidatorActive(regList[gapPtr]))
-                    { unchecked { gapPtr++; } }
-                if (gapPtr < t2Start) { unchecked { regList[i] = regList[gapPtr++]; } }
-                else {
-                    while (!dinvalidatorStakeContract.isValidatorActive(regList[trueResPtr]))
-                        { unchecked { trueResPtr++; } }
-                    unchecked { regList[i] = regList[trueResPtr++]; }
-                }
-            }
+        address[] memory reserve = new address[](rLen);
+        uint rPtr;
+        for (uint i = t1Seats; i < rLen;) {
+            if (i == t2Start && t2Start < maxTotalSeats) { unchecked { i = maxTotalSeats; } continue; }
+            if (active[i]) { reserve[rPtr++] = regList[i]; }
             unchecked { i++; }
         }
-        if (hasT2) {
-            for (uint i = t2Start; i < maxTotalSeats;) {
-                if (!dinvalidatorStakeContract.isValidatorActive(regList[i])) {
-                    while (gapPtr < t2Start && !dinvalidatorStakeContract.isValidatorActive(regList[gapPtr]))
-                        { unchecked { gapPtr++; } }
-                    if (gapPtr < t2Start) { unchecked { regList[i] = regList[gapPtr++]; } }
-                    else {
-                        while (!dinvalidatorStakeContract.isValidatorActive(regList[trueResPtr]))
-                            { unchecked { trueResPtr++; } }
-                        unchecked { regList[i] = regList[trueResPtr++]; }
-                    }
-                }
-                unchecked { i++; }
-            }
+        uint refPtr;
+        uint fillEnd = hasT2 ? maxTotalSeats : t1Seats;
+        for (uint i = 0; i < fillEnd;) {
+            if (i == t1Seats && t1Seats < t2Start) { unchecked { i = t2Start; } continue; }
+            if (!active[i]) { regList[i] = reserve[refPtr++]; }
+            unchecked { i++; }
         }
 
         // ▸ 6. Build Tier-1 batches from the position-stable validator array.
@@ -687,14 +672,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             batch.batchId = b;
 
             for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; ) {
-                batch.aggregators.push(regList[vPtr + k]);
-                isTier1Aggregator[_GI][b][regList[vPtr + k]] = true;
+                address agg1 = regList[vPtr + k];
+                batch.aggregators.push(agg1);
+                isTier1Aggregator[_GI][b][agg1] = true;
                 unchecked { k++; }
             }
 
             uint modelsToAssign = T1_MODELS_PER_BATCH;
-            if (modelIdx.length - mPtr < T1_MODELS_PER_BATCH) {
-                modelsToAssign = modelIdx.length - mPtr;
+            if (mLen - mPtr < T1_MODELS_PER_BATCH) {
+                modelsToAssign = mLen - mPtr;
             }
 
             for (uint256 k = 0; k < modelsToAssign; ) {
@@ -713,8 +699,9 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             Tier2Batch storage t2 = tier2Batches[_GI].push();
             t2.batchId = 0;
             for (uint256 k = 0; k < T1_AGGREGATORS_PER_BATCH; k++) {
-                t2.aggregators.push(regList[t2Start + k]);
-                isTier2Aggregator[_GI][0][regList[t2Start + k]] = true;
+                address agg2 = regList[t2Start + k];
+                t2.aggregators.push(agg2);
+                isTier2Aggregator[_GI][0][agg2] = true;
             }
             emit Tier2BatchAuto(_GI, 0);
         }
@@ -765,32 +752,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
             revert TC_NotEnoughApprovedModels();
     }
 
-    function _activeAggregatorPool(
-        uint _GI
-    ) internal view returns (address[] memory activePool) {
-        address[] storage registeredPool = dinAggregators[_GI];
-        uint len = registeredPool.length;
-        // issue #249 finding 2: cache each isValidatorActive result from the
-        // counting pass instead of re-querying it in the fill pass below.
-        bool[] memory active = new bool[](len);
-        uint activeCount;
 
-        for (uint i = 0; i < len; i++) {
-            bool isActive = dinvalidatorStakeContract.isValidatorActive(registeredPool[i]);
-            active[i] = isActive;
-            if (isActive) {
-                activeCount++;
-            }
-        }
-
-        activePool = new address[](activeCount);
-        uint ptr;
-        for (uint i = 0; i < len; i++) {
-            if (active[i]) {
-                activePool[ptr++] = registeredPool[i];
-            }
-        }
-    }
 
     // ──────────── read helpers ────────────
     /// @notice Returns the number of Tier-1 batches created for the given GI.
