@@ -7,9 +7,13 @@ see that file first for the general contribution flow.
 ## Python (`dincli/`, `tests/`, service files)
 
 - Plain **PEP 8**. There is no `[tool.ruff]` config committed in
-  `pyproject.toml` — `.ruff_cache` is a local artifact, not enforced CI
-  config — so use judgment and keep style consistent with the surrounding
-  file rather than relying on a linter to catch it.
+  `pyproject.toml`, and `.ruff_cache` is a local artifact. CI's Python job
+  runs `ruff check .` with Ruff's defaults as an advisory step
+  (`continue-on-error: true` in
+  [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)): its findings
+  show in the job log but never fail `CI OK`. So use judgment and keep style
+  consistent with the surrounding file rather than relying on a linter to
+  catch it.
 - Python **>= 3.12** (see [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md)).
 - Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner`
   rather than hitting a live network — follow the existing patterns in
