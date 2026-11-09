@@ -21,7 +21,7 @@ pytest                        # run all tests
 pytest tests/test_dintoken.py -k test_name   # run a single test
 ```
 
-There is no `[tool.ruff]` config committed in `pyproject.toml` — `.ruff_cache` is a local artifact, not enforced CI config. `[tool.pytest.ini_options]` registers the `integration` marker. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
+There is no `[tool.ruff]` config committed in `pyproject.toml`, and `.ruff_cache` is a local artifact. CI runs `ruff check .` as an advisory step (`continue-on-error: true` in `.github/workflows/ci.yml`), so findings show in the log but never fail `CI OK`. `[tool.pytest.ini_options]` registers the `integration` marker. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
 
 Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner` rather than hitting a live network (see `tests/test_dintoken.py`, `tests/test_ipfs_config.py`).
 
