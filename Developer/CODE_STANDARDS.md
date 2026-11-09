@@ -6,10 +6,24 @@ see that file first for the general contribution flow.
 
 ## Python (`dincli/`, `tests/`, service files)
 
-- Plain **PEP 8**. There is no `[tool.ruff]` config committed in
-  `pyproject.toml` — `.ruff_cache` is a local artifact, not enforced CI
-  config — so use judgment and keep style consistent with the surrounding
-  file rather than relying on a linter to catch it.
+- Plain **PEP 8**. Ruff **0.16.4** uses the explicit Python 3.12 policy in
+  `pyproject.toml`: `E4`, `E7`, `E9`, `F`, and `I`. CI prints every finding
+  and uploads `ruff-report`; findings are **advisory**. Installation,
+  configuration, execution, unreadable inputs, and invalid reports fail CI.
+- Run `python -m pip install ruff==0.16.4`, then `python -m ruff check .`
+  from the repository root. Exit 1 means findings; fix these in separately
+  scoped cleanup changes. No formatter, automatic fixes, count budget, or
+  no-new-findings gate is introduced by this policy.
+- Discovery covers maintained Python (`*.py`, `*.pyi`), tests, examples
+  (`cache_model_0`, `cache_model_1`, `cid_services`), and maintained scripts
+  in `.github`, `.claude`, and `scripts`, plus Ruff configuration validation.
+  Generated, vendored, build and runtime trees are excluded with
+  `extend-exclude`, preserving Ruff defaults. Markdown/notebook linting is
+  outside this policy. Normal Git ignore discovery still applies.
+- The [migration baseline](issues/320-python-lint/README.md) preserves both
+  the agreed policy and broader old-default debt; narrower discovery/rules
+  do not represent source cleanup. Review existing suppressions before
+  changing them, and keep any new suppression narrow and justified.
 - Python **>= 3.12** (see [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md)).
 - Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner`
   rather than hitting a live network — follow the existing patterns in
