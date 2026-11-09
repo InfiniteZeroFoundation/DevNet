@@ -35,7 +35,7 @@ def slash_auditors(
     else:
         console.print(f"[cyan]Tier 2 score for GI {ref_gi}:[/cyan] {tier2_score}")
 
-    console.print(f"[bold green]Slashing Auditors ...[/bold green]")
+    console.print("[bold green]Slashing Auditors ...[/bold green]")
     try:
         tx_receipt = build_and_send_tx(
             ctx,
@@ -67,7 +67,7 @@ def slash_aggregators(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "AuditorsSlashed","Can not slash aggregators at this time.")
     
-    console.print(f"[bold green]Slashing Aggregators ...[/bold green]")
+    console.print("[bold green]Slashing Aggregators ...[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(

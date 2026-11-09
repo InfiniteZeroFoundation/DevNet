@@ -245,7 +245,7 @@ def task_auditor(
         _set_din_token(ctx, deployed, din_token_address, "DINTaskAuditor")
 
     # Set DINTaskAuditor in DINTaskCoordinator
-    console.print(f"[cyan]Setting DINTaskAuditor in DINTaskCoordinator...[/cyan]")
+    console.print("[cyan]Setting DINTaskAuditor in DINTaskCoordinator...[/cyan]")
 
     DINTaskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(verbose=True, model_id=None, taskCoordinator_address=task_coordinator_address)
 

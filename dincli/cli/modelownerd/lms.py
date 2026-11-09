@@ -19,7 +19,7 @@ def open(
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator)
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Opening local model submissions[/bold green]")
+    console.print("[bold green]Opening local model submissions[/bold green]")
 
     try:
         build_and_send_tx(
@@ -67,7 +67,7 @@ def show_models(
             client_model_ipfs_hashes.append(client_model_ipfs_hash)
             console.print(f"[green]✓ Client {ClientAddresses[i]} submitted model {client_model_ipfs_hash}![/green]")
 
-        console.print(f"[bold green]✓ Local model submissions shown![/bold green]")
+        console.print("[bold green]✓ Local model submissions shown![/bold green]")
         
 
 @lms_app.command()    
@@ -83,7 +83,7 @@ def close(
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
-    console.print(f"[bold green]Closing local model submissions[/bold green]")
+    console.print("[bold green]Closing local model submissions[/bold green]")
 
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSstarted", "Local model submissions not yet started")
 
