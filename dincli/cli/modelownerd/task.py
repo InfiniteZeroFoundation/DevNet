@@ -1,9 +1,9 @@
 import os
-import typer
 from pathlib import Path
 
-from dincli.cli.utils import resolve_task_coordinator_address, load_din_info
+import typer
 
+from dincli.cli.utils import load_din_info, resolve_task_coordinator_address
 from dincli.services.ipfs import retrieve_from_ipfs
 
 task_app = typer.Typer(help="task-level commands")

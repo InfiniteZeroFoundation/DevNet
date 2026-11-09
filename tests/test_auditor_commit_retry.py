@@ -19,8 +19,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dincli.cli import auditor
-from dincli.cli.auditor import (_audit_commit_hash, _commit_store_path,
-                                _save_commit, evaluate_lms)
+from dincli.cli.auditor import (
+    _audit_commit_hash,
+    _commit_store_path,
+    _save_commit,
+    evaluate_lms,
+)
 
 GI = 1
 BATCH = 0

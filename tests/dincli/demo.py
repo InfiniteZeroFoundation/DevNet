@@ -5,7 +5,6 @@ from pathlib import Path
 
 from eth_account import Account
 
-
 # Public Anvil/Hardhat development seed; these accounts are for local tests only.
 DEMO_MNEMONIC = "test test test test test test test test test test test junk"
 DEMO_ADDRESSES = (

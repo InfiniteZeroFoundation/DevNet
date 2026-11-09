@@ -1,12 +1,15 @@
-from pathlib import Path
 from typing import Optional
 
 import typer
 
-from dincli.cli.utils import (CACHE_DIR, GIstateToStr, build_and_send_tx,
-                               get_manifest, get_manifest_key,
-                               require_custom_manifest_service, resolve_manifest_path,
-                               _confirm_or_exit)
+from dincli.cli.utils import (
+    GIstateToStr,
+    _confirm_or_exit,
+    build_and_send_tx,
+    get_manifest,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 gi_app = typer.Typer(help="Global iteration commands")
@@ -198,7 +201,7 @@ def aggregators_open(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_gi)
     
-    console.print(f"[bold green]Opening aggregators registration [/bold green]")
+    console.print("[bold green]Opening aggregators registration [/bold green]")
     
     try:
         tx_receipt = build_and_send_tx(
@@ -227,7 +230,7 @@ def aggregators_close(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Closing aggregators registration[/bold green]")
+    console.print("[bold green]Closing aggregators registration[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -255,7 +258,7 @@ def auditors_open(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Opening auditors registration[/bold green]")
+    console.print("[bold green]Opening auditors registration[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -332,7 +335,7 @@ def auditors_close(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Closing auditors registration[/bold green]")
+    console.print("[bold green]Closing auditors registration[/bold green]")
 
     try:    
         build_and_send_tx(
