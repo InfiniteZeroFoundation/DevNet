@@ -14,6 +14,11 @@ see that file first for the general contribution flow.
   from the repository root. Exit 1 means findings; fix these in separately
   scoped cleanup changes. No formatter, automatic fixes, count budget, or
   no-new-findings gate is introduced by this policy.
+- CI installs Ruff through `.github/constraints-ci.txt`; keep that pin and
+  `required-version` in `pyproject.toml` aligned when upgrading. The snapshot
+  recorder keeps its historical version pin for baseline reproduction.
+- Configure editor integrations to use the installed Ruff 0.16.4 executable.
+  A bundled version that differs will fail the exact-version check.
 - Discovery covers maintained Python (`*.py`, `*.pyi`), tests, examples
   (`cache_model_0`, `cache_model_1`, `cid_services`), and maintained scripts
   in `.github`, `.claude`, and `scripts`, plus Ruff configuration validation.

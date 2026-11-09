@@ -11,6 +11,11 @@ inventory. Detailed fixes/source snippets are omitted to keep evidence compact.
 | Old implicit defaults | 849 | 122 |
 | Explicit agreed Python policy | 229 | 122 |
 
+These counts were captured on Linux. Ruff disables `EXE001` on Windows and
+WSL; on WSL the old-defaults report has 842 findings, omitting the seven
+executable-bit findings. The agreed policy does not enable `EXE001` and still
+reports 229. See [Ruff’s EXE001 documentation](https://docs.astral.sh/ruff/rules/shebang-not-executable/).
+
 The 122 files comprise 121 Python files and `pyproject.toml`. Old Ruff defaults
 also admit Markdown/notebooks and enable a much broader set of rules; on this
 snapshot those extra extensions add no discovered files. The changed totals
@@ -57,3 +62,5 @@ Suppression review (no edits):
 Remaining work: peer review of this slice and separately scoped source cleanup,
 with overlap coordinated across CLI/integration, example services, SDK/daemon,
 and documentation work. No blocking lint findings policy is introduced here.
+The later blocking gate must also reject `invalid-syntax`: pytest only catches
+syntax errors in modules it imports, so it cannot cover every example or script.

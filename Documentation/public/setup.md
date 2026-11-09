@@ -36,8 +36,9 @@ git checkout develop
 pip install -e .
 ```
 
-Cloning alone checks out `main`, not `develop` — the explicit `git checkout
-develop` matters. `-e` (editable) installs `dincli` from whatever commit is
+`develop` is the repository's default branch, so a fresh clone is already on
+it; the explicit `git checkout develop` makes sure of that in a clone that was
+switched to another branch earlier. `-e` (editable) installs `dincli` from whatever commit is
 checked out *at install time*; it does not automatically track upstream
 updates afterwards. If `develop` moves on, re-run `git pull` in that same
 clone to pick up the changes (no reinstall needed).
