@@ -7,96 +7,98 @@
 
 <div align="center">
 
-![Ethereum](https://img.shields.io/badge/Built%20on-Ethereum-3C3C3D?style=flat&logo=ethereum&logoColor=white)
-![License](https://img.shields.io/badge/License-Open%20Source-brightgreen?style=flat)
-![Status](https://img.shields.io/badge/Status-Active-blue?style=flat)
-![Oxford](https://img.shields.io/badge/Founded%20at-University%20of%20Oxford-002147?style=flat)
+[![CI](https://github.com/InfiniteZeroFoundation/DevNet/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/InfiniteZeroFoundation/DevNet/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-brightgreen?style=flat)](LICENSE)
+[![Good first issues](https://img.shields.io/github/issues/InfiniteZeroFoundation/DevNet/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
+[![Telegram](https://img.shields.io/badge/chat-Telegram-26A5E4?style=flat&logo=telegram&logoColor=white)](https://t.me/+h46VS3AnO384ZGI8)
+![Built on Ethereum](https://img.shields.io/badge/Built%20on-Ethereum-3C3C3D?style=flat&logo=ethereum&logoColor=white)
+![Founded at Oxford](https://img.shields.io/badge/Founded%20at-University%20of%20Oxford-002147?style=flat)
 
 </div>
 
-<br>
-
-> **The internet gave everyone a voice.**
-> **Open-source gave everyone a tool.**
-> **AI is still waiting.**
+> The internet gave everyone a voice.\
+> Open source gave everyone a tool.\
+> Yet AI learns from only a fraction of the world's data.
 >
-> InfiniteZero is building the commons that changes that.
+> **InfiniteZero lets AI learn from the rest — where it lives, for everyone.**
 
 ---
 
 ## What is this?
 
-InfiniteZero is open infrastructure for a global AI commons — the way the internet itself is a public good. Millions of devices contribute quietly to shared AI models, with raw data never leaving the user's device. Only anonymised, encrypted patterns join the network.
+InfiniteZero is an open protocol for training shared AI models on data where it lives. Participants train models on their own devices with federated learning and share **model updates, not raw data**. Smart contracts on Ethereum coordinate each training round, check the work, and reward the people who do it.
 
-This repository contains the DevNet setup and tooling for developers and validators building on the InfiniteZero Network protocol.
+This repository is the **DevNet**: the smart contracts, the `dincli` command-line tool, the reference model services, and the documentation for everyone building on or running the network.
 
-> Built on Ethereum. Governed by the community. Models belong to the commons.
+The protocol was previously called DIN (Decentralized Intelligence Network). You'll still see that name in the code, for example in `dincli`, until the rename to InfiniteZero ([#281](https://github.com/InfiniteZeroFoundation/DevNet/issues/281)) is complete.
 
-DevNet 1.0 is live (on `main`). Validator nodes are running 24/7 from Japan to Canada. This is not a simulation — it's real infrastructure, and it needs builders.
+**Where we are today**
 
----
-
-## Overview
-
-- **CLI**: `dincli` — command line interface for interacting with the InfiniteZero Network
-- **Hardhat / Foundry (Optional)**: Smart contract compilation and development
-- **IPFS Provider**: Handles uploading and fetching of network artifacts
-
----
-
-## Quickstart
-
-New here? Start with the validator setup guide:
-
-[Getting Started →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)
+- **DevNet 1.0 is live and experimental**, on the Optimism Sepolia test network, using test ETH. It runs the code on [`main`](https://github.com/InfiniteZeroFoundation/DevNet/tree/main). Validator nodes run 24/7 from Japan to Canada. Expect bugs, changes and resets.
+- **DevNet 2.0 is next.** This `develop` branch holds it: commit-reveal scoring, the reward engine, fee routing and emissions, on upgradeable contracts. It isn't deployed yet.
+- **One tested example so far:** an MNIST image model runs end to end. Other model types are supported by design but not yet tested.
+- **Next:** a public testnet, then mainnet with a fully decentralised fair launch, with no ICO and no VC allocation.
+- **Privacy:** raw data stays on devices. Optional differential-privacy settings exist but are off by default and still being strengthened, so we make no formal privacy guarantee yet.
+- **Governance:** decisions are made in the open today; on-chain community governance is planned after mainnet.
 
 ---
 
-## Install dincli
+## Start here
 
-Full installation guide: [dincli Documentation](Documentation/public/setup.md)
+| You want to… | Go to |
+| :--- | :--- |
+| **Run a node or join a training round on the live DevNet 1.0** | [Getting Started guide on `main`](https://github.com/InfiniteZeroFoundation/DevNet/blob/main/Documentation/GettingStarted.md) and [dincli 0.2.0](https://github.com/InfiniteZeroFoundation/DevNet/releases/tag/v0.2.0) |
+| **Try the DevNet 2.0 code on `develop`** | [Getting started](Documentation/public/getting-started.md) · [Setup guide](Documentation/public/setup.md) |
+| **Train your own model on the network** | [What can I train?](Documentation/public/what-can-be-trained.md) |
+| **Evaluate InfiniteZero for your community or organisation** | [Partner introduction](Documentation/public/partner-introduction.md) |
+| **Contribute code, docs, research or translations** | [Good first issues](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) · [Contributing guide](Developer/CONTRIBUTING.md) · [Roadmap](Developer/ROADMAP.md) |
+
+All documentation: [`Documentation/`](Documentation/README.md)
 
 ---
 
-## Configure IPFS
+## What's in this repository
 
-Full configuration guide: [dincli Documentation](Documentation/public/setup.md)
+| Folder | Contents |
+| :--- | :--- |
+| `foundry/` | Solidity smart contracts (staking, slashing, rewards, emission, fair-launch distribution) and their test suite |
+| `dincli/` | The `dincli` command-line tool used by validators, clients and model owners |
+| `cache_model_0/` | The reference MNIST model and its training, auditing and aggregation services |
+| `Documentation/` | What exists today: `public/` for participants, `technical/` for code readers and auditors |
+| `Developer/` | Plans, designs, tasks and process docs, including the [roadmap](Developer/ROADMAP.md) and [backlog](Developer/BACK_LOG.md) |
+
+Since October 2026, every change to `develop` needs an approving review from someone other than its author ([MAINTAINING.md](Developer/MAINTAINING.md)), and CI runs the Solidity test suite and the Python unit tests on every push.
 
 ---
 
 ## Contributing
 
-The network is open and experimental. We use the `develop` branch for contributions — and we mean it when we say no contribution is too small. Documentation, testing, tooling, smart contracts, privacy mechanisms — all of it matters.
+The network is open and experimental. We work on the `develop` branch, and no contribution is too small: documentation, testing, tooling, smart contracts, privacy research and translations all matter.
 
-[Contribution Guide →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/CONTRIBUTING.md)
+1. Pick a [good first issue](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) or a [help wanted](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22) issue, and comment to claim it.
+2. Read the [contributing guide](Developer/CONTRIBUTING.md) and [development setup](Developer/DEVELOPMENT_SETUP.md).
+3. Branch off `develop` and open your pull request against `develop`.
 
-Not sure where to start?
+Questions? Ask in [Telegram](https://t.me/+h46VS3AnO384ZGI8) or [say hello in Discussions](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92).
 
-[Good first issues →](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Developer/GOOD_FIRST_ISSUES.md)
-
----
-
-## Why contribute here?
-
-Most AI infrastructure is being built behind closed doors, by a handful of companies, for profit. InfiniteZero is the alternative — a live, open, trustless network where the models trained belong to everyone who helped build them.
-
-If you care about privacy-preserving ML, decentralised systems, or just building something that genuinely matters — this is a good place to spend your time.
+Found a security issue? Please don't open a public issue. See our [security policy](https://github.com/InfiniteZeroFoundation/.github/blob/main/SECURITY.md).
 
 ---
 
-## Learn More
+## Learn more and support the work
 
-- [White Paper](https://github.com/InfiniteZeroFoundation/White-Paper)
-- [Documentation](https://github.com/InfiniteZeroFoundation/DevNet/blob/develop/Documentation/public/getting-started.md)
-- [Support the network on Giveth](https://giveth.io/project/infinitezero-network)
-- [Say hello](https://github.com/InfiniteZeroFoundation/DevNet/discussions/92)
-- [Email us](mailto:abrahamnash@protonmail.com)
+- 📄 [White Paper](https://github.com/InfiniteZeroFoundation/White-Paper)
+- 📊 [Impact and traction](IMPACT.md)
+- ❤️ [Support the network on Giveth](https://giveth.io/project/infinitezero-network)
+- ✉️ [Partnerships and grants](mailto:abrahamnash@protonmail.com)
+
+If you use this software in research, please cite it using the **"Cite this repository"** button on the right.
 
 ---
 
 <div align="center">
 
-*InfiniteZero Foundation — open AI infrastructure, built by everyone, for everyone.*
-*Open protocol · Community governed · © 2026*
+*InfiniteZero Foundation — open AI infrastructure, built by everyone, for everyone.*\
+*Open protocol · Built in the open · Apache-2.0 · © 2026*
 
 </div>

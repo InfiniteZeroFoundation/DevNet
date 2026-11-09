@@ -131,9 +131,45 @@ def total_models(ctx: typer.Context,
     console.print(f"[bold green]Total models: {models_length}[/bold green]")
 
 
+def _task_contract_model_ids(network: str, req) -> dict:
+    """modelId() of a registration request's task contracts, keyed by name."""
+    abis = files("dincli").joinpath("abis")
+    return {
+        name: get_contract_instance(str(abis.joinpath(abi)), network, address).functions.modelId().call()
+        for name, abi, address in (
+            ("DINTaskCoordinator", "DINTaskCoordinator.json", req[3]),
+            ("DINTaskAuditor", "DINTaskAuditor.json", req[4]),
+        )
+    }
+
+
 @registry_app.command("approve-registration-request")
-def approve_registration_request(ctx: typer.Context, request_id: int = typer.Argument(..., help="Model request ID to approve")):
+def approve_registration_request(
+    ctx: typer.Context,
+    request_id: int = typer.Argument(..., help="Model request ID to approve"),
+    force: bool = typer.Option(False, "--force", help="Approve even if the task contracts' modelId() doesn't match the ID this approval assigns"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     DINModelRegistry_Contract = ctx.obj.get_deployed_din_registry_contract()
+
+    # The task contracts bake modelId into their constructors before the
+    # registry assigns one, and approveModel assigns totalModels(). A
+    # mismatch breaks per-model stake enforcement for the model's lifetime.
+    req = DINModelRegistry_Contract.functions.modelRequests(request_id).call()
+    assigned_model_id = DINModelRegistry_Contract.functions.totalModels().call()
+    mismatched = {
+        name: model_id
+        for name, model_id in _task_contract_model_ids(effective_network, req).items()
+        if model_id != assigned_model_id
+    }
+    if mismatched:
+        for name, model_id in mismatched.items():
+            console.print(f"[bold red]✗ {name} has modelId() {model_id}, but this approval assigns model ID {assigned_model_id}.[/bold red]")
+        if not force:
+            console.print("[yellow]Refusing to approve. The model owner should redeploy with the right --model-id; pass --force to approve anyway.[/yellow]")
+            raise typer.Exit(1)
+        console.print("[yellow]--force given: approving despite the mismatch.[/yellow]")
+
     build_and_send_tx(
         ctx, 
         DINModelRegistry_Contract.functions.approveModel(request_id),

@@ -24,6 +24,8 @@ import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 
 contract BatchAssignmentStabilityTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ contract BatchAssignmentStabilityTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -201,6 +203,7 @@ contract BatchAssignmentStabilityTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1);
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -378,6 +381,96 @@ contract BatchAssignmentStabilityTest is Test {
         tc.lockAuditSeed(1);
         vm.stopPrank();
         // ← caller may now call tc.createAuditorsBatches(1)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 6 × 6 liveness test: 6 auditors, 6 models → 2 batches, 0 reserve.
+    // After 1 auditor unstakes, batchCnt caps to 1 instead of reverting.
+    // ─────────────────────────────────────────────────────────────────────
+
+    function _runTo6x6AuditSeedLocked() internal {
+        _deployPlatform();
+        _deployTaskPair();
+
+        // 6 auditors, no reserve
+        address[6] memory auds = [
+            makeAddr("six_a0"), makeAddr("six_a1"), makeAddr("six_a2"),
+            makeAddr("six_a3"), makeAddr("six_a4"), makeAddr("six_a5")
+        ];
+        for (uint i = 0; i < 6; i++) _fundAndStake(auds[i]);
+
+        // 3 aggregators to drive GI forward
+        address d0 = makeAddr("six_d0"); address d1 = makeAddr("six_d1"); address d2 = makeAddr("six_d2");
+        _fundAndStake(d0); _fundAndStake(d1); _fundAndStake(d2);
+
+        vm.prank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        vm.prank(d0); tc.registerDINaggregator(1);
+        vm.prank(d1); tc.registerDINaggregator(1);
+        vm.prank(d2); tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        for (uint i = 0; i < 6; i++) {
+            vm.prank(auds[i]);
+            ta.registerDINAuditor(1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        // 6 models → 2 batches of 3 (batchCnt = 2, vPre = 6, reserve = 0)
+        for (uint i = 0; i < 6; i++) {
+            vm.prank(makeAddr(string(abi.encodePacked("six_c", i))));
+            ta.submitLocalModel(bytes32(uint256(i + 1) * 10), 1);
+        }
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1);
+        tc.lockAuditSeed(1);
+        vm.stopPrank();
+    }
+
+    /// @dev 6 auditors, 6 models (2 batches, 0 reserve): after 1 unstake
+    ///      createAuditorsBatches must not revert — it caps batchCnt to 1.
+    function test_auditor_6x6_singleUnstakeDropsTrailingBatch() public {
+        _runTo6x6AuditSeedLocked();
+
+        // Discover which auditor lands in seat 0 of the first batch under the locked seed.
+        uint256 snap = vm.snapshot();
+
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+
+        uint batchCntFull = ta.AuditorsBatchCount(1);
+        assertEq(batchCntFull, 2, "baseline: 6 auditors/6 models = 2 batches");
+
+        (, address[] memory baseAuds,,) = ta.getAuditorsBatch(1, 0);
+        address victim = baseAuds[0]; // primary-seat holder we will unstake
+
+        vm.revertTo(snap);
+
+        vm.prank(victim);
+        stake.unstake(10 ether); // drops to Exiting — isValidatorActive = false
+
+        // Must not revert — batchCnt caps to 1 (5 active / 3 per batch = 1)
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+
+        uint batchCntReduced = ta.AuditorsBatchCount(1);
+        assertEq(batchCntReduced, 1, "after 1 unstake: batchCnt caps to 1, no revert");
+
+        // All 3 auditors in the surviving batch must be active
+        (, address[] memory auds,,) = ta.getAuditorsBatch(1, 0);
+        for (uint i = 0; i < auds.length; i++) {
+            assertTrue(stake.isValidatorActive(auds[i]), "every batch auditor must be active");
+        }
     }
 
     /// @dev With audit seed locked, discover baseline auditor assignment, revert,

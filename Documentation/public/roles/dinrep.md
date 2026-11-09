@@ -165,7 +165,7 @@ dincli dinrep registry approve-registration-request <requestId>
 dincli dinrep registry reject-registration-request <requestId>
 ```
 
-The registration fee is retained by the contract in both cases.
+The required registration fee is a nonrefundable, pay-to-apply anti-spam cost: neither approval nor rejection refunds it. This is intentional (Abraham, [issue #224, 26 October 2026](https://github.com/InfiniteZeroFoundation/DevNet/issues/224#issuecomment-6406239550)). Any amount paid above the required fee is still refunded in the request transaction.
 
 ---
 
@@ -203,7 +203,7 @@ dincli dinrep registry enable-model <modelId>
 ```
 
 > [!CAUTION]
-> Disabling a model does not delete it. All on-chain history is preserved. Today the task contracts (`DINTaskCoordinator`, `DINTaskAuditor`) do **not** check `modelDisabled(modelId)`, so disabling only blocks manifest updates. It does not stop the model's running GIs, submissions or slashing.
+> Disabling a model does not delete it. All on-chain history is preserved. With the current compatible Foundry task pair and canonical registry wiring, disabling blocks both new-GI start overloads, even when already funded, as well as manifest updates and emission funding. Registry approval is required before any GI starts. In-flight GIs, including slashing, settlement and claims, continue; this is not a GI abort. Existing deployed pairs are unchanged and require redeployment for the new guard. Review task code, pairing and canonical registry wiring before authorization/approval; immutable wiring alone does not establish trust. Reenable restores start eligibility. Pre-funded pools have no new refund or recovery path.
 
 ---
 
