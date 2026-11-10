@@ -485,13 +485,23 @@ def reveal_t1(
     model_base_dir = ctx.obj.get_model_base_dir(model_id)
     t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call()
 
+    # Check the seat before the cache, as auditor lms-evaluation reveal does:
+    # a seated aggregator with no local commit gets a distinct message (its
+    # reveal is missing), while a batch it isn't seated in is skipped quietly.
+    assigned_any = False
     found_any = False
     for bid in range(t1_batches_count):
         if batch_id is not None and bid != batch_id:
             continue
 
+        _, validators, _, _, _ = taskCoordinator_contract.functions.getTier1Batch(curr_GI, bid).call()
+        if account.address not in validators:
+            continue
+        assigned_any = True
+
         commit = _load_agg_commit(model_base_dir, TIER1, curr_GI, bid, account.address)
         if commit is None:
+            console.print(f"[yellow]No local commit found for T1 batch {bid} -- skipping.[/yellow]")
             continue
 
         found_any = True
@@ -509,7 +519,9 @@ def reveal_t1(
         except Exception as e:
             console.print(f"[bold red]✗ Error revealing T1 aggregation for batch {bid}: {e}[/bold red]")
 
-    if not found_any:
+    if not assigned_any:
+        console.print(f"[yellow]Not assigned to any T1 batch for GI {curr_GI}; nothing to reveal.[/yellow]")
+    elif not found_any:
         console.print("[yellow]No local T1 commits found to reveal.[/yellow]")
 
     
@@ -696,9 +708,19 @@ def reveal_t2(
 
     model_base_dir = ctx.obj.get_model_base_dir(model_id)
 
+    # Seat check first (see reveal_t1). getTier2Batch reverts when the GI has
+    # no T2 batch, which counts as not assigned.
+    try:
+        _, aggregators, _, _ = taskCoordinator_contract.functions.getTier2Batch(curr_GI, 0).call()
+    except Exception:
+        aggregators = []
+    if account.address not in aggregators:
+        console.print(f"[yellow]Not assigned to the T2 batch for GI {curr_GI}; nothing to reveal.[/yellow]")
+        return
+
     commit = _load_agg_commit(model_base_dir, TIER2, curr_GI, 0, account.address)
     if commit is None:
-        console.print("[yellow]No local T2 commit found to reveal.[/yellow]")
+        console.print("[yellow]No local commit found for T2 batch 0 -- skipping.[/yellow]")
         return
 
     console.print("[bold green]Revealing T2 aggregation[/bold green]")

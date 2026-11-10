@@ -67,9 +67,9 @@ One complete GI, with the GI state asserted after every phase (`_assert_state`).
 |------|-------------|----------------|
 | `test_fund_gi_reward_pool` | `deposit_rewards(network, account, model_id, amount, gi=None)` | — |
 | `test_gi_start` | `start_gi(network, account, model_id)` | `GIstarted` |
-| `test_gi_aggregators_open/close` | `open/close_aggregator_registration(network, account, model_id)` | |
+| `test_gi_aggregators_open/close` | `open/close_aggregator_registration(network, account, model_id)` | `DINaggregatorsRegistrationStarted` / `DINaggregatorsRegistrationClosed` |
 | `test_aggregator_register` | `register_aggregator(network, account, model_id)` | |
-| `test_gi_auditors_open/close` | `open/close_auditor_registration(network, account, model_id)` | `DINauditorsRegistrationClosed` |
+| `test_gi_auditors_open/close` | `open/close_auditor_registration(network, account, model_id)` | `DINauditorsRegistrationStarted` / `DINauditorsRegistrationClosed` |
 | `test_auditor_register` | `register_auditor(network, account, model_id)` | |
 | `test_auditor_register_encryption_key` | `register_encryption_key(network, account)` | |
 | `test_aggregator_cannot_register_as_auditor` | (negative: `register_auditor` raises) | |
@@ -87,8 +87,10 @@ One complete GI, with the GI state asserted after every phase (`_assert_state`).
 | `test_create_t1nt2_batches` | `create_aggregation_batches(network, account, model_id)` | `T1nT2Bcreated` |
 | `test_t1_aggregation_start` / `_start_reveal` / `_close` | `start/start_reveal/close_t1_aggregation(network, account, model_id)` | `T1AggregationStarted` / `…RevealStarted` / `T1AggregationDone` |
 | `test_aggregator_aggregate_t1` / `test_aggregator_reveal_t1` | `aggregate_t1(...)` (commit) / `reveal_t1(...)` | |
+| `test_every_seated_t1_aggregator_revealed` | (on-chain check: every seated aggregator has a `T1AggregationSubmitted` reveal) | |
 | `test_t2_aggregation_start` / `_start_reveal` / `_close` | `start/start_reveal/close_t2_aggregation(network, account, model_id)` | `T2AggregationStarted` / `…RevealStarted` / `T2AggregationDone` |
 | `test_aggregator_aggregate_t2` / `test_aggregator_reveal_t2` | `aggregate_t2(...)` (commit) / `reveal_t2(...)` | |
+| `test_every_seated_t2_aggregator_revealed` | (on-chain check: every seated aggregator has a `T2AggregationSubmitted` reveal) | |
 | `test_t2_set_score` | `set_tier2_score(network, account, model_id)` | |
 | `test_slash_auditors` | `slash_auditors(network, account, model_id)` | `AuditorsSlashed` |
 | `test_slash_aggregators` | `slash_aggregators(network, account, model_id)` | `AggregatorsSlashed` |

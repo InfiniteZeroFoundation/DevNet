@@ -428,7 +428,13 @@ state by name (`task gi show-state`):
    window, auditors reveal, the owner closes (`LMSevaluationClosed`).
 6. **Aggregation** — an aggregator locks the T1/T2 seed (`AggSeedLocked`),
    the owner creates the batches; T1 then T2 each go commit → reveal →
-   close; the owner records the T2 score.
+   close; the owner records the T2 score. After each reveal window the test
+   reads the batch seats and the `T1AggregationSubmitted` /
+   `T2AggregationSubmitted` reveal events and fails if any seated aggregator
+   didn't reveal (a T1 batch can finalize on 2 of 3 reveals, so reaching
+   `GIended` alone wouldn't catch it). A reveal command that finds no local
+   commit for a batch the wallet is seated in prints a distinct message,
+   which the test rejects; an unseated aggregator's reveal is a no-op.
 7. **Slashing & end** — auditors then aggregators are slashed and the GI
    ends (`GIended`, ordinal 28).
 8. **Rewards** — one client, one auditor and one aggregator claim and

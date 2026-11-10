@@ -41,6 +41,7 @@ from eth_account import Account
 from web3 import Web3
 
 from tests.dincli.constants import (
+    DEVNET_ROOT,
     DIN_INFO_PATH,
     HARDHAT_RPC,
     TORCHENV_PYTHON,
@@ -83,6 +84,34 @@ def _assert_state(run, expected: str) -> None:
 def _address(acc: int) -> str:
     Account.enable_unaudited_hdwallet_features()
     return Account.from_mnemonic(DEMO_MNEMONIC, account_path=f"m/44'/60'/0'/0/{acc}").address
+
+
+def _task_coordinator(state):
+    """The model's DINTaskCoordinator (deployed in test_02) and a web3 handle."""
+    address = state.get("task_coordinator_address")
+    assert address, "task_coordinator_address not set; run the suite from test_01"
+    abi = json.loads((DEVNET_ROOT / "dincli" / "abis" / "DINTaskCoordinator.json").read_text(encoding="utf-8"))["abi"]
+    w3 = Web3(Web3.HTTPProvider(HARDHAT_RPC))
+    return w3.eth.contract(address=Web3.to_checksum_address(address), abi=abi), w3
+
+
+def _revealers(contract, w3, event_name: str) -> set:
+    """{(batchId, aggregator)} from T{1,2}AggregationSubmitted (emitted on reveal) for GI.
+
+    Raw eth_getLogs filter: web3 6 and 7 name the get_logs keywords differently.
+    """
+    event = getattr(contract.events, event_name)()
+    signature = f"{event_name}({','.join(i['type'] for i in event.abi['inputs'])})"
+    # HexBytes.hex() has a 0x prefix on web3 6 and none on web3 7.
+    event_topic = "0x" + Web3.keccak(text=signature).hex().removeprefix("0x")
+    gi_topic = "0x" + int(GI).to_bytes(32, "big").hex()
+    raw = w3.eth.get_logs({
+        "address": contract.address,
+        "fromBlock": 0,
+        "toBlock": "latest",
+        "topics": [event_topic, gi_topic],
+    })
+    return {(log.args.batchId, log.args.aggregator) for log in map(event.process_log, raw)}
 
 
 def _din_balance(acc: int) -> int:
@@ -156,6 +185,7 @@ def test_gi_aggregators_open(run):
     """
     result = run(["model-owner", "gi", "reg", "aggregators-open", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "DINaggregatorsRegistrationStarted")
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +221,7 @@ def test_gi_aggregators_close(run):
     """
     result = run(["model-owner", "gi", "reg", "aggregators-close", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "DINaggregatorsRegistrationClosed")
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +232,7 @@ def test_gi_aggregators_close(run):
 def test_gi_auditors_open(run):
     result = run(["model-owner", "gi", "reg", "auditors-open", MODEL_ID])
     assert result.returncode == 0
+    _assert_state(run, "DINauditorsRegistrationStarted")
 
 
 @pytest.mark.parametrize("acc", AUDITOR_ACCOUNTS)
@@ -498,6 +530,25 @@ def test_aggregator_reveal_t1(run, acc):
     result = run(["--demokey", str(acc), "aggregator", "reveal-t1", MODEL_ID])
     assert result.returncode == 0
     _assert_no_failures(result)
+    # reveal-t1 checks the seat before the cache: a seated aggregator with no
+    # local commit prints this and sends nothing.
+    assert "No local commit found for T1 batch" not in result.stdout, result.stdout
+
+
+def test_every_seated_t1_aggregator_revealed(state):
+    """Every aggregator seated in a T1 batch revealed on-chain.
+
+    A T1 batch can finalize on 2 of 3 reveals, so reaching GIended alone
+    doesn't catch a missed reveal.
+    """
+    contract, w3 = _task_coordinator(state)
+    revealed = _revealers(contract, w3, "T1AggregationSubmitted")
+    count = contract.functions.tier1BatchCount(int(GI)).call()
+    assert count > 0, "No T1 batches were created"
+    for bid in range(count):
+        _, validators, _, _, _ = contract.functions.getTier1Batch(int(GI), bid).call()
+        missing = [v for v in validators if (bid, v) not in revealed]
+        assert not missing, f"T1 batch {bid}: seated aggregators never revealed: {missing}"
 
 
 def test_t1_aggregation_close(run):
@@ -564,6 +615,16 @@ def test_aggregator_reveal_t2(run, acc):
     result = run(["--demokey", str(acc), "aggregator", "reveal-t2", MODEL_ID])
     assert result.returncode == 0
     _assert_no_failures(result)
+    assert "No local commit found for T2 batch" not in result.stdout, result.stdout
+
+
+def test_every_seated_t2_aggregator_revealed(state):
+    """Every aggregator seated in the T2 batch revealed on-chain."""
+    contract, w3 = _task_coordinator(state)
+    revealed = _revealers(contract, w3, "T2AggregationSubmitted")
+    _, aggregators, _, _ = contract.functions.getTier2Batch(int(GI), 0).call()
+    missing = [a for a in aggregators if (0, a) not in revealed]
+    assert not missing, f"T2 batch: seated aggregators never revealed: {missing}"
 
 
 def test_t2_aggregation_close(run):
