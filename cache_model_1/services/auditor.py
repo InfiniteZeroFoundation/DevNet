@@ -20,7 +20,6 @@ from scoring import (  # noqa: E402
     write_metric_bundle,
 )
 
-
 console = console.Console()
 
 

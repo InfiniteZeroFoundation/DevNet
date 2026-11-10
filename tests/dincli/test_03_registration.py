@@ -24,7 +24,6 @@ Confirmation-prompt map (input_text reference):
   update-manifest-request : 1 × y  (proceed on-chain)
 """
 
-import pytest
 from tests.dincli.constants import TORCHENV_PYTHON
 
 # Expected GI state after genesis model is registered

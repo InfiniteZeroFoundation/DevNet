@@ -1,8 +1,8 @@
 
 import typer
 
-from dincli.services.cid_utils import get_cid_from_bytes32
 from dincli.cli.utils import build_and_send_tx
+from dincli.services.cid_utils import get_cid_from_bytes32
 
 lms_app = typer.Typer(help="Local Model Submission commands")
 

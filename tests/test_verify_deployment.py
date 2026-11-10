@@ -8,18 +8,13 @@ subprocess overhead.
 """
 
 import json
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-import typer
 import click
-from rich.console import Console
+import typer
 
 from dincli.cli import system as system_mod
 from dincli.cli.system import verify_deployment
-
 
 # ── EIP-1967 slots (mirrors system.py) ──────────────────────────────────────
 _IMPL_SLOT  = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
@@ -198,7 +193,7 @@ def run_cmd(tmp_path, deps: dict, w3=None, no_color=True, slashers=None):
 
 
 def assert_all_ok(lines):
-    drifts = [l for l in lines if "[DRIFT]" in l or "[ERROR]" in l]
+    drifts = [line for line in lines if "[DRIFT]" in line or "[ERROR]" in line]
     assert not drifts, f"Unexpected DRIFT/ERROR lines: {drifts}"
 
 
@@ -215,7 +210,7 @@ class TestAllOK:
 
     def test_reports_deploy_commit(self, tmp_path):
         _code, lines = run_cmd(tmp_path, _one_proxy_deps())
-        assert any("abc1234" in l for l in lines)
+        assert any("abc1234" in line for line in lines)
 
 
 class TestDriftOnImplMismatch:
@@ -229,7 +224,7 @@ class TestDriftOnImplMismatch:
         wrong_impl = "0xDddddddddddddddddddddddddddddddddddddddd"
         w3 = DummyWeb3(impl=wrong_impl)
         _code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3)
-        assert any("[DRIFT]" in l and "impl" in l for l in lines)
+        assert any("[DRIFT]" in line and "impl" in line for line in lines)
 
 
 class TestDriftOnCodehashMismatch:
@@ -241,7 +236,7 @@ class TestDriftOnCodehashMismatch:
     def test_prints_drift_line(self, tmp_path):
         w3 = DummyWeb3(code=b"\xfe")
         _code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3)
-        assert any("[DRIFT]" in l and "codehash" in l for l in lines)
+        assert any("[DRIFT]" in line and "codehash" in line for line in lines)
 
 
 class TestDriftOnAdminMismatch:
@@ -255,7 +250,7 @@ class TestDriftOnAdminMismatch:
         wrong_admin = "0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
         w3 = DummyWeb3(admin=wrong_admin)
         _code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3)
-        assert any("[DRIFT]" in l and "proxyAdmin" in l for l in lines)
+        assert any("[DRIFT]" in line and "proxyAdmin" in line for line in lines)
 
 
 class TestDriftOnOwnerMismatch:
@@ -269,7 +264,7 @@ class TestDriftOnOwnerMismatch:
         wrong_owner = "0xFfffffffffffffffffffffffffffffffFfffffff"
         w3 = DummyWeb3(owner_ret=wrong_owner)
         _code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3)
-        assert any("[DRIFT]" in l and "owner" in l for l in lines)
+        assert any("[DRIFT]" in line and "owner" in line for line in lines)
 
 
 class TestSlasherCheck:
@@ -278,18 +273,18 @@ class TestSlasherCheck:
         w3 = DummyWeb3(slasher_authorized=True)
         code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3, slashers=slasher)
         assert code == 0
-        assert any("[OK]" in l and "slasher" in l for l in lines)
+        assert any("[OK]" in line and "slasher" in line for line in lines)
 
     def test_drift_when_slasher_not_authorized(self, tmp_path):
         slasher = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         w3 = DummyWeb3(slasher_authorized=False)
         code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3, slashers=slasher)
         assert code != 0
-        assert any("[DRIFT]" in l and "slasher" in l for l in lines)
+        assert any("[DRIFT]" in line and "slasher" in line for line in lines)
 
     def test_info_when_no_slashers_given(self, tmp_path):
         _code, lines = run_cmd(tmp_path, _one_proxy_deps())
-        assert any("[INFO]" in l and "slasher" in l for l in lines)
+        assert any("[INFO]" in line and "slasher" in line for line in lines)
 
 
 class TestFileHandling:
@@ -324,14 +319,14 @@ class TestApplicationOwner:
     def test_ok_when_proxy_owner_matches(self, tmp_path):
         code, lines = run_cmd(tmp_path, _one_proxy_deps())
         assert code == 0
-        assert any("[OK]" in l and "owner" in l for l in lines)
+        assert any("[OK]" in line and "owner" in line for line in lines)
 
     def test_drift_when_proxy_owner_wrong(self, tmp_path):
         wrong_owner = "0xFfffffffffffffffffffffffffffffffFfffffff"
         w3 = DummyWeb3(owner_ret=wrong_owner)
         code, lines = run_cmd(tmp_path, _one_proxy_deps(), w3=w3)
         assert code != 0
-        owner_drifts = [l for l in lines if "[DRIFT]" in l and "owner" in l]
+        owner_drifts = [line for line in lines if "[DRIFT]" in line and "owner" in line]
         assert owner_drifts, f"Expected DRIFT owner line, got: {lines}"
 
 
@@ -349,21 +344,21 @@ class TestFeeRouterTreasury:
         w3 = DummyWeb3(treasury_ret=_TREASURY, wiring=_WIRED_WIRING)
         code, lines = run_cmd(tmp_path, _wired_deps(), w3=w3)
         assert code == 0
-        assert any("[OK]" in l and "treasury" in l for l in lines)
+        assert any("[OK]" in line and "treasury" in line for line in lines)
 
     def test_drift_when_treasury_wrong(self, tmp_path):
         wrong_treasury = "0x0000000000000000000000000000000000000099"
         w3 = DummyWeb3(treasury_ret=wrong_treasury, wiring=_WIRED_WIRING)
         code, lines = run_cmd(tmp_path, _wired_deps(), w3=w3)
         assert code != 0
-        assert any("[DRIFT]" in l and "treasury" in l for l in lines)
+        assert any("[DRIFT]" in line and "treasury" in line for line in lines)
 
     def test_skipped_when_fee_router_is_zero(self, tmp_path):
         # zero dinFeeRouter address: treasury check is skipped (WARN), not DRIFT
         deps = _one_proxy_deps()  # dinFeeRouter = zero addr, dinTreasury = _PROXY
         code, lines = run_cmd(tmp_path, deps)
         assert code == 0
-        assert not any("[DRIFT]" in l and "treasury" in l for l in lines)
+        assert not any("[DRIFT]" in line and "treasury" in line for line in lines)
 
     def test_fires_without_coordinator(self, tmp_path):
         """Treasury check must run even when dinCoordinator is absent from deps."""
@@ -372,7 +367,7 @@ class TestFeeRouterTreasury:
         w3 = DummyWeb3(treasury_ret=_TREASURY, wiring=_WIRED_WIRING)
         code, lines = run_cmd(tmp_path, deps, w3=w3)
         assert code == 0
-        assert any("[OK]" in l and "treasury" in l for l in lines), (
+        assert any("[OK]" in line and "treasury" in line for line in lines), (
             "treasury wiring check must fire even when dinCoordinator is absent"
         )
 
@@ -394,14 +389,14 @@ class TestRegistryWiring:
         w3 = DummyWeb3(registry_stake_ret=_STAKE)
         code, lines = run_cmd(tmp_path, _registry_deps(), w3=w3)
         assert code == 0
-        assert any("[OK]" in l and "DINModelRegistry" in l for l in lines)
+        assert any("[OK]" in line and "DINModelRegistry" in line for line in lines)
 
     def test_drift_when_stake_wrong(self, tmp_path):
         wrong_stake = "0x0000000000000000000000000000000000000099"
         w3 = DummyWeb3(registry_stake_ret=wrong_stake)
         code, lines = run_cmd(tmp_path, _registry_deps(), w3=w3)
         assert code != 0
-        assert any("[DRIFT]" in l and "DINModelRegistry" in l for l in lines)
+        assert any("[DRIFT]" in line and "DINModelRegistry" in line for line in lines)
 
 
 class TestAccountFreeDispatch:

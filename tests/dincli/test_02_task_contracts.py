@@ -12,11 +12,9 @@ SDK candidates:
   register_slashers_on_task_contracts(network, model_owner_account)
 """
 
-import json
 import pytest
-from pathlib import Path
 
-from tests.dincli.constants import ARTIFACT_BASE, DIN_INFO_PATH
+from tests.dincli.constants import ARTIFACT_BASE
 
 ARTIFACTS = {
     "task_coordinator": ARTIFACT_BASE / "DINTaskCoordinator.sol/DINTaskCoordinator.json",

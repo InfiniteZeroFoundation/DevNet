@@ -1,12 +1,17 @@
 import os
 import time
 from typing import Optional
+
 import typer
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (build_and_send_tx, load_din_info,
-                              resolve_task_coordinator_address, set_env_key)
+from dincli.cli.utils import (
+    build_and_send_tx,
+    load_din_info,
+    resolve_task_coordinator_address,
+    set_env_key,
+)
 
 _COORDINATOR_DEPLOYMENT_ABI = [
     {"type": "function", "name": "modelId", "inputs": [],

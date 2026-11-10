@@ -4,22 +4,32 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import nacl.encoding
 import typer
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from eth_abi import encode as abi_encode
+from eth_account import Account
+from eth_account.messages import encode_defunct
+from nacl.public import Box, PrivateKey, PublicKey
 from rich.table import Table
 from web3 import Web3
-from eth_abi import encode as abi_encode
-from nacl.public import Box, PrivateKey, PublicKey
-import nacl.encoding
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from eth_account.messages import encode_defunct
-from eth_account import Account
-from dincli.cli.dintoken import (approve_din, buy_dintokens,
-                                 read_din_per_eth_rate, read_dintoken_stake,
-                                 stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, lock_batch_seed_if_pending,
-                               require_custom_manifest_service,
-                               resolve_manifest_path)
+
+from dincli.cli.dintoken import (
+    approve_din,
+    buy_dintokens,
+    read_din_per_eth_rate,
+    read_dintoken_stake,
+    stake_dintokens,
+)
+from dincli.cli.utils import (
+    CONFIG_DIR,
+    MIN_STAKE,
+    build_and_send_tx,
+    get_manifest_key,
+    lock_batch_seed_if_pending,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -31,6 +41,7 @@ from dincli.cli.worker import (
 )
 from dincli.services.cid_utils import get_cid_from_bytes32
 from dincli.services.ipfs import retrieve_from_ipfs
+
 
 # One X25519 key per wallet: a single shared file broke several auditors
 # (e.g. --demokey accounts) on one machine, since each registers its own
@@ -147,18 +158,18 @@ def register(
     is_registered = taskAuditor_contract.functions.isRegisteredAuditor(curr_GI, account.address).call()
     
     if is_registered:
-        console.print(f"[bold red]✗ Auditor already registered.[/bold red]")
+        console.print("[bold red]✗ Auditor already registered.[/bold red]")
         return
     else:
-        console.print(f"[bold green]✓ Auditor not registered.[/bold green]")
+        console.print("[bold green]✓ Auditor not registered.[/bold green]")
 
         stake = DinStake_contract.functions.getStake(account.address).call()
             
         if stake < MIN_STAKE:
-            console.print(f"[bold red]✗ Auditor does not have enough stake.[/bold red]")
+            console.print("[bold red]✗ Auditor does not have enough stake.[/bold red]")
             return
         else:
-            console.print(f"[bold green]✓ Auditor has enough stake.[/bold green]")
+            console.print("[bold green]✓ Auditor has enough stake.[/bold green]")
 
             try:
                 build_and_send_tx(
@@ -287,7 +298,7 @@ def show_batch(
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI, curr_GIstate, "AuditorsBatchesCreated", "Can not show auditor batch at this time")
 
 
-    console.print(f"[bold green]Showing auditor batch![/bold green]")
+    console.print("[bold green]Showing auditor batch![/bold green]")
     
     audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(ref_gi).call()
 

@@ -1,9 +1,9 @@
 """Service ownership tests; these never start chain/IPFS nodes or contact them."""
 
+import os
 import signal
 import socket
 import subprocess
-import os
 import sys
 from unittest.mock import Mock
 

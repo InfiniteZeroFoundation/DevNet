@@ -1,6 +1,6 @@
 """The post-build gate must reject ABI drift and stale deployable bytecode."""
-import importlib.util
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 

@@ -1,6 +1,7 @@
 
 import typer
-from dincli.cli.utils import build_and_send_tx, _confirm_or_exit
+
+from dincli.cli.utils import _confirm_or_exit, build_and_send_tx
 
 slash_app = typer.Typer(help="Slash commands")
 

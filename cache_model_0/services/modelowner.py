@@ -1,20 +1,18 @@
-import torch
-from typing import Union
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 import os
 import secrets
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from web3 import Web3
-from dincli.services.ipfs import upload_to_ipfs, retrieve_from_ipfs
-from pathlib import Path
-from platformdirs import user_config_dir
-from dincli.cli.utils import CONFIG_DIR
-import torch.nn.init as init
-import json
 import sys
-import os
+from pathlib import Path
+from typing import Union
+
+import torch
+import torch.nn as nn
+import torch.nn.init as init
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from torch.utils.data import DataLoader
+from web3 import Web3
+
+from dincli.services.ipfs import retrieve_from_ipfs, upload_to_ipfs
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 

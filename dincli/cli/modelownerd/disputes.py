@@ -5,11 +5,19 @@ from typing import Optional
 import typer
 
 from dincli.cli.modelownerd.auditor_batches import (
-    _auditors_missing_encryption_key, _encrypt_batch_testdata,
-    _load_owner_x25519_key, _load_testdata_secret, _save_testdata_secret)
-from dincli.cli.utils import (build_and_send_tx, get_manifest_key,
-                              parse_tier_kind, require_custom_manifest_service,
-                              resolve_manifest_path)
+    _auditors_missing_encryption_key,
+    _encrypt_batch_testdata,
+    _load_owner_x25519_key,
+    _load_testdata_secret,
+    _save_testdata_secret,
+)
+from dincli.cli.utils import (
+    build_and_send_tx,
+    get_manifest_key,
+    parse_tier_kind,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 
 disputes_app = typer.Typer(help="Answer and settle test-data and aggregation disputes")
 
