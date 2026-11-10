@@ -516,8 +516,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     ) public onlyOwner onlyCurrentGI(_GI) {
         if (GIstate != GIstates.AuditSeedLocked) revert TC_AuditSeedNotLocked();
 
-        bool success = dinTaskAuditorContract.createAuditorsBatches(_GI, auditSeed[_GI]);
-        if (!success) revert TC_FailedToCreateAuditorsBatches();
+        dinTaskAuditorContract.createAuditorsBatches(_GI, auditSeed[_GI]);
 
         _setGIstate(GIstates.AuditorsBatchesCreated);
     }
@@ -652,7 +651,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         address[] memory reserve = new address[](rLen);
         uint rPtr;
         for (uint i = t1Seats; i < rLen;) {
-            if (i == t2Start && t2Start < maxTotalSeats) { unchecked { i = maxTotalSeats; } continue; }
+            if (hasT2 && i == t2Start) { unchecked { i = maxTotalSeats; } continue; }
             if (active[i]) { reserve[rPtr++] = regList[i]; }
             unchecked { i++; }
         }

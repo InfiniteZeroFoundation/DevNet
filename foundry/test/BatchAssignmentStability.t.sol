@@ -504,4 +504,70 @@ contract BatchAssignmentStabilityTest is Test {
         assertEq(auds2[2], aseat2, "auditor seat2 must not move");
         assertTrue(stake.isValidatorActive(auds2[0]), "replacement auditor must be active");
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Regression: T2-block members must enter the reserve when T2 is dropped
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Regression for the reserve-loop bug: when T2 is dropped (hasT2 = false),
+    ///      the T2-block seats must NOT be skipped by the pre-collect loop.
+    ///      Setup: 9 aggregators → T1(3) + T2(3) + reserve(3).
+    ///      Unstake all 3 T1 seat-holders + 1 true-reserve member → 5 active remain
+    ///      (the 3 T2-block validators and 2 true-reserve validators).
+    ///      hasT2 = 5 >= 6 is false. The T2-block validators must become the reserve
+    ///      so the T1 fill has enough entries; before the fix, the fill read past rPtr
+    ///      into the zero-initialised tail and seated address(0).
+    function test_aggregator_t2DroppedT1FillUsesT2BlockAsReserve() public {
+        _runToSeedLocked();
+
+        uint256 snap = vm.snapshot();
+
+        // baseline: discover seat layout
+        vm.prank(modelOwner);
+        tc.autoCreateTier1AndTier2(1);
+
+        (, address[] memory t1agg,,, ) = tc.getTier1Batch(1, 0);
+        (, address[] memory t2agg,, )  = tc.getTier2Batch(1, 0);
+
+        address t1s0 = t1agg[0];
+        address t1s1 = t1agg[1];
+        address t1s2 = t1agg[2];
+        // identify one true-reserve member (not in T1 or T2)
+        address reserve0 = address(0);
+        {
+            address[9] memory aggs = [agg0,agg1,agg2,agg3,agg4,agg5,agg6,agg7,agg8];
+            bool[9] memory seated;
+            for (uint i = 0; i < 3; i++) {
+                for (uint j = 0; j < 9; j++) if (aggs[j] == t1agg[i]) seated[j] = true;
+                for (uint j = 0; j < 9; j++) if (aggs[j] == t2agg[i]) seated[j] = true;
+            }
+            for (uint j = 0; j < 9; j++) {
+                if (!seated[j]) { reserve0 = aggs[j]; break; }
+            }
+        }
+        require(reserve0 != address(0), "setup: no true-reserve member found");
+
+        vm.revertTo(snap);
+
+        // unstake all 3 T1 holders + 1 true-reserve member → 5 active remain
+        vm.prank(t1s0); stake.unstake(10 ether);
+        vm.prank(t1s1); stake.unstake(10 ether);
+        vm.prank(t1s2); stake.unstake(10 ether);
+        vm.prank(reserve0); stake.unstake(10 ether);
+
+        // T2 is dropped (5 active < 6 needed), T2-block validators fill the reserve
+        vm.prank(modelOwner);
+        tc.autoCreateTier1AndTier2(1);
+
+        (, address[] memory t1agg2,,, ) = tc.getTier1Batch(1, 0);
+
+        // every T1 seat must be a non-zero active validator
+        for (uint k = 0; k < 3; k++) {
+            assertTrue(t1agg2[k] != address(0), "T1 seat must not be address(0)");
+            assertTrue(stake.isValidatorActive(t1agg2[k]), "T1 seat must be active");
+        }
+        // T2 was dropped: tier2Batches[1] is empty, so getTier2Batch panics on [0]
+        vm.expectRevert();
+        tc.getTier2Batch(1, 0);
+    }
 }
