@@ -50,3 +50,18 @@ dincli = ["config/*.json", "abis/*", "docker/worker/*", "services/*.py"]
 markers = [
     "integration: marks tests that require a live Hardhat node, IPFS daemon, and Docker",
 ]
+
+# Advisory Python policy. Keep Ruff's standard exclusions as well.
+[tool.ruff]
+required-version = "==0.16.4"
+target-version = "py312"
+force-exclude = true
+include = ["*.py", "*.pyi", "**/pyproject.toml", "**/ruff.toml", "**/.ruff.toml"]
+extend-exclude = [
+    "foundry/lib", "foundry/out", "foundry/cache", "foundry/broadcast",
+    "foundry/deployments", "hardhat/artifacts", "hardhat/cache",
+    "hardhat/typechain-types", "tasks", "build", "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

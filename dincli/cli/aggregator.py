@@ -1,20 +1,30 @@
 import json
 import secrets
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Optional
+
 import typer
+from eth_abi import encode as abi_encode
 from rich.table import Table
 from web3 import Web3
-from eth_abi import encode as abi_encode
-from dincli.cli.dintoken import (approve_din, buy_dintokens,
-                                 read_din_per_eth_rate, read_dintoken_stake,
-                                 stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, lock_batch_seed_if_pending,
-                               parse_tier_kind,
-                               require_custom_manifest_service,
-                               resolve_manifest_path)
+
+from dincli.cli.dintoken import (
+    approve_din,
+    buy_dintokens,
+    read_din_per_eth_rate,
+    read_dintoken_stake,
+    stake_dintokens,
+)
+from dincli.cli.utils import (
+    MIN_STAKE,
+    build_and_send_tx,
+    get_manifest_key,
+    lock_batch_seed_if_pending,
+    parse_tier_kind,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -134,18 +144,18 @@ def register(
     is_registered = taskCoordinator_contract.functions.isDINAggregator(curr_GI, account.address).call()
     
     if is_registered:
-        console.print(f"[bold red]✗ Aggregator already registered.[/bold red]")
+        console.print("[bold red]✗ Aggregator already registered.[/bold red]")
         return
     else:
-        console.print(f"[bold green]✓ Aggregator not registered.[/bold green]")
+        console.print("[bold green]✓ Aggregator not registered.[/bold green]")
 
         stake = DinStake_contract.functions.getStake(account.address).call()
             
         if stake < MIN_STAKE:
-            console.print(f"[bold red]✗ Aggregator does not have enough stake.[/bold red]")
+            console.print("[bold red]✗ Aggregator does not have enough stake.[/bold red]")
             raise typer.Exit(1)
         else:
-            console.print(f"[bold green]✓ Aggregator has enough stake.[/bold green]")
+            console.print("[bold green]✓ Aggregator has enough stake.[/bold green]")
 
             try:
                 receipt = build_and_send_tx(

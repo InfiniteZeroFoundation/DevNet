@@ -2,8 +2,8 @@
 import typer
 from rich.table import Table
 
-from dincli.services.cid_utils import get_cid_from_bytes32
 from dincli.cli.utils import build_and_send_tx
+from dincli.services.cid_utils import get_cid_from_bytes32
 
 lms_evaluation_app = typer.Typer(help="Local Model Submission Evaluation commands")
 
@@ -23,7 +23,7 @@ def start(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "AuditTestDataAssigned",  "Can not start LMS evaluation at this time (run `auditor-batches create-testdataset --submit` first)")
     
-    console.print(f"[bold green]Starting LMS evaluation[/bold green]")
+    console.print("[bold green]Starting LMS evaluation[/bold green]")
 
     try:
         build_and_send_tx(
@@ -56,7 +56,7 @@ def start_reveal(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationStarted", "Can not start LMS evaluation reveal at this time")
 
-    console.print(f"[bold green]Starting LMS evaluation reveal window[/bold green]")
+    console.print("[bold green]Starting LMS evaluation reveal window[/bold green]")
 
     try:
         build_and_send_tx(
@@ -87,7 +87,7 @@ def close(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "LMSevaluationRevealStarted",  "Can not close LMS evaluation at this time")
     
-    console.print(f"[bold green]Closing LMS evaluation![/bold green]")
+    console.print("[bold green]Closing LMS evaluation![/bold green]")
 
     try:        
         build_and_send_tx(

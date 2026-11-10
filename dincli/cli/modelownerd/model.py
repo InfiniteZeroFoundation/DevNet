@@ -1,19 +1,24 @@
+import json
 import os
-from pathlib import Path
 import time
+from pathlib import Path
 
 import typer
-import json
 from web3 import Web3
 
-from dincli.cli.utils import (build_and_send_tx, get_env_key, load_din_info,
-                                get_manifest,
-                               get_manifest_key,
-                               GIstateToStr,
-                               require_custom_manifest_service,
-                               resolve_manifest_path,
-                               resolve_task_coordinator_address,
-                               set_env_key, _confirm_or_exit)
+from dincli.cli.utils import (
+    GIstateToStr,
+    _confirm_or_exit,
+    build_and_send_tx,
+    get_env_key,
+    get_manifest,
+    get_manifest_key,
+    load_din_info,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+    resolve_task_coordinator_address,
+    set_env_key,
+)
 from dincli.services.cid_utils import get_bytes32_from_cid
 
 #delete-this-for-production
@@ -91,14 +96,14 @@ def create_genesis_model(
 
     if not task_dir.exists():
         console.print(f"[bold red]Task directory not found at {task_dir}[/bold red]")
-        console.print(f"[bold yellow]Please create the task directory first using: dincli model-owner task create-task-dir[/bold yellow]")
+        console.print("[bold yellow]Please create the task directory first using: dincli model-owner task create-task-dir[/bold yellow]")
         raise typer.Exit(1)
 
     target_manifest = os.path.join(task_dir, "manifest.json")
     
     if not os.path.exists(target_manifest):
         console.print(f"[bold red]Manifest not found at {target_manifest}[/bold red]")
-        console.print(f"[bold yellow]Please cache the artifacts and manifest using: dincli model-owner task cache-default-artifacts[/bold yellow]")
+        console.print("[bold yellow]Please cache the artifacts and manifest using: dincli model-owner task cache-default-artifacts[/bold yellow]")
         raise typer.Exit(1)
 
     manifest = get_manifest_key(effective_network, "getGenesisModelIpfs", None, task_coordinator_address)
@@ -127,7 +132,7 @@ def create_genesis_model(
     )
     model_hash = fn(task_dir)
     
-    console.print(f"[bold green]Genesis model created successfully![/bold green]")
+    console.print("[bold green]Genesis model created successfully![/bold green]")
     console.print(f"[cyan]Model hash:[/cyan] {model_hash}")
 
     set_env_key(effective_network.upper() + "_" + task_coordinator_address + "_GENESIS_MODEL_IPFS_HASH", model_hash)
@@ -216,8 +221,8 @@ def submit_genesis_model(
         raise typer.Exit(1)
 
     _confirm_or_exit(
-        f"Have you generated the genesis model using dincli model-owner model create-genesis-model?",
-        f"Please generate the genesis model using dincli model-owner model create-genesis-model.",
+        "Have you generated the genesis model using dincli model-owner model create-genesis-model?",
+        "Please generate the genesis model using dincli model-owner model create-genesis-model.",
         console,
     )
 
@@ -241,7 +246,7 @@ def submit_genesis_model(
             raise typer.Exit(1)
         console.print("[yellow]Genesis model already submitted on-chain and matches this CID — submitting score only.[/yellow]")
     else:
-        console.print(f"[bold green]Submitting genesis model to DIN Task Coordinator![/bold green]")
+        console.print("[bold green]Submitting genesis model to DIN Task Coordinator![/bold green]")
         console.print(f"[cyan]Genesis model IPFS hash:[/cyan] {ipfs_hash}")
 
     accuracy = None
@@ -291,7 +296,7 @@ def submit_genesis_model(
                 raise typer.Exit(1)
             
             if accuracy is None:
-                console.print(f"[bold red] X Accuracy is None[/bold red]")
+                console.print("[bold red] X Accuracy is None[/bold red]")
                 raise typer.Exit(1)
 
     
@@ -349,11 +354,11 @@ def validate_update_manifest(
     manifest_DINTaskCoordinator_Contract = manifest_data["DINTaskCoordinator_Contract"]
 
     if task_coordinator_address!=manifest_DINTaskCoordinator_Contract:
-        console.print(f"[bold red] X Task coordinator address in manifest does not match the task coordinator address in .env! [/bold red]")
+        console.print("[bold red] X Task coordinator address in manifest does not match the task coordinator address in .env! [/bold red]")
         console.print(f"[bold red] Task coordinator address in manifest: {manifest_DINTaskCoordinator_Contract} [/bold red]")
         console.print(f"[bold red] Task coordinator address in .env: {task_coordinator_address} [/bold red]")
         if typer.confirm("Should we update the DINTaskCoordinator_Contract in manifest to match the task coordinator address in .env?:"):
-            console.print(f"[bold green] Updating the DINTaskCoordinator_Contract in manifest to match the task coordinator address in .env [/bold green]")
+            console.print("[bold green] Updating the DINTaskCoordinator_Contract in manifest to match the task coordinator address in .env [/bold green]")
             manifest_data["DINTaskCoordinator_Contract"] = task_coordinator_address
         else:
             console.print("[bold red] X Not updating the DINTaskCoordinator_Contract in manifest. [/bold red]")
@@ -363,11 +368,11 @@ def validate_update_manifest(
     task_auditor = get_env_key(key)
 
     if task_auditor!=manifest_DINTaskAuditor_Contract:
-        console.print(f"[bold red] X Task auditor address in manifest does not match the task auditor address in .env! [/bold red]")
+        console.print("[bold red] X Task auditor address in manifest does not match the task auditor address in .env! [/bold red]")
         console.print(f"[bold red] Task auditor address in manifest: {manifest_DINTaskAuditor_Contract} [/bold red]")
         console.print(f"[bold red] Task auditor address in .env: {task_auditor} [/bold red]")
         if typer.confirm("Should we update the DINTaskAuditor_Contract in manifest to match the task auditor address in .env?:"):
-            console.print(f"[bold green] Updating the DINTaskAuditor_Contract in manifest to match the task auditor address in .env [/bold green]")
+            console.print("[bold green] Updating the DINTaskAuditor_Contract in manifest to match the task auditor address in .env [/bold green]")
             manifest_data["DINTaskAuditor_Contract"] = task_auditor
         else:
             console.print("[bold red] X Not updating the DINTaskAuditor_Contract in manifest. [/bold red]")
@@ -376,11 +381,11 @@ def validate_update_manifest(
     genesis_model_ipfs_hash = get_env_key(effective_network.upper() + "_" + task_coordinator_address + "_GENESIS_MODEL_IPFS_HASH")
 
     if manifest_genesis_model_cid!=genesis_model_ipfs_hash:
-        console.print(f"[bold red] X Genesis model CID in manifest does not match the genesis model CID in .env! [/bold red]")
+        console.print("[bold red] X Genesis model CID in manifest does not match the genesis model CID in .env! [/bold red]")
         console.print(f"[bold red] Genesis model CID in manifest: {manifest_genesis_model_cid} [/bold red]")
         console.print(f"[bold red] Genesis model CID in .env: {genesis_model_ipfs_hash} [/bold red]")
         if typer.confirm("Should we update the Genesis model CID in manifest to match the genesis model CID in .env?:"):
-            console.print(f"[bold green] Updating the Genesis model CID in manifest to match the genesis model CID in .env [/bold green]")
+            console.print("[bold green] Updating the Genesis model CID in manifest to match the genesis model CID in .env [/bold green]")
             manifest_data["Genesis_Model_CID"] = genesis_model_ipfs_hash
         else:
             console.print("[bold red] X Not updating the Genesis model CID in manifest. [/bold red]")
@@ -389,7 +394,7 @@ def validate_update_manifest(
         json.dump(manifest_data, f, indent=4)
     
     console.print(f"[bold green] Manifest at {manifestpath} updated successfully! [/bold green]")
-    console.print(f"[bold yellow] Make sure to throughly read/modify all the parameters/CID values in the manifest file before registering your task/model onchain. [/bold yellow]")
+    console.print("[bold yellow] Make sure to throughly read/modify all the parameters/CID values in the manifest file before registering your task/model onchain. [/bold yellow]")
 
 
     

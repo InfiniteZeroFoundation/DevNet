@@ -9,7 +9,13 @@ shared path so a commit made before upgrading can be revealed.
 """
 import json
 
-from dincli.cli.aggregator import TIER1, TIER2, _agg_commit_store_path, _load_agg_commit, _save_agg_commit
+from dincli.cli.aggregator import (
+    TIER1,
+    TIER2,
+    _agg_commit_store_path,
+    _load_agg_commit,
+    _save_agg_commit,
+)
 from dincli.cli.auditor import _commit_store_path, _load_commit, _save_commit
 
 A = "0x" + "aa" * 20

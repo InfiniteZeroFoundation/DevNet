@@ -24,45 +24,39 @@ It requires explicit scratch and external results paths; it does not create a
 container. The default manual service behavior remains unchanged.
 """
 
-import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 from contextlib import ExitStack
+from pathlib import Path
 
 import pytest
 import requests
 
 from tests.dincli.constants import (
-    HARDHAT_RPC,
-    ARTIFACT_BASE,
-    DIN_INFO_PATH,
-    PYDIN_PYTHON,
-    TORCHENV_PYTHON,
-    DEVNET_ROOT,
-    HARDHAT_DIR,
-    FOUNDRY_DIR,
-    FORGE_BIN,
-    PLATFORM_DEPLOY_TOOLCHAIN,
-    DIN_TEMP,
-    NPX_BIN,
-    IPFS_BIN,
     ANVIL_BIN,
+    DEVNET_ROOT,
+    DIN_INFO_PATH,
+    DIN_TEMP,
+    FORGE_BIN,
+    FOUNDRY_DIR,
+    HARDHAT_DIR,
+    HARDHAT_RPC,
+    IPFS_BIN,
     ISOLATED_MODE,
+    NPX_BIN,
+    PLATFORM_DEPLOY_TOOLCHAIN,
+    PYDIN_PYTHON,
     RESULTS_DIR,
     SVM_SEED_DIR,
 )
-
 from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
-from tests.dincli.seed import apply_din_info_overrides, seed_default_artifacts
-from tests.dincli.services import start_service, rpc_ready, ipfs_ready
 from tests.dincli.diagnostics import Diagnostics, write_cleanup_summary
 from tests.dincli.reports import collect_worker_reports
-
+from tests.dincli.seed import apply_din_info_overrides, seed_default_artifacts
+from tests.dincli.services import ipfs_ready, rpc_ready, start_service
 
 _DIAGNOSTICS = None
 

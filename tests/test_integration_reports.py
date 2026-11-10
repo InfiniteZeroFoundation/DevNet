@@ -7,7 +7,6 @@ import pytest
 
 from tests.dincli.reports import collect_worker_reports
 
-
 ADDRESS = "0x" + "a" * 40
 JOBS = {
     "clients": "client_lms_gi_1",

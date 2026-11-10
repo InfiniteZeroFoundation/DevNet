@@ -66,6 +66,9 @@ jobs:
         working-directory: foundry
         run: forge build
 
+      - name: Verify task artifact bundles
+        run: python3 .github/scripts/check_task_artifacts.py
+
       # EIP-170/EIP-3860 budget for every foundry/src contract: fails below a
       # 1,024 B runtime margin, warns below 2,048 B. Reads artifacts directly
       # because `forge build --sizes` omits DINTaskAuditor. Issue #201 Part A.
@@ -129,11 +132,19 @@ jobs:
       - name: Install dincli + test deps
         run: python -m pip install -e ".[test]"
 
-      - name: ruff (advisory)
-        continue-on-error: true
-        run: |
-          python -m pip install ruff
-          ruff check .
+      - name: Install Ruff
+        run: python -m pip install ruff
+
+      - name: Ruff (findings advisory; tool errors blocking)
+        run: python .github/scripts/ruff_advisory.py "$RUNNER_TEMP/ruff.json"
+
+      - name: Upload Ruff report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ruff-report
+          path: ${{ runner.temp }}/ruff.json
+          if-no-files-found: warn
 
       # Excludes tests/dincli/ (Docker + IPFS + live chain) via the directory
       # hook. pytest exits 5 if this ever selects nothing, so a broken hook

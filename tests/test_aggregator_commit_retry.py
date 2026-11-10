@@ -19,9 +19,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dincli.cli import aggregator
-from dincli.cli.aggregator import (TIER1, TIER2, _agg_commit_hash,
-                                   _agg_commit_store_path, _save_agg_commit,
-                                   aggregate_t1, aggregate_t2)
+from dincli.cli.aggregator import (
+    TIER1,
+    TIER2,
+    _agg_commit_hash,
+    _agg_commit_store_path,
+    _save_agg_commit,
+    aggregate_t1,
+    aggregate_t2,
+)
 
 GI = 1
 ACCOUNT = "0x" + "11" * 20

@@ -1,9 +1,9 @@
 import os
-import typer
 from pathlib import Path
 
-from dincli.cli.utils import resolve_task_coordinator_address, load_din_info
+import typer
 
+from dincli.cli.utils import load_din_info, resolve_task_coordinator_address
 from dincli.services.ipfs import retrieve_from_ipfs
 
 task_app = typer.Typer(help="task-level commands")
@@ -20,7 +20,7 @@ def create_task_dir(ctx: typer.Context, task_coordinator_address: str = typer.Op
     task_dir = Path(os.getcwd()) / 'tasks' / effective_network.lower() / task_coordinator_address
     os.makedirs(task_dir, exist_ok=True)
 
-    console.print(f"[bold green]Task directory created successfully![/bold green]")
+    console.print("[bold green]Task directory created successfully![/bold green]")
     console.print(f"[cyan]Task directory:[/cyan] {task_dir}")
 
 
@@ -37,7 +37,7 @@ def cache_default_artifacts(
     task_dir = Path(os.getcwd()) / 'tasks' / effective_network.lower() / task_coordinator_address
     if not task_dir.exists():
         console.print(f"[bold red]Task directory not found at {task_dir}[/bold red]")
-        console.print(f"[bold yellow]Please create the task directory first using: dincli model-owner task create-task-dir[/bold yellow]")
+        console.print("[bold yellow]Please create the task directory first using: dincli model-owner task create-task-dir[/bold yellow]")
         raise typer.Exit(1)
 
     services_dir = task_dir / "services"
@@ -82,12 +82,12 @@ def cache_default_artifacts(
             console.print(f"[bold red]Error caching default requirements: {e}[/bold red]")
             raise typer.Exit(1)
 
-    console.print(f"[bold yellow]Important Instructions![/bold yellow]")
-    console.print(f"[bold yellow]1. Ensure to edit/modify the services as per your task/model specifications![/bold yellow]")
-    console.print(f"[bold yellow]2. Ensure to edit/modify the abis as per your task/model specifications![/bold yellow]")
-    console.print(f"[bold yellow]3. Ensure to edit/modify the requirements as per your task/model specifications![/bold yellow]")
-    console.print(f"[bold yellow]4. Upload the edited/modified services, abis and requirements to IPFS and update the manifest with the new CIDs! use dincli ipfs upload -f path/to/file to upload and get the CID, then update the manifest file with the new CID![/bold yellow]")
-    console.print(f"[bold yellow]5. Make sure to check/update other fields in the manifest as per your task/model specifications![/bold yellow]")
-    console.print(f"[bold yellow]6. Upload the edited/modified manifest to IPFS [/bold yellow]")
+    console.print("[bold yellow]Important Instructions![/bold yellow]")
+    console.print("[bold yellow]1. Ensure to edit/modify the services as per your task/model specifications![/bold yellow]")
+    console.print("[bold yellow]2. Ensure to edit/modify the abis as per your task/model specifications![/bold yellow]")
+    console.print("[bold yellow]3. Ensure to edit/modify the requirements as per your task/model specifications![/bold yellow]")
+    console.print("[bold yellow]4. Upload the edited/modified services, abis and requirements to IPFS and update the manifest with the new CIDs! use dincli ipfs upload -f path/to/file to upload and get the CID, then update the manifest file with the new CID![/bold yellow]")
+    console.print("[bold yellow]5. Make sure to check/update other fields in the manifest as per your task/model specifications![/bold yellow]")
+    console.print("[bold yellow]6. Upload the edited/modified manifest to IPFS [/bold yellow]")
     
         

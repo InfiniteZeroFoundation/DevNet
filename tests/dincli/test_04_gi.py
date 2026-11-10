@@ -40,7 +40,12 @@ import pytest
 from eth_account import Account
 from web3 import Web3
 
-from tests.dincli.constants import DIN_INFO_PATH, HARDHAT_RPC, TORCHENV_PYTHON, TORCHENV_SITE_PACKAGES
+from tests.dincli.constants import (
+    DIN_INFO_PATH,
+    HARDHAT_RPC,
+    TORCHENV_PYTHON,
+    TORCHENV_SITE_PACKAGES,
+)
 from tests.dincli.demo import DEMO_MNEMONIC
 
 MODEL_ID = "0"

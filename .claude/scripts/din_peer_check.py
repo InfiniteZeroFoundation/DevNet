@@ -54,7 +54,7 @@ def person(ident):
     """Canonical person key for a login or display name; unknown idents map to themselves."""
     key = (ident or "").strip().lower()
     for p in PEOPLE:
-        if key == p["name"].lower() or key in (l.lower() for l in p["logins"]):
+        if key == p["name"].lower() or key in (login.lower() for login in p["logins"]):
             return p["name"]
     return ident.strip()
 

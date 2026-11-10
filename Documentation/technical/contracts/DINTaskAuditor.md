@@ -43,6 +43,7 @@ Phase transitions are driven by the paired [`DINTaskCoordinator`](DINTaskCoordin
 |----------|-------------|
 | `dinvalidatorStakeContract` | `DinValidatorStake` proxy (constructor) |
 | `dintaskcoordinatorContract` | Paired coordinator (constructor) |
+| `modelRegistry` (`immutable`) | Canonical platform registry proxy (fourth constructor argument; must contain code; no setter) |
 | `modelId` (`immutable`) | Registry model ID for the stake floor (constructor) |
 | `dinToken` | DIN token (`setDinToken`); required before `depositRewards`, claims or bonded disputes |
 
@@ -92,7 +93,7 @@ Mappings marked *(internal)* have no auto-getter; read them through the view nam
 
 | Caller | Functions |
 |--------|-----------|
-| Paired coordinator (`onlyTaskCoordinator`) | `updatePassScore`, `createAuditorsBatches`, `setTestDataAssignedFlag`, `finalizeEvaluation`, `slashAuditors`, `settleRewards`, `decrementAuditorRegistrations` |
+| Paired coordinator (`onlyTaskCoordinator`) | `validateGIStart`, `updatePassScore`, `createAuditorsBatches`, `setTestDataAssignedFlag`, `finalizeEvaluation`, `slashAuditors`, `settleRewards`, `decrementAuditorRegistrations` |
 | `owner()` (model owner) | `assignAuditTestDataset`, `reassignAuditTestDataset`, all setters |
 | Assigned auditor (`onlyAssignedAuditor`) | `commitAuditScore`, `revealAuditScore` |
 | Auditor of the disputed batch (`isBatchAuditor`) | `openTestDataDispute` |
@@ -100,6 +101,16 @@ Mappings marked *(internal)* have no auto-getter; read them through the view nam
 | Any address | `submitLocalModel`, `depositRewards`, `claimReward`, `claimRewards`, `closeExpiredDispute`, views |
 
 ---
+
+### Future-GI guard and deployment
+
+Constructor: `DINTaskAuditor(stake, coordinator, modelId, modelRegistry)`. A zero/EOA registry reverts `TA_InvalidAddress`; a wrong contract or unavailable registry fails closed at GI start. `validateGIStart(gi)` is coordinator-only (`TA_NotTaskCoordinator`) and reverts `TA_ModelNotRegistered`, `TA_ModelDisabled(registeredId)` or the existing `TC_GIRewardPoolNotFunded` selector. The public `giRewardPool` getter remains an unconditional accounting read.
+
+For the current Foundry task pair, both `startGI(gi)` and `startGI(gi, score)` call the auditor's `validateGIStart(gi)` before changing the pass score, GI counter or state. The auditor requires an approved registry entry for its own address, checks that entry's `modelDisabled` flag, and requires a funded pool. It uses the registry-assigned ID, including ID zero, rather than the constructor's anticipated stake-floor ID. An unregistered model or failed registry read prevents starting a GI. Pre-funding or private funding cannot bypass a disabled flag; reenabling permits starting again if the other prerequisites hold.
+
+Disabling blocks subsequent GI starts, manifest updates and emission funding. It does **not** abort or freeze an in-flight GI: submissions, audits, aggregation, slashing, settlement and reward claims continue. A start ordered before disable may succeed. Existing funds remain in their pools; this change adds no cancellation, refund or recovery path.
+
+Both task contracts are non-upgradeable. Existing deployed pairs keep their previous behavior and need a newly deployed compatible pair to gain this protection; there is no automatic retrofit. Deploy the new coordinator together with the new auditor wired to the canonical platform registry proxy. An old coordinator can bypass the new auditor guard, and a new coordinator cannot call this guard on an old auditor. The CLI therefore reads the deployed coordinator's `taskProtocolVersion()` before auditor deployment: version `1` requires this registry-aware four-argument auditor, while released unversioned coordinators accept only matching legacy auditor signatures (two arguments without `modelId()`, three arguments with it). Mixed or unknown generations fail before deployment, address writes or one-shot pairing. Direct deployments still require review; the version getter is a compatibility declaration, not proof of trusted task code. Immutable wiring prevents later reassignment but does not prove the supplied registry is canonical. The DIN-Representative must review the task code, pairing and registry address before slasher authorization and approval; arbitrary custom or malicious task code is outside this enforcement guarantee.
 
 ## 5. Registration & Submissions
 
@@ -207,7 +218,7 @@ Read alongside the [foundry/src security review](../audits/foundry-src-security-
 - **No. 5 — Fixed: scoring can't open before test data is assigned.** `setTestDataAssignedFlag` now checks every batch has a commitment and moves the coordinator to `AuditTestDataAssigned`, which `startLMsubmissionsEvaluation` requires (task_061026_21 Part B).
 - **No. 6 — Stale NatSpec and reused errors:** `slashAuditors` says S1 and S3 are both `minStake()` (S1 is now a fraction). Several comments call parameters "DAO-settable"; they are `onlyOwner`, i.e. set by the model owner. `setDisputePenaltyBps` reuses `TA_InvalidDisputeBond`, and `closeExpiredDispute` reuses `TA_DisputeWindowClosed` for "window still open".
 - **No. 7 — `modelId` is fixed at construction**, before the registry assigns it (see [DINTaskCoordinator §10 No. 4](DINTaskCoordinator.md#10-review-notes--open-caveats)).
-- **No. 8 — dincli lags this contract:** `dincli model-owner deploy task-auditor` still calls the older two-argument constructor (no `modelId`).
+- **No. 8 — Fixed: dincli supports the current four-argument constructor.** `dincli model-owner deploy task-auditor` passes the configured canonical registry and defaults `--model-id` to the paired coordinator’s `modelId()`. It rejects model-ID or protocol-version mismatches (current pairs use version `1`), then sets the platform `DinToken` before linking the auditor. Legacy constructor support does not add the guard to older contracts; the oldest two-argument artifacts skip token setup because they have no `setDinToken` function.
 - **No. 9 — Fixed: a dincli auditor commit retry no longer loses the committed salt.** Rerunning `dincli auditor lms-evaluation evaluate --submit` used to generate a new salt and overwrite the local commit cache even when the on-chain commit already existed. The later reveal then failed the hash check, and the auditor was slashed for a missed vote. dincli now skips any LM whose `hasCommittedLM` is already set, leaving its cache untouched, and writes the cache before sending the commit tx (issue No. 202 Part 1). A rerun is safe.
 
 ---
