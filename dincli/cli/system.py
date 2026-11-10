@@ -2,36 +2,46 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
-from datetime import datetime, timedelta
-from decimal import Decimal
+import time
 from getpass import getpass
 from importlib.resources import files
 from pathlib import Path
 from typing import Optional
-from rich.console import Console
+
 import typer
-import time
 from eth_account import Account
-from rich.prompt import Confirm
+from rich.console import Console
 
-from dincli.cli.contract_utils import erc20_abi, router_abi
-from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR,
-                              CONFIG_FILE, WORKER_CACHE_DIR,
-                              print_tx_info,
-                              SUPPORTED_IPFS_PROVIDERS, _get_password,
-                              _confirm_or_exit, _clean_optional_string,
-                              get_config, get_demo_private_key,
-                              get_env_key, is_ethereum_address,
-                              load_cid_services, load_config,
-                              load_din_info, normalize_ipfs_provider,
-                              resolve_ipfs_config, resolve_task_coordinator_address,
-                              save_config, save_din_info,
-                              validate_account_name, wallet_path_for_name,
-                              atomic_write_wallet, resolve_wallet_path,
-                              list_accounts, get_active_account_name, load_account,
-                              _extract_keystore)
-
+from dincli.cli.utils import (
+    CACHE_DIR,
+    CONFIG_DIR,
+    CONFIG_FILE,
+    SUPPORTED_IPFS_PROVIDERS,
+    WORKER_CACHE_DIR,
+    _clean_optional_string,
+    _confirm_or_exit,
+    _extract_keystore,
+    _get_password,
+    atomic_write_wallet,
+    get_config,
+    get_demo_private_key,
+    get_env_key,
+    is_ethereum_address,
+    list_accounts,
+    load_account,
+    load_cid_services,
+    load_config,
+    load_din_info,
+    normalize_ipfs_provider,
+    print_tx_info,
+    resolve_ipfs_config,
+    resolve_task_coordinator_address,
+    resolve_wallet_path,
+    save_config,
+    save_din_info,
+    validate_account_name,
+    wallet_path_for_name,
+)
 from dincli.services import bridge as bridge_service
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
@@ -119,7 +129,7 @@ def run_worker_counting(
     delay: float = typer.Option(1.0, "--delay", "-d", help="Seconds between counts"),
 ):
     """Run a counting task inside the DIN worker container."""
-    from dincli.cli.worker import ensure_worker_image, write_worker_job, WORKER_IMAGE
+    from dincli.cli.worker import WORKER_IMAGE, ensure_worker_image, write_worker_job
 
     console = Console()
 
@@ -469,7 +479,7 @@ def connect_demo_wallet(ctx: typer.Context,
                 console.print("[yellow]Aborted. Existing wallet left unchanged.[/yellow]")
                 raise typer.Exit(0)
 
-        console.print(f"[green] ⚙️  Connecting demo wallet...[/green]")
+        console.print("[green] ⚙️  Connecting demo wallet...[/green]")
         console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
 
         try:
@@ -485,7 +495,7 @@ def connect_demo_wallet(ctx: typer.Context,
             "demo_mode": True
         }
         atomic_write_wallet(target_path, wallet_data)
-        console.print(f"[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
+        console.print("[green]✅ Wallet saved in DEMO MODE (plaintext)![/green]")
         console.print(f"[yellow]Address:[/yellow] {acct.address}")
         console.print(f"[cyan]Wallet File:[/cyan] {target_path}")
 
@@ -670,7 +680,7 @@ def register_wallet(ctx: typer.Context,
             console.print("[yellow]Aborted. Existing wallet left unchanged.[/yellow]")
             raise typer.Exit(0)
 
-    console.print(f"[green] ⚙️  Registering wallet...[/green]")
+    console.print("[green] ⚙️  Registering wallet...[/green]")
     console.print(f"[cyan]Saving as:[/cyan] {resolved_name}")
 
     # --- resolve secret material ---
@@ -895,7 +905,7 @@ def send_eth(
         if receipt.status == 1:
             console.print(f"[bold green] ✓ Successfully sent {amount} ETH to {to}[/bold green]")
         else:
-            console.print(f"[bold red]✗ Transaction failed (reverted)[/bold red]")
+            console.print("[bold red]✗ Transaction failed (reverted)[/bold red]")
             raise typer.Exit(1)
 
     except typer.Exit:
@@ -1231,7 +1241,7 @@ def verify_deployment(
     prove that nothing else was deployed or authorized outside that file.
     """
     import sys
-    from eth_utils import keccak
+
 
     use_plain = no_color or not sys.stdout.isatty()
     raw_console = ctx.obj.console
@@ -1556,15 +1566,15 @@ def todo(
         console.print(f"[green]✅ Config file exists: {CONFIG_FILE}[/green]")
         config = load_config()
         if config.get("network") is None: 
-            console.print(f"[red]❌ Config file does not contain a network[/red], run 'dincli system configure-network' to set it.")
+            console.print("[red]❌ Config file does not contain a network[/red], run 'dincli system configure-network' to set it.")
         else:
             console.print(f"[green]✅ Config file contains a network: {config.get('network')}[/green]")
         if config.get("log_level") is None: 
-            console.print(f"[red]❌ Config file does not contain a log level[/red], run 'dincli system configure-logging' to set it.")
+            console.print("[red]❌ Config file does not contain a log level[/red], run 'dincli system configure-logging' to set it.")
         else:
             console.print(f"[green]✅ Config file contains a log level: {config.get('log_level')}[/green]")
         if config.get("demo_mode") is None: 
-            console.print(f"[red]❌ Config file does not contain a demo mode[/red], run 'dincli system configure-demo' to set it.")
+            console.print("[red]❌ Config file does not contain a demo mode[/red], run 'dincli system configure-demo' to set it.")
         else:
             console.print(f"[green]✅ Config file contains a demo mode: {config.get('demo_mode')}[/green]")
 

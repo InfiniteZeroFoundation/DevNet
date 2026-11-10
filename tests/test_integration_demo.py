@@ -5,8 +5,11 @@ import json
 import pytest
 from eth_account import Account
 
-from tests.dincli.demo import bootstrap_demo, generate_demo_accounts, prepare_demo_accounts
-
+from tests.dincli.demo import (
+    bootstrap_demo,
+    generate_demo_accounts,
+    prepare_demo_accounts,
+)
 
 
 def test_generate_demo_accounts_uses_public_anvil_accounts(tmp_path):

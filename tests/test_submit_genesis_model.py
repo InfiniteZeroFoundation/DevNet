@@ -9,7 +9,6 @@ from web3 import Web3
 from dincli.cli.modelownerd import model
 from dincli.cli.utils import GIstatestrToIndex
 
-
 CID_A = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
 CID_B = "bafybeiarceirceirceirceirceirceirceirceirceirceirceirceirce"
 

@@ -40,6 +40,7 @@ SDK candidates:
 """
 
 import pytest
+
 from tests.dincli.constants import TORCHENV_PYTHON, TORCHENV_SITE_PACKAGES
 
 MODEL_ID = "0"

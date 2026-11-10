@@ -51,8 +51,8 @@ def harness(monkeypatch, tmp_path):
 
 def fake_services(harness, monkeypatch):
     """Return real ownership wrappers around fake processes and temporary logs."""
-    from tests.dincli.services import OwnedService
     from tests.dincli import services
+    from tests.dincli.services import OwnedService
 
     harness.RESULTS_DIR.mkdir()
     handles = []
