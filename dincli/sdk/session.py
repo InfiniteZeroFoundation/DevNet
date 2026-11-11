@@ -37,7 +37,6 @@ from typing import Protocol, runtime_checkable
 from web3 import Web3
 
 from dincli.sdk.config import load_config, resolve_network
-from dincli.sdk.errors import NetworkError, RPC_UNREACHABLE
 from dincli.sdk.wallet import KeystoreSigner
 
 

@@ -1,10 +1,12 @@
 # Template 3 — Actual-outcome comment (post-merge, after pushing)
 
-Posted only after the merge has actually landed on `develop` (pushed). Goal:
-replace the table's predictions with what actually happened.
+Posted by the merger, only after the merge has actually landed on `develop`.
+Goal: replace the table's predictions with what actually happened. Works for
+both merge paths (`din-pr-merge`): path A (GitHub-side merge commit, fixes
+pushed onto the PR branch first) and path B (local merge + deviation commit).
 
 ```
-## Actual outcome — PR #<N> merged [+ deviation applied] (pushed)
+## Actual outcome — PR No. <N> merged [+ fixes / deviation applied]
 
 This supersedes the [pre-merge review comment](<url of Template 2's comment>)
 above with what actually happened when resolving this PR against `develop`.
@@ -12,11 +14,12 @@ above with what actually happened when resolving this PR against `develop`.
 **<One/Two> commit(s), <both/all> on `origin/develop`:**
 
 1. **[`<merge-commit-sha>`](<github commit URL>)** — real merge of this PR
-   (merge commit, not squash). <Conflict count vs. what was predicted,
-   resolution method.> GitHub agrees: PR shows **MERGED**.
-2. **[`<deviation-commit-sha>`](<github commit URL>)** — follow-up deviation
-   commit, same pattern as prior deviation commits. (omit if no deviation
-   needed)
+   (merge commit, not squash; path A: merged on GitHub by <merger> after
+   <approver>'s approval of `<head sha>`). <Conflict count vs. what was
+   predicted, resolution method.> GitHub agrees: PR shows **MERGED**.
+2. **[`<fix-or-deviation-commit-sha>`](<github commit URL>)** — path A: the
+   review-fix commit pushed onto the PR branch before the merge; path B: the
+   follow-up deviation commit on `develop`. (omit if none was needed)
 
 ### Files unchanged from the PR (<n> of <N>)
 
@@ -26,7 +29,7 @@ above with what actually happened when resolving this PR against `develop`.
 
 <files where both sides' additions coexist untouched>
 
-### Files deviated by `<deviation-commit-sha>` (<n> of <N>) (omit if none)
+### Files changed by `<fix-or-deviation-commit-sha>` (<n> of <N>) (omit if none)
 
 | File | What changed vs. this PR's merged version |
 |---|---|
@@ -40,8 +43,10 @@ branch was cut.>
 
 ### Verification
 
-<Final build/test numbers against the actually-pushed state — full suite
-counts, not just the touched files.>
+<Path A: the PR's green `CI OK` run on the merged head (link) plus the
+`develop` push run. Path B: final local build/test numbers against the
+actually-pushed state — full suite counts, not just the touched files — plus
+the `develop` push run.>
 
 **Local vs. GitHub agree**: <conflicts resolved as predicted, or note any
 surprise.>

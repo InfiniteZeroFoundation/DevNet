@@ -17,7 +17,6 @@ import re
 import time
 from importlib.resources import files
 from pathlib import Path
-from typing import Optional
 
 from eth_account import Account
 from eth_account.signers.local import LocalAccount

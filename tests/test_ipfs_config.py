@@ -1,10 +1,8 @@
 import json
 from pathlib import Path
 
-from dincli.cli import utils
 from dincli.sdk import config as sdk_config
 from dincli.sdk import ipfs as sdk_ipfs
-from dincli.services import ipfs
 
 
 def _write_config(config_file: Path, data: dict):

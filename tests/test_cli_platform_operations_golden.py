@@ -19,7 +19,6 @@ lines, the stake contract address line, the command's own output — runs for
 real.
 """
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner

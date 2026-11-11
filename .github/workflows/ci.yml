@@ -5,6 +5,11 @@ on:
     branches: [develop]
   push:
     branches: [develop]
+  # Reports `CI OK` on the merge queue's temporary gh-readonly-queue/* branches.
+  # Must land before the ruleset requires the queue, or the queue waits forever
+  # for a check that never runs. Discussion 208.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -60,6 +65,16 @@ jobs:
       - name: forge build
         working-directory: foundry
         run: forge build
+
+      - name: Verify task artifact bundles
+        run: python3 .github/scripts/check_task_artifacts.py
+
+      # EIP-170/EIP-3860 budget for every foundry/src contract: fails below a
+      # 1,024 B runtime margin, warns below 2,048 B. Reads artifacts directly
+      # because `forge build --sizes` omits DINTaskAuditor. Issue #201 Part A.
+      - name: contract size gate
+        working-directory: foundry
+        run: python3 ../.github/scripts/contract_size_gate.py
 
       - name: forge test
         working-directory: foundry
@@ -117,11 +132,19 @@ jobs:
       - name: Install dincli + test deps
         run: python -m pip install -e ".[test]"
 
-      - name: ruff (advisory)
-        continue-on-error: true
-        run: |
-          python -m pip install ruff
-          ruff check .
+      - name: Install Ruff
+        run: python -m pip install ruff
+
+      - name: Ruff (blocking)
+        run: python .github/scripts/ruff_check.py "$RUNNER_TEMP/ruff.json"
+
+      - name: Upload Ruff report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ruff-report
+          path: ${{ runner.temp }}/ruff.json
+          if-no-files-found: warn
 
       # Excludes tests/dincli/ (Docker + IPFS + live chain) via the directory
       # hook. pytest exits 5 if this ever selects nothing, so a broken hook

@@ -592,6 +592,60 @@
     },
     {
       "type": "function",
+      "name": "getAggregatorSubmission",
+      "inputs": [
+        {
+          "name": "_GI",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tier",
+          "type": "uint8",
+          "internalType": "enum DINTaskCoordinator.TierKind"
+        },
+        {
+          "name": "_batchId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "aggregator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "committed",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "commitHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "submitted",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "cid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "votes",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "getDINtaskAggregators",
       "inputs": [
         {
@@ -1389,140 +1443,8 @@
     },
     {
       "type": "function",
-      "name": "t1CommitHash",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t1Committed",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t1SubmissionCID",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t1Submitted",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t1Votes",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
+      "name": "taskProtocolVersion",
+      "inputs": [],
       "outputs": [
         {
           "name": "",
@@ -1530,152 +1452,7 @@
           "internalType": "uint256"
         }
       ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t2CommitHash",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t2Committed",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t2SubmissionCID",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t2Submitted",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "t2Votes",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
+      "stateMutability": "pure"
     },
     {
       "type": "function",
@@ -1692,40 +1469,6 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "tier1Batches",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "batchId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "finalized",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "finalCID",
-          "type": "bytes32",
-          "internalType": "bytes32"
         }
       ],
       "stateMutability": "view"
@@ -1750,40 +1493,6 @@
           "name": "",
           "type": "uint64",
           "internalType": "uint64"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "tier2Batches",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "batchId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "finalized",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "finalCID",
-          "type": "bytes32",
-          "internalType": "bytes32"
         }
       ],
       "stateMutability": "view"
@@ -2718,11 +2427,6 @@
     },
     {
       "type": "error",
-      "name": "TC_EvalPhaseNotClosed",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "TC_FailedToCreateAuditorsBatches",
       "inputs": []
     },
@@ -2743,7 +2447,7 @@
     },
     {
       "type": "error",
-      "name": "TC_GIRewardPoolNotFunded",
+      "name": "TC_GINotEnded",
       "inputs": []
     },
     {
@@ -2879,6 +2583,11 @@
     {
       "type": "error",
       "name": "TC_RevealCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_SlotsAlreadyReleased",
       "inputs": []
     },
     {

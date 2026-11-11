@@ -18,6 +18,7 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {
     GIstates,
@@ -34,6 +35,8 @@ import {
     TC_AuditSeedNotLocked,
     TA_AuditSeedNotLocked
 } from "../src/DINShared.sol";
+import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract SecurityFindingsTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -213,7 +216,7 @@ contract SecurityFindingsTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -296,6 +299,7 @@ contract SecurityFindingsTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -304,11 +308,10 @@ contract SecurityFindingsTest is Test {
         // score 100 on both models (commit-then-reveal per task_210726_6 §2a
         // replaced the old single-shot setAuditScorenEligibility).
         (, address[] memory batchAuditors, uint[] memory modelIdxs,) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+                ta.commitAuditScore(1, 0, modelIdxs[m], auditCommitHash(uint256(100), true, TEST_SALT, batchAuditors[i], 1, 0, modelIdxs[m]));
             }
         }
 
@@ -434,6 +437,7 @@ contract SecurityFindingsTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -446,11 +450,10 @@ contract SecurityFindingsTest is Test {
         // measure closeLMsubmissionsEvaluation's gas directly, matching what
         // this helper returned to callers before commit-reveal existed.
         (, address[] memory batch0Auditors, uint[] memory batch0Models,) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batch0Auditors.length; i++) {
             for (uint m = 0; m < batch0Models.length; m++) {
                 vm.prank(batch0Auditors[i]);
-                ta.commitAuditScore(1, 0, batch0Models[m], commitHash);
+                ta.commitAuditScore(1, 0, batch0Models[m], auditCommitHash(uint256(100), true, TEST_SALT, batch0Auditors[i], 1, 0, batch0Models[m]));
             }
         }
 
@@ -622,14 +625,16 @@ contract SecurityFindingsTest is Test {
     function test_DINTaskAuditor_constructor_rejectsZeroStakeAddress() public {
         _deployPlatform();
         DINTaskCoordinator tcLocal = new DINTaskCoordinator(address(stake), 1);
+        address enabledRegistry = address(new EnabledModelRegistry());
         vm.expectRevert(TA_InvalidAddress.selector);
-        new DINTaskAuditor(address(0), address(tcLocal), 1);
+        new DINTaskAuditor(address(0), address(tcLocal), 1, enabledRegistry);
     }
 
     function test_DINTaskAuditor_constructor_rejectsZeroCoordinatorAddress() public {
         _deployPlatform();
+        address enabledRegistry = address(new EnabledModelRegistry());
         vm.expectRevert(TA_InvalidAddress.selector);
-        new DINTaskAuditor(address(stake), address(0), 1);
+        new DINTaskAuditor(address(stake), address(0), 1, enabledRegistry);
     }
 
     function test_setDINTaskAuditorContract_rejectsZeroAddress() public {
@@ -907,16 +912,16 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
         (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+                ta.commitAuditScore(1, 0, modelIdxs[m], auditCommitHash(uint256(80), true, TEST_SALT, batchAuditors[i], 1, 0, modelIdxs[m]));
             }
         }
         vm.prank(modelOwner);
@@ -962,16 +967,16 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
         (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+                ta.commitAuditScore(1, 0, modelIdxs[m], auditCommitHash(uint256(80), true, TEST_SALT, batchAuditors[i], 1, 0, modelIdxs[m]));
             }
         }
         vm.prank(modelOwner);
@@ -1008,16 +1013,16 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
         (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+                ta.commitAuditScore(1, 0, modelIdxs[m], auditCommitHash(uint256(80), true, TEST_SALT, batchAuditors[i], 1, 0, modelIdxs[m]));
             }
         }
         vm.prank(modelOwner);
@@ -1046,16 +1051,16 @@ contract SecurityFindingsTest is Test {
         vm.prank(modelOwner);
         tc.createAuditorsBatches(1);
         vm.startPrank(modelOwner);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
         (, address[] memory batchAuditors, uint[] memory modelIdxs, ) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
                 vm.prank(batchAuditors[i]);
-                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+                ta.commitAuditScore(1, 0, modelIdxs[m], auditCommitHash(uint256(80), true, TEST_SALT, batchAuditors[i], 1, 0, modelIdxs[m]));
             }
         }
         vm.prank(modelOwner);

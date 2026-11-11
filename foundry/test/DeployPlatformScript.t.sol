@@ -7,6 +7,13 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {DeployPlatform} from "../script/DeployPlatform.s.sol";
+
+/// @dev Exposes the internal _writeDeploymentsTo for white-box testing.
+contract DeployPlatformHarness is DeployPlatform {
+    function writeDeploymentsTo(Deployment memory d, address deployer, string memory outPath) external {
+        _writeDeploymentsTo(d, deployer, outPath);
+    }
+}
 import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DinEmission} from "../src/DinEmission.sol";
@@ -20,15 +27,20 @@ import {DinEmission} from "../src/DinEmission.sol";
 ///         deploy() takes the values as an argument instead of reading the
 ///         environment, so no deploy test depends on env. The env-read path
 ///         (readTokenomics) is covered by exactly one test, which is the only
-///         place in foundry/test that sets these keys; see its comment. No test
-///         calls run(), which would overwrite foundry/deployments/*.json. Run with:
+///         place in foundry/test that sets these tokenomics keys; see its comment.
+///         test_writeDeployments_writesImplAndCodehashMetadata calls
+///         _writeDeploymentsTo via DeployPlatformHarness with an explicit path,
+///         foundry/deployments/test-impl-metadata.json, so it never clobbers
+///         localhost.json and never sets DEPLOYMENTS_NETWORK. Run with:
 ///         forge test --match-contract DeployPlatformScriptTest -vv
 contract DeployPlatformScriptTest is Test {
     DeployPlatform internal script;
+    DeployPlatformHarness internal harness;
     address internal deployer = makeAddr("deployer");
 
     function setUp() public {
         script = new DeployPlatform();
+        harness = new DeployPlatformHarness();
     }
 
     function _overrides() internal pure returns (DeployPlatform.Tokenomics memory) {
@@ -43,7 +55,9 @@ contract DeployPlatformScriptTest is Test {
             s5Window:            10,
             s5Threshold:         4,
             s5JailDuration:      14 days,
-            s6Threshold:         5
+            s6Threshold:         5,
+            s5GlobalWindow:      3 days,
+            s5GlobalThreshold:   8
         });
     }
 
@@ -64,6 +78,7 @@ contract DeployPlatformScriptTest is Test {
         assertEq(coord.dinPerEth(), t.dinPerEth, "dinPerEth");
         assertEq(coord.mintCap(), t.mintCap, "mintCap");
         assertEq(coord.emissionContract(), d.dinEmission, "emission contract wired");
+        assertEq(address(emission.modelRegistry()), d.dinModelRegistry, "emission model registry wired");
         assertEq(emission.initialEmissionPerGI(), t.emissionPerGI, "initialEmissionPerGI");
         assertEq(emission.decayBps(), t.emissionDecayBps, "decayBps");
         assertEq(emission.epochLength(), t.emissionEpochLength, "epochLength");
@@ -73,6 +88,8 @@ contract DeployPlatformScriptTest is Test {
         assertEq(stake.s5RecidivismThreshold(), t.s5Threshold, "s5RecidivismThreshold");
         assertEq(stake.s5JailDuration(), t.s5JailDuration, "s5JailDuration");
         assertEq(stake.s6NoParticipationThreshold(), t.s6Threshold, "s6NoParticipationThreshold");
+        assertEq(stake.s5GlobalWindow(), t.s5GlobalWindow, "s5GlobalWindow");
+        assertEq(stake.s5GlobalThreshold(), t.s5GlobalThreshold, "s5GlobalThreshold");
 
         _assertOwnedByDeployer(d.dinTreasury, "DinTreasury");
         _assertOwnedByDeployer(d.dinToken, "DinToken");
@@ -119,11 +136,61 @@ contract DeployPlatformScriptTest is Test {
         script.deploy(t, deployer);
     }
 
+    /// @dev The S5 global setter takes window and threshold together;
+    ///      overriding only one must apply both, with the other at its default.
+    function test_singleS5GlobalOverride_appliesWithOtherDefault() public {
+        DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
+        t.s5GlobalThreshold = 9;
+        DeployPlatform.Deployment memory d = script.deploy(t, deployer);
+        _assertOnChain(d, t);
+    }
+
+    /// @dev (0, 0) turns the global S5 level off at deploy time.
+    function test_s5GlobalOff_landsOnChain() public {
+        DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
+        t.s5GlobalWindow = 0;
+        t.s5GlobalThreshold = 0;
+        DeployPlatform.Deployment memory d = script.deploy(t, deployer);
+        _assertOnChain(d, t);
+    }
+
+    function test_s5GlobalHalfZero_revertsDeploy() public {
+        DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
+        t.s5GlobalWindow = 0;
+        vm.expectRevert(DinValidatorStake.InvalidS5Params.selector);
+        script.deploy(t, deployer);
+    }
+
     function test_zeroS6Threshold_revertsDeploy() public {
         DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
         t.s6Threshold = 0;
         vm.expectRevert(DinValidatorStake.InvalidS6Params.selector);
         script.deploy(t, deployer);
+    }
+
+    /// @dev Verifies the JSON-writing cycle used by dincli system verify-deployment.
+    ///      Calls _writeDeploymentsTo via DeployPlatformHarness with this test's
+    ///      own file. It deliberately doesn't set DEPLOYMENTS_NETWORK: the
+    ///      process environment is shared by forge's parallel test contracts, and
+    ///      UpgradePlatformScriptTest setting it to another file name made this
+    ///      test read a file that was never written (PR No. 254).
+    function test_writeDeployments_writesImplAndCodehashMetadata() public {
+        DeployPlatform.Tokenomics memory t = script.defaultTokenomics();
+        DeployPlatform.Deployment memory d = script.deploy(t, deployer);
+
+        string memory path = string.concat(
+            vm.projectRoot(), "/deployments/test-impl-metadata.json"
+        );
+        harness.writeDeploymentsTo(d, deployer, path);
+        string memory content = vm.readFile(path);
+
+        address implTreasury = vm.parseJsonAddress(content, ".dinTreasuryImpl");
+        bytes32 chTreasury   = vm.parseJsonBytes32(content, ".dinTreasuryImplCodehash");
+        address owner_       = vm.parseJsonAddress(content, ".owner");
+
+        assertNotEq(implTreasury, address(0), "dinTreasuryImpl not written");
+        assertNotEq(chTreasury, bytes32(0),   "dinTreasuryImplCodehash not written");
+        assertEq(owner_, deployer,            "owner must be the deployer");
     }
 
     /// @dev readTokenomics() returns the defaults with no key set, and exactly
@@ -139,11 +206,11 @@ contract DeployPlatformScriptTest is Test {
     ///      Skipped when the caller's shell or foundry/.env already sets a key,
     ///      so the defaults half stays deterministic.
     function test_readTokenomics_defaultsThenEnvOverrides() public {
-        string[11] memory keys = [
+        string[13] memory keys = [
             "DIN_PER_ETH", "MINT_CAP", "EMISSION_PER_GI", "EMISSION_DECAY_BPS",
             "EMISSION_EPOCH_LENGTH", "EMISSION_MAX_EPOCHS", "MIN_STAKE",
             "S5_RECIDIVISM_WINDOW", "S5_RECIDIVISM_THRESHOLD", "S5_JAIL_DURATION",
-            "S6_NO_PARTICIPATION_THRESHOLD"
+            "S6_NO_PARTICIPATION_THRESHOLD", "S5_GLOBAL_WINDOW", "S5_GLOBAL_THRESHOLD"
         ];
         for (uint256 i = 0; i < keys.length; i++) {
             if (vm.envExists(keys[i])) vm.skip(true, "tokenomics env key set");
@@ -151,11 +218,11 @@ contract DeployPlatformScriptTest is Test {
         assertEq(abi.encode(script.readTokenomics()), abi.encode(script.defaultTokenomics()), "defaults");
 
         DeployPlatform.Tokenomics memory t = _overrides();
-        uint256[11] memory values = [
+        uint256[13] memory values = [
             t.dinPerEth, t.mintCap, t.emissionPerGI, t.emissionDecayBps,
             t.emissionEpochLength, t.emissionMaxEpochs, t.minStake,
             t.s5Window, t.s5Threshold, t.s5JailDuration,
-            t.s6Threshold
+            t.s6Threshold, t.s5GlobalWindow, t.s5GlobalThreshold
         ];
         for (uint256 i = 0; i < keys.length; i++) {
             vm.setEnv(keys[i], vm.toString(values[i]));

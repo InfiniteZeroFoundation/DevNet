@@ -7,13 +7,16 @@
 #   --all  run the Solidity job even if nothing under foundry/ or hardhat/ changed
 set -uo pipefail
 
-REPO=~/projects/devnet
-WT=~/tempdir/DIN/push-check
-PY=~/my_venvs/torchenv/bin/python
+# Machine paths come from .claude/scripts/din-env.sh (DIN_REPO, DIN_WORK, DIN_PY, DIN_NVM).
+# shellcheck disable=SC1091
+source "$(dirname "$0")/../../../scripts/din-env.sh"
+REPO=$DIN_REPO
+WT=$DIN_WORK/push-check
+PY=$DIN_PY
 ALL=0
 [ "${1:-}" = "--all" ] && { ALL=1; shift; }
 SHA=$(git -C "$REPO" rev-parse "${1:-HEAD}") || exit 2
-LOGDIR=~/tempdir/DIN/push-check-logs
+LOGDIR=$DIN_WORK/push-check-logs
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/${SHA:0:12}.log"
 : > "$LOG"
@@ -56,13 +59,14 @@ step "python: pytest -m 'not integration'" \
 
 if [ $ALL = 1 ] || grep -qE '^(foundry|hardhat|\.github)/' <<<"$CHANGED"; then
   # shellcheck disable=SC1090
-  source ~/.nvm/nvm.sh >/dev/null
+  [ -s "$DIN_NVM" ] && source "$DIN_NVM" >/dev/null
   step "solidity: submodules" git submodule update --init --recursive -q
   step "solidity: foundry npm ci" bash -c "cd foundry && npm ci --silent"
   # forge clean first: the worktree is reused, and stale build-info from an
   # earlier commit's build makes the OZ upgrade-validation FFI tests fail with
   # "Found multiple contracts with name ..." (CI builds from a fresh checkout).
   step "solidity: forge build (real via_ir profile, as CI)" bash -c "cd foundry && forge clean && forge build"
+  step "solidity: contract size gate" bash -c "cd foundry && python3 ../.github/scripts/contract_size_gate.py"
   step "solidity: forge test" bash -c "cd foundry && forge test"
   step "solidity: hardhat npm ci" bash -c "cd hardhat && npm ci --silent"
   step "solidity: hardhat compile" bash -c "cd hardhat && npx hardhat compile"

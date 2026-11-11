@@ -8,8 +8,8 @@ New code should import from ``dincli.sdk.contracts``.
 """
 from dincli.sdk.contracts import (  # noqa: F401
     erc20_abi,
-    router_abi,
     get_contract_instance,
+    router_abi,
 )
 
 __all__ = [

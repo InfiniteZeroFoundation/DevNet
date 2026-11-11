@@ -20,7 +20,10 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
+import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract PR146SlashingRegressionTest is Test {
     // ─────────────────────────────────────────────────────────────────────
@@ -81,7 +84,7 @@ contract PR146SlashingRegressionTest is Test {
     function _deployTaskPair() internal {
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         vm.stopPrank();
 
@@ -188,17 +191,17 @@ contract PR146SlashingRegressionTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
 
         // Only batch 0 votes -- batch 1's auditors miss their vote entirely.
         (, address[] memory batch0Auditors, uint[] memory batch0Models, ) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(100), true, TEST_SALT));
         for (uint i = 0; i < batch0Auditors.length; i++) {
             for (uint m = 0; m < batch0Models.length; m++) {
                 vm.prank(batch0Auditors[i]);
-                ta.commitAuditScore(1, 0, batch0Models[m], commitHash);
+                ta.commitAuditScore(1, 0, batch0Models[m], auditCommitHash(uint256(100), true, TEST_SALT, batch0Auditors[i], 1, 0, batch0Models[m]));
             }
         }
 

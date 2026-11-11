@@ -16,7 +16,7 @@ from dincli.sdk.config import (
     get_env_key,
     resolve_ipfs_config,
 )
-from dincli.sdk.errors import ConfigError, IPFS_CID_MISMATCH, IpfsError
+from dincli.sdk.errors import IPFS_CID_MISMATCH, ConfigError, IpfsError
 from dincli.sdk.log import logger
 
 DEFAULT_PUBLIC_GATEWAY = "https://ipfs.io/ipfs"

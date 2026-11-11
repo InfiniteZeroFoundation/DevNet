@@ -1,24 +1,19 @@
 import json
 import os
 import re
-import stat
-import tempfile
-from getpass import getpass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
-from rich.console import Console
 
 import pytest
 import typer
 from eth_account import Account
+from rich.console import Console
 from typer.testing import CliRunner
 
 from dincli.cli import system as system_mod
 from dincli.cli import utils as utils_mod
-from dincli.sdk import config as sdk_config
 from dincli.main import app as main_app
-
+from dincli.sdk import config as sdk_config
 
 DUMMY_KEY_0 = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 DUMMY_KEY_1 = "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
@@ -1091,6 +1086,7 @@ class TestPasswordVerboseFalse:
 
         # Capture console output
         import io
+
         from rich.console import Console as RichConsole
         out = io.StringIO()
         monkeypatch.setattr(utils_mod, "console", RichConsole(file=out, force_terminal=False))
@@ -1139,6 +1135,7 @@ class TestPasswordVerboseFalse:
         utils_mod.CONFIG_DIR = config_dir
 
         import io
+
         from rich.console import Console as RichConsole
         out = io.StringIO()
         orig_console = utils_mod.console
@@ -1169,6 +1166,7 @@ class TestPasswordVerboseFalse:
         monkeypatch.chdir(env_dir)
 
         import io
+
         from rich.console import Console as RichConsole
         out = io.StringIO()
         orig_console = utils_mod.console

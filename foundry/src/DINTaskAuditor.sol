@@ -18,6 +18,9 @@ interface IBurnableDinToken {
 contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
+    /// @notice Canonical platform registry, fixed at deployment; review wiring before approval.
+    ITaskModelRegistry public immutable modelRegistry;
+
     IDinValidatorStake public dinvalidatorStakeContract;
 
     IDINTaskCoordinator public dintaskcoordinatorContract;
@@ -92,7 +95,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     mapping(uint256 => uint256) public giTotalAuditWeight;
 
     /// @notice Per-auditor hasAuditedLM count for a GI, incremented in revealAuditScore.
-    mapping(uint256 => mapping(address => uint256)) public auditorGIWeight;
+    mapping(uint256 => mapping(address => uint256)) internal auditorGIWeight;
 
     /// @notice Whether a participant has already called claimReward for a GI.
     mapping(uint256 => mapping(address => bool)) public rewardClaimed;
@@ -100,7 +103,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     uint MAX_LM_SUBMISSIONS = 10000;
     uint256 public constant MAX_REGISTERED_AUDITORS = 300;
 
-    mapping(uint => address[]) public dinAuditors;
+    mapping(uint => address[]) internal dinAuditors;
 
     // Track if an address is registered for a given _GI
     mapping(uint => mapping(address => bool)) public isRegisteredAuditor;
@@ -224,7 +227,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bytes testDataCID; // encryptedCID = AES-256-GCM(K, rawCID || Sign(ownerSK, rawCID))
     }
 
-    mapping(uint256 => AuditBatch[]) public auditBatches;
+    mapping(uint256 => AuditBatch[]) internal auditBatches;
 
     mapping(uint => mapping(uint => mapping(address => bool)))
         public isBatchAuditor;
@@ -241,7 +244,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has voted
         public hasAuditedLM;
 
-    // Commit-then-reveal (task_210726_6 §2a). commitHash = keccak256(abi.encodePacked(score, vote, salt)).
+    // Commit-then-reveal (task_210726_6 §2a). commitHash =
+    // keccak256(abi.encode(score, vote, salt, auditor, gi, batchId, modelIndex)):
+    // binding the auditor and (gi, batchId, modelIndex) stops a peer copying
+    // another auditor's commit hash and reveal (issue #192).
     // hasCommittedLM is distinct from hasAuditedLM: hasAuditedLM is set only
     // on a successful reveal and remains the single source of truth for
     // quorum/median counting, exactly as before -- an auditor who commits
@@ -255,8 +261,6 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
     mapping(uint256 => mapping(uint => mapping(address => mapping(uint => bool)))) // GI // batchId // auditor // modelIndex // has committed
         public hasCommittedLM;
-
-    mapping(uint256 => bool) public Is_testdataCIDs_Assigned;
 
     // §2b: per-validator encrypted test-data key mapping. GI => batchId =>
     // auditor => that auditor's copy of the test-data decryption key,
@@ -280,9 +284,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     }
     mapping(uint256 => mapping(uint256 => DisputeRecord)) public testDataDisputes;
 
-    uint256 public disputeBondAmount;           // DIN; 0 at deploy, DAO-settable
+    // Non-zero by default so each dispute attempt costs something (issue #205);
+    // matches DINTaskCoordinator.disputeBond. Revisit with issue #155's values.
+    uint256 public disputeBondAmount = 100 * 1e18; // DIN; owner-settable
     uint256 public disputeWindowBlocks = 7200;  // ~1 day on Optimism (~2s blocks)
-    uint256 public disputePenaltyBps = 2500;    // 25% of giRewardPool[gi] forfeited on owner loss
+    uint256 public disputePenaltyBps = 2500;    // 25% of giRewardPool[gi] forfeited on owner loss (none once the GI is settled)
 
     modifier onlyAssignedAuditor(
         uint256 gi,
@@ -352,7 +358,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     event TestDataDisputeResolvedFalse(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondForfeited);
     event TestDataDisputeUpheld(uint256 indexed gi, uint256 indexed batchId, address indexed disputer, uint256 bondReturned, uint256 ownerPenalty);
     event BatchPendingReassignment(uint256 indexed gi, uint256 indexed batchId);
-    event DisputeExpired(uint256 indexed gi, uint256 indexed batchId, uint256 bondForfeited);
+    /// @dev Emitted when an unanswered dispute is closed after its window; it is
+    ///      then upheld (TestDataDisputeUpheld follows). Issue #205.
+    event DisputeExpired(uint256 indexed gi, uint256 indexed batchId);
 
     event EligibilityVoted(
         uint256 indexed gi,
@@ -396,14 +404,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
+    /// @param modelRegistry_ Canonical DINModelRegistry proxy; cannot be changed after deployment.
     constructor(
         address _dinvalidatorStakeContract_address,
         address _dintaskcoordinator_contract_address,
-        uint256 modelId_
+        uint256 modelId_,
+        address modelRegistry_
     ) Ownable(msg.sender) {
         if (
             _dinvalidatorStakeContract_address == address(0) ||
-            _dintaskcoordinator_contract_address == address(0)
+            _dintaskcoordinator_contract_address == address(0) ||
+            modelRegistry_.code.length == 0
         ) revert TA_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
@@ -412,6 +423,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             _dintaskcoordinator_contract_address
         );
         modelId = modelId_;
+        modelRegistry = ITaskModelRegistry(modelRegistry_);
 
         params = Params({
             auditorsPerBatch: 3,
@@ -421,6 +433,19 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             passScore: 50,
             MIN_MODELS_PER_BATCH: 2
         });
+    }
+
+    /// @notice Checks registry approval, enabled status and funding before a new GI.
+    /// @dev Only the paired coordinator calls this, from both startGI overloads,
+    ///      before any mutation. Reverse lookup uses the approved ID rather than
+    ///      the constructor's anticipated stake-floor ID. Registry failures revert
+    ///      closed. In-flight phases, settlement and claims remain available.
+    /// @param gi Next GI whose reward pool must be funded.
+    function validateGIStart(uint256 gi) external view onlyTaskCoordinator {
+        (bool exists, uint256 registeredId) = modelRegistry.getModelIdByTaskAuditor(address(this));
+        if (!exists) revert TA_ModelNotRegistered();
+        if (modelRegistry.modelDisabled(registeredId)) revert TA_ModelDisabled(registeredId);
+        if (giRewardPool[gi] == 0) revert TC_GIRewardPoolNotFunded();
     }
 
     /// @notice Wires the DIN token used for reward deposits and payouts.
@@ -458,7 +483,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      pool (typically the model owner, but not restricted to them --
     ///      matches the "market-set pool" framing in MECHANISM_DESIGN §5,
     ///      nothing stops a third party topping up a pool they care about).
-    ///      DINTaskCoordinator._startGI checks giRewardPool(_GI) > 0 as a
+    ///      DINTaskCoordinator._startGI calls validateGIStart(_GI) as a
     ///      precondition before that GI can start.
     ///
     ///      `gi` must be the current GI or a future one: GI only ever moves
@@ -480,21 +505,22 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         emit RewardDeposited(gi, msg.sender, amount);
     }
 
+    /// @dev Bounds- and id-checked batch lookup shared by the test-data paths.
+    function _batchAt(uint256 gi, uint256 batchId) internal view returns (AuditBatch storage batch) {
+        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
+        batch = auditBatches[gi][batchId];
+        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+    }
+
     /// @dev Burns 50% of `amount` and forwards 50% to the platform slash-treasury
     ///      (`dinvalidatorStakeContract.slashTreasury()`). Burns both halves when
     ///      the slash-treasury is unset. Increments `treasuryAccrued` for observability.
     function _burnAndForward(uint256 amount) internal {
         if (amount == 0) return;
         uint256 burnAmt = amount / 2;
-        uint256 fwdAmt  = amount - burnAmt;
         IBurnableDinToken(address(dinToken)).burn(burnAmt);
-        address treasury = dinvalidatorStakeContract.slashTreasury();
-        if (treasury != address(0)) {
-            dinToken.safeTransfer(treasury, fwdAmt);
-        } else {
-            IBurnableDinToken(address(dinToken)).burn(fwdAmt);
-        }
-        treasuryAccrued += amount;
+        treasuryAccrued += burnAmt;
+        _forwardToTreasury(amount - burnAmt);
     }
 
     /// @dev Forwards `amount` in full to the platform slash-treasury.
@@ -656,6 +682,12 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @notice Registers the caller as an auditor for the current GI.
     /// @dev Caller must be an active validator; duplicate registrations revert.
     ///      The coordinator's GI state must be DINauditorsRegistrationStarted.
+    ///      An address already registered as an aggregator for this GI is
+    ///      refused (TA_DualRoleNotAllowed, issue No. 180). The check lives
+    ///      here because aggregator registration (states 6-7) always comes
+    ///      before auditor registration (8-9), so the coordinator side could
+    ///      never see an auditor yet. It is per address: a second address with
+    ///      its own stake can still register.
     /// @param _GI Current GI index.
     function registerDINAuditor(uint _GI) public onlyCurrentGI(_GI) {
         if (
@@ -664,6 +696,8 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         ) revert TA_AuditorRegistrationNotOpen();
         if (isRegisteredAuditor[_GI][msg.sender])
             revert TA_AuditorAlreadyRegistered();
+        if (dintaskcoordinatorContract.isDINAggregator(_GI, msg.sender))
+            revert TA_DualRoleNotAllowed();
         if (dinAuditors[_GI].length >= MAX_REGISTERED_AUDITORS)
             revert TA_RegistrationCapReached();
 
@@ -673,16 +707,19 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         // Per-model stake floor: enforced when the model owner has set a non-zero bound.
         uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
-        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
-            revert TA_StakeBelowModelFloor();
-
         // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
         uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
-        if (capPerUnit > 0) {
-            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
-                dinvalidatorStakeContract.minStake()) * capPerUnit;
-            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
-                revert TA_ConcurrentRegistrationCapReached();
+        if (floorMin > 0 || capPerUnit > 0) {
+            // Single getStake() read shared by both checks below (issue #249 finding 1).
+            uint256 stake = dinvalidatorStakeContract.getStake(msg.sender);
+            if (floorMin > 0 && stake < floorMin)
+                revert TA_StakeBelowModelFloor();
+            if (capPerUnit > 0) {
+                uint256 maxAllowed = (stake /
+                    dinvalidatorStakeContract.minStake()) * capPerUnit;
+                if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                    revert TA_ConcurrentRegistrationCapReached();
+            }
         }
 
         dinAuditors[_GI].push(msg.sender);
@@ -778,22 +815,25 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint _GI
     ) internal view returns (address[] memory activePool) {
         address[] storage registeredPool = dinAuditors[_GI];
+        uint len = registeredPool.length;
+        // issue #249 finding 2: cache each isValidatorActive result from the
+        // counting pass instead of re-querying it in the fill pass below.
+        bool[] memory active = new bool[](len);
         uint activeCount;
 
-        for (uint i = 0; i < registeredPool.length; i++) {
-            if (
-                dinvalidatorStakeContract.isValidatorActive(registeredPool[i])
-            ) {
+        for (uint i = 0; i < len; i++) {
+            bool isActive = dinvalidatorStakeContract.isValidatorActive(registeredPool[i]);
+            active[i] = isActive;
+            if (isActive) {
                 activeCount++;
             }
         }
 
         activePool = new address[](activeCount);
         uint ptr;
-        for (uint i = 0; i < registeredPool.length; i++) {
-            address auditor = registeredPool[i];
-            if (dinvalidatorStakeContract.isValidatorActive(auditor)) {
-                activePool[ptr++] = auditor;
+        for (uint i = 0; i < len; i++) {
+            if (active[i]) {
+                activePool[ptr++] = registeredPool[i];
             }
         }
     }
@@ -856,7 +896,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint _GI,
         bytes32 seed
     ) external onlyTaskCoordinator onlyCurrentGI(_GI) returns (bool) {
-        if (dintaskcoordinatorContract.GIstate() != GIstates.LMSclosed)
+        if (dintaskcoordinatorContract.GIstate() != GIstates.AuditSeedLocked)
             revert TA_CannotCreateAuditorsBatches();
         if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
@@ -979,31 +1019,42 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bytes[] calldata encryptedKeys,
         bytes32 commitment
     ) external onlyOwner onlyCurrentGI(gi) {
-        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
-        AuditBatch storage batch = auditBatches[gi][batchId];
-        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+        AuditBatch storage batch = _batchAt(gi, batchId);
         if (encryptedKeys.length != batch.auditors.length)
             revert TA_EncryptedKeyCountMismatch();
         if (testDataDisputes[gi][batchId].pendingReassignment)
             revert TA_BatchPendingReassignment();
 
-        batch.testDataCID = testDataCID;
+        _storeTestData(gi, batchId, batch, testDataCID, encryptedKeys, commitment);
+    }
 
+    /// @dev Shared tail of assignAuditTestDataset / reassignAuditTestDataset.
+    function _storeTestData(
+        uint256 gi,
+        uint256 batchId,
+        AuditBatch storage batch,
+        bytes calldata testDataCID,
+        bytes[] calldata encryptedKeys,
+        bytes32 commitment
+    ) internal {
+        batch.testDataCID = testDataCID;
         for (uint256 i = 0; i < encryptedKeys.length; i++) {
             if (dinvalidatorStakeContract.getEncryptionKey(batch.auditors[i]).length == 0)
                 revert TA_AuditorEncryptionKeyNotRegistered();
             encryptedTestDataKey[gi][batchId][batch.auditors[i]] = encryptedKeys[i];
         }
-
         testDataCommitments[gi][batchId] = commitment;
-
         emit EncryptedTestDataKeysAssigned(gi, batchId, testDataCID, encryptedKeys.length);
         emit TestDataCommitmentStored(gi, batchId, commitment);
     }
 
     /// @notice Marks test dataset distribution as complete for the given GI.
-    /// @dev Restricted to the paired DINTaskCoordinator. flag must be true;
-    ///      can only be set once per GI.
+    /// @dev Restricted to the paired DINTaskCoordinator. flag must be true,
+    ///      and every audit batch of the GI must have a stored test-data
+    ///      commitment (written by assignAuditTestDataset), else
+    ///      TA_TestDataNotAssigned. One-way: the coordinator then moves to
+    ///      AuditTestDataAssigned, so the AuditorsBatchesCreated gate below
+    ///      rejects a second call (task_061026_21 Part B).
     /// @param _GI Current GI index.
     /// @param flag Must be true.
     /// @return True on success.
@@ -1016,9 +1067,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             GIstates.AuditorsBatchesCreated
         ) revert TA_CannotSetTestDataAssignedFlag();
         if (!flag) revert TA_FlagMustBeTrue();
-        if (Is_testdataCIDs_Assigned[_GI]) revert TA_FlagAlreadySet();
-
-        Is_testdataCIDs_Assigned[_GI] = flag;
+        uint256 n = auditBatches[_GI].length;
+        for (uint256 b = 0; b < n; b++) {
+            if (testDataCommitments[_GI][b] == bytes32(0))
+                revert TA_TestDataNotAssigned();
+        }
         return true;
     }
 
@@ -1077,8 +1130,12 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @notice Phase 1 of commit-then-reveal auditor scoring: lock in a
     ///         hidden (score, vote) pair.
     /// @dev Caller must be the assigned auditor for this batch and model
-    ///      index. `commitHash` must equal `keccak256(abi.encodePacked(score,
-    ///      vote, salt))` for the values the auditor intends to reveal later
+    ///      index. `commitHash` must equal `keccak256(abi.encode(score, vote,
+    ///      salt, msg.sender, gi, batchId, modelIndex))` for the values the
+    ///      auditor intends to reveal later. Binding the auditor's own address
+    ///      and the (gi, batchId, modelIndex) slot means a peer can't copy this
+    ///      hash and later replay this auditor's reveal (issue #192), and an
+    ///      auditor can't reuse one commit for another model, batch or GI
     ///      -- the contract cannot and does not validate this at commit time
     ///      (that's the point; nothing about score/vote is visible yet).
     ///      Open only while GIstate == LMSevaluationStarted (the commit
@@ -1088,7 +1145,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @param gi Current GI index.
     /// @param batchId Batch index containing this model.
     /// @param modelIndex Index into lmSubmissions[gi] for the model being scored.
-    /// @param commitHash keccak256(abi.encodePacked(score, vote, salt)).
+    /// @param commitHash keccak256(abi.encode(score, vote, salt, msg.sender, gi, batchId, modelIndex)).
     function commitAuditScore(
         uint256 gi,
         uint batchId,
@@ -1157,7 +1214,9 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         if (hasAuditedLM[gi][batchId][msg.sender][modelIndex])
             revert TA_AlreadyVoted();
 
-        bytes32 expectedHash = keccak256(abi.encodePacked(score, vote, salt));
+        bytes32 expectedHash = keccak256(
+            abi.encode(score, vote, salt, msg.sender, gi, batchId, modelIndex)
+        );
         if (
             expectedHash !=
             auditScoreCommits[gi][batchId][msg.sender][modelIndex]
@@ -1198,9 +1257,14 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint b = 0; b < batches; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
+            // issue #249 finding 3: both lengths are loop-invariant per
+            // batch; cache instead of re-reading storage on every iteration
+            // (modelIndexes.length) or per-model (auditors.length x3).
+            uint modelIndexCount = batch.modelIndexes.length;
+            uint auditorCount = batch.auditors.length;
 
             // For each model assigned to this batch
-            for (uint m = 0; m < batch.modelIndexes.length; m++) {
+            for (uint m = 0; m < modelIndexCount; m++) {
                 uint modelIndex = batch.modelIndexes[m];
                 if (modelIndex >= submissions.length) {
                     // Defensive: skip if bad index
@@ -1217,15 +1281,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                 // Collect scores from auditors who actually voted. Bounded by
                 // batch.auditors.length (params.auditorsPerBatch, demo: 3,
                 // spec: up to 10), so an in-memory sort here is cheap.
-                uint256[] memory votedScores = new uint256[](
-                    batch.auditors.length
-                );
-                address[] memory votedAuditors = new address[](
-                    batch.auditors.length
-                );
+                uint256[] memory votedScores = new uint256[](auditorCount);
+                address[] memory votedAuditors = new address[](auditorCount);
                 uint votes;
 
-                for (uint a = 0; a < batch.auditors.length; a++) {
+                for (uint a = 0; a < auditorCount; a++) {
                     address auditor = batch.auditors[a];
                     if (hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         votedScores[votes] = auditScores[_GI][b][auditor][
@@ -1326,12 +1386,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint b = 0; b < batchCount; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
-            for (uint a = 0; a < batch.auditors.length; a++) {
+            // issue #249 finding 3: both lengths are loop-invariant per
+            // batch; cache instead of re-reading storage on every iteration
+            // of the loops they bound (modelIndexes.length was re-read up to
+            // auditorCount x modelIndexCount times without this).
+            uint auditorCount = batch.auditors.length;
+            uint modelIndexCount = batch.modelIndexes.length;
+            for (uint a = 0; a < auditorCount; a++) {
                 address auditor = batch.auditors[a];
                 bool missedVote = false;
                 bool exceededDeviation = false;
 
-                for (uint m = 0; m < batch.modelIndexes.length; m++) {
+                for (uint m = 0; m < modelIndexCount; m++) {
                     uint modelIndex = batch.modelIndexes[m];
                     if (!hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         missedVote = true;
@@ -1453,15 +1519,24 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         return encryptedTestDataKey[gi][batchId][auditor].length == 0;
     }
 
-    /// @notice Opens a test-data dispute for a batch. Requires a DIN bond.
-    ///         The disputer must call resolveTestDataDispute within the challenge
-    ///         window; failure to do so forfeits the bond (closeExpiredDispute).
+    /// @notice Opens a test-data dispute for a batch. Only an auditor of that
+    ///         batch can open one, and it requires the DIN bond.
+    ///         The model owner must then answer with resolveTestDataDispute
+    ///         within the challenge window; if the owner stays silent, anyone
+    ///         can call closeExpiredDispute and the dispute is upheld.
+    /// @dev Issue #205: opening was unrestricted and the bond defaulted to 0,
+    ///      so any address could drain giRewardPool through repeated disputes.
+    ///      Reverts once the GI's rewards are settled: claims then pay from
+    ///      giRewardSnapshot, so a giRewardPool penalty would underfund them.
     /// @param gi GI index.
     /// @param batchId Batch to dispute.
     function openTestDataDispute(
         uint256 gi,
         uint256 batchId
     ) external nonReentrant {
+        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
+        if (!isBatchAuditor[gi][batchId][msg.sender]) revert TA_NotAssignedAuditor();
+        if (giRewardSnapshot[gi].settled) revert TA_RewardsAlreadySettled();
         if (testDataCommitments[gi][batchId] == bytes32(0)) revert TA_NoCommitmentStored();
         DisputeRecord storage d = testDataDisputes[gi][batchId];
         if (d.active) revert TA_DisputeAlreadyActive();
@@ -1483,11 +1558,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         emit TestDataDisputeOpened(gi, batchId, msg.sender, disputeBondAmount, expires);
     }
 
-    /// @notice Resolves an active dispute by revealing K and the actual plaintext hash.
-    ///         Anyone may call this — the disputer is the beneficiary if upheld.
+    /// @notice The model owner answers an active dispute by revealing K and the
+    ///         actual plaintext hash.
     ///         Commitment check: keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintextHash))
     ///         Match  → dispute false → disputer's bond forfeited (50% burn / 50% treasury).
     ///         Mismatch → dispute upheld → bond returned, owner's giRewardPool[gi] penalised.
+    /// @dev Owner-only (issue #205). When anyone could call this, a caller-chosen
+    ///      junk K always produced a mismatch, so any address could uphold a
+    ///      dispute and burn 25% of the GI reward pool. Only the party holding the
+    ///      data can now reveal; a non-matching owner reveal still upholds.
+    ///      Trust assumption: the owner judges disputes about their own test data
+    ///      (tracked for mainnet in issue #181); the silence rule in
+    ///      closeExpiredDispute keeps that from being a free veto.
     /// @param gi GI index.
     /// @param batchId Batch under dispute.
     /// @param K The raw symmetric key the model owner used to encrypt the test data.
@@ -1497,7 +1579,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint256 batchId,
         bytes calldata K,
         bytes32 plaintextHash
-    ) external nonReentrant {
+    ) external onlyOwner nonReentrant {
         DisputeRecord storage d = testDataDisputes[gi][batchId];
         if (!d.active) revert TA_NoActiveDispute();
         if (block.number > d.expiresAtBlock) revert TA_DisputeWindowClosed();
@@ -1514,40 +1596,51 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             _burnAndForward(bond);
             emit TestDataDisputeResolvedFalse(gi, batchId, d.disputer, bond);
         } else {
-            // Dispute upheld — return bond, penalise owner's reward pool
-            uint256 bond = d.bond;
-            address disputer = d.disputer;
-            d.active = false;
-            d.pendingReassignment = true;
-
-            if (bond > 0) {
-                dinToken.safeTransfer(disputer, bond);
-            }
-
-            uint256 penalty = (giRewardPool[gi] * disputePenaltyBps) / 10000;
-            if (penalty > 0 && giRewardPool[gi] >= penalty) {
-                giRewardPool[gi] -= penalty;
-                _burnAndForward(penalty);
-            }
-
-            emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
-            emit BatchPendingReassignment(gi, batchId);
+            _upholdTestDataDispute(gi, batchId, d);
         }
     }
 
-    /// @notice Closes an expired dispute and forfeits the disputer's bond.
-    ///         Callable by anyone once the challenge window has elapsed without resolution.
+    /// @notice Closes a dispute the model owner didn't answer within the
+    ///         challenge window. The dispute is upheld: bond returned to the
+    ///         disputer, owner's giRewardPool[gi] penalised, batch flagged for
+    ///         reassignment. Callable by anyone once the window has elapsed.
+    /// @dev Issue #205: silence counts against the party who holds the data.
+    ///      Before, an unanswered dispute forfeited the disputer's bond, which
+    ///      combined with the open resolve made the owner's silence costless.
     function closeExpiredDispute(uint256 gi, uint256 batchId) external nonReentrant {
         DisputeRecord storage d = testDataDisputes[gi][batchId];
         if (!d.active) revert TA_NoActiveDispute();
         if (block.number <= d.expiresAtBlock) revert TA_DisputeWindowClosed();
 
+        emit DisputeExpired(gi, batchId);
+        _upholdTestDataDispute(gi, batchId, d);
+    }
+
+    /// @dev Upheld test-data dispute: return the bond, penalise the owner's GI
+    ///      reward pool by disputePenaltyBps, and block the batch until
+    ///      reassignAuditTestDataset. No penalty if the GI settled while the
+    ///      dispute was open: settleRewards has already split giRewardPool
+    ///      into giRewardSnapshot, which claims pay from.
+    function _upholdTestDataDispute(uint256 gi, uint256 batchId, DisputeRecord storage d) internal {
         uint256 bond = d.bond;
+        address disputer = d.disputer;
         d.active = false;
+        d.pendingReassignment = true;
 
-        _burnAndForward(bond);
+        if (bond > 0) {
+            dinToken.safeTransfer(disputer, bond);
+        }
 
-        emit DisputeExpired(gi, batchId, bond);
+        uint256 penalty = giRewardSnapshot[gi].settled
+            ? 0
+            : (giRewardPool[gi] * disputePenaltyBps) / 10000;
+        if (penalty > 0 && giRewardPool[gi] >= penalty) {
+            giRewardPool[gi] -= penalty;
+            _burnAndForward(penalty);
+        }
+
+        emit TestDataDisputeUpheld(gi, batchId, disputer, bond, penalty);
+        emit BatchPendingReassignment(gi, batchId);
     }
 
     /// @notice Re-assigns test data for a batch after the model owner lost a dispute.
@@ -1565,24 +1658,13 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bytes[] calldata newEncryptedKeys,
         bytes32 newCommitment
     ) external onlyOwner onlyCurrentGI(gi) {
-        if (batchId >= auditBatches[gi].length) revert TA_BatchDoesNotExist();
-        AuditBatch storage batch = auditBatches[gi][batchId];
-        if (batch.batchId != batchId) revert TA_BatchIDMismatch();
+        AuditBatch storage batch = _batchAt(gi, batchId);
         if (!testDataDisputes[gi][batchId].pendingReassignment) revert TA_NoActiveDispute();
         if (newEncryptedKeys.length != batch.auditors.length)
             revert TA_EncryptedKeyCountMismatch();
 
         testDataDisputes[gi][batchId].pendingReassignment = false;
 
-        batch.testDataCID = newTestDataCID;
-        for (uint256 i = 0; i < newEncryptedKeys.length; i++) {
-            if (dinvalidatorStakeContract.getEncryptionKey(batch.auditors[i]).length == 0)
-                revert TA_AuditorEncryptionKeyNotRegistered();
-            encryptedTestDataKey[gi][batchId][batch.auditors[i]] = newEncryptedKeys[i];
-        }
-        testDataCommitments[gi][batchId] = newCommitment;
-
-        emit EncryptedTestDataKeysAssigned(gi, batchId, newTestDataCID, newEncryptedKeys.length);
-        emit TestDataCommitmentStored(gi, batchId, newCommitment);
+        _storeTestData(gi, batchId, batch, newTestDataCID, newEncryptedKeys, newCommitment);
     }
 }

@@ -19,7 +19,13 @@ For example:
 ```
 
 > [!NOTE]
-> If the manifest file is absent when the genesis setup (`dincli task model-owner create-genesis`) runs, it is automatically created with default values from the default manifest CID (`bafybeibbhrefnamky7vmgcrhfx4ptxb3bdemh5dtnvwfkpualoganvnuve`).
+> The manifest file must already exist at this path before running
+> `dincli model-owner model create-genesis-model` — it exits with an error if
+> the file is missing, it is not created automatically. To create it from a
+> default template, run `dincli model-owner task cache-default-artifacts`
+> first; that only works where the configured network has a `default_manifest`
+> CID set (currently just `local` — `sepolia_op_devnet` and `mainnet` have no
+> default to cache from, so you must supply your own manifest file there).
 
 ---
 
@@ -39,10 +45,10 @@ For example:
 
 | Field | Required | Description |
 |---|---|---|
-| `Genesis_Model_CID` | Yes | IPFS CID of the genesis model. Set after running `dincli model-owner model create-genesis` |
+| `Genesis_Model_CID` | Yes | IPFS CID of the genesis model. Set after running `dincli model-owner model create-genesis-model` |
 | `DINTaskCoordinator_Contract` | Yes | Address of the deployed TaskCoordinator contract |
 | `DINTaskAuditor_Contract` | Yes | Address of the deployed TaskAuditor contract |
-| `dp` | No | Nested Differential Privacy configuration block used by services at runtime |
+| `dp` | No | Nested Differential Privacy configuration block used by services at runtime. See [Differential Privacy Parameters](#differential-privacy-parameters) below. |
 
 ### Service Entries
 
@@ -60,7 +66,7 @@ Each service function is registered in the manifest as a JSON object with the fo
 | Key | Description |
 |---|---|
 | `type` | Service type (currently `"custom"`) |
-| `path` | Local relative path to the service file |
+| `path` | Local relative path to the service file. Must be relative and resolve inside the model's own cache/task directory — an absolute path or a `..` segment that would escape it is rejected (issue #227), not silently re-anchored. |
 | `ipfs` | IPFS CID of the uploaded and pinned service file |
 | `stakeholders` | List of roles that use this service (e.g., `"modelowner"`, `"clients"`, `"auditors"`, `"aggregators"`) |
 
@@ -109,6 +115,40 @@ and then install the requirements.txt file using the following command:
 pip3 install -r requirements.txt
 ```
 
+---
+
+## Differential Privacy Parameters
+
+The optional `dp` block controls whether trained weights are clipped and noised before upload. Privacy is **off by default** — a manifest with no `dp` block or `"enabled": false` uploads raw weights.
+
+```json
+"dp": {
+  "enabled": false,
+  "mode": "afterTraining",
+  "mechanism": "post_training_gaussian",
+  "parameters": {
+    "clipping_norm": 10.0,
+    "noise_multiplier": 0.5,
+    "clip_scope": "global"
+  }
+}
+```
+
+### Choosing `clipping_norm`
+
+`clipping_norm` controls the L2-norm bound that is clipped and that the noise is calibrated against (`noise_scale = noise_multiplier × clipping_norm`). The right value depends on **what** the mechanism clips:
+
+| Mechanism | What is clipped | Guidance |
+|-----------|----------------|----------|
+| `post_training_gaussian` / `post_training_laplace` | Combined L2 norm of all final weights | Set to at least the model's combined weight norm. For the reference cache_model_0 architecture (measured ≈ 9.44 with seed=42, 2000 MNIST samples, 20 epochs, lr=0.01), use **≥ 10.0**. Too small a value discards most of the model. |
+| `update_gaussian` | Combined L2 norm of the per-round weight delta | The delta is the per-round weight change, not the absolute weights. For cache_model_0 (seed=42, 2000 MNIST samples, 20 epochs, lr=0.01), the measured delta norm is ≈ 3.62. **≥ 4.0** is appropriate for those settings; adjust based on your own training configuration. |
+
+> **Note**: raising `clipping_norm` to stop over-clipping also raises the noise by the same factor. If you increase `clipping_norm`, lower `noise_multiplier` proportionally to keep the absolute noise standard deviation unchanged (note: this does not preserve equivalent DP privacy protection — a larger `clipping_norm` provides weaker privacy at the same σ; privacy assessment is needed separately).
+
+For full technical details see [technical/manifest.md](../technical/manifest.md).
+
+---
+
 ## Example Manifest
 
 Please find the example/template manifest file at [cache_model_0/manifest.json](../../cache_model_0/manifest.json)
@@ -121,5 +161,5 @@ Please find the example/template manifest file at [cache_model_0/manifest.json](
 Once the model is registered and assigned a model ID, the manifest file should be updated with the `Model ID` field and re-uploaded to IPFS. The following dincli command can be used to update the model CID in the DINModelRegistry contract:
 
 ```bash
-dincli task model-owner update-manifest <model_id> [--modelCID <model_cid>] [--manifestpath <manifest_path>]
+dincli task model-owner update-manifest-request <model_id> [--manifestCID <manifest_cid>] [--manifestpath <manifest_path>]
 ```

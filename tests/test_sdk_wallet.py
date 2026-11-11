@@ -1,6 +1,5 @@
 """Tests for dincli.sdk.wallet — non-interactive keystore/account resolution."""
 import json
-import os
 import time
 from pathlib import Path
 from unittest.mock import MagicMock

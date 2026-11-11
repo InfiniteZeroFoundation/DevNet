@@ -3,17 +3,18 @@ import re
 from pathlib import Path
 
 import pytest
+
 from dincli.sdk.errors import ValidationError
 from dincli.sdk.state import (
     GIState,
+    GIstate_to_index,
+    GIstatestrToIndex,
     GIstateToDes,
     GIstateToStr,
-    GIstatestrToIndex,
-    GIstate_to_index,
     stateDescription,
     states,
-    validate_gi_state_equals,
     validate_gi_state_at_least,
+    validate_gi_state_equals,
 )
 
 

@@ -3,33 +3,31 @@ import gc
 import json
 import threading
 import time
-from dataclasses import asdict
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from eth_account import Account
 from web3.datastructures import AttributeDict
 from web3.exceptions import TimeExhausted, TransactionNotFound
 
 from dincli.sdk import tx as sdk_tx
+from dincli.sdk.errors import (
+    NONCE_MANAGER_CAPACITY,
+    RECEIPT_MISSING,
+    TX_ESTIMATION_FAILED,
+    TX_NONCE_CONFLICT,
+    TX_REPLACEMENT_UNDERPRICED,
+    TX_REVERTED,
+    TX_TIMEOUT,
+    SignerUnavailable,
+    TransactionError,
+)
+from dincli.sdk.session import DinSession
 from dincli.sdk.tx import (
     NonceManager,
     TxReceiptInfo,
     build_tx_params,
     decode_events,
     send,
-)
-from dincli.sdk.session import DinSession
-from dincli.sdk.errors import (
-    TransactionError,
-    SignerUnavailable,
-    TX_ESTIMATION_FAILED,
-    TX_NONCE_CONFLICT,
-    TX_REPLACEMENT_UNDERPRICED,
-    TX_REVERTED,
-    TX_TIMEOUT,
-    RECEIPT_MISSING,
-    NONCE_MANAGER_CAPACITY,
 )
 
 DUMMY_KEY = "0x0000000000000000000000000000000000000000000000000000000000000001"
@@ -229,7 +227,6 @@ class TestNonceManager:
         assert 10 not in mgr._reserved
 
     def test_mark_broadcast_moves_to_inflight(self):
-        w3 = _w3_mock(pending_nonce=5)
         mgr = NonceManager(1, "0xaaa")
         mgr._reserved[5] = time.monotonic()
         mgr.mark_broadcast(5)

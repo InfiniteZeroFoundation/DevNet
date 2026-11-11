@@ -1,6 +1,6 @@
 ---
 name: din-task-close
-description: Use when deciding whether a Tasks-category GitHub Discussion for a `Developer/tasks/task_*.md` file can be closed — "can task_N be closed", "close discussion #N", "is task_<id> done", or a batch "can tasks 6-10 be closed" ask. Verifies every deliverable in the task file's own checklist and every PR it names against the real state of `develop` (not against discussion comments claiming "done"/"landed" — contributors have said that about unmerged branches before), then either posts a closing comment and closes the discussion as Resolved, or reports exactly what's still blocking and leaves it open. Not for reviewing a PR itself (`din-pr-review`) or for the mechanical per-file merge follow-through (`merge-fix-comment-update`).
+description: Use when deciding whether a Tasks-category GitHub Discussion for a `Developer/tasks/task_*.md` file can be closed — "can task_N be closed", "close discussion #N", "is task_<id> done", or a batch "can tasks 6-10 be closed" ask. Any maintainer can run it, as long as the task isn't assigned to them (checked first with `.claude/scripts/din_peer_check.py`). Verifies every deliverable in the task file's own checklist and every PR it names against the real state of `develop` (not against discussion comments claiming "done"/"landed" — contributors have said that about unmerged branches before), then either posts a closing comment, closes the discussion as Resolved and opens the follow-up PR that updates the task file's `Status:` line, or reports exactly what's still blocking and leaves it open. Not for reviewing a PR itself (`din-pr-review`) or for the mechanical per-file merge follow-through (`merge-fix-comment-update`).
 ---
 
 # DIN task-discussion closure
@@ -12,12 +12,23 @@ post one comment that recaps the evidence, and close the discussion — or, if
 something's still missing, say exactly what and leave it open rather than
 closing on the strength of a comment thread that says "done."
 
+The process is [`Developer/MAINTAINING.md`](../../../Developer/MAINTAINING.md)
+No. 5.3: closing is a peer's check, never the assignee's. "The operator" means
+the maintainer running the skill (the active `gh` user).
+
 **Discussion numbers do not match task numbers 1:1.** task_210726_5 is
 discussion #47, task_100926_11 is discussion #135, etc. — always resolve the
 number, never assume task N ↔ discussion N.
 
 ## 0. Hard rules
 
+- **Peer check first**, once the task file is resolved (step 1):
+  ```bash
+  python3 .claude/scripts/din_peer_check.py task Developer/tasks/<task file>
+  ```
+  `REFUSE` means the task is assigned to the operator. Stop and name a peer.
+  Never switch `gh` accounts to get past it. If a PR the task depends on was
+  co-authored by the operator, treat that the same way.
 - **Verify against code and merge state, never against discussion-thread
   claims.** "Landed"/"implemented" in a comment has meant "pushed to an open,
   unmerged PR branch" before (task_300726_8/#67 — Santiago's comments said
@@ -102,7 +113,7 @@ full stop — regardless of what any comment says about it.
 git log --oneline --all --grep="<N>" -i | grep -i merge   # find the merge commit(s)
 ```
 
-If Umer's own review comments (posted by `din-pr-review`) flagged blocking
+If the PR's review comments (posted by `din-pr-review`) flagged blocking
 items on that PR, re-check each one was actually fixed on `develop` — read
 the fix commit, don't just trust a "fixed" reply in the thread.
 
@@ -119,10 +130,10 @@ forge test --match-contract <Suite>      # relevant suite(s) actually pass
 grep -n "function <name>" foundry/src/<Contract>.sol
 ```
 
-**Watch for later deliberate deviations.** Umer sometimes lands a PR then
-follows up with his own commit that intentionally changes scope (e.g. scoping
-a fee path back to ETH-only after a design direction shifted, per
-`p3-issues-defer-fee-changes`/`eth-burn-din-only`-style calls). If a
+**Watch for later deliberate deviations.** A maintainer sometimes lands a PR
+then follows up with a commit that intentionally changes scope (e.g. scoping
+a fee path back to ETH-only after a design direction shifted, or routing ETH
+"burn" shares to the Treasury because burning applies to DIN only). If a
 deliverable that was clearly implemented in the merged PR is now missing on
 `develop`, check `git log --oneline -- <path>` for a later commit explaining
 why before treating it as a regression — cite that commit in the closing
@@ -168,6 +179,10 @@ mutation($discussionId: ID!) {
 — #47, #49, #76, #105, #106, #135 — used it; `OUTDATED`/`DUPLICATE` are for
 non-task discussions that stopped being relevant rather than got done).
 
+Then update the task file's `Status:` line through a small PR (MAINTAINING
+No. 5.3), e.g. `**Status:** Done (closed <date>, Discussion No. <N>)`. Like
+any PR it needs a peer's approval; the operator doesn't merge it themselves.
+
 ## 6b. If something's still open — report, don't close
 
 State plainly which deliverable/PR is the blocker, cite the evidence (PR
@@ -181,8 +196,9 @@ closed, on a "6-10 can be closed" instruction that only covered 6-10).
 
 ## 7. Report back
 
-Summarize for Umer: which discussion(s) got closed (with links), which PRs/
+Summarize for the operator: which discussion(s) got closed (with links), the
+`Status:` PR, which PRs/
 commits were the evidence, any deliberate deviation called out, and — for
 anything left open — the exact blocker. Don't offer to update project memory
 yourself unless asked; just make sure the report contains everything needed
-for the state to be captured correctly if Umer wants it remembered.
+for the state to be captured correctly if the operator wants it remembered.

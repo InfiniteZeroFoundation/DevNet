@@ -11,7 +11,6 @@ corresponding fix. See Plans/task_300726_8-remediation-plan.md:
   R4  A signer that satisfies the documented SignerProvider protocol — and
       nothing more — must be able to drive a full send().
 """
-import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -104,7 +103,7 @@ class TestR1ReceiptPolling:
         """A tx that never mines must surface as TransactionError(tx_timeout),
         never as a raw web3 exception with no subcode or retry surface."""
         from dincli.sdk import tx as txmod
-        from dincli.sdk.errors import TransactionError, TX_TIMEOUT, RECEIPT_MISSING
+        from dincli.sdk.errors import RECEIPT_MISSING, TX_TIMEOUT, TransactionError
 
         w3 = _w3_mock()
         w3.eth.get_transaction_receipt.side_effect = TransactionNotFound("nope")
@@ -323,7 +322,7 @@ class TestR6BroadcastFailureClassification:
 
     def test_unclassified_broadcast_failure_is_not_estimation_failed(self):
         from dincli.sdk import tx as txmod
-        from dincli.sdk.errors import TransactionError, TX_ESTIMATION_FAILED
+        from dincli.sdk.errors import TX_ESTIMATION_FAILED, TransactionError
 
         w3 = _w3_mock()
         w3.eth.send_raw_transaction.side_effect = ConnectionError("socket hung up")
@@ -405,6 +404,7 @@ class TestM2ReleaseIsThreadSafe:
 
     def test_concurrent_reserve_and_release_keeps_nonces_distinct(self):
         import threading
+
         from dincli.sdk.tx import NonceManager
 
         w3 = _w3_mock(pending_nonce=0)

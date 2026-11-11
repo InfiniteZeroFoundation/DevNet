@@ -427,7 +427,8 @@ contract DINModelRegistry is Initializable, OwnableUpgradeable, ReentrancyGuardT
         return (true, val - 1);
     }
 
-    /// @notice Disables a model, blocking manifest updates and new GI registrations.
+    /// @notice Disables a model, blocking manifest updates and emission funding.
+    /// @dev Compatible task pairs also check this flag before new GIs; in-flight GIs continue.
     /// @param modelId ID of the model to disable.
     function disableModel(uint256 modelId) external onlyOwner {
         if (modelId >= models.length) revert InvalidModelId();

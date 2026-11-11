@@ -10,7 +10,10 @@ import {DinCoordinator}    from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DinTreasury}       from "../src/DinTreasury.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor}     from "../src/DINTaskAuditor.sol";
+import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 /// @notice Gas simulation for issue #78 — validator network-fee sizing.
 ///
@@ -78,7 +81,7 @@ contract GasSimulationTest is Test {
 
         // Task contracts
         tc = new DINTaskCoordinator(address(stake), 1);
-        ta = new DINTaskAuditor(address(stake), address(tc), 1);
+        ta = new DINTaskAuditor(address(stake), address(tc), 1, address(new EnabledModelRegistry()));
 
         // Wire state machine: auditor → coordinator slasher → auditor slasher → genesis
         tc.setDINTaskAuditorContract(address(ta));
@@ -153,6 +156,7 @@ contract GasSimulationTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(gi);
         tc.createAuditorsBatches(gi);
+        assignPlaceholderTestData(ta, address(stake), gi);
         tc.setTestDataAssignedFlag(gi, true);
         tc.startLMsubmissionsEvaluation(gi);
     }
@@ -162,13 +166,12 @@ contract GasSimulationTest is Test {
     ///      T1AggregationStarted.
     function _completeEvalAndOpenT1(uint gi) internal {
         uint bCnt = ta.AuditorsBatchCount(gi);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
         for (uint b = 0; b < bCnt; b++) {
             (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(gi, b);
             for (uint a = 0; a < bAuds.length; a++) {
                 for (uint m = 0; m < bMods.length; m++) {
                     vm.prank(bAuds[a]);
-                    ta.commitAuditScore(gi, b, bMods[m], commitHash);
+                    ta.commitAuditScore(gi, b, bMods[m], auditCommitHash(uint256(75), true, TEST_SALT, bAuds[a], gi, b, bMods[m]));
                 }
             }
         }
@@ -367,8 +370,7 @@ contract GasSimulationTest is Test {
         _setupToEvalStart(3);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
 
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
-        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], auditCommitHash(uint256(75), true, TEST_SALT, bAuds[0], 1, 0, bMods[0]));
         tc.startLMsubmissionsEvaluationReveal(1);
 
         uint before = gasleft();
@@ -381,10 +383,8 @@ contract GasSimulationTest is Test {
         _setupToEvalStart(3);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
 
-        bytes32 commitHash0 = keccak256(abi.encodePacked(uint256(70), true, TEST_SALT));
-        bytes32 commitHash1 = keccak256(abi.encodePacked(uint256(80), true, TEST_SALT));
-        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash0);
-        vm.prank(bAuds[1]); ta.commitAuditScore(1, 0, bMods[0], commitHash1);
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], auditCommitHash(uint256(70), true, TEST_SALT, bAuds[0], 1, 0, bMods[0]));
+        vm.prank(bAuds[1]); ta.commitAuditScore(1, 0, bMods[0], auditCommitHash(uint256(80), true, TEST_SALT, bAuds[1], 1, 0, bMods[0]));
         tc.startLMsubmissionsEvaluationReveal(1);
 
         // First reveal (cold, below quorum)
@@ -402,10 +402,9 @@ contract GasSimulationTest is Test {
     function test_gas_s2_commitAuditScore_cold_3batches() public {
         _setupToEvalStart(3);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
 
         uint before = gasleft();
-        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], auditCommitHash(uint256(75), true, TEST_SALT, bAuds[0], 1, 0, bMods[0]));
         console.log("[GAS][S2] commitAuditScore (cold, LOW 3 batches):", before - gasleft());
     }
 
@@ -413,10 +412,9 @@ contract GasSimulationTest is Test {
     function test_gas_s2_commitAuditScore_cold_5batches() public {
         _setupToEvalStart(5);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
 
         uint before = gasleft();
-        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], auditCommitHash(uint256(75), true, TEST_SALT, bAuds[0], 1, 0, bMods[0]));
         console.log("[GAS][S2] commitAuditScore (cold, MID 5 batches):", before - gasleft());
     }
 
@@ -424,10 +422,9 @@ contract GasSimulationTest is Test {
     function test_gas_s2_commitAuditScore_cold_10batches() public {
         _setupToEvalStart(10);
         (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(1, 0);
-        bytes32 commitHash = keccak256(abi.encodePacked(uint256(75), true, TEST_SALT));
 
         uint before = gasleft();
-        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], commitHash);
+        vm.prank(bAuds[0]); ta.commitAuditScore(1, 0, bMods[0], auditCommitHash(uint256(75), true, TEST_SALT, bAuds[0], 1, 0, bMods[0]));
         console.log("[GAS][S2] commitAuditScore (cold, HIGH 10 batches):", before - gasleft());
     }
 
