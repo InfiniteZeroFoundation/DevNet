@@ -179,7 +179,7 @@ def show_state(
     
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator)
 
-    target_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
     console.print(f"[bold green]Showing global iteration state for global iteration {curr_GI}[/bold green]")
     console.print(f"[cyan]Global iteration numerical state:[/cyan] {curr_GIstate}")
@@ -306,7 +306,6 @@ def update_manifest_request(
     dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
     model_data = dinregistry_contract.functions.getModel(model_id).call()
 
-    taskCoordinator = model_data[4]
     owner = model_data[0]
     is_open_source = model_data[1]
 

@@ -159,7 +159,8 @@ def register(
 
     taskCoordinator_contract, taskAuditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
     
-    DinCoordinator_contract, DinStake_contract = ctx.obj.get_deployed_din_coordinator_contract(), ctx.obj.get_deployed_din_stake_contract()
+    ctx.obj.get_deployed_din_coordinator_contract()
+    DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
     
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract, True, False, True)
 
@@ -383,17 +384,17 @@ def show_batch(
                 try:
                     has_voted = task_auditor_contract.functions.hasAuditedLM(curr_GI, batch_id, account.address, idx).call()
                     time.sleep(0.5)
-                except:
+                except Exception:
                     has_voted = False
                 try:
                     is_eligible = task_auditor_contract.functions.LMeligibleVote(curr_GI, batch_id, account.address, idx).call()
                     time.sleep(0.5)
-                except:
+                except Exception:
                     is_eligible = False
                 try:
                     has_auditScores = task_auditor_contract.functions.auditScores(curr_GI, batch_id, account.address, idx).call()
                     time.sleep(0.5)
-                except:
+                except Exception:
                     has_auditScores = False
 
                 assigned_lm_submissions[idx] = {
@@ -479,7 +480,7 @@ def evaluate_lms(
 
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationStarted", "Can not evaluate auditor batches at this time")
     
@@ -708,7 +709,7 @@ def reveal_lms(
 
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationRevealStarted", "Can not reveal audit scores at this time")
 
