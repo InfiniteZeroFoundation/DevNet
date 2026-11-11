@@ -1,20 +1,30 @@
 import json
 import secrets
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Optional
+
 import typer
+from eth_abi import encode as abi_encode
 from rich.table import Table
 from web3 import Web3
-from eth_abi import encode as abi_encode
-from dincli.cli.dintoken import (approve_din, buy_dintokens,
-                                 read_din_per_eth_rate, read_dintoken_stake,
-                                 stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, lock_batch_seed_if_pending,
-                               parse_tier_kind,
-                               require_custom_manifest_service,
-                               resolve_manifest_path)
+
+from dincli.cli.dintoken import (
+    approve_din,
+    buy_dintokens,
+    read_din_per_eth_rate,
+    read_dintoken_stake,
+    stake_dintokens,
+)
+from dincli.cli.utils import (
+    MIN_STAKE,
+    build_and_send_tx,
+    get_manifest_key,
+    lock_batch_seed_if_pending,
+    parse_tier_kind,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -44,20 +54,31 @@ TIER2 = 1
 # commands rather than recomputed -- recomputing would also require
 # re-running the aggregation worker a second time. Mirrors auditor.py's
 # commit-store pattern for the auditor-side commit-reveal flow.
-def _agg_commit_store_path(model_base_dir: Path, tier: int, gi: int, batch_id: int) -> Path:
+#
+# The store is per wallet (commits/<address>/...): several aggregators in
+# the same batch can run from one machine (one cache dir), and a shared
+# file would let the last committer overwrite the others' salts, failing
+# their reveals. _load_agg_commit still reads the old shared path, so a
+# commit made before this change can be revealed after upgrading.
+def _agg_commit_store_path(model_base_dir: Path, tier: int, gi: int, batch_id: int, address: Optional[str]) -> Path:
     tier_name = "t1" if tier == TIER1 else "t2"
-    return model_base_dir / "aggregations" / "commits" / f"{tier_name}_gi_{gi}_batch_{batch_id}.json"
+    commits_dir = model_base_dir / "aggregations" / "commits"
+    if address is not None:
+        commits_dir = commits_dir / address
+    return commits_dir / f"{tier_name}_gi_{gi}_batch_{batch_id}.json"
 
 
-def _save_agg_commit(model_base_dir: Path, tier: int, gi: int, batch_id: int, cid_bytes32: bytes, salt: bytes) -> None:
-    path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id)
+def _save_agg_commit(model_base_dir: Path, tier: int, gi: int, batch_id: int, cid_bytes32: bytes, salt: bytes, address: str) -> None:
+    path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id, address)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump({"cid": cid_bytes32.hex(), "salt": salt.hex()}, f)
 
 
-def _load_agg_commit(model_base_dir: Path, tier: int, gi: int, batch_id: int) -> Optional[dict]:
-    path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id)
+def _load_agg_commit(model_base_dir: Path, tier: int, gi: int, batch_id: int, address: str) -> Optional[dict]:
+    path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id, address)
+    if not path.exists():
+        path = _agg_commit_store_path(model_base_dir, tier, gi, batch_id, None)  # pre-per-wallet layout
     if not path.exists():
         return None
     with open(path) as f:
@@ -123,21 +144,21 @@ def register(
     is_registered = taskCoordinator_contract.functions.isDINAggregator(curr_GI, account.address).call()
     
     if is_registered:
-        console.print(f"[bold red]✗ Aggregator already registered.[/bold red]")
+        console.print("[bold red]✗ Aggregator already registered.[/bold red]")
         return
     else:
-        console.print(f"[bold green]✓ Aggregator not registered.[/bold green]")
+        console.print("[bold green]✓ Aggregator not registered.[/bold green]")
 
         stake = DinStake_contract.functions.getStake(account.address).call()
             
         if stake < MIN_STAKE:
-            console.print(f"[bold red]✗ Aggregator does not have enough stake.[/bold red]")
-            return
+            console.print("[bold red]✗ Aggregator does not have enough stake.[/bold red]")
+            raise typer.Exit(1)
         else:
-            console.print(f"[bold green]✓ Aggregator has enough stake.[/bold green]")
+            console.print("[bold green]✓ Aggregator has enough stake.[/bold green]")
 
             try:
-                build_and_send_tx(
+                receipt = build_and_send_tx(
                     ctx,
                     taskCoordinator_contract.functions.registerDINaggregator(curr_GI),
                     "Registering aggregator",
@@ -147,9 +168,12 @@ def register(
                 )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register aggregator. {e}[/bold red]")
-    
-  
-   
+                raise typer.Exit(1)
+            # A refused registration (e.g. TA_DualRoleNotAllowed) must not exit 0.
+            if receipt is None:
+                raise typer.Exit(1)
+
+
 @app.command("lock-seed", help="Lock the T1/T2 batch-assignment seed for the current GI (permissionless)")
 def lock_seed(
     ctx: typer.Context,
@@ -425,7 +449,7 @@ def aggregate_t1(
                 # mine, so saving only on a receipt could strand a real commit
                 # without its preimage. A failed attempt leaves a stale cache
                 # that the next retry replaces (the batch isn't committed yet).
-                _save_agg_commit(model_base_dir, TIER1, curr_GI, bid, aggregated_cid_bytes32, salt)
+                _save_agg_commit(model_base_dir, TIER1, curr_GI, bid, aggregated_cid_bytes32, salt, account.address)
                 build_and_send_tx(
                     ctx,
                     taskCoordinator_contract.functions.commitT1Aggregation(curr_GI, bid, commit_hash),
@@ -461,13 +485,23 @@ def reveal_t1(
     model_base_dir = ctx.obj.get_model_base_dir(model_id)
     t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call()
 
+    # Check the seat before the cache, as auditor lms-evaluation reveal does:
+    # a seated aggregator with no local commit gets a distinct message (its
+    # reveal is missing), while a batch it isn't seated in is skipped quietly.
+    assigned_any = False
     found_any = False
     for bid in range(t1_batches_count):
         if batch_id is not None and bid != batch_id:
             continue
 
-        commit = _load_agg_commit(model_base_dir, TIER1, curr_GI, bid)
+        _, validators, _, _, _ = taskCoordinator_contract.functions.getTier1Batch(curr_GI, bid).call()
+        if account.address not in validators:
+            continue
+        assigned_any = True
+
+        commit = _load_agg_commit(model_base_dir, TIER1, curr_GI, bid, account.address)
         if commit is None:
+            console.print(f"[yellow]No local commit found for T1 batch {bid} -- skipping.[/yellow]")
             continue
 
         found_any = True
@@ -485,7 +519,9 @@ def reveal_t1(
         except Exception as e:
             console.print(f"[bold red]✗ Error revealing T1 aggregation for batch {bid}: {e}[/bold red]")
 
-    if not found_any:
+    if not assigned_any:
+        console.print(f"[yellow]Not assigned to any T1 batch for GI {curr_GI}; nothing to reveal.[/yellow]")
+    elif not found_any:
         console.print("[yellow]No local T1 commits found to reveal.[/yellow]")
 
     
@@ -638,7 +674,7 @@ def aggregate_t2(
                 commit_hash = _agg_commit_hash(aggregated_cid_bytes32, salt, account.address, curr_GI, TIER2, i)
 
                 # Cache before sending -- see aggregate-t1.
-                _save_agg_commit(model_base_dir, TIER2, curr_GI, i, aggregated_cid_bytes32, salt)
+                _save_agg_commit(model_base_dir, TIER2, curr_GI, i, aggregated_cid_bytes32, salt, account.address)
                 build_and_send_tx(
                     ctx,
                     taskCoordinator_contract.functions.commitT2Aggregation(curr_GI, i, commit_hash),
@@ -672,9 +708,19 @@ def reveal_t2(
 
     model_base_dir = ctx.obj.get_model_base_dir(model_id)
 
-    commit = _load_agg_commit(model_base_dir, TIER2, curr_GI, 0)
+    # Seat check first (see reveal_t1). getTier2Batch reverts when the GI has
+    # no T2 batch, which counts as not assigned.
+    try:
+        _, aggregators, _, _ = taskCoordinator_contract.functions.getTier2Batch(curr_GI, 0).call()
+    except Exception:
+        aggregators = []
+    if account.address not in aggregators:
+        console.print(f"[yellow]Not assigned to the T2 batch for GI {curr_GI}; nothing to reveal.[/yellow]")
+        return
+
+    commit = _load_agg_commit(model_base_dir, TIER2, curr_GI, 0, account.address)
     if commit is None:
-        console.print("[yellow]No local T2 commit found to reveal.[/yellow]")
+        console.print("[yellow]No local commit found for T2 batch 0 -- skipping.[/yellow]")
         return
 
     console.print("[bold green]Revealing T2 aggregation[/bold green]")

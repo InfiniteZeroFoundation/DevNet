@@ -40,14 +40,12 @@ Core components:
 
 ## Open Issues
 
-### 0. Starter Task: Differential Privacy & Responsible AI Review
+### 0. Starter Task: Differential Privacy & Responsible AI Review — ✅ Completed
 
-**Difficulty:** Beginner (review/analysis, not implementation)
-**Area:** Privacy-Preserving Federated Learning / AI Governance
 **Detailed issue:** [issues/dp-governance-review-starter-task.md](issues/dp-governance-review-starter-task.md)
 **Status:** ✅ Done. Completed by @walkonwayvs in [PR #89](https://github.com/InfiniteZeroFoundation/DevNet/pull/89). The review is at [Documentation/technical/audits/dp-mechanism-review.md](../Documentation/technical/audits/dp-mechanism-review.md), and its open findings are tracked in [#279](https://github.com/InfiniteZeroFoundation/DevNet/issues/279). It stays listed here as an example of the work.
 
-A self-contained, no-coding-required entry point for contributors coming from an AI governance / responsible-AI / policy background rather than deep systems engineering. Review the three DP mechanisms already implemented for client model updates and assess them from a "what privacy claims can we honestly make" angle. Good first step before taking on implementation work in issue #1 below.
+This starter task (reviewing the three DP mechanisms implemented for client model updates from a "what privacy claims can we honestly make" angle) was completed in [PR #89](https://github.com/InfiniteZeroFoundation/DevNet/pull/89); the findings live at [Documentation/technical/audits/dp-mechanism-review.md](../Documentation/technical/audits/dp-mechanism-review.md). For a similar beginner-friendly review/analysis entry point, check issues tagged [`good first issue`](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
 
 ### 1. Differential Privacy Improvements
 

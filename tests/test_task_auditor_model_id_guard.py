@@ -7,8 +7,8 @@ and pairing is one-shot, so a mismatched deploy can't be corrected without a ful
 redeployment.
 """
 import time
-from unittest.mock import Mock
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import typer

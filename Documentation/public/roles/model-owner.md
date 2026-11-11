@@ -103,7 +103,7 @@ dincli task model-owner register-request \
   [--isOpenSource]
 ```
 
-The contract addresses default to the ones in your `.env`, and the manifest to the task directory's `manifest.json`, which is uploaded to IPFS. Without `--isOpenSource` the model is registered as proprietary.
+The contract addresses default to the ones in your `.env`, and the manifest to the task directory's `manifest.json`, which is uploaded to IPFS. `--manifestCID` skips the upload and registers an already-pinned manifest directly. Without `--isOpenSource` the model is registered as proprietary.
 
 On success you receive a **`requestId`**. Track it to monitor approval status.
 

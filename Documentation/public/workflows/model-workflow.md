@@ -5,7 +5,7 @@ In this guide we will describe the workflow of the DIN Protocol for a model.
 In Model Workflow there are 5 main entities:
 
 1. Model-Owner
-2. DIN-Representative (later DIN-DAO)
+2. DIN-Representative
 3. Auditors
 4. Aggregators
 5. Clients (Model-Trainees)
@@ -88,11 +88,11 @@ Reach out to the DIN-Representative through any of the following channels:
 | Telegram Group| https://t.me/+h46VS3AnO384ZGI8 |
 | Email    | umermajeed.cto@gmail.com abrahamnash@protonmail.com |
 
-> DIN Protocol is developed and maintained by Infinite Zero Foundation
+> DIN Protocol is developed and maintained by InfiniteZero Foundation
 
-> Dr. Umer Majeed is the Founding Member of Infinite Zero Foundation. He is the Technical Architecture & Implementation Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
+> Dr. Umer Majeed is the Founding Member of InfiniteZero Foundation. He is the Technical Architecture & Implementation Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
-> Dr. Abraham Nash is the Founding Member of Infinite Zero Foundation. He is Vision, Strategy & Ecosystem Development Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
+> Dr. Abraham Nash is the Founding Member of InfiniteZero Foundation. He is Vision, Strategy & Ecosystem Development Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
 ### Required Information for Your Request
 

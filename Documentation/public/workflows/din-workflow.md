@@ -2,7 +2,7 @@
 
 In this guide we will describe the workflow of the DIN Protocol.
 
-DIN-Representative (later DIN-DAO) is an entity that is authorized to perform certain actions on behalf of the DIN Protocol. 
+DIN-Representative is an entity that is authorized to perform certain actions on behalf of the DIN Protocol. 
 
 The DIN-Representative deploys the seven DIN platform contracts, each behind a transparent proxy (`foundry/script/DeployPlatform.s.sol`), and imports their addresses into dincli with `dincli system import-deployments`:
 

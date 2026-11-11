@@ -4,22 +4,32 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import nacl.encoding
 import typer
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from eth_abi import encode as abi_encode
+from eth_account import Account
+from eth_account.messages import encode_defunct
+from nacl.public import Box, PrivateKey, PublicKey
 from rich.table import Table
 from web3 import Web3
-from eth_abi import encode as abi_encode
-from nacl.public import Box, PrivateKey, PublicKey
-import nacl.encoding
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from eth_account.messages import encode_defunct
-from eth_account import Account
-from dincli.cli.dintoken import (approve_din, buy_dintokens,
-                                 read_din_per_eth_rate, read_dintoken_stake,
-                                 stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, lock_batch_seed_if_pending,
-                               require_custom_manifest_service,
-                               resolve_manifest_path)
+
+from dincli.cli.dintoken import (
+    approve_din,
+    buy_dintokens,
+    read_din_per_eth_rate,
+    read_dintoken_stake,
+    stake_dintokens,
+)
+from dincli.cli.utils import (
+    CONFIG_DIR,
+    MIN_STAKE,
+    build_and_send_tx,
+    get_manifest_key,
+    lock_batch_seed_if_pending,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -31,6 +41,7 @@ from dincli.cli.worker import (
 )
 from dincli.services.cid_utils import get_cid_from_bytes32
 from dincli.services.ipfs import retrieve_from_ipfs
+
 
 # One X25519 key per wallet: a single shared file broke several auditors
 # (e.g. --demokey accounts) on one machine, since each registers its own
@@ -59,19 +70,31 @@ def _decrypt_aes_gcm(ciphertext: bytes, K: bytes) -> bytes:
 # time must be reproduced exactly at reveal time, so it's cached to disk
 # between the two commands rather than recomputed (recomputing would also
 # require re-running the scoring worker a second time).
-def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Path:
-    return model_base_dir / "audits" / "commits" / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
+#
+# The store is per wallet (commits/<address>/...): an audit batch has
+# several auditors, who may run from one machine (one cache dir), and a
+# shared file would let the last committer overwrite the others' salts,
+# failing their reveals with TA_RevealHashMismatch. _load_commit still
+# reads the old shared path, so a commit made before this change can be
+# revealed after upgrading.
+def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int, address: Optional[str]) -> Path:
+    commits_dir = model_base_dir / "audits" / "commits"
+    if address is not None:
+        commits_dir = commits_dir / address
+    return commits_dir / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
 
 
-def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes) -> None:
-    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes, address: str) -> None:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index, address)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump({"score": score, "vote": vote, "salt": salt.hex()}, f)
 
 
-def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Optional[dict]:
-    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, address: str) -> Optional[dict]:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index, address)
+    if not path.exists():
+        path = _commit_store_path(model_base_dir, gi, batch_id, model_index, None)  # pre-per-wallet layout
     if not path.exists():
         return None
     with open(path) as f:
@@ -147,21 +170,21 @@ def register(
     is_registered = taskAuditor_contract.functions.isRegisteredAuditor(curr_GI, account.address).call()
     
     if is_registered:
-        console.print(f"[bold red]✗ Auditor already registered.[/bold red]")
+        console.print("[bold red]✗ Auditor already registered.[/bold red]")
         return
     else:
-        console.print(f"[bold green]✓ Auditor not registered.[/bold green]")
+        console.print("[bold green]✓ Auditor not registered.[/bold green]")
 
         stake = DinStake_contract.functions.getStake(account.address).call()
             
         if stake < MIN_STAKE:
-            console.print(f"[bold red]✗ Auditor does not have enough stake.[/bold red]")
-            return
+            console.print("[bold red]✗ Auditor does not have enough stake.[/bold red]")
+            raise typer.Exit(1)
         else:
-            console.print(f"[bold green]✓ Auditor has enough stake.[/bold green]")
+            console.print("[bold green]✓ Auditor has enough stake.[/bold green]")
 
             try:
-                build_and_send_tx(
+                receipt = build_and_send_tx(
                     ctx,
                     taskAuditor_contract.functions.registerDINAuditor(curr_GI),
                     "Registering auditor",
@@ -171,7 +194,10 @@ def register(
                 )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
-                raise typer.Exit()
+                raise typer.Exit(1)
+            # A refused registration (e.g. TA_DualRoleNotAllowed) must not exit 0.
+            if receipt is None:
+                raise typer.Exit(1)
 
 @app.command("register-encryption-key", help="Generate this wallet's X25519 key and register its public key on DinValidatorStake")
 def register_encryption_key(ctx: typer.Context):
@@ -287,7 +313,7 @@ def show_batch(
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI, curr_GIstate, "AuditorsBatchesCreated", "Can not show auditor batch at this time")
 
 
-    console.print(f"[bold green]Showing auditor batch![/bold green]")
+    console.print("[bold green]Showing auditor batch![/bold green]")
     
     audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(ref_gi).call()
 
@@ -568,7 +594,7 @@ def evaluate_lms(
                     console.print(f"[bold red]✗ Batch {batch_id}: owner signature on rawCID invalid — skipping.[/bold red]")
                     continue
 
-                raw_cid = get_cid_from_bytes32("0x" + raw_cid_bytes.hex())
+                raw_cid = get_cid_from_bytes32(raw_cid_bytes.hex())
 
                 pt_path = model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt"
                 if not pt_path.exists():
@@ -650,7 +676,7 @@ def evaluate_lms(
                     # a real commit without its preimage. A failed attempt leaves
                     # a stale cache that the next retry replaces (the LM isn't
                     # committed yet, so the hasCommittedLM guard lets it through).
-                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt, account.address)
                     build_and_send_tx(
                         ctx,
                         task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
@@ -708,7 +734,7 @@ def reveal_lms(
             if lmi is not None and lmi != model_index:
                 continue
 
-            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index)
+            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index, account.address)
             if commit is None:
                 console.print(f"[yellow]No local commit found for LM {model_index} from batch {batch_id} -- skipping.[/yellow]")
                 continue

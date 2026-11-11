@@ -1,12 +1,17 @@
 import os
 import time
 from typing import Optional
+
 import typer
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (build_and_send_tx, load_din_info,
-                              resolve_task_coordinator_address, set_env_key)
+from dincli.cli.utils import (
+    build_and_send_tx,
+    load_din_info,
+    resolve_task_coordinator_address,
+    set_env_key,
+)
 
 _COORDINATOR_DEPLOYMENT_ABI = [
     {"type": "function", "name": "modelId", "inputs": [],
@@ -245,7 +250,7 @@ def task_auditor(
         _set_din_token(ctx, deployed, din_token_address, "DINTaskAuditor")
 
     # Set DINTaskAuditor in DINTaskCoordinator
-    console.print(f"[cyan]Setting DINTaskAuditor in DINTaskCoordinator...[/cyan]")
+    console.print("[cyan]Setting DINTaskAuditor in DINTaskCoordinator...[/cyan]")
 
     DINTaskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(verbose=True, model_id=None, taskCoordinator_address=task_coordinator_address)
 

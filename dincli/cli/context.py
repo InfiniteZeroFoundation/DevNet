@@ -1,29 +1,40 @@
 from __future__ import annotations
+
 import functools
-import inspect
-from urllib.parse import urlparse
-
-import json
-
 import importlib.util
+import inspect
+import json
 from importlib.resources import files
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
 
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger, logging
-from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
-                              ManifestPathEscapesBaseError,
-                              get_config, get_manifest, get_manifest_key, get_w3,
-                              load_account, load_config, load_din_info,
-                              resolve_manifest_path, resolve_network,
-                              get_active_account_name,
-                              validate_account_name, resolve_wallet_path)
+from dincli.cli.utils import (
+    CACHE_DIR,
+    GIstatestrToIndex,
+    GIstateToStr,
+    ManifestPathEscapesBaseError,
+    get_active_account_name,
+    get_config,
+    get_manifest,
+    get_manifest_key,
+    get_w3,
+    load_account,
+    load_config,
+    load_din_info,
+    resolve_manifest_path,
+    resolve_network,
+    resolve_wallet_path,
+    validate_account_name,
+)
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
+
 
 def sanitize_rpc_url(url: str) -> str:
     parsed = urlparse(url)

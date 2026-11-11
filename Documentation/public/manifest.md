@@ -19,7 +19,7 @@ For example:
 ```
 
 > [!NOTE]
-> `dincli model-owner model create-genesis-model` needs the manifest in the task directory. To start from the reference MNIST model, run `dincli model-owner task create-task-dir` and then `dincli model-owner task cache-default-artifacts`, which fetches the default manifest, services, ABIs and requirements (their CIDs are the `default_*` entries in `dincli/config/din_info.json`).
+> `dincli model-owner model create-genesis-model` needs the manifest in the task directory and exits with an error if it is missing; it is not created automatically. To start from the reference MNIST model, run `dincli model-owner task create-task-dir` and then `dincli model-owner task cache-default-artifacts`, which fetches the default manifest, services, ABIs and requirements (their CIDs are the `default_*` entries in `dincli/config/din_info.json`). Only `local` has these defaults set at the moment; on `sepolia_op_devnet` and `mainnet` there is nothing to cache from, so supply your own manifest file.
 
 ---
 

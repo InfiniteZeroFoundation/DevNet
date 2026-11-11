@@ -1,14 +1,19 @@
 import os
 from pathlib import Path
-import json
+
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import (CACHE_DIR, build_and_send_tx, cache_manifest, _confirm_or_exit,
-                               get_env_key, GIstateToStr,
-                               resolve_task_coordinator_address)
-from dincli.services.ipfs import upload_to_ipfs
+from dincli.cli.utils import (
+    GIstateToStr,
+    _confirm_or_exit,
+    build_and_send_tx,
+    cache_manifest,
+    get_env_key,
+    resolve_task_coordinator_address,
+)
 from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
+from dincli.services.ipfs import upload_to_ipfs
 
 app = typer.Typer(help="Manage DIN tasks/models across networks.")
 
@@ -192,7 +197,7 @@ def register_request(
     isOpenSource: bool = typer.Option(False, "--isOpenSource"),
 ):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
-    console.print(f"[bold green]Submitting model registration request to DINRegistry ...[/bold green]")
+    console.print("[bold green]Submitting model registration request to DINRegistry ...[/bold green]")
 
     dinregistry_contract = ctx.obj.get_deployed_din_registry_contract()
 
@@ -211,7 +216,7 @@ def register_request(
         console.print("[gray]Manifest CID not provided, uploading manifest to IPFS...[/gray]")
         if not manifestpath:
             manifestpath = Path(os.getcwd()) / "tasks" / effective_network.lower() / taskCoordinator / "manifest.json"
-            console.print(f"[gray]Custom manifest path not provided, using default manifest path[/gray]")
+            console.print("[gray]Custom manifest path not provided, using default manifest path[/gray]")
 
         if not os.path.exists(manifestpath):
             console.print(f"[red]Error:[/red] Manifest not found at path: {manifestpath}")
@@ -233,7 +238,7 @@ def register_request(
 
         manifestCID = upload_to_ipfs(str(manifestpath), "manifest")
 
-    console.print(f"[green]Requesting model registration in DINRegistry[/green]")
+    console.print("[green]Requesting model registration in DINRegistry[/green]")
     console.print(f"[gray]Manifest CID: {manifestCID}[/gray]")
     console.print(f"[gray]Task Coordinator: {taskCoordinator}[/gray]")
     console.print(f"[gray]Task Auditor: {taskAuditor}[/gray]")

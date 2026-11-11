@@ -4,7 +4,12 @@ from typing import Optional
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import CACHE_DIR, build_and_send_tx, require_custom_manifest_service, resolve_manifest_path, _confirm_or_exit
+from dincli.cli.utils import (
+    _confirm_or_exit,
+    build_and_send_tx,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -316,7 +321,7 @@ def show_models(
     if has_submitted:
         console.print(f"[green]✓ Client {account.address} has submitted ![/green]")
     else:
-        console.print(f"[red]Error:[/red] No local model submission found")
+        console.print("[red]Error:[/red] No local model submission found")
         raise typer.Exit(1)
 
     has_index = taskAuditor_contract.functions.clientSubmissionIndex(ref_gi, account.address).call()
@@ -325,4 +330,4 @@ def show_models(
     
     console.print(f"[green]✓ Client {lm_submission[0]} submitted model {get_cid_from_bytes32(lm_submission[1].hex())}![/green]")
 
-    console.print(f"[bold green]✓ Local model submissions shown![/bold green]")
+    console.print("[bold green]✓ Local model submissions shown![/bold green]")

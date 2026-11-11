@@ -21,7 +21,7 @@ pytest                        # run all tests
 pytest tests/test_dintoken.py -k test_name   # run a single test
 ```
 
-There is no `[tool.ruff]` config committed in `pyproject.toml` — `.ruff_cache` is a local artifact, not enforced CI config. `[tool.pytest.ini_options]` registers the `integration` marker. Code standard is plain PEP 8 (per `Developer/CONTRIBUTING.md`).
+Ruff 0.16.4 is pinned in CI and required by `[tool.ruff]` in `pyproject.toml` (Python 3.12; `E4,E7,E9,F,I`). Install with `python -m pip install ruff==0.16.4`, then run `python -m ruff check .`. Findings remain advisory; tool/configuration/install/report failures block CI. CI prints all findings and uploads the JSON report. No formatter or automatic fixes are enabled. Maintained Python and configuration files are included; generated/vendor/runtime trees are excluded, and Markdown/notebooks are outside policy. See `Developer/CODE_STANDARDS.md` and `Developer/issues/320-python-lint/README.md` for scope and migration evidence. `[tool.pytest.ini_options]` registers the `integration` marker. Code standard is plain PEP 8.
 
 Tests mock chain/IPFS state via `monkeypatch` and `typer.testing.CliRunner` rather than hitting a live network (see `tests/test_dintoken.py`, `tests/test_ipfs_config.py`).
 
