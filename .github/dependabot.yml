@@ -12,10 +12,20 @@
 version: 2
 updates:
   - package-ecosystem: pip
+    # Dependabot matches each manifest's own directory, so every directory
+    # holding one of the 13 requirements files is listed explicitly.
     directories:
       - /cache_model_0
+      - /cache_model_0/requirements/aggregators
+      - /cache_model_0/requirements/auditors
+      - /cache_model_0/requirements/clients
+      - /cache_model_0/requirements/modelowner
       - /cache_model_1
-      - /cid_services
+      - /cache_model_1/requirements/aggregators
+      - /cache_model_1/requirements/auditors
+      - /cache_model_1/requirements/clients
+      - /cache_model_1/requirements/modelowner
+      - /cid_services/requirements
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
