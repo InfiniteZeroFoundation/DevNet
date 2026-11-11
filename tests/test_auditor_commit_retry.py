@@ -131,7 +131,7 @@ def _run(ctx):
 
 
 def _read_cache(model_base_dir, model_index):
-    with open(_commit_store_path(model_base_dir, GI, BATCH, model_index)) as f:
+    with open(_commit_store_path(model_base_dir, GI, BATCH, model_index, ACCOUNT)) as f:
         return json.load(f)
 
 
@@ -140,7 +140,7 @@ def test_already_committed_lm_is_skipped_and_cache_untouched(tmp_path, worker_st
     leave LM 0's cache and on-chain commit alone and only commit LM 1."""
     state = {"committed": {0}, "commits": []}
     ctx = _make_ctx(_make_auditor_contract(state), tmp_path)
-    _save_commit(tmp_path, GI, BATCH, 0, 55, False, OLD_SALT)
+    _save_commit(tmp_path, GI, BATCH, 0, 55, False, OLD_SALT, ACCOUNT)
     before = _read_cache(tmp_path, 0)
 
     with patch.object(auditor, "build_and_send_tx") as send:
@@ -176,7 +176,7 @@ def test_cache_written_before_send_and_matches_sent_commit(tmp_path, worker_stub
 
     def _send(ctx_, fn, *args, **kwargs):
         model_index = state["commits"][-1][2]
-        seen_at_send.append(_commit_store_path(tmp_path, GI, BATCH, model_index).exists())
+        seen_at_send.append(_commit_store_path(tmp_path, GI, BATCH, model_index, ACCOUNT).exists())
         return None
 
     with patch.object(auditor, "build_and_send_tx", side_effect=_send):
