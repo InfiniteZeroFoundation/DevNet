@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock
 
 import pytest
+
 from dincli.sdk import web3 as sdk_web3
-from dincli.sdk.errors import NetworkError, RPC_UNREACHABLE
+from dincli.sdk.errors import RPC_UNREACHABLE, NetworkError
 
 
 def test_get_w3_raises_network_error_on_unreachable(monkeypatch):

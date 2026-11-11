@@ -152,7 +152,7 @@ function mintEmission(address to, uint256 amount) external nonReentrant
 3. Revert `MintCapExceeded()` under the same cap rule as the faucet.
 4. `totalMinted += amount`, `dinToken.mint(to, amount)`, emit `EmissionMinted`.
 
-`to` is the `DinEmission` contract itself: `DinEmission.fundGI(gi, taskAuditor)` mints to itself, approves, and calls `DINTaskAuditor.depositRewards(gi, amount)` to fund that GI's reward pool. Emission deliberately shares the faucet's supply controls: `mintCap` bounds faucet + emission together, and **retiring the faucet also stops emission**.
+`to` is the `DinEmission` contract itself: `DinEmission.fundGI(gi, taskAuditor)` mints to itself, approves, and calls `DINTaskAuditor.depositRewards(gi, amount)` to fund that GI's reward pool. `fundGI` is permissionless, but `taskAuditor` must resolve to a real, non-disabled model via `DINModelRegistry.getModelIdByTaskAuditor`/`modelDisabled` before any of that happens — otherwise the caller could point it at an arbitrary contract and drain the mint through the allowance (issue #226). Emission deliberately shares the faucet's supply controls: `mintCap` bounds faucet + emission together, and **retiring the faucet also stops emission**.
 
 ---
 
@@ -241,7 +241,7 @@ Automated by `foundry/script/DeployPlatform.s.sol` (see [DeployPlatform](foundry
     dinFeeRouter.addFeeSource(dinCoordinator)          ← lets sweepFeesToRouter through
 7.  Deploy DinValidatorStake proxy → initialize(dinToken, dinCoordinator)
 8.  dinCoordinator.updateValidatorStakeContract(dinValidatorStake)
-13. Deploy DinEmission proxy       → initialize(dinCoordinator, dinToken, schedule…)
+13. Deploy DinEmission proxy       → initialize(dinCoordinator, dinToken, dinModelRegistry, schedule…)
 14. dinCoordinator.setEmissionContract(dinEmission)
 15. dinCoordinator.updateDinPerEth / setMintCap       ← only when DIN_PER_ETH / MINT_CAP are set to non-default values
 

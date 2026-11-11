@@ -1,8 +1,7 @@
 import json
 import logging
-from pathlib import Path
 
-from dincli.sdk.config import CONFIG_DIR, CONFIG_FILE
+from dincli.sdk.config import CONFIG_FILE
 
 _LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 

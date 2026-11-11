@@ -76,7 +76,7 @@ Optimism Sepolia is a public chain, so there is no anvil step. Instead you need 
 
 - **Funds.** The address needs Optimism Sepolia ETH. A full deploy is 22 transactions: seven implementations, seven proxies, and eight wiring calls. Each proxy creates its own ProxyAdmin inside its constructor, so the ProxyAdmins need no transactions of their own.
 
-- **Tokenomics parameters.** `DeployPlatform.s.sol` reads 11 tokenomics settings from the environment: `DIN_PER_ETH`, `MINT_CAP`, the four `EMISSION_*` keys, `MIN_STAKE`, the three `S5_*` keys and `S6_NO_PARTICIPATION_THRESHOLD`. Any key that isn't set falls back to the in-code default; for example, `MINT_CAP` defaults to `0`, which means uncapped. Set the values chosen for this network in `.env.sepolia_op_devnet` (loaded above) or in `foundry/.env` (forge loads it automatically). The script logs an `[INFO] <KEY> not set` line for each missing key and ends with a `--- Effective tokenomics ---` block. See [DeployPlatform.md](../../technical/contracts/foundry/script/DeployPlatform.md) for every key and its default.
+- **Tokenomics parameters.** `DeployPlatform.s.sol` reads 13 tokenomics settings from the environment: `DIN_PER_ETH`, `MINT_CAP`, the four `EMISSION_*` keys, `MIN_STAKE`, the three `S5_RECIDIVISM_*`/`S5_JAIL_DURATION` keys, the two `S5_GLOBAL_*` keys and `S6_NO_PARTICIPATION_THRESHOLD`. Any key that isn't set falls back to the in-code default; for example, `MINT_CAP` defaults to `0`, which means uncapped. Set the values chosen for this network in `.env.sepolia_op_devnet` (loaded above) or in `foundry/.env` (forge loads it automatically). The script logs an `[INFO] <KEY> not set` line for each missing key and ends with a `--- Effective tokenomics ---` block. See [DeployPlatform.md](../../technical/contracts/foundry/script/DeployPlatform.md) for every key and its default.
 
 **2. Deploy:**
 
@@ -165,7 +165,7 @@ dincli dinrep registry approve-registration-request <requestId>
 dincli dinrep registry reject-registration-request <requestId>
 ```
 
-The registration fee is retained by the contract in both cases.
+The required registration fee is a nonrefundable, pay-to-apply anti-spam cost: neither approval nor rejection refunds it. This is intentional (Abraham, [issue #224, 26 October 2026](https://github.com/InfiniteZeroFoundation/DevNet/issues/224#issuecomment-6406239550)). Any amount paid above the required fee is still refunded in the request transaction.
 
 ---
 
@@ -203,7 +203,7 @@ dincli dinrep registry enable-model <modelId>
 ```
 
 > [!CAUTION]
-> Disabling a model does not delete it. All on-chain history is preserved. Today the task contracts (`DINTaskCoordinator`, `DINTaskAuditor`) do **not** check `modelDisabled(modelId)`, so disabling only blocks manifest updates. It does not stop the model's running GIs, submissions or slashing.
+> Disabling a model does not delete it. All on-chain history is preserved. With the current compatible Foundry task pair and canonical registry wiring, disabling blocks both new-GI start overloads, even when already funded, as well as manifest updates and emission funding. Registry approval is required before any GI starts. In-flight GIs, including slashing, settlement and claims, continue; this is not a GI abort. Existing deployed pairs are unchanged and require redeployment for the new guard. Review task code, pairing and canonical registry wiring before authorization/approval; immutable wiring alone does not establish trust. Reenable restores start eligibility. Pre-funded pools have no new refund or recovery path.
 
 ---
 

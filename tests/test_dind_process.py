@@ -6,7 +6,6 @@ CLI level: a crashed daemon's stale PID file must still be cleaned up by
 """
 
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -21,7 +20,6 @@ from dincli.dind.process import (
     is_process_running,
     read_pid,
     remove_pid,
-    send_signal,
     write_pid,
 )
 

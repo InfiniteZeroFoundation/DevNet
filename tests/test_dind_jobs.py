@@ -1,7 +1,7 @@
 """Tests for dind/jobs.py — JobContext, handler registry, and read_stake."""
 
 from dincli.dind import jobs as jobs_mod
-from dincli.dind.jobs import Job, JobContext, JOB_HANDLERS
+from dincli.dind.jobs import JOB_HANDLERS, Job, JobContext
 from dincli.dind.state import StateStore
 from dincli.sdk.operations.platform import StakeInfo
 from dincli.sdk.session import DinSession

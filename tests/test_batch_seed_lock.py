@@ -6,15 +6,18 @@ anchored seed block, then lock the seed itself only if nobody else already
 has, and must not proceed with a zero seed if the lock call re-anchors
 instead of setting it (>256 blocks elapsed since anchor).
 """
-from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
 from web3.exceptions import TimeExhausted
 
-from dincli.cli.utils import (GIstatestrToIndex, ensure_batch_seed_locked,
-                              lock_batch_seed_if_pending)
+from dincli.cli.utils import (
+    GIstatestrToIndex,
+    ensure_batch_seed_locked,
+    lock_batch_seed_if_pending,
+)
 
 ZERO_SEED = b"\x00" * 32
 LOCKED_SEED = b"\x11" * 32

@@ -1,17 +1,24 @@
+import json
 import os
-from pathlib import Path
 import time
+from pathlib import Path
 
 import typer
-import json
 from web3 import Web3
 
-from dincli.cli.utils import (build_and_send_tx, get_env_key, 
-                                get_manifest,
-                               get_manifest_key,
-                               require_custom_manifest_service,
-                               resolve_task_coordinator_address, 
-                               set_env_key, _confirm_or_exit)
+from dincli.cli.utils import (
+    GIstateToStr,
+    _confirm_or_exit,
+    build_and_send_tx,
+    get_env_key,
+    get_manifest,
+    get_manifest_key,
+    load_din_info,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+    resolve_task_coordinator_address,
+    set_env_key,
+)
 from dincli.services.cid_utils import get_bytes32_from_cid
 
 #delete-this-for-production
@@ -61,7 +68,7 @@ def create_genesis_model(
         console.print(f"The genesis model hash will be set in {os.getcwd()}/.env under {effective_network.upper() + '_' + task_coordinator_address}_GENESIS_MODEL_IPFS_HASH")
         raise typer.Exit(0)
 
-    task_dir = Path(os.getcwd()) / 'tasks' / effective_network.lower() / task_coordinator_address
+    task_dir = ctx.obj.get_task_dir(task_coordinator_address)
 
     _confirm_or_exit(
         "Have you created task directory using: dincli model-owner task create-task-dir ?",
@@ -89,23 +96,23 @@ def create_genesis_model(
 
     if not task_dir.exists():
         console.print(f"[bold red]Task directory not found at {task_dir}[/bold red]")
-        console.print(f"[bold yellow]Please create the task directory first using: dincli model-owner task create-task-dir[/bold yellow]")
+        console.print("[bold yellow]Please create the task directory first using: dincli model-owner task create-task-dir[/bold yellow]")
         raise typer.Exit(1)
 
     target_manifest = os.path.join(task_dir, "manifest.json")
     
     if not os.path.exists(target_manifest):
         console.print(f"[bold red]Manifest not found at {target_manifest}[/bold red]")
-        console.print(f"[bold yellow]Please cache the artifacts and manifest using: dincli model-owner task cache-default-artifacts[/bold yellow]")
+        console.print("[bold yellow]Please cache the artifacts and manifest using: dincli model-owner task cache-default-artifacts[/bold yellow]")
         raise typer.Exit(1)
 
     manifest = get_manifest_key(effective_network, "getGenesisModelIpfs", None, task_coordinator_address)
-    service_path = task_dir / Path(manifest["path"])
-    model_service_path = task_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"])
+    service_path = resolve_manifest_path(task_dir, manifest["path"], what="getGenesisModelIpfs path")
+    model_service_path = resolve_manifest_path(task_dir, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"], what="ModelArchitecture path")
 
     require_custom_manifest_service(manifest, "getGenesisModelIpfs")
-    ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-    ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service")
+    ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=task_dir)
+    ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service", base_dir=task_dir)
 
     _confirm_or_exit(
         f"Have you edited/modified the modelowner service at {service_path} according to your task requirements?",
@@ -120,11 +127,12 @@ def create_genesis_model(
     console.print("[bold green]Creating genesis model... [/bold green]")
     fn = ctx.obj.load_custom_fn(
         service_path,
-        "getGenesisModelIpfs"
+        "getGenesisModelIpfs",
+        base_dir=task_dir,
     )
     model_hash = fn(task_dir)
     
-    console.print(f"[bold green]Genesis model created successfully![/bold green]")
+    console.print("[bold green]Genesis model created successfully![/bold green]")
     console.print(f"[cyan]Model hash:[/cyan] {model_hash}")
 
     set_env_key(effective_network.upper() + "_" + task_coordinator_address + "_GENESIS_MODEL_IPFS_HASH", model_hash)
@@ -134,6 +142,10 @@ def create_genesis_model(
     return
 
 #delete-this-for-production
+# The reference MNIST test dataset used by `add-default-test-data --default-test-data`.
+DEFAULT_TEST_DATASET_CID = "bafybeigjtcu2nzsffoy5pjmui25bnc43yduzn6aopi4wnrbtxfleqmw46y"
+
+
 @model_app.command("add-default-test-data")
 def add_default_test_data(ctx: typer.Context,     task_coordinator_address: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"), model_id: int = typer.Option(None, "--model-id", help="Model ID"), default_test_data: bool = typer.Option(False, "--default-test-data", help="use default test data")):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -148,10 +160,13 @@ def add_default_test_data(ctx: typer.Context,     task_coordinator_address: str 
     if model_id is not None:
         task_dir = ctx.obj.get_model_base_dir(model_id)
     elif task_coordinator_address is not None:
-        task_dir = Path.cwd() / 'tasks' / effective_network.lower()/ task_coordinator_address
+        task_dir = ctx.obj.get_task_dir(task_coordinator_address)
     test_dataset_path = task_dir.joinpath("dataset","test","test_dataset.pt")
     if default_test_data:
-        default_test_dataset_ipfs_hash = "bafybeigjtcu2nzsffoy5pjmui25bnc43yduzn6aopi4wnrbtxfleqmw46y"
+        # din_info's per-network `default_test_dataset` overrides the published default.
+        default_test_dataset_ipfs_hash = load_din_info().get(effective_network, {}).get(
+            "default_test_dataset", DEFAULT_TEST_DATASET_CID
+        )
         console.print(f"[bold yellow] Using default test dataset with IPFS CID {default_test_dataset_ipfs_hash} [/bold yellow]")
         retrieve_from_ipfs(default_test_dataset_ipfs_hash, test_dataset_path)
 
@@ -164,12 +179,18 @@ def submit_genesis_model(
     score: int = typer.Option(None, "--score", help="Score of the model"),
     help: bool = typer.Option(False, "--help","-h", help="Show help"),
 ):
+    """Submit the genesis model's IPFS hash and/or tier 2 score for GI 0.
+
+    Safe to re-run: if the genesis model hash was already submitted
+    (GIstate == GenesisModelCreated) this re-sends only the tier 2 score,
+    after checking the on-chain hash still matches the CID being scored.
+    """
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
 
     task_coordinator_address = resolve_task_coordinator_address(
         effective_network, task_coordinator_address, console
     )
-    
+
     if help:
         console.print("[bold green]Usage:[/bold green]")
         console.print("  dincli model-owner model submit-genesis-model --network <network>")
@@ -180,12 +201,28 @@ def submit_genesis_model(
         console.print("\n [yellow]Warning:[/yellow] the genesis model must be available at: ")
         console.print(f"  {Path(os.getcwd()) / 'tasks' / effective_network.lower() / task_coordinator_address / 'models' / 'genesis_model.pth'}")
         console.print(f"\n [yellow]Warning:[/yellow] If --ipfs-hash is not specified, the genesis model IPFS hash will be read from {os.getcwd()}/.env under {effective_network.upper() + '_' + task_coordinator_address + '_GENESIS_MODEL_IPFS_HASH'}")
+        console.print("\n [yellow]Note:[/yellow] safe to re-run — if the genesis model hash is already on-chain, this only (re-)submits the tier 2 score.")
         raise typer.Exit(0)
 
-    
+    deployed_DINTaskCoordinatorContract = ctx.obj.get_deployed_din_task_coordinator_contract(True, None, task_coordinator_address)
+    curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(deployed_DINTaskCoordinatorContract, verbose_gi=False)
+    curr_GIstate_str = GIstateToStr(curr_GIstate)
+
+    score_only_rerun = False
+    if curr_GIstate_str == "AwaitingGenesisModel":
+        pass
+    elif curr_GI == 0 and curr_GIstate_str == "GenesisModelCreated":
+        score_only_rerun = True
+    elif curr_GI > 0:
+        console.print(f"[bold red]✗ Global iteration 0's genesis model and score can no longer be set (current GI: {curr_GI}).[/bold red]")
+        raise typer.Exit(1)
+    else:
+        console.print(f"[bold red]✗ Cannot submit the genesis model at this time. Current state: {curr_GIstate_str}[/bold red]")
+        raise typer.Exit(1)
+
     _confirm_or_exit(
-        f"Have you generated the genesis model using dincli model-owner model create-genesis-model?",
-        f"Please generate the genesis model using dincli model-owner model create-genesis-model.",
+        "Have you generated the genesis model using dincli model-owner model create-genesis-model?",
+        "Please generate the genesis model using dincli model-owner model create-genesis-model.",
         console,
     )
 
@@ -196,16 +233,28 @@ def submit_genesis_model(
             console.print("[bold red]Genesis model IPFS hash not found![/bold red]")
             console.print(f"[yellow]Please set {effective_network.upper() + '_' + task_coordinator_address + '_GENESIS_MODEL_IPFS_HASH'} in {os.getcwd()}/.env[/yellow]")
             raise typer.Exit(1)
-    
-    console.print(f"[bold green]Submitting genesis model to DIN Task Coordinator![/bold green]")
-    console.print(f"[cyan]Genesis model IPFS hash:[/cyan] {ipfs_hash}")
+
+    genesis_ipfs_hash_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(ipfs_hash))
+
+    if score_only_rerun:
+        onchain_genesis_hash = deployed_DINTaskCoordinatorContract.functions.genesisModelIpfsHash().call()
+        if onchain_genesis_hash != genesis_ipfs_hash_bytes32:
+            console.print("[bold red]✗ The on-chain genesis model hash does not match the CID you're submitting a score for.[/bold red]")
+            console.print(f"[yellow]On-chain hash:[/yellow] 0x{onchain_genesis_hash.hex()}")
+            console.print(f"[yellow]Submitted CID hash:[/yellow] 0x{genesis_ipfs_hash_bytes32.hex()}")
+            console.print("[yellow]Refusing to attach this score to a different on-chain genesis model.[/yellow]")
+            raise typer.Exit(1)
+        console.print("[yellow]Genesis model already submitted on-chain and matches this CID — submitting score only.[/yellow]")
+    else:
+        console.print("[bold green]Submitting genesis model to DIN Task Coordinator![/bold green]")
+        console.print(f"[cyan]Genesis model IPFS hash:[/cyan] {ipfs_hash}")
 
     accuracy = None
     if score is not None:
         accuracy = score
     else:
 
-        task_dir = Path.cwd() / 'tasks' / effective_network.lower()/ task_coordinator_address
+        task_dir = ctx.obj.get_task_dir(task_coordinator_address)
 
         manifest_data = get_manifest(
             effective_network,
@@ -216,14 +265,14 @@ def submit_genesis_model(
             console.print("[yellow]Manifest does not require genesis model scoring with a test dataset. Skipping tier 2 score submission.[/yellow]")
         else:
             manifest = manifest_data["getscoreforGM"]
-            service_path = task_dir / Path(manifest["path"])
-            model_service_path = task_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"])
+            service_path = resolve_manifest_path(task_dir, manifest["path"], what="getscoreforGM path")
+            model_service_path = resolve_manifest_path(task_dir, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["path"], what="ModelArchitecture path")
 
             require_custom_manifest_service(manifest, "getscoreforGM")
-            ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service")
+            ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=task_dir)
+            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", None, task_coordinator_address)["ipfs"], "model architecture service", base_dir=task_dir)
 
-            fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM")
+            fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM", base_dir=task_dir)
 
             test_dataset_path = task_dir.joinpath("dataset", "test", "test_dataset.pt")
             _confirm_or_exit(
@@ -247,26 +296,28 @@ def submit_genesis_model(
                 raise typer.Exit(1)
             
             if accuracy is None:
-                console.print(f"[bold red] X Accuracy is None[/bold red]")
+                console.print("[bold red] X Accuracy is None[/bold red]")
                 raise typer.Exit(1)
 
     
-    deployed_DINTaskCoordinatorContract = ctx.obj.get_deployed_din_task_coordinator_contract(True, None, task_coordinator_address)
+    if score_only_rerun:
+        if accuracy is None:
+            console.print("[yellow]Genesis model hash is already on-chain and there is no tier 2 score to submit (manifest doesn't require test-dataset scoring). Pass --score to set one.[/yellow]")
+            raise typer.Exit(0)
+        _confirm_or_exit("\n Do you want to submit this tier 2 score to the blockchain? \n ", "You chose not to submit the tier 2 score to the blockchain.", console)
+    else:
+        _confirm_or_exit("\n Do you want to submit this genesis model to the blockchain? \n ", "You chose not to submit the genesis model to the blockchain.", console)
 
-    genesis_ipfs_hash_bytes32 = Web3.to_bytes(hexstr=get_bytes32_from_cid(ipfs_hash))
+        build_and_send_tx(
+            ctx,
+            deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(genesis_ipfs_hash_bytes32),
+            "Submitting genesis model",
+            "Genesis model submitted!",
+            "Failed to submit genesis model!"
+        )
 
-    _confirm_or_exit("\n Do you want to submit this genesis model to the blockchain? \n ", "You chose not to submit the genesis model to the blockchain.", console)
-    
-    tx_receipt = build_and_send_tx(
-        ctx,
-        deployed_DINTaskCoordinatorContract.functions.setGenesisModelIpfsHash(genesis_ipfs_hash_bytes32),
-        "Submitting genesis model",
-        "Genesis model submitted!",
-        "Failed to submit genesis model!"
-    )
+        time.sleep(10)
 
-    time.sleep(10)
-    
     if accuracy is None:
         return
 
@@ -293,7 +344,7 @@ def validate_update_manifest(
         effective_network, task_coordinator_address, console
     )
 
-    task_dir = Path.cwd() / 'tasks' / effective_network.lower()/ task_coordinator_address
+    task_dir = ctx.obj.get_task_dir(task_coordinator_address)
 
     manifestpath = task_dir / "manifest.json"
     console.print(f"[bold green] Updating Manifest file at  {manifestpath} ...[/bold green]")
@@ -303,11 +354,11 @@ def validate_update_manifest(
     manifest_DINTaskCoordinator_Contract = manifest_data["DINTaskCoordinator_Contract"]
 
     if task_coordinator_address!=manifest_DINTaskCoordinator_Contract:
-        console.print(f"[bold red] X Task coordinator address in manifest does not match the task coordinator address in .env! [/bold red]")
+        console.print("[bold red] X Task coordinator address in manifest does not match the task coordinator address in .env! [/bold red]")
         console.print(f"[bold red] Task coordinator address in manifest: {manifest_DINTaskCoordinator_Contract} [/bold red]")
         console.print(f"[bold red] Task coordinator address in .env: {task_coordinator_address} [/bold red]")
         if typer.confirm("Should we update the DINTaskCoordinator_Contract in manifest to match the task coordinator address in .env?:"):
-            console.print(f"[bold green] Updating the DINTaskCoordinator_Contract in manifest to match the task coordinator address in .env [/bold green]")
+            console.print("[bold green] Updating the DINTaskCoordinator_Contract in manifest to match the task coordinator address in .env [/bold green]")
             manifest_data["DINTaskCoordinator_Contract"] = task_coordinator_address
         else:
             console.print("[bold red] X Not updating the DINTaskCoordinator_Contract in manifest. [/bold red]")
@@ -317,11 +368,11 @@ def validate_update_manifest(
     task_auditor = get_env_key(key)
 
     if task_auditor!=manifest_DINTaskAuditor_Contract:
-        console.print(f"[bold red] X Task auditor address in manifest does not match the task auditor address in .env! [/bold red]")
+        console.print("[bold red] X Task auditor address in manifest does not match the task auditor address in .env! [/bold red]")
         console.print(f"[bold red] Task auditor address in manifest: {manifest_DINTaskAuditor_Contract} [/bold red]")
         console.print(f"[bold red] Task auditor address in .env: {task_auditor} [/bold red]")
         if typer.confirm("Should we update the DINTaskAuditor_Contract in manifest to match the task auditor address in .env?:"):
-            console.print(f"[bold green] Updating the DINTaskAuditor_Contract in manifest to match the task auditor address in .env [/bold green]")
+            console.print("[bold green] Updating the DINTaskAuditor_Contract in manifest to match the task auditor address in .env [/bold green]")
             manifest_data["DINTaskAuditor_Contract"] = task_auditor
         else:
             console.print("[bold red] X Not updating the DINTaskAuditor_Contract in manifest. [/bold red]")
@@ -330,11 +381,11 @@ def validate_update_manifest(
     genesis_model_ipfs_hash = get_env_key(effective_network.upper() + "_" + task_coordinator_address + "_GENESIS_MODEL_IPFS_HASH")
 
     if manifest_genesis_model_cid!=genesis_model_ipfs_hash:
-        console.print(f"[bold red] X Genesis model CID in manifest does not match the genesis model CID in .env! [/bold red]")
+        console.print("[bold red] X Genesis model CID in manifest does not match the genesis model CID in .env! [/bold red]")
         console.print(f"[bold red] Genesis model CID in manifest: {manifest_genesis_model_cid} [/bold red]")
         console.print(f"[bold red] Genesis model CID in .env: {genesis_model_ipfs_hash} [/bold red]")
         if typer.confirm("Should we update the Genesis model CID in manifest to match the genesis model CID in .env?:"):
-            console.print(f"[bold green] Updating the Genesis model CID in manifest to match the genesis model CID in .env [/bold green]")
+            console.print("[bold green] Updating the Genesis model CID in manifest to match the genesis model CID in .env [/bold green]")
             manifest_data["Genesis_Model_CID"] = genesis_model_ipfs_hash
         else:
             console.print("[bold red] X Not updating the Genesis model CID in manifest. [/bold red]")
@@ -343,7 +394,7 @@ def validate_update_manifest(
         json.dump(manifest_data, f, indent=4)
     
     console.print(f"[bold green] Manifest at {manifestpath} updated successfully! [/bold green]")
-    console.print(f"[bold yellow] Make sure to throughly read/modify all the parameters/CID values in the manifest file before registering your task/model onchain. [/bold yellow]")
+    console.print("[bold yellow] Make sure to throughly read/modify all the parameters/CID values in the manifest file before registering your task/model onchain. [/bold yellow]")
 
 
     

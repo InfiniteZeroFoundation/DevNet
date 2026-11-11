@@ -10,7 +10,7 @@ import sys
 import textwrap
 
 from dincli.sdk import errors
-from dincli.sdk.errors import DinError, TransactionError, TX_REVERTED, sanitize_details
+from dincli.sdk.errors import TX_REVERTED, DinError, TransactionError, sanitize_details
 
 
 def test_sdk_imports_no_cli_or_ui():

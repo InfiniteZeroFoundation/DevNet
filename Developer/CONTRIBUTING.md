@@ -10,12 +10,13 @@ git checkout develop
 
 # Install dependencies and set up dincli in editable mode
 pip install -e .
-
-# See full setup guide
-/Developer/DEVELOPMENT_SETUP.md
 ```
 
+See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) for the full setup guide (Python version, Foundry, running tests).
+
 Create a feature branch, commit your changes, and open a pull request to `develop`.
+
+Every PR is reviewed and merged by someone other than its author. [MAINTAINING.md](MAINTAINING.md) describes how review, merging, and issue/task closure work.
 
 ## A Note On The Developer Docs
 
@@ -38,7 +39,7 @@ For issue-specific contributor packets, review questions, and curated reading li
 
 ## Submitting PRs
 
-- Reference related issues
+- Reference related issues. Write `Closes #N` only if the PR completes everything issue N asks (it then closes automatically on merge); otherwise write `Part of #N`
 - Clear description of what and why
 - Add tests where applicable
 - Keep commits focused
@@ -47,6 +48,12 @@ For issue-specific contributor packets, review questions, and curated reading li
   dincli system dump-abi --artifact foundry/out/<Contract>.sol/<Contract>.json --output dincli/abis --official
   ```
   `dincli/abis/*.json` is the only ABI dincli has for the platform contracts (`DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`, `DinFeeRouter`), and the fallback for `DINTaskCoordinator`/`DINTaskAuditor` when a model's manifest doesn't supply custom `task_contracts` artifacts. A stale bundle means dincli calls functions that no longer exist (`AttributeError`) or decodes events/structs against the wrong layout. No network or wallet needed to run it. See [issue #177](https://github.com/InfiniteZeroFoundation/DevNet/issues/177) for what drifting looks like when this is skipped.
+- **Contract size budget.** Every deployable `foundry/src` contract must keep at least **1,024 B** of runtime headroom under EIP-170's 24,576 B. Initcode must stay under EIP-3860's 49,152 B. CI enforces both with `.github/scripts/contract_size_gate.py`, and warns when a contract's margin drops below **2,048 B**. Both thresholds are constants at the top of the script (issue #201). Check locally after `forge build`:
+  ```
+  cd foundry && python3 ../.github/scripts/contract_size_gate.py
+  ```
+  `foundry/anvil.sh` lifts the limit on the local chain, so a local deploy is not a size check. A PR that pushes a contract under the 1,024 B fail line needs a size reduction in the same PR. Don't split a contract without raising it with a maintainer first.
+- **Integration suite.** The `tests/dincli/` full-GI suite (Anvil, an offline Kubo and Docker, in isolated mode; issue #228) is too heavy to run on every push, so it runs only when a maintainer starts the **Full GI** workflow by hand, for example before merging a change to the GI flow. It does not gate `CI OK`. Its summary separates setup, pytest, log capture and artifact outcomes. On failure or cancellation, it attempts to upload the available pytest, compile, chain and IPFS logs as `integration-logs`; reporting and upload are best effort. To reproduce it locally, see [CI integration job](../Documentation/technical/testing/dincli-testing-guide.md#ci-integration-job).
 
 ## Code Standards
 

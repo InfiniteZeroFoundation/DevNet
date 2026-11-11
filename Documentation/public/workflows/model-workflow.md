@@ -5,7 +5,7 @@ In this guide we will describe the workflow of the DIN Protocol for a model.
 In Model Workflow there are 5 main entities:
 
 1. Model-Owner
-2. DIN-Representative (later DIN-DAO)
+2. DIN-Representative
 3. Auditors
 4. Aggregators
 5. Clients (Model-Trainees)
@@ -32,7 +32,16 @@ dincli system register-wallet --account <account_id>
 > More on wallet configuration can be found in the [DIN CLI Documentation](../cli-reference.md).
 
 
-In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model. 
+In current DIN Protocol, the model owner needs to deploy a taskCoordinator contract and a taskAuditor contract specific to each model.
+
+For current Foundry artifacts, `model-owner deploy task-coordinator` defaults `--model-id` to `DINModelRegistry.totalModels()`, the ID the next approval assigns. This assumes no other registration is approved first. `model-owner deploy task-auditor` defaults to the paired coordinator’s `modelId()`; explicit IDs must match. Both commands configure the platform `DinToken` from this network’s `din_info.json` (`token`), with auditor token setup completed before pairing. Configure the canonical platform registry address in this network's `din_info.json` (`registry`) before deploying the auditor. Its fourth constructor argument is immutable registry wiring. The coordinator reports `taskProtocolVersion() == 1`, identifying the interface that requires the auditor GI-start guard. Before deploying an auditor, the CLI checks this version as well as matching model IDs: version 1 requires the registry-aware four-argument auditor. Released unversioned coordinators remain supported with matching legacy auditors: coordinators without `modelId()` use the two-argument auditor, and those with `modelId()` use the three-argument auditor; unknown versions and mixed generations are rejected before deployment or pairing. Legacy pairs do not gain the guard described below. Unsupported custom constructor signatures are rejected.
+
+The checked-in `cache_model_0` artifacts and manifest describe the current reference pair. The `cache-default-artifacts` command instead downloads the manifest and ABIs selected by this network's `din_info.json` (`default_manifest` and `default_abis`); those historical bootstrap CIDs are not refreshed by this change. Verify the downloaded constructor signatures and registry wiring before using them for a new deployment.
+
+The DIN-Representative must approve the model before **any** GI can start. Both start overloads check the registry-assigned ID by auditor address; do not assume the anticipated constructor ID establishes registration. Coordinate ID allocation with the DIN-Representative for correct stake floors.
+
+Disabling a model prevents future GIs, including those with a pre-funded or privately funded pool. An in-flight GI continues through work, slashing, settlement and reward claims. There is no GI abort or new pool refund/recovery path. The guard requires a newly deployed compatible coordinator/auditor pair with canonical registry wiring and reviewed task code; existing deployments remain unchanged. See [kill-switch scope](../../technical/contracts/DINModelRegistry.md#11-kill-switch).
+
 
 # Workflow
 
@@ -40,7 +49,7 @@ In current DIN Protocol, the model owner needs to deploy a taskCoordinator contr
 
 Model Owner deploys a taskCoordinator contract specific to each model.
 ```bash
-dincli model-owner deploy task-coordinator --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
+dincli model-owner deploy task-coordinator --artifact "/path/to/devnet/foundry/out/DINTaskCoordinator.sol/DINTaskCoordinator.json" --model-id <anticipated-id>
 ```
 
 dincli will store the taskCoordinator contract address in the .env file as `SEPOLIA_OP_DEVNET_DINTaskCoordinator_Contract_Address` in your local project directory which we call `root_dir`.
@@ -49,7 +58,7 @@ dincli will store the taskCoordinator contract address in the .env file as `SEPO
 
 Model Owner deploys a taskAuditor contract specific to each model.
 ```bash
-dincli model-owner deploy task-auditor --artifact "/path/to/devnet/hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
+dincli model-owner deploy task-auditor --artifact "/path/to/devnet/foundry/out/DINTaskAuditor.sol/DINTaskAuditor.json" --model-id <same-anticipated-id>
 ```
 
 dincli will store the taskAuditor contract address in the .env file as `SEPOLIA_OP_DEVNET_<task_coordinator_contract_address>_DINTaskAuditor_Contract_Address` in your local project directory which we call `root_dir`.
@@ -71,11 +80,11 @@ Reach out to the DIN-Representative through any of the following channels:
 | Telegram Group| https://t.me/+h46VS3AnO384ZGI8 |
 | Email    | umermajeed.cto@gmail.com abrahamnash@protonmail.com |
 
-> DIN Protocol is developed and maintained by Infinite Zero Foundation
+> DIN Protocol is developed and maintained by InfiniteZero Foundation
 
-> Dr. Umer Majeed is the Founding Member of Infinite Zero Foundation. He is the Technical Architecture & Implementation Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
+> Dr. Umer Majeed is the Founding Member of InfiniteZero Foundation. He is the Technical Architecture & Implementation Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
-> Dr. Abraham Nash is the Founding Member of Infinite Zero Foundation. He is Vision, Strategy & Ecosystem Development Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
+> Dr. Abraham Nash is the Founding Member of InfiniteZero Foundation. He is Vision, Strategy & Ecosystem Development Lead for the DIN Protocol. Please mention "DIN Protocol Model Registration Request" in the subject of the email
 
 ### Required Information for Your Request
 
@@ -175,7 +184,7 @@ Model Owner creates and submits the genesis model to the TaskCoordinator contrac
 The following dincli command is used to create the genesis model:
 
 ```bash
-dincli model-owner model create-genesis
+dincli model-owner model create-genesis-model
 ```
 
 > make sure that the manifest.json file is present at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json` before running the above command. The above dincli command will use `getGenesisModelIpfs` in `modelowner.py` service  to create the genesis model and upload it to IPFS and store the IPFS CID in the .env file as `SEPOLIA_OP_DEVNET_<TASK_COORDINATOR_CONTRACT_ADDRESS>_GENESIS_MODEL_IPFS_HASH`. Please note that dincli can automatically fetch the service from IPFS using the coressponding entry for `getGenesisModelIpfs` in the manifest.json file.
@@ -183,25 +192,27 @@ dincli model-owner model create-genesis
 The model owner can submit the genesis model to the TaskCoordinator contract using the following dincli command:
 
 ```bash
-dincli model-owner model submit-genesis
+dincli model-owner model submit-genesis-model
 ```
 
 > make sure that the appropriate test dataset for the model is available at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/dataset/test/test_dataset.pt` before running the above command. The test dataset will be used to evaluate the genesis model and calculate the score. This score will set the threshold range for the final eligibility of local models.
 
+> this command is safe to re-run. If the genesis model hash was already submitted on-chain (e.g. a prior run submitted the hash but failed before or during the score submission), re-running it detects that the hash is already set, verifies it still matches the CID you're scoring, and (re-)submits only the tier 2 score. If the on-chain hash doesn't match the CID you're submitting, it exits with an error instead of attaching a score to the wrong genesis model.
+
 ## 8. Register Model - Model Owner
 
-Model Owner updates the manisfest file at`<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, specially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract`  fields with the IPFS CID of the genesis model, DINTaskCoordinator contract address and DINTaskAuditor contract address respectively.
+Model Owner updates the manifest file at `<root_dir>/tasks/sepolia_op_devnet/<task_coordinator_contract_address>/manifest.json`, specially the `Genesis_Model_CID`, `DINTaskCoordinator_Contract`, and `DINTaskAuditor_Contract`  fields with the IPFS CID of the genesis model, DINTaskCoordinator contract address and DINTaskAuditor contract address respectively.
 
-Model Owner then register the model with the DIN Protocolat DINModelRegistry contract using the following dincli command:
+Model Owner then registers the model with the DIN Protocol at the DINModelRegistry contract using the following dincli command:
 
 ```bash
-dincli task model-owner register --isOpenSource [true/false]
+dincli task model-owner register-request [--isOpenSource]
 ```
 
 Once the model is registered, the model is assigned a model ID. The manifest file may be updated with the model id field `Model ID` and uploaded to IPFS again. Other fields in manifest file can also be updated as per requirement. The following dincli command can be used to update the model CID in DINModelRegistry contract:
 
 ```bash
-dincli task model-owner update-manifest <model_id> [--modelCID <model_cid>] [--manifestpath <manifest_path>]
+dincli task model-owner update-manifest-request <model_id> [--manifestCID <manifest_cid>] [--manifestpath <manifest_path>]
 ```
 
 ## 9. Start Global Iteration (GI) - Model Owner
@@ -359,6 +370,14 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 > The test dataset  must be located at `<CACHE_DIR>/sepolia_op_devnet/model_<model_id>/dataset/test/test_dataset.pt` for model owner.
 > where `CACHE_DIR` is the path to the cache directory of the dincli.
 > and can be found by running the command `dincli system get-cache-dir`.
+
+> [NOTE]
+> `create-testdataset --submit` is safe to re-run. If some auditor batches failed to
+> be assigned, it prints their batch IDs, skips the test-dataset-assigned flag, and
+> exits non-zero. Retry just those batches with the repeatable `--batch <id>` option,
+> e.g. `dincli model-owner auditor-batches create-testdataset <model_id> --submit --batch 2 --batch 5`.
+> The flag itself is one-shot on-chain; re-running after it's already set is detected
+> and skipped rather than treated as an error.
 
 **Auditors** evaluate their assigned batches (repeat for each auditor):
 

@@ -17,6 +17,11 @@
           "name": "modelId_",
           "type": "uint256",
           "internalType": "uint256"
+        },
+        {
+          "name": "modelRegistry_",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "nonpayable"
@@ -36,25 +41,6 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "Is_testdataCIDs_Assigned",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -160,35 +146,6 @@
     },
     {
       "type": "function",
-      "name": "auditBatches",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "batchId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "testDataCID",
-          "type": "bytes",
-          "internalType": "bytes"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "auditScoreCommits",
       "inputs": [
         {
@@ -244,30 +201,6 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "auditorGIWeight",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
@@ -466,30 +399,6 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "dinAuditors",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1069,6 +978,19 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "modelRegistry",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract ITaskModelRegistry"
         }
       ],
       "stateMutability": "view"
@@ -1665,6 +1587,19 @@
       "stateMutability": "nonpayable"
     },
     {
+      "type": "function",
+      "name": "validateGIStart",
+      "inputs": [
+        {
+          "name": "gi",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "view"
+    },
+    {
       "type": "event",
       "name": "AuditScoreCommitted",
       "inputs": [
@@ -1939,12 +1874,6 @@
           "name": "batchId",
           "type": "uint256",
           "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "bondForfeited",
-          "type": "uint256",
-          "indexed": false,
           "internalType": "uint256"
         }
       ],
@@ -2567,6 +2496,11 @@
     },
     {
       "type": "error",
+      "name": "TA_DualRoleNotAllowed",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TA_EmptyCommitHash",
       "inputs": []
     },
@@ -2578,11 +2512,6 @@
     {
       "type": "error",
       "name": "TA_EncryptedKeyCountMismatch",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "TA_FlagAlreadySet",
       "inputs": []
     },
     {
@@ -2638,6 +2567,22 @@
     {
       "type": "error",
       "name": "TA_MaxLMSubmissionsReached",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TA_ModelDisabled",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "TA_ModelNotRegistered",
       "inputs": []
     },
     {
@@ -2702,6 +2647,11 @@
     },
     {
       "type": "error",
+      "name": "TA_RewardsAlreadySettled",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TA_RewardsNotSettled",
       "inputs": []
     },
@@ -2717,7 +2667,17 @@
     },
     {
       "type": "error",
+      "name": "TA_TestDataNotAssigned",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TA_WrongGI",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_GIRewardPoolNotFunded",
       "inputs": []
     }
   ]

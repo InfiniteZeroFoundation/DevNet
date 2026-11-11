@@ -10,15 +10,17 @@ The chain backend and platform deploy script are chosen by
 chain ID 1337 on `http://127.0.0.1:8545`.
 
 > [!WARNING]
-> `foundry/anvil.sh` starts Anvil with `--code-size-limit 4294967295`, so the local chain accepts contracts above the 24,576-byte EIP-170 limit. `DINTaskCoordinator` is currently over that limit (issue #201), so a green local run does not show that a contract can be deployed to a real chain.
+> `foundry/anvil.sh` starts Anvil with `--code-size-limit 4294967295`, so the local chain accepts contracts above the 24,576-byte EIP-170 limit. A green local run therefore does not show that a contract can be deployed to a real chain. CI enforces the limit instead, with `.github/scripts/contract_size_gate.py` (issue #201).
 
 ---
 
 ## Quick start
 
-The harness is self-contained. All prerequisites (contract compilation, the
-local chain node, IPFS daemon) are managed automatically by the conftest. The only manual
-requirement is Docker — it must be running before Phase 4 client training begins.
+The conftest manages contract compilation and local chain/IPFS startup.
+Install the Python dependencies and chain/IPFS toolchains first. The existing
+manual path also requires a repo-root `.env` and a packaged
+`dincli/config/accounts.json` containing the public development accounts.
+Docker must be running before Phase 4 client training begins.
 
 ```bash
 # 1. Ensure Docker daemon is running
@@ -35,9 +37,9 @@ python -m pytest tests/dincli/test_01_platform.py \
 ```
 
 That's it. The conftest will:
-- Compile contracts: `npx hardhat compile` always (the task-contract deploy and
-  `dump-abi` tests still use Hardhat artifacts), plus `forge build` for the
-  default `foundry` toolchain
+- Compile contracts: `forge build` always (the platform deploy, the
+  task-contract deploys and the `dump-abi` tests all use `foundry/out`), plus
+  `npx hardhat compile` only for the `hardhat` platform toolchain
 - Kill any existing chain node and start a fresh one (clean EVM state): Anvil
   for `foundry`, a Hardhat node for `hardhat`
 - Start the IPFS daemon if it is not already running
@@ -50,22 +52,215 @@ That's it. The conftest will:
 The test suite is structured around a centralized session-scoped `conftest.py`
 that isolates dependencies and coordinates services.
 
+### CI smoke groundwork
+
+The first CI preparation change adds opt-in `DIN_TEST_ISOLATED=1` service
+ownership and corrects demo bootstrap to use `connect-demo-wallet`. It does
+not add a Docker runner or complete seven-contract deployment assertions.
+The Python CI job still selects `not integration`; the suite itself runs in
+the separate [CI integration job](#ci-integration-job).
+Full lifecycle wallet switches and later phases are not verified by this change.
+
+In a disposable checkout/environment, isolated mode requires absolute
+`DIN_TEST_TMPDIR` and `DIN_TEST_RESULTS_DIR` paths. Scratch must not already
+exist; results must be outside scratch. The harness refuses checkout dotenv
+files, uses a local-only subprocess environment, creates a fresh offline Kubo
+repository, and rejects occupied ports without terminating their processes.
+Only newly started process groups are stopped, including when setup fails
+before fixture yield. Startup logs remain in the external results directory.
+Both compiler paths remain enabled at this foundation stage; the Foundry-only
+selection will accompany the later smoke runner.
+
+The isolated Anvil is started through `foundry/anvil.sh` itself, so the chain
+flags have one source: the harness sets `ANVIL_BIN` to the binary it resolved
+and appends `--host 127.0.0.1`. The offline Kubo is configured without an
+HTTP gateway, so the RPC API on 5001 is its only port (dincli never reads
+through the gateway). Isolated compiles get a fresh `HOME` and XDG
+directories, so forge would download solc even for an up-to-date build. Set
+`DIN_TEST_SVM_DIR` to an existing absolute svm directory (`~/.svm`, or
+`~/.local/share/svm` when `~/.svm` does not exist) and its compiler versions
+are copied into scratch before `forge build`; the source is never linked or
+written to. Hardhat needs no equivalent once `hardhat/` has been compiled
+outside the harness: its isolated compile then reports "Nothing to compile"
+and never asks for a compiler.
+
+Isolated bootstrap validates and reuses accounts 0/1 in the checkout's public
+`dincli/config/accounts.json`, preserving the file. If absent, it generates
+those accounts from the public Anvil mnemonic and removes only that generated
+file on teardown. Invalid accounts or symlinks fail setup. `connect-demo-wallet` reads
+this file; setting `ETH_PRIVATE_KEY_N` alone does not supply demo accounts.
+Existing manual runs must provide their own public account file with enough
+entries for the chosen phases. Real-wallet commands deliberately reject demo
+wallets and must not be substituted during bootstrap.
+
+The focused tests below exercise startup failures, process ownership,
+interruption, account setup and retained evidence without launching Anvil or
+IPFS, compiling contracts or contacting a chain:
+
+```bash
+python -m pytest tests/test_integration_demo.py \
+  tests/test_integration_services.py tests/test_integration_harness.py -q
+```
+
+Isolated mode is a harness setting, not a container or a guarantee that an
+arbitrary checkout is disposable. Use it only inside an environment you own
+for testing. In CI that environment is the job's GitHub-hosted runner. A future
+Docker runner must establish a container boundary and provide a shared
+GitHub/local reproduction command; isolated mode itself does not do so.
+
+### Isolated failure diagnostics
+
+In isolated mode, CLI commands, compiler builds and Kubo initialization retain
+stdout/stderr as numbered logs in `DIN_TEST_RESULTS_DIR` while they execute.
+Owned chain/Kubo output uses the same bounded capture budget. The JSONL manifest
+records outcomes, duration, return codes, truncation and log filenames; it does
+not record command arguments, stdin or environment variables. It records the
+Python version and checkout SHA when available. Actual chain/compiler tool
+versions are not probed by this change and must be recorded when provisioning
+a future reproducible runner.
+
+Each output stream is limited to 10 MiB and the run's retained logs to 100 MiB.
+Exceeding a limit fails the run, with a truncation outcome in the separately
+bounded 64 KiB manifest. A timed-out command retains partial output and its
+owned host process group is stopped. Python exceptions and SIGINT use the same
+host-process cleanup; this does not establish Docker-container cleanup or
+SIGTERM/hosted-cancellation support.
+
+Before isolated scratch is removed, the harness collects sanitized worker
+reports under `worker-reports/`, including `worker-reports/summary.json`. It
+recognizes only the current local model cache's client, auditor and aggregator
+output layout.
+Reports retain status, pseudonymous participant/job identity and bounded error/
+traceback text; success payloads, job inputs, wallet/config files and commit
+salts are excluded. Symlinks and hardlinked reports are rejected. Collection
+is limited to 200 reports, 1 MiB per input report and 20 MiB total; malformed,
+missing discovered results and collection failures are reported and fail an
+otherwise successful run. Cleanup is still attempted when collection fails.
+After log closure and scratch removal, `cleanup.json` records whether scratch
+was removed and any cleanup failure stages/types, without exception messages.
+Each isolated run needs its own results directory; existing evidence is never
+overwritten.
+
+There is no expected-job inventory yet: collecting reports does not prove that
+every participant ran successfully. Auditor/aggregator CLI exit codes alone
+also do not establish that. Full-GI success assertions and Docker ownership
+remain follow-up work. Error/traceback and CLI text are untrusted application
+output; the collection exclusions are not general secret redaction. Use only
+public demo state in an owned disposable checkout.
+
+The legacy non-isolated capture and retention behavior is unchanged. These
+diagnostics do not repair the later lifecycle phases. Focused
+coverage additionally lives in `tests/test_integration_diagnostics.py` and
+`tests/test_integration_reports.py`.
+
+### CI integration job
+
+`.github/workflows/full-gi.yml` has an **Integration (full GI)** job (issue #228)
+that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
+`DIN_TEST_ISOLATED=1` on a GitHub-hosted runner.
+
+- **When it runs:** only when started by hand. Use the Actions tab ("Full GI" →
+  "Run workflow") or `gh workflow run full-gi.yml --ref <branch>`. A full GI
+  trains 9 clients and runs auditor and aggregator containers, which is too
+  heavy to run on every commit or push. Maintainers run it on demand, for
+  example before merging a change to the GI flow.
+- **Not a required check:** it lives outside `ci.yml`, so `CI OK` never
+  depends on it, and it will not become required. Locally, an isolated run
+  (`DIN_TEST_ISOLATED=1`) walks one full GI from `startGI` to `GIended`, plus
+  reward claim/withdraw and slot release: 186 tests in about 30 minutes.
+- **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
+  Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
+  `npx hardhat compile` run first, in the runner's normal environment, so the
+  harness's isolated compiles are up to date: forge gets solc through
+  `DIN_TEST_SVM_DIR` and hardhat needs no compiler. Without this step the
+  harness would download both compilers and run a full `via_ir` build inside
+  its 180 s compile timeout. The solc and Hardhat compiler downloads are
+  cached between runs, and the `din-worker` image is built before the suite
+  starts rather than inside a Phase 4 command's timeout.
+- **Outcome report:** a small **Full GI summary** job runs after integration,
+  including after failure, and reports the job result, setup completion,
+  recorded pytest exit, log capture exit and suite runtime separately. Missing
+  evidence is unknown, never a successful suite. A completed pytest exit 0
+  does not override a failed or cancelled job, nor prove complete training-round
+  lifecycle coverage. Integration, log capture, upload and reporting failures
+  retain their real failure status; Full GI stays outside `CI OK`.
+- **Logs:** on failure or cancellation, the job attempts a bounded upload of
+  the available results directory as `integration-logs`: `pytest.log`,
+  numbered diagnostic logs for commands, compiler builds, Kubo initialization
+  and owned services, plus `0001_manifest.jsonl`, `worker-reports/` (including
+  `summary.json`) and `cleanup.json` when collection and cleanup reach those
+  stages. The report links a confirmed artifact separately from the suite
+  result. A successful upload step without an artifact URL does not confirm
+  that files were uploaded. Successful runs do not request an artifact.
+- **Limits:** reporting and uploads are best effort. Setup consumes part of
+  the 90-minute job budget, so the suite's 85-minute timeout does not reserve
+  time for collecting evidence. Cancellation, timeouts or runner loss can
+  prevent outputs, artifacts or even the follow-up report. Use the integration
+  job logs when available; a missing result does not identify a timeout or
+  setup failure by itself.
+
+To reproduce the job locally, use a disposable checkout with no `.env*` file
+other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo
+(`ipfs`) on `PATH`, Docker running, and nothing listening on ports 8545 or
+5001:
+
+```bash
+(cd foundry && npm ci && forge build)
+# only for PLATFORM_DEPLOY_TOOLCHAIN=hardhat:
+# (cd hardhat && npm ci && npx hardhat compile)
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+python -m pip install -e ".[test]"
+docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
+
+svm="$HOME/.svm"; [ -d "$svm" ] || svm="${XDG_DATA_HOME:-$HOME/.local/share}/svm"
+export DIN_TEST_ISOLATED=1 DIN_TEST_SVM_DIR="$svm"
+export DIN_TEST_TMPDIR="$(mktemp -d)/scratch" DIN_TEST_RESULTS_DIR="$(mktemp -d)"
+set -o pipefail
+pytest tests/dincli/ -v -x -m integration --tb=short 2>&1 | tee "$DIN_TEST_RESULTS_DIR/pytest.log"
+```
+
+`DIN_TEST_TMPDIR` must not exist yet: the harness creates it and deletes it
+at the end of the session. The logs stay in `DIN_TEST_RESULTS_DIR`.
+
 ### Managed services (`managed_services` fixture)
 
 Before any test runs, the fixture does the following:
-1. **Solidity compilation** — runs `npx hardhat compile` in `hardhat/` (the
-   task-contract deploys and `dump-abi` tests use Hardhat artifacts), and
-   `forge build` in `foundry/` when the toolchain is `foundry` (the platform is
-   deployed from `foundry/out/` via `DeployPlatform.s.sol`).
+1. **Solidity compilation** — runs `forge build` in `foundry/` (the task
+   contracts and `dump-abi` tests use `foundry/out/`, and so does the default
+   platform deploy via `DeployPlatform.s.sol`), and `npx hardhat compile` in
+   `hardhat/` only when `PLATFORM_DEPLOY_TOOLCHAIN=hardhat`. In isolated mode
+   the `DIN_TEST_SVM_DIR` compilers, if set, are copied into scratch first.
 2. **Fresh chain node** — kills any running node and launches a clean one on
    port `8545`: `foundry/anvil.sh` (70 accounts, chain ID 1337) for `foundry`,
-   or `npx hardhat node` for `hardhat`.
+   or `npx hardhat node` for `hardhat`. Isolated mode starts the same
+   `foundry/anvil.sh`, but never kills anything: an occupied port fails setup.
 3. **IPFS daemon** — checks if the IPFS API (`http://127.0.0.1:5001`) is
    running, starting it (`ipfs daemon`) if not. If it was already running
    externally, it is left running at teardown.
 4. **Docker daemon** *(pre-requisite, not managed)* — must already be running
    on the host to execute containerized client training, evaluation, and
    aggregation in Phase 4.
+
+### Seeded default artifacts (`seeded_default_artifacts` fixture, isolated mode)
+
+`model-owner task cache-default-artifacts` and `add-default-test-data` fetch
+the CIDs in din_info's `default_*` entries. The isolated Kubo node is offline
+and empty, and the published `default_manifest` has no provider on the public
+network, so isolated runs seed their own copy (`tests/dincli/seed.py`):
+
+- the reference model's services, per-role requirements and test dataset
+  from `cache_model_0/`, the task-contract ABIs from `dincli/abis/` (the
+  `cache_model_0/abis/` copies predate the richer GI states), and a manifest
+  built from `cache_model_0/manifest.json` with those CIDs;
+- the `cid_services/` files for `system dataset distribute-mnist`, which
+  reproduce their pinned CIDs.
+
+Files are added with Kubo's default layout, the one dincli verifies
+downloads against. The fixture then points this run's din_info `default_*`
+entries (including `default_test_dataset`) at the new CIDs. It runs after
+`din_info_backup`, so `din_info.json` is restored unpatched at teardown.
+Legacy (non-isolated) runs still fetch the published defaults through the
+host's IPFS node.
 
 ### Fixture ordering and `autouse`
 
@@ -92,10 +287,11 @@ The full session setup chain, in execution order:
 
 ```
 din_tmp                    (create/wipe temp dirs)
-  └─ managed_services      (autouse: compile, fresh Hardhat node, IPFS)
+  └─ managed_services      (autouse: forge build, fresh chain node, IPFS)
 bootstrap                  (autouse) depends on:
   ├─ managed_services      (already up)
   ├─ din_info_backup       (snapshot din_info.json for restore at teardown)
+  ├─ seeded_default_artifacts (isolated mode: seed IPFS, patch din_info defaults)
   └─ run ─ din_env, workdir
      then: configure-demo + configure-network --network local
 ```
@@ -133,7 +329,7 @@ If you see torch import errors in Phase 4, confirm those paths are correct.
 
 ### Chain accounts
 
-The GI harness uses accounts 0–22 and 50–58 (59 accounts total).
+The GI harness uses accounts 0–22 and 50–58 (32 accounts; indices up to 58).
 `foundry/anvil.sh` already starts Anvil with `--accounts 70`. For the
 `hardhat` toolchain, Hardhat's default is 20 accounts, so `hardhat.config.ts`
 must set `accounts.count` to at least 60. If you see an "account index out of
@@ -174,24 +370,30 @@ graph TD
 
 | Phase | File | Description |
 |-------|------|--------------|
-| 1 | `test_01_platform.py` | Deploy 4 platform contracts as DIN-Representative (account 0) |
-| 2 | `test_02_task_contracts.py` | Deploy task contracts + authorise slashers (accounts 0 and 1) |
+| 1 | `test_01_platform.py` | Deploy the 7 platform contracts as DIN-Representative (account 0) and import them |
+| 2 | `test_02_task_contracts.py` | Deploy task contracts from `foundry/out` (default `--model-id`, DinToken set) + authorise slashers (accounts 0 and 1) |
 | 3 | `test_03_registration.py` | Genesis model creation, IPFS upload, registry request + approval |
-| 4 | `test_04_gi.py` | Full Global Iteration: aggregator/auditor/client/eval/aggregation/slash/end |
+| 4 | `test_04_gi.py` | One complete GI, state asserted after every phase: funding, registration + keys, LMS, seeds + test data, evaluation and aggregation with reveals, slashing, end, claims, release slots |
 
 The harness is the blocking prerequisite for contract upgrade redeployments
 (P3 WP 6.1). Pass all phases before pushing contract changes to testnet.
 
 ### Phase 1: Platform Deployment (`test_01_platform.py`)
 - **Role**: `Account 0` (DIN-Representative).
-- **Deploys**: `DinCoordinator` (and `DinToken` internally), `DinValidatorStake`,
-  `DINModelRegistry`.
-- **Outputs**: official ABIs and platform contract addresses, stored in the
-  shared session `state`.
+- **Deploys**: the seven platform contracts behind transparent proxies
+  (`DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`,
+  `DinTreasury`, `DinFeeRouter`, `DinEmission`) with `DeployPlatform.s.sol`
+  (or the hardhat script), then `system import-deployments`. Checks each
+  per-proxy `proxyAdmin*` key and its `proxy_admin_*` din_info entry.
+- **Outputs**: platform contract addresses in din_info and the shared session
+  `state`. The `dump-abi` tests write to the run's scratch dir (`--output`),
+  so no tracked file changes.
 
 ### Phase 2: Task & Slasher Setup (`test_02_task_contracts.py`)
 - **Role**: `Account 1` (Model Owner).
-- **Deploys**: `DINTaskCoordinator`, `DINTaskAuditor`.
+- **Deploys**: `DINTaskCoordinator`, `DINTaskAuditor` from `foundry/out`,
+  leaving `--model-id` to its default (`totalModels()` = 0) and checking that
+  each deploy set the contract's DinToken.
 - **Authorizations**: `Account 0` authorizes the new task contracts as
   legitimate slashers; the model owner then registers the slashers back onto
   the task contracts.
@@ -207,19 +409,37 @@ The harness is the blocking prerequisite for contract upgrade redeployments
   6. `Account 0` inspects and approves the registration request.
 
 ### Phase 4: Global Iteration (GI) Lifecycle (`test_04_gi.py`)
-The core federated training round:
-1. **Window opening** — opens registration for aggregators and auditors.
+One complete GI (GI 1 of model 0). After every phase the test asserts the GI
+state by name (`task gi show-state`):
+1. **Funding** — the model owner buys DIN and deposits 50 DIN into GI 1's
+   reward pool, then starts the GI (`GIstarted`).
 2. **Staking & joining** — 12 aggregators (accounts `11–22`) and 9 auditors
-   (accounts `50–58`) buy DIN tokens, stake, and register.
+   (accounts `50–58`) buy DIN tokens, stake, and register; each auditor
+   registers an encryption key. An aggregator trying to register as an
+   auditor is refused (dual-role guard).
 3. **Training (LMS)** — a distributed MNIST shard dataset is generated and
-   assigned to 9 clients (accounts `2` and `4–10`); clients run local
-   training inside containerized workers (Docker) and upload model weights.
-4. **Evaluation** — auditors receive partitioned batches of trained local
-   models, evaluate accuracy against test data, and submit scores on-chain.
-5. **Aggregation** — aggregators pull approved weights and perform Tier 1
-   (sub-batch averaging) and Tier 2 (global consensus model) aggregation.
-6. **Slashing & cleanup** — under-performing validators are slashed and the
-   Global Iteration is ended.
+   assigned to 9 clients (accounts `2–10`, i.e. `range(2, 11)`); clients
+   train inside containerized workers (Docker), then submit with `submit-lm`.
+4. **Seed, batches, test data** — an auditor locks the auditor seed
+   (`AuditSeedLocked`), the owner creates the batches
+   (`AuditorsBatchesCreated`) and assigns encrypted test data
+   (`AuditTestDataAssigned`).
+5. **Evaluation** — auditors evaluate and commit, the owner opens the reveal
+   window, auditors reveal, the owner closes (`LMSevaluationClosed`).
+6. **Aggregation** — an aggregator locks the T1/T2 seed (`AggSeedLocked`),
+   the owner creates the batches; T1 then T2 each go commit → reveal →
+   close; the owner records the T2 score. After each reveal window the test
+   reads the batch seats and the `T1AggregationSubmitted` /
+   `T2AggregationSubmitted` reveal events and fails if any seated aggregator
+   didn't reveal (a T1 batch can finalize on 2 of 3 reveals, so reaching
+   `GIended` alone wouldn't catch it). A reveal command that finds no local
+   commit for a batch the wallet is seated in prints a distinct message,
+   which the test rejects; an unseated aggregator's reveal is a no-op.
+7. **Slashing & end** — auditors then aggregators are slashed and the GI
+   ends (`GIended`, ordinal 28).
+8. **Rewards** — one client, one auditor and one aggregator claim and
+   withdraw their GI 1 reward (each DIN balance must rise); the owner
+   releases GI 1's registration slots.
 
 ---
 
@@ -291,13 +511,17 @@ used for `ModelArchitecture`. This is handled for `scoring.py` via the
 
 ```python
 scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
-scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
-ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
+scoring_service_path = resolve_manifest_path(model_base_dir, scoring_manifest["path"], what="ScoringUtils path")
+ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils", base_dir=model_base_dir)
 ```
 
 When adding a new reference service with sibling-module imports, follow this
 pattern: add a manifest entry with its own IPFS CID, and fetch it explicitly
-before the worker job runs.
+before the worker job runs. Always build the path with
+`resolve_manifest_path` (never `base / Path(manifest["path"])`) and pass the
+workflow root as `base_dir`. That root is `get_model_base_dir(model_id)` for
+participants, or `get_task_dir(coordinator)` for the model owner before
+registration (issue #227).
 
 ---
 
@@ -324,7 +548,7 @@ pytest tests/dincli/test_04_gi.py::test_gi_start -v -m integration
 
 ## Output / logs
 
-All output is written to `~/tempdir/dincli/`:
+In non-isolated mode, output is written to `~/tempdir/dincli/`:
 
 | Path | Contents |
 |------|----------|
@@ -336,6 +560,12 @@ All output is written to `~/tempdir/dincli/`:
 | `results/ipfs_daemon.log` | IPFS daemon stdout/stderr (if started by conftest) |
 | `config/` | Isolated dincli config for the test session |
 | `cache/` | Isolated dincli cache for the test session |
+
+In isolated mode (and in CI), `DIN_TEST_RESULTS_DIR` retains numbered command,
+compiler, Kubo initialization and owned-service logs, the JSONL manifest,
+worker summaries and cleanup evidence described under
+[Isolated failure diagnostics](#isolated-failure-diagnostics) and
+[CI integration job](#ci-integration-job).
 
 ---
 

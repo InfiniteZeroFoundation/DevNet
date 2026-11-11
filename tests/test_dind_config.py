@@ -1,6 +1,5 @@
 """Tests for dind/config.py resolver precedence."""
 
-import os
 from pathlib import Path
 
 from dincli.dind import config as dconf

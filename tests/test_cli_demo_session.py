@@ -1,8 +1,9 @@
 """Demo-key selection must survive the root callback's network selection."""
 from eth_account import Account
+
+from dincli.cli import context, utils
 from dincli.cli.context import DinContext
 from dincli.sdk import config
-from dincli.cli import context, utils
 
 
 def test_demo_signer_survives_network_selection(monkeypatch, tmp_path):

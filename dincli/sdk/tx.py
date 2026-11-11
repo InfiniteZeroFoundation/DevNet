@@ -12,22 +12,23 @@ import weakref
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict
 
 from web3 import Web3
 from web3.contract.contract import ContractEvent, ContractFunction
 from web3.exceptions import TimeExhausted, TransactionNotFound
 from web3.types import TxReceipt
 
-from dincli.sdk.errors import DinError, TransactionError
 from dincli.sdk.errors import (
+    NONCE_MANAGER_CAPACITY,
+    RECEIPT_MISSING,
     TX_ESTIMATION_FAILED,
     TX_NONCE_CONFLICT,
     TX_REPLACEMENT_UNDERPRICED,
     TX_REVERTED,
     TX_TIMEOUT,
-    RECEIPT_MISSING,
-    NONCE_MANAGER_CAPACITY,
+    DinError,
+    TransactionError,
 )
 from dincli.sdk.session import DinSession
 
@@ -591,7 +592,7 @@ def send(
     # written to the protocol would break here (remediation R4).
     signer = session.signer
     nonce_mgr = NonceManager.for_session(session)
-    network = session.network
+    session.network  # Resolve configuration before reserving a nonce.
 
     base_params = build_tx_params(session, overrides=tx_params)
     nonce: int = base_params["nonce"]
@@ -644,7 +645,7 @@ def send(
 
     # --- broadcast ---
     try:
-        tx_hash_raw = w3.eth.send_raw_transaction(signed.raw_transaction)
+        w3.eth.send_raw_transaction(signed.raw_transaction)
     except Exception as e:
         msg_lower = str(e).lower()
 

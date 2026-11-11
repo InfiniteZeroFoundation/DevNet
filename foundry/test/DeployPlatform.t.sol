@@ -10,6 +10,7 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {TA_InvalidSlashFraction, TC_InvalidSlashFraction} from "../src/DINShared.sol";
@@ -649,6 +650,11 @@ contract DeployPlatformTokenomicsOverrideTest is PlatformTest {
         assertEq(p.dinValidatorStake.s5JailDuration(), 7 days, "default s5JailDuration");
     }
 
+    function test_dinValidatorStake_defaultS5GlobalParams() public view {
+        assertEq(p.dinValidatorStake.s5GlobalWindow(), 7 days, "default s5GlobalWindow");
+        assertEq(p.dinValidatorStake.s5GlobalThreshold(), 6, "default s5GlobalThreshold");
+    }
+
     function test_dinValidatorStake_defaultS6Threshold() public view {
         assertEq(p.dinValidatorStake.s6NoParticipationThreshold(), 3, "default s6Threshold");
     }
@@ -678,6 +684,12 @@ contract DeployPlatformTokenomicsOverrideTest is PlatformTest {
         assertEq(p.dinValidatorStake.s5JailDuration(), 14 days, "updated s5JailDuration");
     }
 
+    function test_dinValidatorStake_overrideS5GlobalParams_appliesAfterDeploy() public {
+        p.dinValidatorStake.setS5GlobalParams(3 days, 9);
+        assertEq(p.dinValidatorStake.s5GlobalWindow(), 3 days, "updated s5GlobalWindow");
+        assertEq(p.dinValidatorStake.s5GlobalThreshold(), 9, "updated s5GlobalThreshold");
+    }
+
     function test_dinValidatorStake_overrideS6Threshold_appliesAfterDeploy() public {
         p.dinValidatorStake.setS6NoParticipationThreshold(5);
         assertEq(p.dinValidatorStake.s6NoParticipationThreshold(), 5, "updated s6Threshold");
@@ -695,7 +707,7 @@ contract SlashFractionZeroBpsTest is Test {
     function setUp() public {
         // Deploy a stub stake contract address — the setter guards don't call it.
         tc = new DINTaskCoordinator(address(0x1), 1);
-        ta = new DINTaskAuditor(address(0x1), address(tc), 1);
+        ta = new DINTaskAuditor(address(0x1), address(tc), 1, address(new EnabledModelRegistry()));
     }
 
     function test_setS1SlashFractionBps_rejectsZero() public {

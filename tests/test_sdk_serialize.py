@@ -2,7 +2,6 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-import pytest
 from dincli.sdk.errors import ValidationError
 from dincli.sdk.serialize import SCHEMA_VERSION, _encode_dataclass, to_envelope
 from dincli.sdk.state import GIState

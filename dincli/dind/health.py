@@ -23,7 +23,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dincli.dind.capabilities import resource_snapshot
 from dincli.dind.state import StateStore

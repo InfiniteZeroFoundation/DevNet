@@ -11,7 +11,6 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict
 from datetime import datetime, timezone
-from pathlib import Path
 
 import typer
 
@@ -27,7 +26,6 @@ from dincli.dind.config import (
 from dincli.dind.lock import acquire_state_lock, is_locked, release_state_lock
 from dincli.dind.paths import StateDirs
 from dincli.dind.preferences import (
-    Preferences,
     VALID_RISK_TOLERANCES,
     load_preferences,
     save_preferences,

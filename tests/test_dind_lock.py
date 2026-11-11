@@ -6,11 +6,9 @@ where exactly one must win.
 
 import errno
 import os
-import signal
 import subprocess
 import sys
 import threading
-import time
 
 import pytest
 
@@ -165,8 +163,9 @@ def test_two_racing_starts_exactly_one_wins(tmp_path, attempt):
     # Three ticks at the default 1.0s tick_interval keeps the winner alive
     # ~3s — comfortably longer than the loser needs to fail. Assert that
     # assumption explicitly rather than relying on it.
-    from dincli.dind.daemon import DaemonLoop
     import inspect
+
+    from dincli.dind.daemon import DaemonLoop
     default_interval = inspect.signature(DaemonLoop.__init__).parameters[
         "tick_interval"
     ].default

@@ -42,7 +42,7 @@ def test_enqueue_fail(tmp_path):
 
 def test_reset_running_jobs(tmp_path):
     store = StateStore(tmp_path / "test.db")
-    jid = store.enqueue("demo")
+    store.enqueue("demo")
     store.claim_next()
 
     counts = store.get_job_counts()

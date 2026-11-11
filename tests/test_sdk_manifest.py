@@ -102,7 +102,6 @@ class TestDownloadManifest:
     def test_force_always_fetches(self, monkeypatch, tmp_path):
         model_dir = tmp_path / "local" / "model_5"
         manifest_file = model_dir / "manifest.json"
-        cid_file = model_dir / "manifest.json.cid"
         monkeypatch.setattr(sdk_manifest, "CACHE_DIR", tmp_path)
         write_json(manifest_file, {"type": "custom"})
 
@@ -281,9 +280,9 @@ class TestGetManifestFreshness:
 
         model_dir = tmp_path / "local" / "model_5"
         manifest_file = model_dir / "manifest.json"
-        cid_file = model_dir / "manifest.json.cid"
         model_dir.mkdir(parents=True, exist_ok=True)
         manifest_file.write_text('{"type": "custom"}', encoding="utf-8")
+        cid_file = model_dir / "manifest.json.cid"
         cid_file.write_text("bafyFresh", encoding="utf-8")
 
         monkeypatch.setattr(
@@ -317,9 +316,9 @@ class TestGetManifestFreshness:
 
         model_dir = tmp_path / "local" / "model_5"
         manifest_file = model_dir / "manifest.json"
-        cid_file = model_dir / "manifest.json.cid"
         model_dir.mkdir(parents=True, exist_ok=True)
         manifest_file.write_text('{"type": "custom"}', encoding="utf-8")
+        cid_file = model_dir / "manifest.json.cid"
         cid_file.write_text("bafyStale", encoding="utf-8")
 
         monkeypatch.setattr(

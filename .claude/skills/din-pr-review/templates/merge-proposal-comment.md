@@ -46,8 +46,9 @@ matches GitHub's own status.>
   with a row per file — only use a normal wide table when the field list is
   genuinely short (2-4 columns).
 - **Every "Actual merge proposal" cell is literally `Soon`** on this initial
-  post. This is Umer's field to fill later, per-file, once he's made a call —
-  never pre-populate it with your own trial-merge outcome. Grep the drafted
+  post. It's filled in later, per file, by whoever performs the merge
+  (`Developer/MAINTAINING.md` No. 4.3) — never pre-populate it with your own
+  trial-merge outcome. Grep the drafted
   body for `Actual merge proposal | ` and confirm every row says `Soon`
   before posting.
 - The "Functionality — how & why" row sits right after "Diff" and is filled in

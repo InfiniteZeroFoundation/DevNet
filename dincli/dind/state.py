@@ -14,7 +14,6 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

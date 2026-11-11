@@ -1,11 +1,15 @@
-from pathlib import Path
 from typing import Optional
 
 import typer
 
-from dincli.cli.utils import (CACHE_DIR, GIstateToStr, build_and_send_tx,
-                               get_manifest, get_manifest_key,
-                               require_custom_manifest_service, _confirm_or_exit)
+from dincli.cli.utils import (
+    GIstateToStr,
+    _confirm_or_exit,
+    build_and_send_tx,
+    get_manifest,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 gi_app = typer.Typer(help="Global iteration commands")
@@ -92,6 +96,14 @@ def start(
         console.print(f"[red]❌ Invalid GI request:[/red] Expected {curr_gi + 1}, got {target_gi}")
         raise typer.Exit(1)
 
+    # startGI reverts with TC_GIRewardPoolNotFunded on an empty pool; check
+    # before the pass-score evaluation below.
+    task_auditor = ctx.obj.get_deployed_din_task_auditor_contract(False, model_id)
+    if task_auditor.functions.giRewardPool(target_gi).call() == 0:
+        console.print(f"[red]❌ GI {target_gi}'s reward pool is empty, so it can't start.[/red]")
+        console.print(f"[yellow]Fund it first: dincli model-owner rewards deposit {model_id} --gi {target_gi} --amount <DIN> (or `rewards fund-emission`).[/yellow]")
+        raise typer.Exit(1)
+
     console.print(f"[bold green]🚀 Starting global iteration {target_gi}[/bold green]")
 
     # === 2. Manifest Policy Resolution ===
@@ -123,13 +135,13 @@ def start(
         require_custom_manifest_service(manifest, "getscoreforGM")
 
         # Retrieve required service files
-        service_path = model_base_path / manifest["path"]
+        service_path = resolve_manifest_path(model_base_path, manifest["path"], what="getscoreforGM path")
         model_arch_manifest = manifest_data["ModelArchitecture"]
-        model_arch_path = model_base_path / model_arch_manifest["path"]
+        model_arch_path = resolve_manifest_path(model_base_path, model_arch_manifest["path"], what="ModelArchitecture path")
 
-        ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service")
-        ctx.obj.ensure_file_exists(model_arch_path, model_arch_manifest["ipfs"], "model architecture service")
-        ctx.obj.ensure_file_exists(genesis_model_path, manifest_data["Genesis_Model_CID"], "genesis model")
+        ctx.obj.ensure_file_exists(service_path, manifest["ipfs"], "model owner service", base_dir=model_base_path)
+        ctx.obj.ensure_file_exists(model_arch_path, model_arch_manifest["ipfs"], "model architecture service", base_dir=model_base_path)
+        ctx.obj.ensure_file_exists(genesis_model_path, manifest_data["Genesis_Model_CID"], "genesis model", base_dir=model_base_path)
 
         _confirm_or_exit(f"Pass Scoring is enabled. Have you placed the test dataset for GM evaluation at {test_data_path}?", "Pass Scoring is enabled. Test dataset not placed. ", console)
             
@@ -138,7 +150,7 @@ def start(
             console.print(f"[red]X Test dataset missing:[/red] {test_data_path}")
             raise typer.Exit(1)
 
-        fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM")
+        fn = ctx.obj.load_custom_fn(service_path, "getscoreforGM", base_dir=model_base_path)
 
         accuracy = fn(curr_gi, gmcid, model_base_path)
 
@@ -189,7 +201,7 @@ def aggregators_open(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_gi)
     
-    console.print(f"[bold green]Opening aggregators registration [/bold green]")
+    console.print("[bold green]Opening aggregators registration [/bold green]")
     
     try:
         tx_receipt = build_and_send_tx(
@@ -218,10 +230,10 @@ def aggregators_close(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Closing aggregators registration[/bold green]")
+    console.print("[bold green]Closing aggregators registration[/bold green]")
 
     try:
-        tx_receipt = build_and_send_tx(
+        build_and_send_tx(
             ctx,
             task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI),
             "Closing aggregators registration",
@@ -246,10 +258,10 @@ def auditors_open(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Opening auditors registration[/bold green]")
+    console.print("[bold green]Opening auditors registration[/bold green]")
 
     try:
-        tx_receipt = build_and_send_tx(
+        build_and_send_tx(
             ctx,
             task_coordinator.functions.startDINauditorsRegistration(curr_GI),
             "Opening auditors registration",
@@ -323,7 +335,7 @@ def auditors_close(
     
     ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     
-    console.print(f"[bold green]Closing auditors registration[/bold green]")
+    console.print("[bold green]Closing auditors registration[/bold green]")
 
     try:    
         build_and_send_tx(
@@ -351,7 +363,7 @@ def end(
     
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate( GIstate, "AggregatorsSlashed", "AggregatorsSlashed not passed yet")
     
     console.print(f"[bold green]Ending GI {curr_GI}...[/bold green]")   
@@ -367,3 +379,34 @@ def end(
     except Exception as e:
         console.print(f"[red]❌ Transaction failed:[/red] {str(e)}")
         raise typer.Exit(1)
+
+
+@gi_app.command("release-slots", help="Release an ended GI's validator registration slots (DINTaskCoordinator.releaseGIRegistrationSlots, once per GI)")
+def release_slots(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Ended GI (default: the current GI, once ended)"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+
+    curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator)
+    ref_gi = gi if gi is not None else curr_GI
+
+    curr_state = GIstate if isinstance(GIstate, str) else GIstateToStr(GIstate)
+    if ref_gi < 1 or ref_gi > curr_GI or (ref_gi == curr_GI and curr_state != "GIended"):
+        console.print(f"[red]❌ GI {ref_gi} has not ended (current GI {curr_GI}, state {curr_state}).[/red]")
+        raise typer.Exit(1)
+
+    if task_coordinator.functions.registrationSlotsReleased(ref_gi).call():
+        console.print(f"[yellow]Registration slots for GI {ref_gi} are already released.[/yellow]")
+        return
+
+    build_and_send_tx(
+        ctx,
+        task_coordinator.functions.releaseGIRegistrationSlots(ref_gi),
+        f"Releasing registration slots for GI {ref_gi}",
+        f"Registration slots for GI {ref_gi} released.",
+        f"Could not release registration slots for GI {ref_gi}",
+    )

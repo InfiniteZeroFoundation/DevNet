@@ -11,7 +11,12 @@ import pytest
 from web3 import Web3
 
 from dincli.sdk import operations as ops
-from dincli.sdk.errors import ConfigError, ContractError, SignerUnavailable, ValidationError
+from dincli.sdk.errors import (
+    ConfigError,
+    ContractError,
+    SignerUnavailable,
+    ValidationError,
+)
 from dincli.sdk.manifest import load_din_info
 from dincli.sdk.operations import platform as platform_ops
 from dincli.sdk.serialize import to_envelope

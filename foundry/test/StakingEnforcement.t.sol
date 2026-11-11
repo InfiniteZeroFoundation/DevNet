@@ -16,14 +16,21 @@ import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {GIstates} from "../src/DINShared.sol";
 import {
     TC_StakeBelowModelFloor,
     TC_ConcurrentRegistrationCapReached,
+    TC_WrongGI,
+    TC_GINotEnded,
+    TC_SlotsAlreadyReleased,
     TA_StakeBelowModelFloor,
-    TA_ConcurrentRegistrationCapReached
+    TA_ConcurrentRegistrationCapReached,
+    TA_DualRoleNotAllowed
 } from "../src/DINShared.sol";
+import {auditCommitHash} from "./utils/AuditCommitHash.sol";
+import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 
 contract StakingEnforcementTest is Test {
     DinToken token;
@@ -79,7 +86,7 @@ contract StakingEnforcementTest is Test {
 
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), MODEL_ID);
-        ta = new DINTaskAuditor(address(stake), address(tc), MODEL_ID);
+        ta = new DINTaskAuditor(address(stake), address(tc), MODEL_ID, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         ta.setDinToken(address(token));
         vm.stopPrank();
@@ -229,7 +236,7 @@ contract StakingEnforcementTest is Test {
         // Deploy a second coordinator for the same stake contract
         vm.startPrank(modelOwner);
         DINTaskCoordinator tc2 = new DINTaskCoordinator(address(stake), 2);
-        DINTaskAuditor ta2 = new DINTaskAuditor(address(stake), address(tc2), 2);
+        DINTaskAuditor ta2 = new DINTaskAuditor(address(stake), address(tc2), 2, address(new EnabledModelRegistry()));
         tc2.setDINTaskAuditorContract(address(ta2));
         ta2.setDinToken(address(token));
         vm.stopPrank();
@@ -285,6 +292,40 @@ contract StakingEnforcementTest is Test {
         assertEq(stake.activeRegistrationCount(agg1), 0);
         vm.prank(agg1);
         tc.registerDINaggregator(1);
+        assertEq(stake.activeRegistrationCount(agg1), 1);
+    }
+
+    // ── registerDINaggregator is pinned to the current GI (issue #206) ───────
+
+    /// @dev Without onlyCurrentGI, a validator could register for GI N+1 during
+    ///      GI N's window and fill its aggregator list before it opened.
+    function test_registerDINaggregator_futureGI_reverts() public {
+        _stake(agg1, MIN_STAKE_AMOUNT);
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        vm.expectRevert(TC_WrongGI.selector);
+        tc.registerDINaggregator(2);
+        assertEq(stake.activeRegistrationCount(agg1), 0);
+    }
+
+    /// @dev A past GI (here GI 0 while GI 1 is open) would otherwise leak a
+    ///      concurrent-registration slot that releaseGIRegistrationSlots never frees.
+    function test_registerDINaggregator_pastGI_reverts() public {
+        _stake(agg1, MIN_STAKE_AMOUNT);
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        vm.expectRevert(TC_WrongGI.selector);
+        tc.registerDINaggregator(0);
+        assertEq(stake.activeRegistrationCount(agg1), 0);
+    }
+
+    function test_registerDINaggregator_currentGI_registers() public {
+        _stake(agg1, MIN_STAKE_AMOUNT);
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+        assertTrue(tc.isDINAggregator(1, agg1));
+        assertFalse(tc.isDINAggregator(2, agg1));
         assertEq(stake.activeRegistrationCount(agg1), 1);
     }
 
@@ -357,6 +398,7 @@ contract StakingEnforcementTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
         vm.stopPrank();
@@ -365,9 +407,8 @@ contract StakingEnforcementTest is Test {
         bytes32 salt = bytes32(uint256(0xC0FFEE));
         for (uint i = 0; i < batchAuditors.length; i++) {
             for (uint m = 0; m < modelIdxs.length; m++) {
-                bytes32 commitHash = keccak256(abi.encodePacked(uint256(80), true, salt));
                 vm.prank(batchAuditors[i]);
-                ta.commitAuditScore(1, 0, modelIdxs[m], commitHash);
+                ta.commitAuditScore(1, 0, modelIdxs[m], auditCommitHash(uint256(80), true, salt, batchAuditors[i], 1, 0, modelIdxs[m]));
             }
         }
 
@@ -446,8 +487,89 @@ contract StakingEnforcementTest is Test {
 
         vm.startPrank(modelOwner);
         tc.releaseGIRegistrationSlots(1);
-        vm.expectRevert(bytes("slots already released"));
+        vm.expectRevert(TC_SlotsAlreadyReleased.selector);
         tc.releaseGIRegistrationSlots(1);
         vm.stopPrank();
+    }
+
+    function test_releaseGIRegistrationSlots_revertsWhenGINotEnded() public {
+        // GI 1 is still in progress (never driven to GIended) -- neither
+        // "_GI < current GI" nor "_GI == current GI && GIstate == GIended"
+        // holds, so the call must revert rather than release slots early.
+        vm.prank(modelOwner);
+        vm.expectRevert(TC_GINotEnded.selector);
+        tc.releaseGIRegistrationSlots(1);
+    }
+
+    // ── one address can't hold both roles in a GI (issue No. 180) ────────────
+
+    /// @dev An aggregator for GI 1 can't also register as an auditor for GI 1.
+    function test_registerDINAuditor_aggregatorSameGI_reverts() public {
+        _stake(agg1, MIN_STAKE_AMOUNT * 2);
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(agg1);
+        vm.expectRevert(TA_DualRoleNotAllowed.selector);
+        ta.registerDINAuditor(1);
+        assertFalse(ta.isRegisteredAuditor(1, agg1));
+        assertEq(stake.activeRegistrationCount(agg1), 1, "only the aggregator slot is held");
+    }
+
+    /// @dev The guard is per GI: GI 1's aggregator may audit in GI 2.
+    function test_registerDINAuditor_aggregatorOfEarlierGI_registers() public {
+        _runFullGIToEnded(); // agg1 is a GI 1 aggregator
+
+        address funder = makeAddr("funder_gi2");
+        uint256 poolEth = 0.001 ether;
+        vm.deal(funder, poolEth + 1 ether);
+        vm.prank(funder);
+        coordinator.depositAndMint{value: poolEth}();
+        uint256 pool = token.balanceOf(funder);
+        vm.startPrank(funder);
+        token.approve(address(ta), pool);
+        ta.depositRewards(2, pool);
+        vm.stopPrank();
+
+        vm.startPrank(modelOwner);
+        tc.startGI(2);
+        tc.startDINaggregatorsRegistration(2);
+        tc.closeDINaggregatorsRegistration(2);
+        tc.startDINauditorsRegistration(2);
+        vm.stopPrank();
+
+        assertTrue(tc.isDINAggregator(1, agg1));
+        assertFalse(tc.isDINAggregator(2, agg1));
+        vm.prank(agg1);
+        ta.registerDINAuditor(2); // must not revert
+        assertTrue(ta.isRegisteredAuditor(2, agg1));
+    }
+
+    /// @dev Documents the guard's limit: it is per address, so the same
+    ///      operator with a second address and its own stake can still take
+    ///      the auditor role (Sybil). The defence is that it costs a second
+    ///      stake and is visible on-chain.
+    function test_registerDINAuditor_secondAddressWithOwnStake_registers() public {
+        _stake(agg1, MIN_STAKE_AMOUNT);
+        _stake(aud1, MIN_STAKE_AMOUNT); // the operator's second address
+        _advanceToAggregatorRegistration();
+        vm.prank(agg1);
+        tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        vm.prank(aud1);
+        ta.registerDINAuditor(1); // must not revert
+        assertTrue(ta.isRegisteredAuditor(1, aud1));
+        assertTrue(tc.isDINAggregator(1, agg1));
     }
 }

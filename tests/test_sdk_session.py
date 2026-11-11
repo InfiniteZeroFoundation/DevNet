@@ -2,13 +2,15 @@
 import subprocess
 import sys
 import textwrap
-from unittest.mock import MagicMock
 
 import pytest
 from eth_account import Account
 
+from dincli.sdk.errors import (
+    RPC_UNREACHABLE,
+    NetworkError,
+)
 from dincli.sdk.session import DinSession, SignerProvider, _resolve_w3
-from dincli.sdk.errors import NetworkError, RPC_UNREACHABLE, SignerUnavailable, WalletError
 from dincli.sdk.wallet import KeystoreSigner, PrivateKeySigner
 
 DUMMY_KEY = "0x0000000000000000000000000000000000000000000000000000000000000001"

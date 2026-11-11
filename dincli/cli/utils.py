@@ -1,65 +1,97 @@
 import json
 import os
-import re
 import time
-from dataclasses import dataclass
 from datetime import datetime
 from getpass import getpass
-from importlib.resources import files
-from pathlib import Path
 from typing import NamedTuple, Optional
 
 import typer
 from eth_account import Account
-from platformdirs import user_cache_dir, user_config_dir
 from rich.console import Console
-from web3 import Web3
 
 from dincli.cli.log import logger
-
-console = Console()
-
-from dincli.sdk.config import (
-    CONFIG_DIR, CACHE_DIR, WORKER_CACHE_DIR, CONFIG_FILE,
-    ALLOWED_NETWORKS, SUPPORTED_IPFS_PROVIDERS, LEGACY_IPFS_PROVIDER_ALIASES,
-    FILEBASE_IPFS_ADD_URL, FILEBASE_IPFS_CAT_URL, FILEBASE_IPFS_PIN_URL,
-    IPFSConfig, save_config, load_config, get_config, _clean_optional_string,
-    normalize_ipfs_provider, resolve_network, resolve_ipfs_config,
-    get_env_key, set_env_key, resolve_network_value,
+from dincli.sdk.config import (  # noqa: F401 — compatibility exports
+    ALLOWED_NETWORKS,
+    CACHE_DIR,
+    CONFIG_DIR,
+    CONFIG_FILE,
+    FILEBASE_IPFS_ADD_URL,
+    FILEBASE_IPFS_CAT_URL,
+    FILEBASE_IPFS_PIN_URL,
+    LEGACY_IPFS_PROVIDER_ALIASES,
+    SUPPORTED_IPFS_PROVIDERS,
+    WORKER_CACHE_DIR,
+    IPFSConfig,
+    _clean_optional_string,
+    get_config,
+    get_env_key,
+    load_config,
+    normalize_ipfs_provider,
+    resolve_ipfs_config,
+    resolve_network,
+    resolve_network_value,
+    save_config,
+    set_env_key,
 )
-from dincli.sdk.web3 import get_w3
-from dincli.sdk.manifest import (
-    load_din_info, save_din_info, load_cid_services,
-    get_manifest, get_manifest_path, get_manifest_key,
-    is_ethereum_address, download_manifest, get_model_info,
+from dincli.sdk.errors import (  # noqa: F401 — compatibility exports
+    ChainIdMismatchError,
+    DinError,
+    SignerUnavailable,
+    WalletError,
 )
-from dincli.sdk.wallet import (  # moved to SDK — re-exported for CLI compatibility
+from dincli.sdk.manifest import (  # noqa: F401 — compatibility exports
+    ManifestPathEscapesBaseError,
+    download_manifest,
+    get_manifest,
+    get_manifest_key,
+    get_manifest_path,
+    get_model_info,
+    is_ethereum_address,
+    load_cid_services,
+    load_din_info,
+    resolve_manifest_path,
+    save_din_info,
+)
+from dincli.sdk.state import (  # noqa: F401 — compatibility exports
+    GIState,
+    GIstate_to_index,
+    GIstatestrToIndex,
+    GIstateToDes,
+    GIstateToStr,
+    stateDescription,
+    states,
+)
+from dincli.sdk.wallet import (  # noqa: F401 — compatibility exports
     _ACCOUNT_NAME_RE,
-    _PASSWORD_TTL_DEFAULT,
     _PASSWORD_CACHE,
+    _PASSWORD_TTL_DEFAULT,
     _UNSET,
+    LEGACY_WALLET_FILE,
     WALLET_FILE,
     WALLETS_DIR,
-    LEGACY_WALLET_FILE,
-    validate_account_name,
-    wallet_path_for_name,
-    resolve_wallet_path,
-    ensure_wallets_dir,
-    atomic_write_wallet,
-    _extract_keystore,
-    get_demo_private_key,
-    get_demo_account_index,
-    _cache_password_in_memory,
-    _clear_memory_cache,
-    _clean_stale_session_file,
-    load_account_noninteractive,
-    load_keystore,
-    account_from_keystore,
-    resolve_password,
     KeystoreSigner,
     PrivateKeySigner,
+    _cache_password_in_memory,
+    _clean_stale_session_file,
+    _clear_memory_cache,
+    _extract_keystore,
+    account_from_keystore,
+    atomic_write_wallet,
+    ensure_wallets_dir,
+    get_demo_account_index,
+    get_demo_private_key,
+    load_account_noninteractive,
+    load_keystore,
+    resolve_password,
+    resolve_wallet_path,
+    validate_account_name,
+    wallet_path_for_name,
 )
-from dincli.sdk.errors import ChainIdMismatchError, DinError, SignerUnavailable, WalletError  # noqa: F401 — re-exported for CLI/test compatibility
+from dincli.sdk.web3 import (  # noqa: F401 — compatibility exports
+    get_w3,
+)
+
+console = Console()
 
 MIN_STAKE = 10*10**18
 
@@ -308,10 +340,6 @@ def get_active_account_name(ctx_obj=None) -> str:
 # GI-state enums/converters moved to dincli.sdk.state (issue #20). Re-exported so
 # existing `from dincli.cli.utils import GIstateToDes, ...` call sites keep
 # working. New code: import from dincli.sdk.state.
-from dincli.sdk.state import (  # noqa: F401,E402
-    GIState, GIstateToDes, GIstateToStr, GIstatestrToIndex,
-    stateDescription, states, GIstate_to_index,
-)
 
 
 def save_tasks(data: dict):
@@ -429,6 +457,17 @@ def resolve_task_coordinator_address(
     return None
 
 
+# DINTaskCoordinator.TierKind ordinals.
+TIER_KINDS = {"t1": 0, "t2": 1}
+
+
+def parse_tier_kind(tier: str) -> int:
+    try:
+        return TIER_KINDS[tier.strip().lower()]
+    except KeyError:
+        raise typer.BadParameter("--tier must be t1 or t2")
+
+
 def build_and_send_tx(
     ctx,
     contract_function,
@@ -439,9 +478,8 @@ def build_and_send_tx(
     exit_on_failure: bool = True,
     show_tx_hash: bool = True,
 ):
+    from dincli.sdk.errors import TX_ESTIMATION_FAILED, TX_REVERTED, TransactionError
     from dincli.sdk.tx import send as sdk_send
-    from dincli.sdk.tx import build_tx_params
-    from dincli.sdk.errors import TransactionError, TX_ESTIMATION_FAILED, TX_REVERTED
 
     ctx_obj = ctx.obj
     effective_network, w3, account, console = ctx_obj.get_en_w3_account_console()
@@ -592,17 +630,22 @@ def lock_batch_seed_if_pending(ctx, task_coordinator_contract, gi: int, curr_gi:
 
 
 def print_tx_info(tx_hash, network=None, print_url = True):
+    """Print the transaction hash and its URL when an explorer is configured."""
     #ensure tx_hash is hex string
     if isinstance(tx_hash, bytes):
         tx_hash_hex = tx_hash.hex()
     else:
         tx_hash_hex = tx_hash
 
-    #print tx url
     console.print(f"[bold green]Transaction hash:[/bold green] {tx_hash_hex}")
-    if print_url:
-        din_info = load_din_info()
-        console.print(f"[bold green]Transaction url:[/bold green] [cyan]{din_info[network]['explorer']}/tx/{tx_hash_hex}[/cyan]")
+    if not print_url:
+        return
+
+    explorer = load_din_info().get(network, {}).get("explorer")
+    if not explorer:
+        return
+
+    console.print(f"[bold green]Transaction url:[/bold green] [cyan]{explorer.rstrip('/')}/tx/{tx_hash_hex}[/cyan]")
     
 def _confirm_or_exit(question: str, instruction: str, console):
     answer = console.input(f"[bold yellow]{question} (y/n):[/bold yellow] ").strip().lower()

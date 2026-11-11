@@ -7,13 +7,13 @@ The implementation moved to ``dincli.sdk.ipfs`` as part of the SDK extraction
 New code should import from ``dincli.sdk.ipfs``.
 """
 from dincli.sdk.ipfs import (  # noqa: F401
-    upload_to_ipfs,
-    retrieve_from_ipfs,
     _ensure_file_exists,
     _load_custom_fn,
     _normalize_path,
     _provider_label,
     _require_custom_service_path,
+    retrieve_from_ipfs,
+    upload_to_ipfs,
 )
 
 __all__ = [

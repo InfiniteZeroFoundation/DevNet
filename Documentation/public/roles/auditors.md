@@ -89,7 +89,7 @@ dincli auditor lms-evaluation evaluate <model_id> [--gi <gi_index>] [--submit] [
 | Option | Required | Description |
 |---|---|---|
 | `--gi <gi_index>` | No | Global Iteration index. Defaults to the current GI if omitted |
-| `--submit` | No | Submit evaluation scores and eligibility flags to the blockchain |
+| `--submit` | No | **Commit** a hidden hash of each score and eligibility vote on-chain (the score, vote and a random salt are cached locally for the reveal). Omit to evaluate locally only. Re-running skips models you've already committed |
 | `--batch <batch_id>` | No | Evaluate a specific batch. Defaults to your assigned batch if omitted |
 | `--lmi <lmi_index>` | No | Evaluate a single Local Model by index. Evaluates all models in the batch if omitted |
 

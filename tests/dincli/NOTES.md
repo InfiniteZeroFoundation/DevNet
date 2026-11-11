@@ -10,27 +10,26 @@ logic callable by `dind` without going through the CLI layer.
 
 ## Platform contracts (Phase 1 → `sdk/platform.py`)
 
-PR 13 made the platform contracts transparent proxies. INTERIM: the hardhat
-script (OZ upgrades plugin) deploys + wires token → coordinator →
-`setCoordinator` → stake → `updateValidatorStakeContract` → registry, and
-dincli imports the resulting `deployments/<network>.json` via
-`system import-deployments`. This is scaffolding only — the committed decision
-record (`Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md`)
-chose native web3.py proxy deploys in `dinrep deploy` (backlog:
-`Developer/issues/dincli-native-proxy-deployment.md`); once implemented,
-Phase 1 returns to per-contract dincli deploy tests.
+Phase 1 deploys the seven platform contracts behind transparent proxies with
+`forge script foundry/script/DeployPlatform.s.sol --broadcast` (the default
+`PLATFORM_DEPLOY_TOOLCHAIN=foundry`; `hardhat` runs
+`hardhat/scripts/deploy-platform.ts` instead), and dincli imports the
+resulting `foundry/deployments/<network>.json` via `system import-deployments`.
+The test checks each per-proxy `proxyAdmin*` key and its `proxy_admin_*`
+din_info entry. Native web3.py proxy deploys in `dinrep deploy` remain the
+recorded long-term decision
+(`Documentation/technical/upgradable-contracts/proxy-deployment-architecture.md`;
+backlog `Developer/issues/dincli-native-proxy-deployment.md`); once
+implemented, Phase 1 returns to per-contract dincli deploy tests.
 
-Foundry migration: foundry/ has the same contracts but no deploy script yet.
-When a forge deploy script lands, `deploy_platform` wraps `forge script
---broadcast` instead of `npx hardhat run`; `import_deployments` stays the
-handoff (forge script should write the same deployments JSON shape, or the
-importer grows a broadcast/run-latest.json parser).
+Task contracts (Phase 2 onward) are deployed from `foundry/out` too.
+`dump-abi` tests write to the run's scratch dir (`--output`), never `--official`.
 
 | Test | SDK function |
 |------|-------------|
 | `test_deploy_platform_via_script` | `deploy_platform(network) → addresses dict` (wraps the deploy script) |
 | `test_import_deployments_into_din_info` | `import_deployments(network, file) → dict` (body of `system import-deployments`) |
-| `test_dump_abi_*` | `dump_abi(artifact_path, official=True)` |
+| `test_dump_abi_*` | `dump_abi(artifact_path, output_dir)` |
 
 ---
 
@@ -38,8 +37,8 @@ importer grows a broadcast/run-latest.json parser).
 
 | Test | SDK function |
 |------|-------------|
-| `test_deploy_task_coordinator` | `deploy_task_coordinator(network, account, artifact_path) → address` |
-| `test_deploy_task_auditor` | `deploy_task_auditor(network, account, artifact_path) → address` |
+| `test_deploy_task_coordinator` | `deploy_task_coordinator(network, account, artifact_path, model_id=None) → address` (also sets DinToken) |
+| `test_deploy_task_auditor` | `deploy_task_auditor(network, account, artifact_path, model_id=None) → address` (also sets DinToken) |
 | `test_din_rep_authorizes_*` | `dinrep_add_slasher(network, account, task_coordinator=None, task_auditor=None)` |
 | `test_model_owner_registers_*` | `model_owner_add_slasher(network, account, task_coordinator=None, task_auditor=None)` |
 
@@ -62,8 +61,44 @@ importer grows a broadcast/run-latest.json parser).
 
 ## GI lifecycle (Phase 4 → `sdk/gi.py`)
 
-| Test | SDK function |
-|------|-------------|
+One complete GI, with the GI state asserted after every phase (`_assert_state`).
+
+| Test | SDK function | GI state after |
+|------|-------------|----------------|
+| `test_fund_gi_reward_pool` | `deposit_rewards(network, account, model_id, amount, gi=None)` | — |
+| `test_gi_start` | `start_gi(network, account, model_id)` | `GIstarted` |
+| `test_gi_aggregators_open/close` | `open/close_aggregator_registration(network, account, model_id)` | `DINaggregatorsRegistrationStarted` / `DINaggregatorsRegistrationClosed` |
+| `test_aggregator_register` | `register_aggregator(network, account, model_id)` | |
+| `test_gi_auditors_open/close` | `open/close_auditor_registration(network, account, model_id)` | `DINauditorsRegistrationStarted` / `DINauditorsRegistrationClosed` |
+| `test_auditor_register` | `register_auditor(network, account, model_id)` | |
+| `test_auditor_register_encryption_key` | `register_encryption_key(network, account)` | |
+| `test_aggregator_cannot_register_as_auditor` | (negative: `register_auditor` raises) | |
+| `test_lms_open/close` | `open_lms(network, account, model_id)` / `close_lms(...)` | `LMSstarted` / `LMSclosed` |
+| `test_client_train_and_submit` | `train_lm(...)` + `submit_lm(network, account, model_id)` | |
+| `test_auditor_lock_seed` | `lock_audit_seed(network, account, model_id)` | `AuditSeedLocked` |
+| `test_create_auditor_batches` | `create_auditor_batches(network, account, model_id)` | `AuditorsBatchesCreated` |
+| `test_create_testdataset_and_submit` | `assign_audit_test_data(network, account, model_id)` | `AuditTestDataAssigned` |
+| `test_lms_evaluation_start` | `start_lms_evaluation(network, account, model_id)` | `LMSevaluationStarted` |
+| `test_auditor_evaluate` | `evaluate_lms_batch(network, account, model_id)` (commit) | |
+| `test_lms_evaluation_start_reveal` | `start_lms_evaluation_reveal(network, account, model_id)` | `LMSevaluationRevealStarted` |
+| `test_auditor_reveal` | `reveal_audit_scores(network, account, model_id)` | |
+| `test_lms_evaluation_close` | `close_lms_evaluation(network, account, model_id)` | `LMSevaluationClosed` |
+| `test_aggregator_lock_seed` | `lock_agg_seed(network, account, model_id)` | `AggSeedLocked` |
+| `test_create_t1nt2_batches` | `create_aggregation_batches(network, account, model_id)` | `T1nT2Bcreated` |
+| `test_t1_aggregation_start` / `_start_reveal` / `_close` | `start/start_reveal/close_t1_aggregation(network, account, model_id)` | `T1AggregationStarted` / `…RevealStarted` / `T1AggregationDone` |
+| `test_aggregator_aggregate_t1` / `test_aggregator_reveal_t1` | `aggregate_t1(...)` (commit) / `reveal_t1(...)` | |
+| `test_every_seated_t1_aggregator_revealed` | (on-chain check: every seated aggregator has a `T1AggregationSubmitted` reveal) | |
+| `test_t2_aggregation_start` / `_start_reveal` / `_close` | `start/start_reveal/close_t2_aggregation(network, account, model_id)` | `T2AggregationStarted` / `…RevealStarted` / `T2AggregationDone` |
+| `test_aggregator_aggregate_t2` / `test_aggregator_reveal_t2` | `aggregate_t2(...)` (commit) / `reveal_t2(...)` | |
+| `test_every_seated_t2_aggregator_revealed` | (on-chain check: every seated aggregator has a `T2AggregationSubmitted` reveal) | |
+| `test_t2_set_score` | `set_tier2_score(network, account, model_id)` | |
+| `test_slash_auditors` | `slash_auditors(network, account, model_id)` | `AuditorsSlashed` |
+| `test_slash_aggregators` | `slash_aggregators(network, account, model_id)` | `AggregatorsSlashed` |
+| `test_gi_end` / `test_gi_final_state_is_ended` | `end_gi(network, account, model_id)` | `GIended` (28) |
+| `test_reward_claim_and_withdraw` | `claim_reward(network, account, model_id, gi)` + `withdraw_rewards(...)` | |
+| `test_gi_release_slots` | `release_gi_slots(network, account, model_id, gi=None)` | |
+
+------|-------------|
 | `test_gi_start` | `start_gi(network, account, model_id)` |
 | `test_gi_aggregators_open/close` | `open/close_aggregator_registration(network, account, model_id)` |
 | `test_aggregator_register` | `register_aggregator(network, account, model_id)` |

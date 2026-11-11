@@ -1,7 +1,7 @@
 from web3 import Web3
 
 from dincli.sdk.config import resolve_network_value
-from dincli.sdk.errors import ChainIdMismatchError, NetworkError, RPC_UNREACHABLE
+from dincli.sdk.errors import RPC_UNREACHABLE, ChainIdMismatchError, NetworkError
 from dincli.sdk.log import logger
 from dincli.sdk.manifest import load_din_info
 

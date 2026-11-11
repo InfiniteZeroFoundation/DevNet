@@ -15,7 +15,6 @@ import tomllib
 from pathlib import Path
 
 import pytest
-import typer
 from typer.main import get_group
 from typer.testing import CliRunner
 
@@ -47,6 +46,7 @@ _MODULE_TO_DIST = {
     "multibase": "py-multibase",
     "eth_account": "eth-account",
     "eth_abi": "eth-abi",
+    "eth_utils": "eth-utils",
     "nacl": "pynacl",
     "yaml": "pyyaml",
 }

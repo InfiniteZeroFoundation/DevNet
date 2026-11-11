@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dincli.sdk.errors import ChainIdMismatchError, NetworkError, RPC_UNREACHABLE
+from dincli.sdk.errors import RPC_UNREACHABLE, ChainIdMismatchError, NetworkError
 from dincli.sdk.manifest import load_din_info
 from dincli.sdk.web3 import get_w3
 

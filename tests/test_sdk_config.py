@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from dincli.sdk import config as sdk_config
 
 

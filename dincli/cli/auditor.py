@@ -4,19 +4,32 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import nacl.encoding
 import typer
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from eth_abi import encode as abi_encode
+from eth_account import Account
+from eth_account.messages import encode_defunct
+from nacl.public import Box, PrivateKey, PublicKey
 from rich.table import Table
 from web3 import Web3
-from nacl.public import Box, PrivateKey, PublicKey
-import nacl.encoding
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from eth_account.messages import encode_defunct
-from eth_account import Account
-from dincli.cli.dintoken import (buy_dintokens, read_din_per_eth_rate,
-                                 read_dintoken_stake, stake_dintokens)
-from dincli.cli.utils import (CACHE_DIR, CONFIG_DIR, MIN_STAKE, build_and_send_tx,
-                               get_manifest_key, lock_batch_seed_if_pending,
-                               require_custom_manifest_service)
+
+from dincli.cli.dintoken import (
+    approve_din,
+    buy_dintokens,
+    read_din_per_eth_rate,
+    read_dintoken_stake,
+    stake_dintokens,
+)
+from dincli.cli.utils import (
+    CONFIG_DIR,
+    MIN_STAKE,
+    build_and_send_tx,
+    get_manifest_key,
+    lock_batch_seed_if_pending,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -29,8 +42,16 @@ from dincli.cli.worker import (
 from dincli.services.cid_utils import get_cid_from_bytes32
 from dincli.services.ipfs import retrieve_from_ipfs
 
-def _load_auditor_x25519_key() -> PrivateKey:
-    key_path = Path(CONFIG_DIR) / "auditor_x25519.key"
+
+# One X25519 key per wallet: a single shared file broke several auditors
+# (e.g. --demokey accounts) on one machine, since each registers its own
+# public key on DinValidatorStake.
+def _auditor_x25519_key_path(address: str) -> Path:
+    return Path(CONFIG_DIR) / f"auditor_x25519_{Web3.to_checksum_address(address)}.key"
+
+
+def _load_auditor_x25519_key(address: str) -> PrivateKey:
+    key_path = _auditor_x25519_key_path(address)
     if not key_path.exists():
         raise FileNotFoundError(
             f"Auditor X25519 private key not found at {key_path}. "
@@ -49,25 +70,49 @@ def _decrypt_aes_gcm(ciphertext: bytes, K: bytes) -> bytes:
 # time must be reproduced exactly at reveal time, so it's cached to disk
 # between the two commands rather than recomputed (recomputing would also
 # require re-running the scoring worker a second time).
-def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Path:
-    return model_base_dir / "audits" / "commits" / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
+#
+# The store is per wallet (commits/<address>/...): an audit batch has
+# several auditors, who may run from one machine (one cache dir), and a
+# shared file would let the last committer overwrite the others' salts,
+# failing their reveals with TA_RevealHashMismatch. _load_commit still
+# reads the old shared path, so a commit made before this change can be
+# revealed after upgrading.
+def _commit_store_path(model_base_dir: Path, gi: int, batch_id: int, model_index: int, address: Optional[str]) -> Path:
+    commits_dir = model_base_dir / "audits" / "commits"
+    if address is not None:
+        commits_dir = commits_dir / address
+    return commits_dir / f"gi_{gi}_batch_{batch_id}_lm_{model_index}.json"
 
 
-def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes) -> None:
-    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+def _save_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, score: int, vote: bool, salt: bytes, address: str) -> None:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index, address)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump({"score": score, "vote": vote, "salt": salt.hex()}, f)
 
 
-def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int) -> Optional[dict]:
-    path = _commit_store_path(model_base_dir, gi, batch_id, model_index)
+def _load_commit(model_base_dir: Path, gi: int, batch_id: int, model_index: int, address: str) -> Optional[dict]:
+    path = _commit_store_path(model_base_dir, gi, batch_id, model_index, address)
+    if not path.exists():
+        path = _commit_store_path(model_base_dir, gi, batch_id, model_index, None)  # pre-per-wallet layout
     if not path.exists():
         return None
     with open(path) as f:
         data = json.load(f)
     data["salt"] = bytes.fromhex(data["salt"])
     return data
+
+
+def _audit_commit_hash(score: int, vote: bool, salt: bytes, sender: str, gi: int, batch_id: int, model_index: int) -> bytes:
+    """keccak256(abi.encode(score, vote, salt, msg.sender, gi, batchId, modelIndex)) --
+    must match DINTaskAuditor.revealAuditScore exactly, including plain
+    (non-packed) ABI encoding. Binding the auditor and the (gi, batch, model)
+    slot stops a peer replaying this auditor's commit and reveal (issue #192)."""
+    encoded = abi_encode(
+        ["uint256", "bool", "bytes32", "address", "uint256", "uint256", "uint256"],
+        [score, vote, salt, Web3.to_checksum_address(sender), gi, batch_id, model_index],
+    )
+    return Web3.keccak(encoded)
 
 app = typer.Typer(help="Commands for Auditors in DIN.")
 
@@ -114,7 +159,8 @@ def register(
 
     taskCoordinator_contract, taskAuditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
     
-    DinCoordinator_contract, DinStake_contract = ctx.obj.get_deployed_din_coordinator_contract(), ctx.obj.get_deployed_din_stake_contract()
+    ctx.obj.get_deployed_din_coordinator_contract()
+    DinStake_contract = ctx.obj.get_deployed_din_stake_contract()
     
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract, True, False, True)
 
@@ -125,21 +171,21 @@ def register(
     is_registered = taskAuditor_contract.functions.isRegisteredAuditor(curr_GI, account.address).call()
     
     if is_registered:
-        console.print(f"[bold red]✗ Auditor already registered.[/bold red]")
+        console.print("[bold red]✗ Auditor already registered.[/bold red]")
         return
     else:
-        console.print(f"[bold green]✓ Auditor not registered.[/bold green]")
+        console.print("[bold green]✓ Auditor not registered.[/bold green]")
 
         stake = DinStake_contract.functions.getStake(account.address).call()
             
         if stake < MIN_STAKE:
-            console.print(f"[bold red]✗ Auditor does not have enough stake.[/bold red]")
-            return
+            console.print("[bold red]✗ Auditor does not have enough stake.[/bold red]")
+            raise typer.Exit(1)
         else:
-            console.print(f"[bold green]✓ Auditor has enough stake.[/bold green]")
+            console.print("[bold green]✓ Auditor has enough stake.[/bold green]")
 
             try:
-                build_and_send_tx(
+                receipt = build_and_send_tx(
                     ctx,
                     taskAuditor_contract.functions.registerDINAuditor(curr_GI),
                     "Registering auditor",
@@ -149,7 +195,84 @@ def register(
                 )
             except Exception as e:
                 console.print(f"[bold red]✗ Could not register auditor. {e}[/bold red]")
-                raise typer.Exit()
+                raise typer.Exit(1)
+            # A refused registration (e.g. TA_DualRoleNotAllowed) must not exit 0.
+            if receipt is None:
+                raise typer.Exit(1)
+
+@app.command("register-encryption-key", help="Generate this wallet's X25519 key and register its public key on DinValidatorStake")
+def register_encryption_key(ctx: typer.Context):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
+
+    stake_contract = ctx.obj.get_deployed_din_stake_contract()
+
+    key_path = _auditor_x25519_key_path(account.address)
+    if key_path.exists():
+        privkey = PrivateKey(bytes.fromhex(key_path.read_text().strip()))
+        console.print(f"[dim]Using existing X25519 key {key_path}[/dim]")
+    else:
+        privkey = PrivateKey.generate()
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(privkey.encode(encoder=nacl.encoding.HexEncoder).decode())
+        console.print(f"[yellow]Generated X25519 key → {key_path}[/yellow]")
+    key_path.chmod(0o600)
+
+    pubkey = bytes(privkey.public_key)
+    if bytes(stake_contract.functions.getEncryptionKey(account.address).call()) == pubkey:
+        console.print("[bold green]✓ This key is already registered on-chain.[/bold green]")
+        return
+
+    build_and_send_tx(
+        ctx,
+        stake_contract.functions.registerEncryptionKey(pubkey),
+        "Registering encryption key",
+        "Encryption key registered.",
+        "Could not register encryption key",
+    )
+
+
+@app.command("dispute-test-data", help="Dispute your batch's test data (posts the DIN bond; batch auditors only)")
+def dispute_test_data(
+    ctx: typer.Context,
+    model_id: int = typer.Argument(..., help="Model ID"),
+    gi: int = typer.Option(None, "--gi", help="Global iteration number"),
+    batch_id: int = typer.Option(..., "--batch", help="Your auditor batch ID"),
+):
+    effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
+
+    task_coordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+    task_auditor_contract = ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+
+    curr_GI, _ = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
+    ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
+
+    # Mirrors openTestDataDispute's checks, so a doomed dispute costs no approval.
+    if not task_auditor_contract.functions.isBatchAuditor(ref_gi, batch_id, account.address).call():
+        console.print(f"[bold red]✗ You aren't an auditor of GI {ref_gi} batch {batch_id}.[/bold red]")
+        raise typer.Exit(1)
+    if task_auditor_contract.functions.giRewardSnapshot(ref_gi).call()[4]:
+        console.print(f"[bold red]✗ GI {ref_gi}'s rewards are already settled; it can't be disputed.[/bold red]")
+        raise typer.Exit(1)
+    if task_auditor_contract.functions.testDataCommitments(ref_gi, batch_id).call() == b"\x00" * 32:
+        console.print(f"[bold red]✗ No test data has been assigned to batch {batch_id} yet.[/bold red]")
+        raise typer.Exit(1)
+    d = task_auditor_contract.functions.testDataDisputes(ref_gi, batch_id).call()
+    if d[3] or d[4]:
+        console.print(f"[bold red]✗ Batch {batch_id} already has an active dispute or is pending reassignment.[/bold red]")
+        raise typer.Exit(1)
+
+    bond = task_auditor_contract.functions.disputeBondAmount().call()
+    if bond > 0:
+        approve_din(ctx, task_auditor_contract.address, bond, purpose="the dispute bond")
+
+    build_and_send_tx(
+        ctx,
+        task_auditor_contract.functions.openTestDataDispute(ref_gi, batch_id),
+        f"Opening a test-data dispute on GI {ref_gi} batch {batch_id} (bond {Web3.from_wei(bond, 'ether')} DIN)",
+        "Dispute opened. The model owner must answer within the window, or anyone can close it as upheld.",
+        "Could not open the dispute",
+    )
+
 
 @app.command("lock-seed", help="Lock the auditor batch-assignment seed for the current GI (permissionless)")
 def lock_seed(
@@ -191,7 +314,7 @@ def show_batch(
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI, curr_GIstate, "AuditorsBatchesCreated", "Can not show auditor batch at this time")
 
 
-    console.print(f"[bold green]Showing auditor batch![/bold green]")
+    console.print("[bold green]Showing auditor batch![/bold green]")
     
     audtor_batch_count = task_auditor_contract.functions.AuditorsBatchCount(ref_gi).call()
 
@@ -261,17 +384,17 @@ def show_batch(
                 try:
                     has_voted = task_auditor_contract.functions.hasAuditedLM(curr_GI, batch_id, account.address, idx).call()
                     time.sleep(0.5)
-                except:
+                except Exception:
                     has_voted = False
                 try:
                     is_eligible = task_auditor_contract.functions.LMeligibleVote(curr_GI, batch_id, account.address, idx).call()
                     time.sleep(0.5)
-                except:
+                except Exception:
                     is_eligible = False
                 try:
                     has_auditScores = task_auditor_contract.functions.auditScores(curr_GI, batch_id, account.address, idx).call()
                     time.sleep(0.5)
-                except:
+                except Exception:
                     has_auditScores = False
 
                 assigned_lm_submissions[idx] = {
@@ -357,7 +480,7 @@ def evaluate_lms(
 
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationStarted", "Can not evaluate auditor batches at this time")
     
@@ -372,7 +495,7 @@ def evaluate_lms(
     requirements_path = get_worker_requirements_path(model_base_dir, "auditors")
     packages_dir = Path(packages_dir) if packages_dir else None
     if auditor_requirements_cid:
-        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements")
+        ctx.obj.ensure_file_exists(requirements_path, auditor_requirements_cid, "auditor requirements", base_dir=model_base_dir)
         try:
             ensure_worker_image(console)
             if not no_cache and packages_dir is None:
@@ -389,6 +512,7 @@ def evaluate_lms(
         model_base_dir / "models" / "genesis_model.pth",
         genesis_model_cid,
         "genesis model",
+        base_dir=model_base_dir,
     )
 
     found_any = False
@@ -417,6 +541,15 @@ def evaluate_lms(
                 continue
 
             found_any = True
+
+            # A retry must never replace the salt behind an existing on-chain
+            # commitment -- the reveal would then fail TA_RevealHashMismatch
+            # and the auditor be S1-slashed for an honest vote (issue #202).
+            # Skip before re-evaluating, leaving the commit cache untouched.
+            if submit and task_auditor_contract.functions.hasCommittedLM(curr_GI, batch_id, account.address, model_index).call():
+                console.print(f"[yellow]LM {model_index} in audit batch {batch_id} already committed by {account.address}; skipping (reveal with `dincli auditor lms-evaluation reveal`).[/yellow]")
+                continue
+
             console.print(f"[bold green]Evaluating LM {model_index} from Audit batch {batch_id}![/bold green]")
 
             time.sleep(0.5)
@@ -425,19 +558,19 @@ def evaluate_lms(
             lm_cid = get_cid_from_bytes32(lms[1].hex())
 
             manifest = get_manifest_key(effective_network, "Score_model_by_auditor", model_id)
-            auditor_service_path = model_base_dir / Path(manifest["path"])
-            model_service_path = model_base_dir / Path(get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"])
+            auditor_service_path = resolve_manifest_path(model_base_dir, manifest["path"], what="Score_model_by_auditor path")
+            model_service_path = resolve_manifest_path(model_base_dir, get_manifest_key(effective_network, "ModelArchitecture", model_id)["path"], what="ModelArchitecture path")
             scoring_manifest = get_manifest_key(effective_network, "ScoringUtils", model_id)
-            scoring_service_path = model_base_dir / Path(scoring_manifest["path"])
+            scoring_service_path = resolve_manifest_path(model_base_dir, scoring_manifest["path"], what="ScoringUtils path")
 
             require_custom_manifest_service(manifest, "Score_model_by_auditor")
-            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service")
-            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service")
+            ctx.obj.ensure_file_exists(auditor_service_path, manifest["ipfs"], "auditor service", base_dir=model_base_dir)
+            ctx.obj.ensure_file_exists(model_service_path, get_manifest_key(effective_network, "ModelArchitecture", model_id)["ipfs"], "model service", base_dir=model_base_dir)
             # auditor.py imports `scoring` as a sibling module via sys.path
             # rather than a package import, so it must be materialized at the
             # same local services/ path dincli derives from the manifest
             # before the worker container can import it.
-            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils")
+            ctx.obj.ensure_file_exists(scoring_service_path, scoring_manifest["ipfs"], "scoring utils", base_dir=model_base_dir)
 
             # Recover K and rawCID via decrypt chain:
             #   Box(auditor_privkey, owner_pubkey).decrypt(encryptedKey) → K
@@ -446,7 +579,7 @@ def evaluate_lms(
             #   fetch ciphertext IPFS(rawCID) → AES-GCM-decrypt(K) → plaintext .pt
             raw_cid = None
             try:
-                auditor_privkey = _load_auditor_x25519_key()
+                auditor_privkey = _load_auditor_x25519_key(account.address)
                 owner_pubkey = PublicKey(bytes.fromhex(
                     get_manifest_key(effective_network, "owner_encryption_pubkey", model_id)
                 ))
@@ -462,7 +595,7 @@ def evaluate_lms(
                     console.print(f"[bold red]✗ Batch {batch_id}: owner signature on rawCID invalid — skipping.[/bold red]")
                     continue
 
-                raw_cid = get_cid_from_bytes32("0x" + raw_cid_bytes.hex())
+                raw_cid = get_cid_from_bytes32(raw_cid_bytes.hex())
 
                 pt_path = model_base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{curr_GI}_{batch_id}.pt"
                 if not pt_path.exists():
@@ -479,6 +612,7 @@ def evaluate_lms(
                 model_base_dir / "models" / "auditor" / f"lm_{curr_GI}_{model_index}.pth",
                 lm_cid,
                 "local model submission",
+                base_dir=model_base_dir,
             )
 
             metric_bundle_dir = model_base_dir / "audits" / "metric_bundles" / account.address
@@ -531,12 +665,19 @@ def evaluate_lms(
                 score_int = int(score)
                 vote_bool = bool(eligible)
                 salt = secrets.token_bytes(32)
-                commit_hash = Web3.solidity_keccak(
-                    ["uint256", "bool", "bytes32"], [score_int, vote_bool, salt]
+                commit_hash = _audit_commit_hash(
+                    score_int, vote_bool, salt, account.address, curr_GI, batch_id, model_index
                 )
 
                 try:
                     time.sleep(0.5)
+                    # Cache before sending: build_and_send_tx returns None both
+                    # on a revert and when the receipt wait fails for a tx that
+                    # may still mine, so saving only after the send could strand
+                    # a real commit without its preimage. A failed attempt leaves
+                    # a stale cache that the next retry replaces (the LM isn't
+                    # committed yet, so the hasCommittedLM guard lets it through).
+                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt, account.address)
                     build_and_send_tx(
                         ctx,
                         task_auditor_contract.functions.commitAuditScore(curr_GI, batch_id, model_index, commit_hash),
@@ -545,9 +686,6 @@ def evaluate_lms(
                         f"Audit score commit failed for LM {model_index} from batch {batch_id}!",
                         exit_on_failure=False
                     )
-                    # Only cache locally once the commit tx is known to have
-                    # been attempted -- reveal is a no-op without this file.
-                    _save_commit(model_base_dir, curr_GI, batch_id, model_index, score_int, vote_bool, salt)
                 except Exception as e:
                     console.print(f"[bold red]✗ Error committing audit score for LM {model_index} from batch {batch_id}: {e}[/bold red]")
 
@@ -571,7 +709,7 @@ def reveal_lms(
 
     curr_GI, curr_GIstate = ctx.obj.get_current_gi_and_state(task_coordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 
     ctx.obj.validate_GIstate_ET_given_GIstate(curr_GIstate, "LMSevaluationRevealStarted", "Can not reveal audit scores at this time")
 
@@ -597,7 +735,7 @@ def reveal_lms(
             if lmi is not None and lmi != model_index:
                 continue
 
-            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index)
+            commit = _load_commit(model_base_dir, curr_GI, batch_id, model_index, account.address)
             if commit is None:
                 console.print(f"[yellow]No local commit found for LM {model_index} from batch {batch_id} -- skipping.[/yellow]")
                 continue

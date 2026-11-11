@@ -67,7 +67,6 @@ def test_json_formatter_exception():
 
 def test_configure_logging_idempotent():
     logger = logging.getLogger("dincli")
-    initial_handlers = len(logger.handlers)
     initial_propagate = logger.propagate
 
     configure_logging("json")
