@@ -1,0 +1,23 @@
+# Dependabot config. Version updates are off (open-pull-requests-limit: 0);
+# this file exists only to set ignore rules for the security-update PRs that
+# Dependabot opens against develop.
+#
+# torch is ignored in the example-model requirements because Dependabot bumps
+# it on its own, leaving torchvision/triton/nvidia pins that require the old
+# version (PRs No. 318, 325 and 333 were closed for this). These files are also
+# pinned to IPFS by CID in the model manifests and din_info default_requirements,
+# so torch moves only in the coordinated update tracked in issue No. 298:
+# torch, torchvision, triton and the nvidia pins together, re-uploaded, with the
+# CIDs updated.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /cache_model_0
+      - /cache_model_1
+      - /cid_services
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: torch
