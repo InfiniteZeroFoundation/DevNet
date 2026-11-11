@@ -79,7 +79,8 @@ def close(
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
-    taskCoordinator_contract, taskAuditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+    taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+    ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
 

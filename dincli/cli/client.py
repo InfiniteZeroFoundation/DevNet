@@ -108,7 +108,8 @@ def train_lms(
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
-    taskCoordinator_contract, taskAuditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+    taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+    ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
 
     runtime = ctx.obj.build_service_runtime(role="client", model_id=model_id)
     current_GI, current_GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)

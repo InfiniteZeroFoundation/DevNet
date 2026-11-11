@@ -316,7 +316,7 @@ def aggregate_t1(
     
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationStarted", "Can not aggregate T1 batches at this time")
 
     t1_batches_count = taskCoordinator_contract.functions.tier1BatchCount(curr_GI).call() 
@@ -479,7 +479,7 @@ def reveal_t1(
 
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationRevealStarted", "Can not reveal T1 aggregation at this time")
 
     model_base_dir = ctx.obj.get_model_base_dir(model_id)
@@ -542,7 +542,7 @@ def aggregate_t2(
     
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
     
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationStarted", "Can not aggregate T2 batches at this time")
     
     t2_batches_count = 1
@@ -703,7 +703,7 @@ def reveal_t2(
 
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationRevealStarted", "Can not reveal T2 aggregation at this time")
 
     model_base_dir = ctx.obj.get_model_base_dir(model_id)

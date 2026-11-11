@@ -233,7 +233,7 @@ def aggregators_close(
     console.print("[bold green]Closing aggregators registration[/bold green]")
 
     try:
-        tx_receipt = build_and_send_tx(
+        build_and_send_tx(
             ctx,
             task_coordinator.functions.closeDINaggregatorsRegistration(curr_GI),
             "Closing aggregators registration",
@@ -261,7 +261,7 @@ def auditors_open(
     console.print("[bold green]Opening auditors registration[/bold green]")
 
     try:
-        tx_receipt = build_and_send_tx(
+        build_and_send_tx(
             ctx,
             task_coordinator.functions.startDINauditorsRegistration(curr_GI),
             "Opening auditors registration",
@@ -363,7 +363,7 @@ def end(
     
     curr_GI, GIstate = ctx.obj.get_current_gi_and_state(task_coordinator)
 
-    ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
+    ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate( GIstate, "AggregatorsSlashed", "AggregatorsSlashed not passed yet")
     
     console.print(f"[bold green]Ending GI {curr_GI}...[/bold green]")   
