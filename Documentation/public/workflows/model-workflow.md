@@ -438,6 +438,14 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 > and skipped rather than treated as an error. Setting it moves the GI to
 > `AuditTestDataAssigned`, which `lms-evaluation start` requires.
 
+> [!IMPORTANT]
+> The first time `create-testdataset --submit` runs, and again after the owner key changes, it writes `owner_encryption_pubkey` into the model-cache manifest at `<CACHE_DIR>/<network>/model_<model_id>/manifest.json`, and only there. Auditors on other machines read the key from the manifest at the on-chain CID, so until it's published they skip decryption and evaluation. Publish it before opening evaluation:
+> 1. `dincli task model-owner update-manifest-request <model_id> --manifestpath <CACHE_DIR>/<network>/model_<model_id>/manifest.json`. Point it at the model-cache manifest the command changed, not the task-directory manifest used at registration.
+> 2. Wait for the DIN-Representative's `dincli dinrep registry approve-manifest-update <request_id>`.
+> 3. Make sure remote auditors have the approved CID before evaluation starts. dincli re-fetches the manifest when its on-chain CID changes.
+>
+> Only the public key goes in the manifest. Never publish the owner's private key.
+
 > [!NOTE]
 > `create-testdataset --submit` saves each batch's key and plaintext hash to
 > `<model dir>/audits/testdata_keys/` (mode 0600). Keep them: you need them
@@ -633,7 +641,7 @@ dincli model-owner disputes resolve-test-data <model_id> --gi <gi> --batch <batc
 dincli model-owner disputes close-expired <model_id> --gi <gi> --batch <batch_id>
 ```
 
-If the revealed key matches the commitment, the dispute fails and the bond is forfeited. If it doesn't, or the owner never answers (`close-expired`), the dispute is upheld: the bond goes back to the auditor, part of the GI's reward pool is taken as a penalty, and the owner must assign new test data with `dincli model-owner disputes reassign-test-data <model_id> --batch <batch_id>`.
+If the revealed key matches the commitment, the dispute fails and the bond is forfeited. If it doesn't, or the owner never answers (`close-expired`), the dispute is upheld: the bond goes back to the auditor, and the owner must assign new test data with `dincli model-owner disputes reassign-test-data <model_id> --batch <batch_id>`. An upheld dispute also takes part of the GI's reward pool as a penalty, but only while the GI's rewards are unsettled. `gi end` settles them and doesn't wait for open disputes, so if a dispute is upheld after that, the penalty is zero. To make the penalty apply, resolve or close pending test-data disputes before ending the GI.
 
 **Aggregation.** Any active validator can dispute a finalized T1 or T2 batch's CID within the dispute window:
 
@@ -642,10 +650,13 @@ If the revealed key matches the commitment, the dispute fails and the bond is fo
 dincli aggregator dispute <model_id> --tier t1|t2 --batch <batch_id>
 # model owner: reject it (bond forfeited), or uphold it, which assigns a fresh subgroup of 3 aggregators
 dincli model-owner disputes resolve-aggregation <model_id> --gi <gi> --tier t1|t2 --batch <batch_id> --upheld|--rejected
-# model owner, after the recomputation: confirm (the original aggregators are slashed) or dismiss (bond forfeited)
+# model owner, after the off-chain recomputation: confirm (the original aggregators whose revealed CID matched the disputed one are slashed) or dismiss (bond forfeited)
 dincli model-owner disputes settle-recomputation <model_id> --gi <gi> --tier t1|t2 --batch <batch_id> --confirmed|--dismissed
 # anyone, past the resolution deadline: the fresh subgroup is slashed
 dincli model-owner disputes expire <model_id> --gi <gi> --tier t1|t2 --batch <batch_id>
 ```
+
+> [!WARNING]
+> Upholding a dispute only records the fresh subgroup on-chain. It doesn't reopen the GI for them, and they have no on-chain way to submit a recomputation. The model owner has to coordinate the evidence and recomputation with them off-chain and call `settle-recomputation` before anyone calls `expire`. After `resolutionDeadline`, anyone can call `expire`, which slashes all three fresh-subgroup members for liveness even though they couldn't submit anything. `settle-recomputation` has no deadline check, so the owner can still call it after the deadline, but only until someone expires the dispute.
 
 A confirmed recomputation or an expired dispute credits the bond back to the challenger, who withdraws it with `dincli aggregator claim-dispute-bond <model_id>`. A batch can be disputed only once.

@@ -172,7 +172,7 @@ Any active validator can dispute a finalized T1 or T2 batch's CID within the dis
 dincli aggregator dispute <model_id> --tier t1|t2 --batch <batch_id> [--gi <gi_index>]
 ```
 
-The Model Owner either rejects the dispute (the bond is forfeited) or upholds it, which assigns a fresh subgroup of 3 aggregators to recompute the batch. If the recomputation confirms the dispute, or the fresh subgroup misses its deadline, your bond is credited back. Withdraw credited bonds with:
+The Model Owner either rejects the dispute (the bond is forfeited) or upholds it, which assigns a fresh subgroup of 3 aggregators to recompute the batch. That assignment is bookkeeping only: the GI isn't reopened, so the recomputation is coordinated off-chain with the Model Owner. If the Model Owner confirms the dispute (`settle-recomputation --confirmed`), or the dispute expires past its resolution deadline, your bond is credited back. A confirmed dispute slashes the original aggregators whose revealed CID matched the disputed one. An expired dispute slashes all three fresh-subgroup members, so if you're drawn into one, make sure the Model Owner settles it before the deadline. Withdraw credited bonds with:
 
 ```bash
 dincli aggregator claim-dispute-bond <model_id>

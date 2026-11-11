@@ -277,6 +277,14 @@ dincli model-owner auditor-batches show <model_id> [--gi <gi_index>]
 
 `create-testdataset --submit` checks first that every batch auditor has registered an encryption key (`dincli auditor register-encryption-key`) and stops, naming them, if any hasn't. It saves each batch's key and plaintext hash under `<model dir>/audits/testdata_keys/` (mode 0600); keep them to answer test-data disputes.
 
+> [!IMPORTANT]
+> The first time `create-testdataset --submit` runs, and again after the owner key changes, it writes `owner_encryption_pubkey` into the model-cache manifest at `<CACHE_DIR>/<network>/model_<model_id>/manifest.json`, and only there. Auditors on other machines read the key from the manifest at the on-chain CID, so until it's published they skip decryption and evaluation. Publish it before opening evaluation:
+> 1. `dincli task model-owner update-manifest-request <model_id> --manifestpath <CACHE_DIR>/<network>/model_<model_id>/manifest.json`. Point it at the model-cache manifest the command changed, not the task-directory manifest used at registration.
+> 2. Wait for the DIN-Representative's `dincli dinrep registry approve-manifest-update <request_id>`.
+> 3. Make sure remote auditors have the approved CID before evaluation starts. dincli re-fetches the manifest when its on-chain CID changes.
+>
+> Only the public key goes in the manifest. Never publish the owner's private key.
+
 ---
 
 ### Step 5 — Evaluation Phase
@@ -412,13 +420,15 @@ dincli model-owner disputes reassign-test-data <model_id> --batch <batch_id> [--
 
 # Aggregation: reject, or uphold (assigns a fresh subgroup of 3 aggregators; locks the dispute seed first)
 dincli model-owner disputes resolve-aggregation <model_id> --gi <gi> --tier t1|t2 --batch <batch_id> --upheld|--rejected
-# Aggregation: after the recomputation, confirm (original aggregators slashed, bond returned) or dismiss (bond forfeited)
+# Aggregation: after the off-chain recomputation, confirm (original aggregators whose revealed CID matched the disputed one are slashed, bond returned) or dismiss (bond forfeited)
 dincli model-owner disputes settle-recomputation <model_id> --gi <gi> --tier t1|t2 --batch <batch_id> --confirmed|--dismissed
 # Aggregation: anyone, past the resolution deadline (the fresh subgroup is slashed)
 dincli model-owner disputes expire <model_id> --gi <gi> --tier t1|t2 --batch <batch_id>
 ```
 
-`resolve-test-data` needs the key `create-testdataset --submit` saved. An upheld test-data dispute takes part of the GI's reward pool as a penalty. See [model-workflow.md](../workflows/model-workflow.md#17-disputes) for the full flow.
+`resolve-test-data` needs the key `create-testdataset --submit` saved. An upheld test-data dispute takes part of the GI's reward pool as a penalty, but only while the GI's rewards are unsettled. `gi end` settles them without waiting for open disputes, so resolve or close pending test-data disputes before ending the GI if the penalty is to apply.
+
+Upholding an aggregation dispute only records the fresh subgroup on-chain. They can't submit a recomputation on-chain, so you coordinate it with them off-chain and call `settle-recomputation` before anyone calls `expire`. After `resolutionDeadline`, anyone can call `expire`, which slashes all three fresh-subgroup members. See [model-workflow.md](../workflows/model-workflow.md#17-disputes) for the full flow.
 
 ---
 
