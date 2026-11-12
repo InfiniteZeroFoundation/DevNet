@@ -641,6 +641,7 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
         uint t1cnt = t1cntMax;
         if (t1cnt * T1_AGGREGATORS_PER_BATCH > activeCount)
             t1cnt = activeCount / T1_AGGREGATORS_PER_BATCH;
+        if (activeCount < T1_AGGREGATORS_PER_BATCH) revert TC_NotEnoughValidators();
         bool hasT2 = maxHasT2 && activeCount >= (t1cnt + 1) * T1_AGGREGATORS_PER_BATCH;
         uint t1Seats = t1cnt * T1_AGGREGATORS_PER_BATCH;
 

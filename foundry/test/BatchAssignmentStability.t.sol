@@ -23,6 +23,7 @@ import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
+import {GIstates} from "../src/DINShared.sol";
 import {auditCommitHash} from "./utils/AuditCommitHash.sol";
 import {assignPlaceholderTestData} from "./utils/PlaceholderTestData.sol";
 import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
@@ -569,5 +570,121 @@ contract BatchAssignmentStabilityTest is Test {
         // T2 was dropped: tier2Batches[1] is empty, so getTier2Batch panics on [0]
         vm.expectRevert();
         tc.getTier2Batch(1, 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Recovery regression: zero-usable-batch case reverts and retries
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev When fewer than T1_AGGREGATORS_PER_BATCH validators are active at
+    ///      batch-creation time, autoCreateTier1AndTier2 must revert with
+    ///      TC_NotEnoughValidators and leave GIstate at AggSeedLocked so the
+    ///      owner can retry once a validator becomes active again.
+    function test_aggregator_zeroActiveBatchRevertsAndRetries() public {
+        _runToSeedLocked();
+
+        // Unstake all 9 → 0 active, definitely below T1_AGGREGATORS_PER_BATCH (3).
+        // (Partial-unstake logic is fragile: if all 6 seated validators happen to fall
+        // at the last 6 positions of all[], the loop exhausts the array at unstaked=6
+        // and never reaches 7.)
+        address[9] memory all = [agg0,agg1,agg2,agg3,agg4,agg5,agg6,agg7,agg8];
+        for (uint j = 0; j < 9; j++) {
+            vm.prank(all[j]); stake.unstake(10 ether);
+        }
+
+        // Must revert; GIstate must stay at AggSeedLocked
+        vm.expectRevert(abi.encodeWithSignature("TC_NotEnoughValidators()"));
+        vm.prank(modelOwner);
+        tc.autoCreateTier1AndTier2(1);
+        assertEq(uint(tc.GIstate()), uint(GIstates.AggSeedLocked), "state must remain AggSeedLocked after revert");
+
+        // After the unbonding period: claim the pending withdrawal (returns tokens)
+        // then restake — claimUnstaked clears pendingWithdrawals so stake() sets Active.
+        vm.warp(block.timestamp + 7 days + 1);
+        for (uint j = 0; j < 3; j++) {
+            vm.prank(all[j]); stake.claimUnstaked();
+            vm.startPrank(all[j]);
+            token.approve(address(stake), type(uint256).max);
+            stake.stake(10 ether);
+            vm.stopPrank();
+        }
+
+        // Retry must succeed now
+        vm.prank(modelOwner);
+        tc.autoCreateTier1AndTier2(1);
+        assertEq(uint(tc.GIstate()), uint(GIstates.T1nT2Bcreated), "state must advance to T1nT2Bcreated after retry");
+    }
+
+    /// @dev When fewer than auditorsPerBatch validators are active at
+    ///      createAuditorsBatches time, the call must revert with
+    ///      TA_NotEnoughAuditors and leave GIstate at AuditSeedLocked so the
+    ///      owner can retry once a validator becomes active again.
+    function test_auditor_zeroActiveBatchRevertsAndRetries() public {
+        // Setup: exactly auditorsPerBatch (3) auditors registered, seed locked.
+        _deployPlatform();
+        _deployTaskPair();
+
+        // 3 aggregators to drive GI forward
+        address d0 = makeAddr("rec_d0"); address d1 = makeAddr("rec_d1"); address d2 = makeAddr("rec_d2");
+        _fundAndStake(d0); _fundAndStake(d1); _fundAndStake(d2);
+
+        vm.prank(modelOwner);
+        tc.startDINaggregatorsRegistration(1);
+        vm.prank(d0); tc.registerDINaggregator(1);
+        vm.prank(d1); tc.registerDINaggregator(1);
+        vm.prank(d2); tc.registerDINaggregator(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINaggregatorsRegistration(1);
+        tc.startDINauditorsRegistration(1);
+        vm.stopPrank();
+
+        // Fund and stake the 3 auditors so isValidatorActive returns true
+        _fundAndStake(aud0); _fundAndStake(aud1); _fundAndStake(aud2);
+
+        // Exactly 3 auditors — the minimum batch size
+        vm.prank(aud0); ta.registerDINAuditor(1);
+        vm.prank(aud1); ta.registerDINAuditor(1);
+        vm.prank(aud2); ta.registerDINAuditor(1);
+
+        vm.startPrank(modelOwner);
+        tc.closeDINauditorsRegistration(1);
+        tc.startLMsubmissions(1);
+        vm.stopPrank();
+
+        vm.prank(makeAddr("rc0")); ta.submitLocalModel(bytes32(uint256(10)), 1);
+        vm.prank(makeAddr("rc1")); ta.submitLocalModel(bytes32(uint256(20)), 1);
+        vm.prank(makeAddr("rc2")); ta.submitLocalModel(bytes32(uint256(30)), 1);
+
+        vm.startPrank(modelOwner);
+        tc.closeLMsubmissions(1);
+        vm.roll(block.number + tc.disputeSeedDelay() + 1);
+        tc.lockAuditSeed(1);
+        vm.stopPrank();
+
+        // One auditor unstakes → only 2 active, below auditorsPerBatch (3)
+        vm.prank(aud0); stake.unstake(10 ether);
+
+        // Must revert; GIstate must stay at AuditSeedLocked
+        vm.expectRevert(abi.encodeWithSignature("TA_NotEnoughAuditors()"));
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        assertEq(uint(tc.GIstate()), uint(GIstates.AuditSeedLocked), "state must remain AuditSeedLocked after revert");
+
+        // aud0 restakes → 3 active again.
+        // Must warp past the unbonding period and claimUnstaked() first:
+        // unstake() sets pendingWithdrawals > 0, keeping status Exiting even
+        // after staking, until pendingWithdrawals is cleared by claimUnstaked().
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(aud0); stake.claimUnstaked();
+        vm.startPrank(aud0);
+        token.approve(address(stake), type(uint256).max);
+        stake.stake(10 ether);
+        vm.stopPrank();
+
+        // Retry must succeed
+        vm.prank(modelOwner);
+        tc.createAuditorsBatches(1);
+        assertEq(uint(tc.GIstate()), uint(GIstates.AuditorsBatchesCreated), "state must advance to AuditorsBatchesCreated after retry");
     }
 }

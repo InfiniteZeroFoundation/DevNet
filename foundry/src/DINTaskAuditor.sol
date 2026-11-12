@@ -931,6 +931,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         }
         if (batchCnt * params.auditorsPerBatch > activeCount)
             batchCnt = activeCount / params.auditorsPerBatch;
+        if (activeCount < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
 
         uint vPre = batchCnt * params.auditorsPerBatch;
 

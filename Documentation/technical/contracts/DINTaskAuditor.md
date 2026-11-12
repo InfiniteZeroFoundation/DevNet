@@ -127,7 +127,7 @@ Both task contracts are non-upgradeable. Existing deployed pairs keep their prev
 
   The function:
   1. Shuffles the fixed per-GI list `dinAuditors[_GI]` in memory with `keccak256(seed, "AUD_ADDR")` and the model indexes with `keccak256(seed, "AUD_IDX")` (Fisher-Yates).
-  2. Computes `batchCnt` from registered count and model count (`rLen / auditorsPerBatch` cap), then further caps by `activeCount / auditorsPerBatch` so the fill below is guaranteed to succeed. If `activeCount < auditorsPerBatch`, this cap produces `batchCnt = 0`: no batches are created and no revert is raised. The GI advances to `AuditorsBatchesCreated` with zero batches; the first attempt to progress further will fail at `TC_NotEnoughApprovedModels` during aggregation.
+  2. Computes `batchCnt` from registered count and model count (`rLen / auditorsPerBatch` cap), then further caps by `activeCount / auditorsPerBatch` so the fill below is guaranteed to succeed. If `activeCount < auditorsPerBatch`, the call reverts with `TA_NotEnoughAuditors` and GI state remains `AuditSeedLocked`, leaving the owner free to retry once enough validators become active again.
   3. Position-stable seat fill: for each primary seat i inactive, draws from the reserve (`batchCnt*auditorsPerBatch..rLen-1`). The active-count cap ensures the reserve is never exhausted.
   4. Forms batches of `auditorsPerBatch` auditors × `modelsPerBatch` models each (last batch may take `MIN_MODELS_PER_BATCH`). Leftover auditors and models are unused.
 
