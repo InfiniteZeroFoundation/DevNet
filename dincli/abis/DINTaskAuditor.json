@@ -2456,6 +2456,11 @@
     },
     {
       "type": "error",
+      "name": "TA_CannotAssignTestData",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "TA_CannotCreateAuditorsBatches",
       "inputs": []
     },

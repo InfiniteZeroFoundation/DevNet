@@ -247,6 +247,7 @@ Used by: `DINTaskCoordinator`
 | `TA_BatchDoesNotExist` | Batch ID >= batch array length |
 | `TA_BatchIDMismatch` | Internal sanity check failure on batch ID |
 | `TA_CannotSetTestDataAssignedFlag` | State is not `AuditorsBatchesCreated` |
+| `TA_CannotAssignTestData` | `assignAuditTestDataset`: state is not `AuditorsBatchesCreated` (later changes go through `reassignAuditTestDataset`) |
 | `TA_FlagMustBeTrue` | `setTestDataAssignedFlag` called with `flag = false` |
 | `TA_TestDataNotAssigned` | `setTestDataAssignedFlag`: some audit batch of the GI has no stored test-data commitment (task_061026_21 Part B). A second call is rejected by the state gate (`TA_CannotSetTestDataAssignedFlag` / `TC_CannotSetTestDataAssignedFlag`), so `TA_FlagAlreadySet` is gone |
 | `TA_NotAssignedAuditor` | Score commit/reveal, or `openTestDataDispute`, from an auditor not assigned to the batch |

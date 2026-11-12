@@ -999,7 +999,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
     /// @notice Records the encrypted test dataset CID, per-auditor encrypted keys, and
     ///         content commitment for a specific audit batch.
-    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked.
+    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked,
+    ///      and only while the coordinator is in AuditorsBatchesCreated
+    ///      (TA_CannotAssignTestData otherwise). After AuditTestDataAssigned, a
+    ///      batch's test data and commitment change only through the dispute
+    ///      route, reassignAuditTestDataset (Discussion #231).
     ///      `encryptedKeys[i]` must correspond to `auditBatches[gi][batchId].auditors[i]`
     ///      (same order createAuditorsBatches populated them in). Each auditor must have
     ///      a registered X25519 encryption key on DinValidatorStake before this call.
@@ -1019,6 +1023,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bytes[] calldata encryptedKeys,
         bytes32 commitment
     ) external onlyOwner onlyCurrentGI(gi) {
+        if (
+            dintaskcoordinatorContract.GIstate() !=
+            GIstates.AuditorsBatchesCreated
+        ) revert TA_CannotAssignTestData();
         AuditBatch storage batch = _batchAt(gi, batchId);
         if (encryptedKeys.length != batch.auditors.length)
             revert TA_EncryptedKeyCountMismatch();
