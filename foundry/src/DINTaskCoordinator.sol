@@ -97,14 +97,14 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
     mapping(uint => mapping(uint => mapping(address => bytes32))) internal t2CommitHash;
     mapping(uint => mapping(uint => mapping(address => bool))) internal t2Committed;
 
-    /// @notice Per-aggregator count of finalized T1/T2 batches they were
-    ///         assigned to in a GI, one increment per (aggregator,
-    ///         finalized-batch) pair. Preserves the reward weighting
-    ///         _collectFinalizedBatchAggregators used to express by emitting
-    ///         a duplicate array entry per pair (task_210726_6 §3): an
-    ///         aggregator assigned to a finalized batch is rewardable for it
-    ///         regardless of whether they personally matched consensus,
-    ///         since a mismatch already cost them stake via slashAggregators.
+    /// @notice Per-aggregator count of finalized T1/T2 batches they
+    ///         revealed a submission in during a GI, one increment per
+    ///         (aggregator, finalized-batch) pair (task_210726_6 §3). An
+    ///         aggregator who revealed in a finalized batch is rewardable for
+    ///         it whether or not they matched consensus, since a mismatch
+    ///         already cost them stake via slashAggregators. An assigned
+    ///         aggregator who never committed or never revealed earns no
+    ///         weight for that batch (issue #309).
     ///         Accumulated incrementally in finalizeT1Aggregation /
     ///         finalizeT2Aggregation's existing per-batch loop (BL-10, #125)
     ///         and read at claim time by DINTaskAuditor.claimReward.
@@ -986,17 +986,20 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                         maxVotes = votes;
                         winningCID = cid;
                     }
-                }
 
-                // BL-10 (#125): one settlement-weight unit per assigned
-                // aggregator in this batch, unconditional on consensus
-                // match -- same basis _collectFinalizedBatchAggregators
-                // used. Safe to write unconditionally here because the
-                // whole call reverts atomically (TC_NoSubmissions /
-                // TC_InsufficientSubmissions below) if any batch fails to
-                // finalize, so no weight persists for a non-finalized batch.
-                aggregatorWeight[_GI][aggregator]++;
-                totalAggregatorWeight[_GI]++;
+                    // BL-10 (#125) / issue #309: one settlement-weight unit
+                    // per aggregator who revealed a submission in this
+                    // batch, whether or not it matched consensus (a
+                    // mismatch is penalised by the BAD_CONSENSUS slash).
+                    // Aggregators who never committed or never revealed
+                    // earn nothing. Safe to write before the checks below
+                    // because the whole call reverts atomically
+                    // (TC_NoSubmissions / TC_InsufficientSubmissions) if any
+                    // batch fails to finalize, so no weight persists for a
+                    // non-finalized batch.
+                    aggregatorWeight[_GI][aggregator]++;
+                    totalAggregatorWeight[_GI]++;
+                }
             }
 
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
@@ -1141,15 +1144,15 @@ contract DINTaskCoordinator is Ownable, ReentrancyGuardTransient {
                         maxVotes = votes;
                         winningCID = cid;
                     }
-                }
 
-                // BL-10 (#125): see the matching comment in
-                // finalizeT1Aggregation -- an aggregator assigned to both a
-                // finalized T1 batch and the finalized T2 batch accrues
-                // weight from each, exactly as the pre-#125 duplicate
-                // array entry did.
-                aggregatorWeight[_GI][aggregator]++;
-                totalAggregatorWeight[_GI]++;
+                    // BL-10 (#125) / issue #309: see the matching comment in
+                    // finalizeT1Aggregation -- only aggregators who revealed
+                    // earn weight. One who revealed in both a finalized T1
+                    // batch and the finalized T2 batch accrues weight from
+                    // each.
+                    aggregatorWeight[_GI][aggregator]++;
+                    totalAggregatorWeight[_GI]++;
+                }
             }
 
             if (winningCID == bytes32(0)) revert TC_NoSubmissions();
