@@ -6,10 +6,12 @@ anchored seed block, then lock the seed itself only if nobody else already
 has, and must not proceed with a zero seed if the lock call re-anchors
 instead of setting it (>256 blocks elapsed since anchor).
 """
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
+from web3.exceptions import TimeExhausted
 
 from dincli.cli.utils import (
     GIstatestrToIndex,
@@ -243,14 +245,28 @@ def test_persistent_lock_failure_after_send_spends_gas_once(_mock_print_tx_info,
     if failure == "mined_revert":
         w3.eth.wait_for_transaction_receipt.return_value = MagicMock(status=0)
     else:
-        w3.eth.wait_for_transaction_receipt.side_effect = TimeoutError("receipt timeout")
+        w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted("receipt timeout")
     ctx, console = _make_ctx(w3)
-    ctx.obj.get_tx_params.return_value = {}
+    # The CLI transaction adapter now consumes ctx.obj.session, rather than
+    # ctx.obj.get_tx_params. Keep the real SDK send/nonce path in this test.
+    from dincli.sdk.tx import NonceManager
+    from dincli.sdk.wallet import PrivateKeySigner
+    signer = PrivateKeySigner("0x" + "31" * 32)
+    w3.eth.chain_id = 1337
+    w3.eth.gas_price = 1
+    w3.eth.max_priority_fee = 1
+    w3.eth.get_transaction_count.return_value = 0
+    signed = SimpleNamespace(hash=b"\x12" * 32, raw_transaction=b"signed")
+    signer = MagicMock(wraps=signer)
+    signer.sign_transaction.return_value = signed
+    ctx.obj.session = SimpleNamespace(w3=w3, network="local", address=signer.address(), signer=signer)
+    NonceManager.reset_all(force=True)
 
     with pytest.raises(typer.Exit):
         _call(ctx, contract)
 
     assert w3.eth.send_raw_transaction.call_count == 1
+    NonceManager.reset_all(force=True)
     assert state["lock_calls"] == [GI]
     assert state["seed"] == ZERO_SEED
 
