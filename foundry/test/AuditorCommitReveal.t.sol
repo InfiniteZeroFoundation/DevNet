@@ -152,7 +152,9 @@ contract AuditorCommitRevealTest is Test {
     ///      and two submitted models (MIN_MODELS_PER_BATCH=2 is the floor
     ///      for a batch to form at all), WITHOUT committing or revealing any
     ///      scores -- callers drive commit/reveal themselves.
-    function _runToLMSevaluationStarted() internal {
+    /// @dev Stops at AuditorsBatchesCreated, the only state in which
+    ///      assignAuditTestDataset is allowed (Discussion #231).
+    function _runToAuditorsBatchesCreated() internal {
         _deployPlatform();
         _deployTaskPair();
 
@@ -191,6 +193,12 @@ contract AuditorCommitRevealTest is Test {
         vm.roll(block.number + tc.disputeSeedDelay() + 1); // issue #156 H-2: seed lock
         tc.lockAuditSeed(1);
         tc.createAuditorsBatches(1);
+        vm.stopPrank();
+    }
+
+    function _runToLMSevaluationStarted() internal {
+        _runToAuditorsBatchesCreated();
+        vm.startPrank(modelOwner);
         assignPlaceholderTestData(ta, address(stake), 1);
         tc.setTestDataAssignedFlag(1, true);
         tc.startLMsubmissionsEvaluation(1);
@@ -427,7 +435,7 @@ contract AuditorCommitRevealTest is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     function test_assignAuditTestDataset_populatesPerAuditorKeys() public {
-        _runToLMSevaluationStarted();
+        _runToAuditorsBatchesCreated();
         (, address[] memory batchAuditors, , ) = ta.getAuditorsBatch(1, 0);
 
         // Each auditor registers a 32-byte X25519 public key before assignment.

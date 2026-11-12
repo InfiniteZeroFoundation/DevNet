@@ -32,7 +32,7 @@ import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
-import {GIstates, TA_NoCommitmentStored, TA_DisputeAlreadyActive, TA_NoActiveDispute, TA_DisputeWindowClosed, TA_NotAssignedAuditor, TA_RewardsAlreadySettled} from "../src/DINShared.sol";
+import {GIstates, TA_CannotAssignTestData, TA_NoCommitmentStored, TA_DisputeAlreadyActive, TA_NoActiveDispute, TA_DisputeWindowClosed, TA_NotAssignedAuditor, TA_RewardsAlreadySettled} from "../src/DINShared.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract EncryptedTestDataTest is Test {
@@ -606,5 +606,90 @@ contract EncryptedTestDataTest is Test {
         vm.prank(modelOwner);
         vm.expectRevert(TA_NoActiveDispute.selector);
         ta.reassignAuditTestDataset(1, 0, TEST_ENC_CID, keys, bytes32(0));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // assignAuditTestDataset is limited to AuditorsBatchesCreated
+    // (Discussion #231): after that, test data changes only through the
+    // dispute route, reassignAuditTestDataset.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    function _batch0Keys(uint256 seed) internal view returns (bytes[] memory keys) {
+        (, address[] memory auditors,,) = ta.getAuditorsBatch(1, 0);
+        keys = new bytes[](auditors.length);
+        for (uint i = 0; i < auditors.length; i++) {
+            keys[i] = abi.encodePacked(bytes32(uint256(i + seed)));
+        }
+    }
+
+    function _assignAllBatchesAndSetFlag() internal {
+        _assignBatch0();
+        uint256 n = ta.AuditorsBatchCount(1);
+        for (uint256 b = 1; b < n; b++) {
+            (, address[] memory auditors,,) = ta.getAuditorsBatch(1, b);
+            bytes[] memory keys = new bytes[](auditors.length);
+            for (uint i = 0; i < auditors.length; i++) {
+                keys[i] = abi.encodePacked(bytes32(uint256(i + 300)));
+            }
+            vm.prank(modelOwner);
+            ta.assignAuditTestDataset(1, b, TEST_ENC_CID, keys, _buildCommitment(1, b, TEST_K, TEST_PLAINTEXT_HASH));
+        }
+        vm.prank(modelOwner);
+        tc.setTestDataAssignedFlag(1, true);
+    }
+
+    function test_assign_inAuditorsBatchesCreated_canOverwriteBeforeFlag() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+
+        bytes32 second = _buildCommitment(1, 0, abi.encodePacked(bytes32(uint256(0xFEED))), TEST_PLAINTEXT_HASH);
+        bytes[] memory keys = _batch0Keys(500);
+        vm.prank(modelOwner);
+        ta.assignAuditTestDataset(1, 0, TEST_ENC_CID, keys, second);
+        assertEq(ta.testDataCommitments(1, 0), second, "still editable before the flag is set");
+    }
+
+    function test_assign_afterTestDataAssigned_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignAllBatchesAndSetFlag();
+        assertEq(uint8(tc.GIstate()), uint8(GIstates.AuditTestDataAssigned));
+        bytes32 original = ta.testDataCommitments(1, 0);
+        bytes[] memory keys = _batch0Keys(500);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(TA_CannotAssignTestData.selector);
+        ta.assignAuditTestDataset(1, 0, TEST_ENC_CID, keys, bytes32(uint256(0xBEEF)));
+        assertEq(ta.testDataCommitments(1, 0), original, "commitment unchanged");
+    }
+
+    function test_assign_duringEvaluation_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignAllBatchesAndSetFlag();
+        vm.prank(modelOwner);
+        tc.startLMsubmissionsEvaluation(1);
+        bytes[] memory keys = _batch0Keys(500);
+
+        vm.prank(modelOwner);
+        vm.expectRevert(TA_CannotAssignTestData.selector);
+        ta.assignAuditTestDataset(1, 0, TEST_ENC_CID, keys, bytes32(uint256(0xBEEF)));
+    }
+
+    function test_reassign_stillWorksAfterTestDataAssigned() public {
+        _runToAuditorBatchesCreated();
+        _assignAllBatchesAndSetFlag();
+        vm.prank(modelOwner);
+        ta.setDisputeBondAmount(BOND);
+        _openDispute(disputer);
+
+        bytes memory wrongK = abi.encodePacked(bytes32(uint256(0xBAD)));
+        vm.prank(modelOwner);
+        ta.resolveTestDataDispute(1, 0, wrongK, TEST_PLAINTEXT_HASH);
+        assertTrue(_disputePending(1, 0));
+
+        bytes32 newCommitment = _buildCommitment(1, 0, abi.encodePacked(bytes32(uint256(0xFEED))), bytes32(uint256(0xF00D)));
+        bytes[] memory newKeys = _batch0Keys(200);
+        vm.prank(modelOwner);
+        ta.reassignAuditTestDataset(1, 0, TEST_ENC_CID, newKeys, newCommitment);
+        assertEq(ta.testDataCommitments(1, 0), newCommitment, "dispute route still replaces test data");
     }
 }
