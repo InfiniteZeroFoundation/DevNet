@@ -182,9 +182,7 @@ The current devnet primarily focuses on:
 * Validation workflows
 * Ethereum-enforced protocol state transitions
 
-Staking and slashing concepts exist within the protocol architecture.
-
-Economic and reward distribution mechanisms are still under active development and are not yet the primary focus of the current devnet phase.
+Staking, slashing and rewards are part of every Global Iteration: validators stake DIN to register, misbehaving or absent validators are slashed, and each GI pays clients, auditors and aggregators from a reward pool the model owner funds before starting it. After a GI ends, claim your share with `dincli rewards claim <model_id> --gi <gi>` and `dincli rewards withdraw <model_id>`. Reward splits, bond sizes and other economic parameters are not final and may change between devnet phases.
 
 ---
 
@@ -358,12 +356,18 @@ dincli task gi show-state 0
 
 ### Step 5: Check your Aggregation Batch (if state = `T1nT2Bcreated`)
 
+If the state is still `LMSevaluationClosed`, lock the batch-assignment seed first (this moves it to `AggSeedLocked`; the model owner then creates the batches):
+
+```bash
+dincli aggregator lock-seed 0
+```
+
 ```bash
 # Check T1 batch assigned to you
-dincli model-owner aggregation show-t1-batches 0 --detailed
+dincli aggregator show-t1-batches 0 --detailed
 
 # Check T2 batch assigned to you
-dincli model-owner aggregation show-t2-batches 0 --detailed
+dincli aggregator show-t2-batches 0 --detailed
 ```
 
 ---
@@ -404,6 +408,14 @@ dincli aggregator reveal-t2 0
 
 > ⚠️ Aggregation is commit-then-reveal: a commit that is never revealed is slashed like a missed submission. Reveal from the same machine you committed from; the salt is cached locally.
 
+### Step 9: Claim your reward (once state = `GIended`)
+
+```bash
+# credit your share of GI <gi> (the GI you took part in), then withdraw it
+dincli rewards claim 0 --gi <gi>
+dincli rewards withdraw 0
+```
+
 > 💡 T1 and T2 batch assignments depend on the current Global Iteration state and protocol allocation logic. A registered aggregator may not receive a batch in every iteration.
 
 ---
@@ -442,6 +454,9 @@ dincli auditor dintoken read-stake
 
 # Register as auditor
 dincli auditor register 0
+
+# Once per wallet: register the encryption key your batch's test data is encrypted to
+dincli auditor register-encryption-key
 ```
 
 ---
@@ -452,13 +467,19 @@ dincli auditor register 0
 dincli task gi show-state 0
 ```
 
-### Step 5: Check your Auditor Batch (if state = `AuditorsBatchesCreated`)
+### Step 5: Check your Auditor Batch (if state = `AuditorsBatchesCreated` or `AuditTestDataAssigned`)
+
+If the state is still `LMSclosed`, lock the batch-assignment seed first (this moves it to `AuditSeedLocked`; the model owner then creates the batches):
+
+```bash
+dincli auditor lock-seed 0
+```
 
 ```bash
 dincli auditor lms-evaluation show-batch 0
 ```
 
-If a batch is shown, you will soon be required to audit it.
+If a batch is shown, you will soon be required to audit it. The model owner then assigns each batch its test data (`AuditTestDataAssigned`) and opens evaluation.
 
 ---
 
@@ -468,14 +489,27 @@ If a batch is shown, you will soon be required to audit it.
 dincli task gi show-state 0
 ```
 
-### Step 7: Audit your assigned batch (if state = `LMSevaluationStarted`)
+### Step 7: Audit your assigned batch (commit if state = `LMSevaluationStarted`, reveal if `LMSevaluationRevealStarted`)
 
 ```bash
 # check your assigned batch
 dincli auditor lms-evaluation show-batch 0
 
-# audit your batch (scripts run automatically)
+# audit your batch (scripts run automatically) and commit a hidden hash of each score
 dincli auditor lms-evaluation evaluate 0 --submit
+
+# once the model owner opens the reveal window: reveal your scores
+dincli auditor lms-evaluation reveal 0
+```
+
+> ⚠️ Scoring is commit-then-reveal: a commit that is never revealed is slashed as a missed vote. Reveal from the same machine you committed from; the salt is cached locally.
+
+### Step 8: Claim your reward (once state = `GIended`)
+
+```bash
+# credit your share of GI <gi> (the GI you took part in), then withdraw it
+dincli rewards claim 0 --gi <gi>
+dincli rewards withdraw 0
 ```
 > 💡 Auditor batch assignments depend on the current Global Iteration state and protocol allocation logic. A registered auditor may not receive a batch in every iteration.
 
@@ -592,15 +626,22 @@ dincli system register-wallet --account 0
 # Check ETH balance
 dincli system --eth-balance
 
-# Optional (Recommended Step) to ensure training is running fine locally
-# Train locally without submitting 
+# Train a local model (nothing is sent on-chain)
 dincli client train-lms 0
 
-# Train and submit local model
-dincli client train-lms 0 --submit
+# Upload the trained model and submit it
+dincli client submit-lm 0
 
 # Show submitted models
 dincli client lms show-models 0
+```
+
+### Step 4: Claim your reward (once state = `GIended`)
+
+```bash
+# credit your share of GI <gi> (the GI you took part in), then withdraw it
+dincli rewards claim 0 --gi <gi>
+dincli rewards withdraw 0
 ```
 
 ---

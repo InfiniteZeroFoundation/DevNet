@@ -8,12 +8,13 @@ see that file first for the general contribution flow.
 
 - Plain **PEP 8**. Ruff **0.16.4** uses the explicit Python 3.12 policy in
   `pyproject.toml`: `E4`, `E7`, `E9`, `F`, and `I`. CI prints every finding
-  and uploads `ruff-report`; findings are **advisory**. Installation,
-  configuration, execution, unreadable inputs, and invalid reports fail CI.
+  and uploads `ruff-report`; findings (including syntax errors) are **blocking**.
+  Installation, configuration, execution, unreadable inputs, and invalid reports
+  fail CI.
 - Run `python -m pip install ruff==0.16.4`, then `python -m ruff check .`
-  from the repository root. Exit 1 means findings; fix these in separately
-  scoped cleanup changes. No formatter, automatic fixes, count budget, or
-  no-new-findings gate is introduced by this policy.
+  from the repository root. Exit 1 means findings; resolve them before merging.
+  CI runs `.github/scripts/ruff_check.py`, preserving the JSON report on failure.
+  No formatter, automatic fixes, or grandfathered finding budget is enabled.
 - CI installs Ruff through `.github/constraints-ci.txt`; keep that pin and
   `required-version` in `pyproject.toml` aligned when upgrading. The snapshot
   recorder keeps its historical version pin for baseline reproduction.

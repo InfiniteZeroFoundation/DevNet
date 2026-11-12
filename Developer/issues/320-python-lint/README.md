@@ -59,8 +59,31 @@ Suppression review (no edits):
   `cache_model_1/services/client.py:33`: F401 on the example model import.
   Preserve until the example owners review intended use.
 
-Remaining work: peer review of this slice and separately scoped source cleanup,
+At the time of this first snapshot, remaining work was peer review and source cleanup,
 with overlap coordinated across CLI/integration, example services, SDK/daemon,
-and documentation work. No blocking lint findings policy is introduced here.
-The later blocking gate must also reject `invalid-syntax`: pytest only catches
+and documentation work. This historical slice did not introduce blocking lint findings.
+The blocking gate must also reject `invalid-syntax`: pytest only catches
 syntax errors in modules it imports, so it cannot cover every example or script.
+
+
+## Blocking gate
+
+The current workflow uses `.github/scripts/ruff_check.py`. Every finding,
+including `invalid-syntax`, fails the Python job and therefore `CI OK`.
+Tool, configuration, unreadable-input and report failures also fail the job.
+The JSON artifact upload runs even when the checker fails. This applies to
+pull requests, `develop` pushes and merge groups through the existing workflow.
+
+The final cleanup started from `1ff1bce5499c46ee9e4f9a25064fac45c4adb8be`
+with 23 findings under the unchanged policy: 15 F841, three E722, three E402,
+and two F401. The example aggregators explicitly retain their
+`ModelArchitecture` export for compatibility. Auditor status lookups still use
+False for ordinary errors, but interruption and process-exit signals propagate.
+Historical JSON reports above remain unchanged; they are not finding allowances.
+
+Before publishing the final cleanup, verify `python -m ruff check .` is clean
+and run `pytest -m "not integration" -q` with the CI constraints and Ruff
+installed. The checker tests exercise real clean, lint, syntax and configuration
+failure cases when Ruff is installed (as in CI). Hosted PR/merge-group checks
+and the post-merge `develop` run must pass before a peer confirms issue 320 is
+complete. Update Discussion 74's advisory status after that change lands.

@@ -4,10 +4,10 @@ local Anvil node (chain backend picked by PLATFORM_DEPLOY_TOOLCHAIN, see
 tests/dincli/constants.py).
 
 The conftest automatically handles all prerequisites:
-  1. Compiles Solidity contracts via  npx hardhat compile  (task-level
-     contract deploys and dump-abi tests always need hardhat's ABIs/bytecode,
-     regardless of which toolchain deploys the platform contracts); also runs
-     `forge build` when PLATFORM_DEPLOY_TOOLCHAIN is "foundry"
+  1. Builds Solidity contracts via  forge build  (task-level contract deploys
+     and dump-abi tests read foundry/out/ artifacts, regardless of which
+     toolchain deploys the platform contracts); also runs  npx hardhat compile
+     when PLATFORM_DEPLOY_TOOLCHAIN is "hardhat"
   2. Kills any running chain node and starts a fresh one (clean EVM state) —
      Hardhat node for the "hardhat" toolchain, Anvil for "foundry" (both
      listen on HARDHAT_RPC / chain-id 1337, so the rest of the harness is
@@ -55,6 +55,7 @@ from tests.dincli.constants import (
 from tests.dincli.demo import bootstrap_demo, prepare_demo_accounts
 from tests.dincli.diagnostics import Diagnostics, write_cleanup_summary
 from tests.dincli.reports import collect_worker_reports
+from tests.dincli.seed import apply_din_info_overrides, seed_default_artifacts
 from tests.dincli.services import ipfs_ready, rpc_ready, start_service
 
 _DIAGNOSTICS = None
@@ -175,8 +176,8 @@ def _seed_solc(din_tmp: Path) -> None:
 def _build_foundry_contracts(results_dir: Path) -> None:
     """Run forge build. Aborts the session on failure.
 
-    Needed only when PLATFORM_DEPLOY_TOOLCHAIN is "foundry" — DeployPlatform.s.sol
-    reads compiled artifacts under foundry/out/, separate from hardhat/artifacts/.
+    Always needed: task-contract deploys and dump-abi tests read foundry/out/
+    (ARTIFACT_BASE), and DeployPlatform.s.sol does too for the foundry toolchain.
     """
     print("\n[setup] Building Foundry contracts...")
     log_path = results_dir / "forge_build.log"
@@ -405,13 +406,14 @@ def managed_services(din_tmp):
     chain_proc = None
     ipfs_proc = None
 
-    # 1. Compile contracts — task-level contract deploys and dump-abi tests
-    #    always need hardhat's ABIs/bytecode, regardless of deploy toolchain.
-    _compile_contracts(results_dir)
-    if PLATFORM_DEPLOY_TOOLCHAIN == "foundry":
-        if ISOLATED_MODE:
-            _seed_solc(din_tmp)
-        _build_foundry_contracts(results_dir)
+    # 1. Build contracts — task-level contract deploys and dump-abi tests read
+    #    foundry/out/ regardless of deploy toolchain; hardhat compiles only when
+    #    it deploys the platform.
+    if ISOLATED_MODE:
+        _seed_solc(din_tmp)
+    _build_foundry_contracts(results_dir)
+    if PLATFORM_DEPLOY_TOOLCHAIN == "hardhat":
+        _compile_contracts(results_dir)
 
     if ISOLATED_MODE:
         env = _isolated_env(din_tmp)
@@ -501,6 +503,9 @@ def _isolated_env(din_tmp):
         "IPFS_API_URL_ADD": "http://127.0.0.1:5001/api/v0/add",
         "IPFS_API_URL_RETRIEVE": "http://127.0.0.1:5001/api/v0",
         "NO_COLOR": "1", "TERM": "dumb",
+        # Rich wraps at 80 columns without a TTY; the suite matches whole
+        # output lines (addresses, GI state), so keep them on one line.
+        "COLUMNS": "250",
     }
 
 
@@ -525,6 +530,7 @@ def din_env(din_tmp):
     env["PYTHONPATH"] = str(DEVNET_ROOT) + (":" + existing if existing else "")
     env["NO_COLOR"] = "1"
     env["TERM"]     = "dumb"
+    env["COLUMNS"]  = "250"  # see _isolated_env
     return env
 
 
@@ -649,8 +655,39 @@ def run(din_env, workdir):
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="session")
+def seeded_default_artifacts(managed_services, din_info_backup, din_tmp):
+    """Isolated mode: add the reference model's default artifacts to the offline
+    Kubo node and point this run's din_info `default_*` entries at them (see
+    tests/dincli/seed.py). Runs after din_info_backup, so the tracked
+    din_info.json is restored unpatched at the end of the session.
+
+    Legacy (non-isolated) runs fetch the published defaults through the
+    host's IPFS node instead, and get None.
+    """
+    if not ISOLATED_MODE:
+        yield None
+        return
+    env = _isolated_env(din_tmp)
+
+    def add(path: Path) -> str:
+        result = _get_diagnostics().run(
+            # Kubo's default layout, the one dincli verifies downloads against
+            # (`ipfs add -n -Q`, dincli/services/ipfs.py); --cid-version 1
+            # switches to a different chunking for multi-chunk files.
+            [IPFS_BIN, "add", "-Q", "--pin", str(path)],
+            cwd=din_tmp, env=env, timeout=60, label="ipfs_seed",
+        )
+        result.check_returncode()
+        return result.stdout.strip()
+
+    overrides = seed_default_artifacts(add, din_tmp)
+    apply_din_info_overrides(DIN_INFO_PATH, "local", overrides)
+    yield overrides
+
+
 @pytest.fixture(scope="session", autouse=True)
-def bootstrap(managed_services, din_info_backup, run):
+def bootstrap(managed_services, din_info_backup, seeded_default_artifacts, run):
     """
     Configure demo mode and local network, and connect the named demo role
     wallets (account 0 = dinrep / DIN-Representative, account 1 = modelowner).

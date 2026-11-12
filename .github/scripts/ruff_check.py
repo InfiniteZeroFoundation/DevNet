@@ -1,4 +1,4 @@
-"""Run Ruff once; findings are advisory, execution/report failures are fatal."""
+"""Run Ruff once; findings and execution/report failures block CI."""
 
 import json
 import subprocess
@@ -31,7 +31,7 @@ def report(status, output):
         print(f"{item['filename']}:{location['row']}:{location['column']}: "
               f"{item['code']} {item['message']}")
     counts = dict(sorted(Counter(item["code"] for item in findings).items()))
-    print(f"Ruff advisory findings: {len(findings)}; by rule: {counts}")
+    print(f"Ruff findings: {len(findings)}; by rule: {counts}")
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
     except (ValueError, KeyError, TypeError) as error:
         print(f"Ruff reporting failed: {error}", file=sys.stderr)
         return 1
-    return 0
+    return result.returncode
 
 
 if __name__ == "__main__":

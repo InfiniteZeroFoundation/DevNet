@@ -13,6 +13,7 @@ from dincli.cli.utils import (
     get_env_key,
     get_manifest,
     get_manifest_key,
+    load_din_info,
     require_custom_manifest_service,
     resolve_manifest_path,
     resolve_task_coordinator_address,
@@ -141,6 +142,10 @@ def create_genesis_model(
     return
 
 #delete-this-for-production
+# The reference MNIST test dataset used by `add-default-test-data --default-test-data`.
+DEFAULT_TEST_DATASET_CID = "bafybeigjtcu2nzsffoy5pjmui25bnc43yduzn6aopi4wnrbtxfleqmw46y"
+
+
 @model_app.command("add-default-test-data")
 def add_default_test_data(ctx: typer.Context,     task_coordinator_address: str = typer.Option(None, "--taskCoordinator", help="Task coordinator address"), model_id: int = typer.Option(None, "--model-id", help="Model ID"), default_test_data: bool = typer.Option(False, "--default-test-data", help="use default test data")):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
@@ -158,7 +163,10 @@ def add_default_test_data(ctx: typer.Context,     task_coordinator_address: str 
         task_dir = ctx.obj.get_task_dir(task_coordinator_address)
     test_dataset_path = task_dir.joinpath("dataset","test","test_dataset.pt")
     if default_test_data:
-        default_test_dataset_ipfs_hash = "bafybeigjtcu2nzsffoy5pjmui25bnc43yduzn6aopi4wnrbtxfleqmw46y"
+        # din_info's per-network `default_test_dataset` overrides the published default.
+        default_test_dataset_ipfs_hash = load_din_info().get(effective_network, {}).get(
+            "default_test_dataset", DEFAULT_TEST_DATASET_CID
+        )
         console.print(f"[bold yellow] Using default test dataset with IPFS CID {default_test_dataset_ipfs_hash} [/bold yellow]")
         retrieve_from_ipfs(default_test_dataset_ipfs_hash, test_dataset_path)
 
