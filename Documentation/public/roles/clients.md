@@ -26,22 +26,45 @@ Clients contribute to the DIN network by training local models on their own data
 
 ## Commands
 
-### Train & Submit a Local Model
+### Train a Local Model
 
-Train a local model using your dataset and optionally submit the result to the blockchain.
+Train a local model on your dataset, in the worker container. Nothing is sent on-chain.
 
 ```bash
-dincli client train-lms <model_id> [--gi <gi_index>] [--submit]
+dincli client train-lms <model_id> [--gi <gi_index>] [--packages-dir <dir>] [--no-cache]
 ```
 
 | Argument / Option | Required | Description |
 |---|---|---|
 | `<model_id>` | Yes | The ID of the model/task you are participating in |
 | `--gi <gi_index>` | No | The Global Iteration index. Defaults to the current GI if omitted |
-| `--submit` | No | Upload the trained model to IPFS and record the submission on-chain |
+| `--packages-dir <dir>` | No | Packages directory to mount into the worker |
+| `--no-cache` | No | Don't use cached packages |
+
+### Submit the Local Model
+
+Upload the trained model to IPFS and record its CID on-chain. LMS must be open.
+
+```bash
+dincli client submit-lm <model_id> [--gi <gi_index>]
+```
 
 > [!NOTE]
-> Always include `--submit` to make your contribution visible to the network.
+> Training alone doesn't count: run `submit-lm` to make your contribution visible to the network.
+
+---
+
+### Claim Rewards
+
+After the Model Owner ends the GI, credit your share of its reward pool and withdraw it:
+
+```bash
+# Credit your share for an ended GI
+dincli rewards claim <model_id> --gi <gi_index>
+
+# Transfer your whole claimable balance to your wallet
+dincli rewards withdraw <model_id>
+```
 
 ---
 
@@ -64,5 +87,7 @@ dincli client lms show-models <model_id> [--gi <gi_index>]
 
 1. **Wait for LMS Open** — The Model Owner must open the Local Model Submission (LMS) phase for the current GI.
 2. **Place Dataset** — Ensure your `data.pt` file is at the correct path (see Prerequisites above).
-3. **Train** — Run `train-lms` with `--submit` to process your data and record the result on-chain.
-4. **Verify** — Run `show-models` to confirm your submission was recorded successfully.
+3. **Train** — Run `train-lms` to train on your data.
+4. **Submit** — Run `submit-lm` to upload the model and record it on-chain.
+5. **Verify** — Run `show-models` to confirm your submission was recorded successfully.
+6. **Claim** — After the GI ends, run `rewards claim` and `rewards withdraw`.

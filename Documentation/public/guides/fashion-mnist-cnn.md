@@ -119,11 +119,11 @@ From your project root (the directory where `dincli` stores tasks):
 ```bash
 # deploy DINTaskCoordinator
 dincli model-owner deploy task-coordinator \
-    --artifact "hardhat/artifacts/contracts/DINTaskCoordinator.sol/DINTaskCoordinator.json"
+    --artifact "foundry/out/DINTaskCoordinator.sol/DINTaskCoordinator.json"
 
 # deploy DINTaskAuditor
 dincli model-owner deploy task-auditor \
-    --artifact "hardhat/artifacts/contracts/DINTaskAuditor.sol/DINTaskAuditor.json"
+    --artifact "foundry/out/DINTaskAuditor.sol/DINTaskAuditor.json"
 ```
 
 Both contract addresses are written to your local `.env` file.  Request

@@ -49,7 +49,7 @@ dincli aggregator register <model_id> [--gi <gi_index>]
 | `--gi <gi_index>` | No | The Global Iteration index. Defaults to the current GI if omitted |
 
 > [!IMPORTANT]
-> Aggregators Registration must be open for the current GI before to successfully register as an aggregator.
+> Aggregator registration must be open for the current GI before you can register. A wallet registered as an aggregator can't also register as an auditor in the same GI.
 
 ---
 
@@ -58,6 +58,14 @@ dincli aggregator register <model_id> [--gi <gi_index>]
 Aggregators operate in two tiers:
 - **Tier 1 (T1)** — Intermediate aggregation: combine local model batches into sub-global model updates.
 - **Tier 2 (T2)** — Final aggregation: combine sub-global model updates into a single global model.
+
+### Lock the Batch-Assignment Seed (optional, recommended)
+
+```bash
+dincli aggregator lock-seed <model_id> [--gi <gi_index>]
+```
+
+When evaluation closes, the T1/T2 batch assignment is drawn from a seed anchored to a future block. Anyone can lock it once that block is mined; locking it yourself stops the Model Owner from waiting out a draw they dislike. The command waits for the seed block, then locks (or skips if someone already has), and the GI moves to `AggSeedLocked`. `show-t1-batches` / `show-t2-batches` do the same automatically when run before batches exist. Only valid while the GI is in `LMSevaluationClosed`.
 
 ### Tier 1 Aggregation
 
@@ -138,6 +146,38 @@ dincli aggregator aggregate-t2 <model_id> [--gi <gi_index>] [--batch <batch_id>]
 dincli aggregator reveal-t2 <model_id> [--gi <gi_index>]
 ```
 
+There is a single T2 batch, so `reveal-t2` takes no `--batch`.
+
+---
+
+## 4. Rewards
+
+After the Model Owner ends the GI, credit your share of its reward pool and withdraw it:
+
+```bash
+# Credit your share for an ended GI
+dincli rewards claim <model_id> --gi <gi_index>
+
+# Transfer your whole claimable balance to your wallet
+dincli rewards withdraw <model_id>
+```
+
+---
+
+## 5. Disputing an Aggregation
+
+Any active validator can dispute a finalized T1 or T2 batch's CID within the dispute window after it was finalized. It posts the coordinator's DIN dispute bond, and each batch can be disputed only once:
+
+```bash
+dincli aggregator dispute <model_id> --tier t1|t2 --batch <batch_id> [--gi <gi_index>]
+```
+
+The Model Owner either rejects the dispute (the bond is forfeited) or upholds it, which assigns a fresh subgroup of 3 aggregators to recompute the batch. That assignment is bookkeeping only: the GI isn't reopened, so the recomputation is coordinated off-chain with the Model Owner. If the Model Owner confirms the dispute (`settle-recomputation --confirmed`), or the dispute expires past its resolution deadline, your bond is credited back. A confirmed dispute slashes the original aggregators whose revealed CID matched the disputed one. An expired dispute slashes all three fresh-subgroup members, so if you're drawn into one, make sure the Model Owner settles it before the deadline. Withdraw credited bonds with:
+
+```bash
+dincli aggregator claim-dispute-bond <model_id>
+```
+
 ---
 
 ## Workflow
@@ -149,3 +189,4 @@ dincli aggregator reveal-t2 <model_id> [--gi <gi_index>]
 5. **Reveal T1** — Run `reveal-t1` once the Model Owner opens the T1 reveal window (`T1AggregationRevealStarted`).
 6. **Aggregate and commit T2** — If assigned to the final tier, run `aggregate-t2 --submit` when the Tier 2 phase opens (`T2AggregationStarted`).
 7. **Reveal T2** — Run `reveal-t2` once the T2 reveal window opens (`T2AggregationRevealStarted`).
+8. **Claim** — After the GI ends, run `rewards claim` and `rewards withdraw`.
