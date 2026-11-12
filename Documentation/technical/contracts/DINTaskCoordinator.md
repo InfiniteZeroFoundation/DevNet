@@ -62,7 +62,7 @@ Auditor registration, client submissions, scoring and rewards live in the paired
 | `t1SubmissionCID`, `t1Submitted`, `t1Votes` (and `t2*`) | Revealed CID, revealed flag and per-CID vote count. Written only by the reveal functions; `t*Submitted` stays `false` for an aggregator who committed but never revealed |
 | `tier1FinalizedAt`, `tier2FinalizedAt` | Finalization timestamps (dispute window start) |
 | `tier2Score[gi]` | Owner-recorded quality score for the T2 model |
-| `aggregatorWeight[gi][addr]`, `totalAggregatorWeight[gi]` | Reward weights (one unit per aggregator per finalized batch) |
+| `aggregatorWeight[gi][addr]`, `totalAggregatorWeight[gi]` | Reward weights (one unit per aggregator per finalized batch they revealed in) |
 | `auditSeedBlock[gi]`, `auditSeed[gi]` | Anchor block and locked seed for auditor batch assignment (§6.3) |
 | `aggSeedBlock[gi]`, `aggSeed[gi]` | Anchor block and locked seed for T1/T2 batch assignment (§6.3) |
 
@@ -197,7 +197,7 @@ Submissions are commit-then-reveal (issue #156 M-1, PR #197). With a single-shot
 - **Commit hash:** `keccak256(abi.encode(cid, salt, msg.sender, gi, TierKind, batchId))`. Because the sender, GI, tier and batch are bound in, an aggregator who copies a peer's commit hash cannot later reveal the peer's `(cid, salt)` under their own address.
 - **Open reveals** (owner): `startT1AggregationReveal` / `startT2AggregationReveal`. No further commits are accepted.
 - **Reveal** (`T1AggregationRevealStarted` / `T2AggregationRevealStarted`): `revealT1Aggregation(gi, batchId, cid, salt)` / `revealT2Aggregation(…)`. Same batch, assignment and active checks; requires a prior commit (`TC_T*NoCommitFound`), no prior reveal (`TC_AlreadySubmitted`), a non-zero CID (`TC_ZeroCID`) and a matching hash (`TC_T*RevealHashMismatch`). Records the CID, increments `t*Votes[cid]`, emits `T1AggregationSubmitted` / `T2AggregationSubmitted`.
-- **Finalize** (owner, from the reveal state): per batch, the CID with the most votes wins (on a tie, the first tied CID in batch order). Reverts `TC_NoSubmissions` if nobody revealed, and `TC_InsufficientSubmissions` if fewer than `3 / 2 + 1 = 2` revealed. Records `finalCID` and the finalization time, emits `T1BatchFinalized` / `T2Finalized`, and adds one `aggregatorWeight` unit for **every assigned aggregator** of the batch, whether or not they revealed or matched consensus. A failing batch reverts the whole call, so no weight persists for unfinalized batches.
+- **Finalize** (owner, from the reveal state): per batch, the CID with the most votes wins (on a tie, the first tied CID in batch order). Reverts `TC_NoSubmissions` if nobody revealed, and `TC_InsufficientSubmissions` if fewer than `3 / 2 + 1 = 2` revealed. Records `finalCID` and the finalization time, emits `T1BatchFinalized` / `T2Finalized`, and adds one `aggregatorWeight` unit for **every aggregator who revealed** a submission in the batch, whether or not it matched consensus (a mismatch is penalised by the `BAD_CONSENSUS` slash instead). An assigned aggregator who never committed or never revealed gets no weight for the batch. A failing batch reverts the whole call, so no weight persists for unfinalized batches.
 
 An aggregator who commits but never reveals is treated exactly like one who never committed: excluded from the vote and slashed as a non-submitter (§6.6).
 
