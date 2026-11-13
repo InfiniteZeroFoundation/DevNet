@@ -192,7 +192,7 @@ dincli model-owner rewards deposit <model_id> --amount <din_amount> [--gi <gi_in
 dincli model-owner rewards fund-emission <model_id> [--gi <gi_index>]
 ```
 
-`--gi` defaults to the next GI. Buy DIN with `dincli dintoken buy <eth_amount>`.
+`--gi` defaults to the next GI. The current GI can be topped up until `gi end` settles its rewards; after that both commands refuse it, since a later deposit would never be paid out. Buy DIN with `dincli dintoken buy <eth_amount>`.
 
 ```bash
 dincli model-owner gi start <model_id> [--gi <gi_index>] [--threshold <threshold>]
@@ -426,7 +426,7 @@ dincli model-owner disputes settle-recomputation <model_id> --gi <gi> --tier t1|
 dincli model-owner disputes expire <model_id> --gi <gi> --tier t1|t2 --batch <batch_id>
 ```
 
-`resolve-test-data` needs the key `create-testdataset --submit` saved. An upheld test-data dispute takes part of the GI's reward pool as a penalty, but only while the GI's rewards are unsettled. `gi end` settles them without waiting for open disputes, so resolve or close pending test-data disputes before ending the GI if the penalty is to apply.
+`resolve-test-data` needs the key `create-testdataset --submit` saved, and reveals it only if it reproduces the batch's on-chain commitment (a mismatched reveal would uphold the dispute against you). An upheld test-data dispute takes part of the GI's reward pool as a penalty, but only while the GI's rewards are unsettled. `gi end` settles them without waiting for open disputes, so resolve or close pending test-data disputes before ending the GI if the penalty is to apply.
 
 Upholding an aggregation dispute only records the fresh subgroup on-chain. They can't submit a recomputation on-chain, so you coordinate it with them off-chain and call `settle-recomputation` before anyone calls `expire`. After `resolutionDeadline`, anyone can call `expire`, which slashes all three fresh-subgroup members. See [model-workflow.md](../workflows/model-workflow.md#17-disputes) for the full flow.
 

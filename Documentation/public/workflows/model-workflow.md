@@ -270,7 +270,7 @@ dincli model-owner rewards deposit <model_id> --amount <din_amount> [--gi <gi>]
 dincli model-owner rewards fund-emission <model_id> [--gi <gi>]
 ```
 
-`--gi` defaults to the next GI. Then start it:
+`--gi` defaults to the next GI. The current GI can still be topped up until `gi end` settles it. Then start it:
 
 ```bash
 dincli model-owner gi start <model_id> [--threshold <accuracy_deduction>]
@@ -448,8 +448,11 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 
 > [!NOTE]
 > `create-testdataset --submit` saves each batch's key and plaintext hash to
-> `<model dir>/audits/testdata_keys/` (mode 0600). Keep them: you need them
-> to answer a test-data dispute (`dincli model-owner disputes resolve-test-data`).
+> `<model dir>/audits/testdata_keys/`, owner-only (mode 0600) from the moment
+> each file is created. Keep them: you need them to answer a test-data dispute
+> (`dincli model-owner disputes resolve-test-data`). A new key is kept as
+> `gi_<gi>_batch_<id>.pending.json` until its assignment transaction succeeds,
+> so a failed retry never replaces the key behind the on-chain commitment.
 
 **Auditors** evaluate their assigned batches and commit the scores (repeat for each auditor):
 

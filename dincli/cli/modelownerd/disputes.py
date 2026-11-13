@@ -6,10 +6,13 @@ import typer
 
 from dincli.cli.modelownerd.auditor_batches import (
     _auditors_missing_encryption_key,
+    _confirm_testdata_secret,
     _encrypt_batch_testdata,
     _load_owner_x25519_key,
     _load_testdata_secret,
-    _save_testdata_secret,
+    _pending_testdata_secret_path,
+    _stage_testdata_secret,
+    _testdata_secret_path,
 )
 from dincli.cli.utils import (
     build_and_send_tx,
@@ -51,9 +54,18 @@ def resolve_test_data(
         console.print(f"[bold red]✗ The answer window closed at block {d[2]}; the dispute is upheld. Close it with `close-expired`.[/bold red]")
         raise typer.Exit(1)
 
-    secret = _load_testdata_secret(ctx.obj.get_model_base_dir(model_id), gi, batch_id)
+    # Reveal only a K that reproduces the on-chain commitment: a mismatched
+    # reveal upholds the dispute against the owner.
+    model_base_dir = ctx.obj.get_model_base_dir(model_id)
+    commitment = task_auditor.functions.testDataCommitments(gi, batch_id).call()
+    secret = _load_testdata_secret(model_base_dir, gi, batch_id, commitment)
     if secret is None:
-        console.print(f"[bold red]✗ No saved K for GI {gi} batch {batch_id}. It is written by `auditor-batches create-testdataset --submit` on this machine.[/bold red]")
+        saved = [p for p in (_testdata_secret_path(model_base_dir, gi, batch_id),
+                             _pending_testdata_secret_path(model_base_dir, gi, batch_id)) if p.exists()]
+        if saved:
+            console.print(f"[bold red]✗ No saved K for GI {gi} batch {batch_id} matches its on-chain commitment, so revealing would uphold the dispute. Checked: {', '.join(str(p) for p in saved)}[/bold red]")
+        else:
+            console.print(f"[bold red]✗ No saved K for GI {gi} batch {batch_id}. It is written by `auditor-batches create-testdataset --submit` on this machine.[/bold red]")
         raise typer.Exit(1)
     K, plaintext_keccak = secret
 
@@ -144,15 +156,21 @@ def reassign_test_data(
     encrypted_cid, encrypted_keys, commitment = _encrypt_batch_testdata(
         account, stake_contract, owner_privkey, ref_gi, batch_auditors, batch_info,
     )
-    _save_testdata_secret(model_base_path, ref_gi, batch_id, batch_info["K"], batch_info["plaintext_keccak"])
+    # Staged, then confirmed only once the reassignment lands (see
+    # auditor_batches._stage_testdata_secret).
+    _stage_testdata_secret(model_base_path, ref_gi, batch_id, batch_info["K"], batch_info["plaintext_keccak"])
 
-    build_and_send_tx(
+    receipt = build_and_send_tx(
         ctx,
         task_auditor.functions.reassignAuditTestDataset(ref_gi, batch_id, encrypted_cid, encrypted_keys, commitment),
         f"Reassigning test data for GI {ref_gi} batch {batch_id}",
         f"Test data reassigned for batch {batch_id}.",
         f"Could not reassign test data for batch {batch_id}",
+        exit_on_failure=False,
     )
+    if receipt is None:
+        raise typer.Exit(1)
+    _confirm_testdata_secret(model_base_path, ref_gi, batch_id)
 
 
 # ── Aggregation disputes (DINTaskCoordinator, S4) ───────────────────────────

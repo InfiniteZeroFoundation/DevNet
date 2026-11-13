@@ -332,7 +332,7 @@ Used by: `DINTaskCoordinator`
 | `TA_NoRewardsToClaim` | `claimRewards` with a zero `claimable` balance |
 | `TA_InvalidRewardGI` | `depositRewards` for GI 0 or a GI that has already passed |
 | `TA_RewardsNotSettled` | `claimReward(gi)` before `endGI` settled that GI |
-| `TA_RewardsAlreadySettled` | `openTestDataDispute` on a GI whose rewards are already settled |
+| `TA_RewardsAlreadySettled` | `depositRewards` (including `DinEmission.fundGI`) or `openTestDataDispute` on a GI whose rewards are already settled |
 | `TA_RewardAlreadyClaimed` | Second `claimReward(gi)` by the same address |
 | `TA_NoRewardEarned` | Caller has no client, auditor or aggregator share in that GI |
 

@@ -75,7 +75,7 @@ class DummyTaskAuditorFunctions:
         return DummyCall((batch_id, [_AUDITOR_ADDRESS], [], b""))
 
     def assignAuditTestDataset(self, gi, batch_id, encrypted_cid, encrypted_keys, commitment):
-        return ("assignAuditTestDataset", batch_id)
+        return ("assignAuditTestDataset", batch_id, commitment)
 
 
 class DummyTaskAuditorContract:
@@ -534,19 +534,54 @@ def test_missing_auditor_encryption_key_exits_before_any_tx(monkeypatch, tmp_pat
     assert "register-encryption-key" in out
 
 
+def _record_assigns(monkeypatch, fail_batches=()):
+    """Fakes build_and_send_tx; returns {batch_id: commitment} for the assign
+    txs that succeed (batches in `fail_batches` get no receipt)."""
+    landed = {}
+
+    def fake(ctx, fn, *a, **kw):
+        if isinstance(fn, tuple) and fn[0] == "assignAuditTestDataset":
+            if fn[1] in fail_batches:
+                return None
+            landed[fn[1]] = fn[2]
+        return SimpleNamespace(transactionHash=b"\xab" * 32)
+
+    monkeypatch.setattr(atb, "build_and_send_tx", fake)
+    return landed
+
+
 def test_submit_saves_each_batch_secret_owner_only(monkeypatch, tmp_path):
     ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
-    monkeypatch.setattr(
-        atb, "build_and_send_tx",
-        lambda *a, **kw: SimpleNamespace(transactionHash=b"\xab" * 32),
-    )
+    landed = _record_assigns(monkeypatch)
 
     _invoke(tmp_path, ctx)
 
     for batch_id in (0, 1):
         path = atb._testdata_secret_path(tmp_path, 0, batch_id)
         assert path.stat().st_mode & 0o777 == 0o600
-        K, plaintext_keccak = atb._load_testdata_secret(tmp_path, 0, batch_id)
+        assert not atb._pending_testdata_secret_path(tmp_path, 0, batch_id).exists()
+        K, plaintext_keccak = atb._load_testdata_secret(tmp_path, 0, batch_id, landed[batch_id])
         assert len(K) == 32
         assert plaintext_keccak == b"\x00" * 32
     assert (tmp_path / "config" / "owner_x25519.key").stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_retry_keeps_the_k_behind_the_onchain_commitment(monkeypatch, tmp_path):
+    # Batch 1 lands on the first run; a retry of batch 1 then fails. The
+    # confirmed K must still be the one matching the first commitment
+    # (task_061026_21 close-out, Discussion 231).
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    landed = _record_assigns(monkeypatch)
+    _invoke(tmp_path, ctx)
+    onchain = landed[1]
+    confirmed_before = atb._testdata_secret_path(tmp_path, 0, 1).read_text()
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    _record_assigns(monkeypatch, fail_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx, batch=[1])
+
+    assert atb._testdata_secret_path(tmp_path, 0, 1).read_text() == confirmed_before
+    secret = atb._load_testdata_secret(tmp_path, 0, 1, onchain)
+    assert secret is not None
+    assert atb._testdata_commitment(0, 1, *secret) == onchain
