@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ from dincli.cli.utils import (
     get_manifest_key,
     require_custom_manifest_service,
     resolve_manifest_path,
+    write_private_text,
 )
 from dincli.services.cid_utils import get_bytes32_from_cid
 
@@ -50,35 +52,82 @@ def _load_owner_x25519_key(console) -> PrivateKey:
     owner_key_path = Path(CONFIG_DIR) / "owner_x25519.key"
     if not owner_key_path.exists():
         new_key = PrivateKey.generate()
-        owner_key_path.write_text(
-            new_key.encode(encoder=nacl.encoding.HexEncoder).decode()
-        )
+        write_private_text(owner_key_path, new_key.encode(encoder=nacl.encoding.HexEncoder).decode())
         console.print(f"[yellow]Generated owner X25519 key → {owner_key_path}[/yellow]")
-    owner_key_path.chmod(0o600)
+    owner_key_path.chmod(0o600)  # tightens a key file written before 0600-on-create
     return PrivateKey(bytes.fromhex(owner_key_path.read_text().strip()))
 
 
 # The owner answers a test-data dispute by revealing K and the plaintext hash
-# (DINTaskAuditor.resolveTestDataDispute), so both are kept per (gi, batch)
-# from the moment they're committed on-chain. K decrypts the batch's test
-# data, so the file is owner-only.
+# (DINTaskAuditor.resolveTestDataDispute), so both are kept per (gi, batch).
+# K decrypts the batch's test data, so the files are owner-only.
+#
+# A new K is staged in the pending file before its assign/reassign tx and
+# moved over the confirmed file only once the tx succeeds. A failed retry
+# therefore never replaces the K that matches the on-chain commitment, and a
+# crash after a successful tx still leaves the new K on disk (pending).
 def _testdata_secret_path(model_base_dir: Path, gi: int, batch_id: int) -> Path:
     return Path(model_base_dir) / "audits" / "testdata_keys" / f"gi_{gi}_batch_{batch_id}.json"
 
 
+def _pending_testdata_secret_path(model_base_dir: Path, gi: int, batch_id: int) -> Path:
+    return _testdata_secret_path(model_base_dir, gi, batch_id).with_suffix(".pending.json")
+
+
+def _secret_json(K: bytes, plaintext_keccak: bytes) -> str:
+    return json.dumps({"K": K.hex(), "plaintext_keccak": bytes(plaintext_keccak).hex()})
+
+
 def _save_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, K: bytes, plaintext_keccak: bytes) -> None:
-    path = _testdata_secret_path(model_base_dir, gi, batch_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"K": K.hex(), "plaintext_keccak": bytes(plaintext_keccak).hex()}))
-    path.chmod(0o600)
+    """Writes the confirmed secret directly (the K behind the on-chain commitment)."""
+    write_private_text(_testdata_secret_path(model_base_dir, gi, batch_id), _secret_json(K, plaintext_keccak))
 
 
-def _load_testdata_secret(model_base_dir: Path, gi: int, batch_id: int):
-    path = _testdata_secret_path(model_base_dir, gi, batch_id)
+def _stage_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, K: bytes, plaintext_keccak: bytes) -> None:
+    """Writes a not-yet-committed K to the pending file; the confirmed file is untouched."""
+    write_private_text(_pending_testdata_secret_path(model_base_dir, gi, batch_id), _secret_json(K, plaintext_keccak))
+
+
+def _confirm_testdata_secret(model_base_dir: Path, gi: int, batch_id: int) -> None:
+    """Promotes the pending K to confirmed, after its tx succeeded."""
+    os.replace(
+        _pending_testdata_secret_path(model_base_dir, gi, batch_id),
+        _testdata_secret_path(model_base_dir, gi, batch_id),
+    )
+
+
+def _read_secret(path: Path):
     if not path.exists():
         return None
     data = json.loads(path.read_text())
     return bytes.fromhex(data["K"]), bytes.fromhex(data["plaintext_keccak"])
+
+
+def _load_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, commitment: bytes):
+    """Returns the saved (K, plaintext_keccak) that matches the on-chain
+    `commitment`, or None. Checks the confirmed file first, then the pending
+    one (a tx that landed before the process could confirm it); a matching
+    pending secret is promoted to confirmed."""
+    for path in (_testdata_secret_path(model_base_dir, gi, batch_id),
+                 _pending_testdata_secret_path(model_base_dir, gi, batch_id)):
+        secret = _read_secret(path)
+        if secret is None or _testdata_commitment(gi, batch_id, *secret) != bytes(commitment):
+            continue
+        if path.name.endswith(".pending.json"):
+            _confirm_testdata_secret(model_base_dir, gi, batch_id)
+        return secret
+    return None
+
+
+def _testdata_commitment(gi: int, batch_id: int, K: bytes, plaintext_keccak: bytes) -> bytes:
+    """keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintext_keccak)),
+    the value DINTaskAuditor.resolveTestDataDispute reconstructs."""
+    return bytes(Web3.keccak(
+        encode_packed(
+            ["uint256", "uint256", "bytes32", "bytes32"],
+            [gi, batch_id, bytes(Web3.keccak(K)), bytes(plaintext_keccak)],
+        )
+    ))
 
 
 def _auditors_missing_encryption_key(stake_contract, auditors) -> List[str]:
@@ -113,14 +162,7 @@ def _encrypt_batch_testdata(account, stake_contract, owner_privkey, gi: int, bat
         )
     encrypted_keys = [encrypted_key_by_addr[addr.lower()] for addr in batch_auditors]
 
-    # commitment = keccak256(abi.encodePacked(gi, batchId, keccak256(K), plaintext_keccak))
-    keccak_K = bytes(Web3.keccak(K))
-    commitment = bytes(Web3.keccak(
-        encode_packed(
-            ["uint256", "uint256", "bytes32", "bytes32"],
-            [gi, batch_id, keccak_K, bytes(plaintext_keccak)],
-        )
-    ))
+    commitment = _testdata_commitment(gi, batch_id, K, plaintext_keccak)
     return encrypted_cid, encrypted_keys, commitment
 
 @auditor_batches_app.command()
@@ -363,9 +405,10 @@ def create_testdataset(
                     account, stake_contract, owner_privkey, ref_gi,
                     batch_auditors_by_id[batch_id], batch_info,
                 )
-                # Saved before the tx: once the commitment is on-chain, K is
-                # what answers a dispute against it.
-                _save_testdata_secret(model_base_path, ref_gi, batch_id, batch_info["K"], batch_info["plaintext_keccak"])
+                # Staged before the tx (a crash after it lands must not lose
+                # K), confirmed only once it succeeds, so a failed retry can't
+                # replace the K behind an earlier on-chain commitment.
+                _stage_testdata_secret(model_base_path, ref_gi, batch_id, batch_info["K"], batch_info["plaintext_keccak"])
 
                 time.sleep(5)
                 tx_receipt = build_and_send_tx(
@@ -380,6 +423,8 @@ def create_testdataset(
                 )
                 if tx_receipt is None:
                     failed_batch_ids.append(batch_id)
+                else:
+                    _confirm_testdata_secret(model_base_path, ref_gi, batch_id)
         except Exception as e:
             console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")
             raise typer.Exit(1)

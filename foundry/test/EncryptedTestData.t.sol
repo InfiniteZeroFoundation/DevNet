@@ -534,6 +534,36 @@ contract EncryptedTestDataTest is Test {
         ta.openTestDataDispute(1, 0);
     }
 
+    /// @dev Funding the current GI after settleRewards would strand the DIN:
+    ///      claims pay from the snapshot. Refused; the next GI still accepts
+    ///      deposits (task_061026_21 close-out, Discussion 231).
+    function test_depositRewards_afterSettle_reverts() public {
+        _runToAuditorBatchesCreated();
+        _assignBatch0();
+        address funder = makeAddr("lateFunder");
+        _fundDin(funder, 2 ether);
+
+        // Before settlement the current GI is still fundable.
+        uint256 poolBefore = ta.giRewardPool(1);
+        vm.prank(funder);
+        ta.depositRewards(1, 1 ether);
+        assertEq(ta.giRewardPool(1), poolBefore + 1 ether, "pre-settle deposit lands");
+
+        vm.prank(address(tc));
+        ta.settleRewards(1, 0);
+
+        uint256 balanceBefore = token.balanceOf(funder);
+        vm.prank(funder);
+        vm.expectRevert(TA_RewardsAlreadySettled.selector);
+        ta.depositRewards(1, 1 ether);
+        assertEq(token.balanceOf(funder), balanceBefore, "no DIN pulled");
+        assertEq(ta.giRewardPool(1), poolBefore + 1 ether, "pool unchanged");
+
+        vm.prank(funder);
+        ta.depositRewards(2, 1 ether);
+        assertEq(ta.giRewardPool(2), 1 ether, "next GI still fundable");
+    }
+
     /// @dev A dispute opened before settlement and upheld after it (owner
     ///      silent) returns the bond and flags the batch, but takes no penalty,
     ///      so the contract still holds everything the snapshot owes.

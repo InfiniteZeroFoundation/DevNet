@@ -494,12 +494,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      balance forever with no sweep path. Rejecting that case here is
     ///      cheap and catches both a mistyped GI number and a genuinely
     ///      unreachable one.
-    /// @param gi GI index to fund. Must be >= the coordinator's current GI.
+    ///
+    ///      The current GI is also refused once settleRewards has run: claims
+    ///      pay from giRewardSnapshot, so a later deposit would never reach
+    ///      anyone. DinEmission.fundGI deposits through here, so this covers
+    ///      emission funding too.
+    /// @param gi GI index to fund. Must be >= the coordinator's current GI and not yet settled.
     /// @param amount DIN amount to deposit, in wei (18 decimals).
     function depositRewards(uint256 gi, uint256 amount) external {
         if (amount == 0) revert TA_AmountMustBePositive();
         if (gi == 0 || gi < dintaskcoordinatorContract.GI())
             revert TA_InvalidRewardGI();
+        if (giRewardSnapshot[gi].settled) revert TA_RewardsAlreadySettled();
         dinToken.safeTransferFrom(msg.sender, address(this), amount);
         giRewardPool[gi] += amount;
         emit RewardDeposited(gi, msg.sender, amount);

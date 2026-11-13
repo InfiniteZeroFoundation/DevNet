@@ -29,6 +29,7 @@ from dincli.cli.utils import (
     lock_batch_seed_if_pending,
     require_custom_manifest_service,
     resolve_manifest_path,
+    write_private_text,
 )
 from dincli.cli.worker import (
     ensure_worker_image,
@@ -212,10 +213,9 @@ def register_encryption_key(ctx: typer.Context):
         console.print(f"[dim]Using existing X25519 key {key_path}[/dim]")
     else:
         privkey = PrivateKey.generate()
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        key_path.write_text(privkey.encode(encoder=nacl.encoding.HexEncoder).decode())
+        write_private_text(key_path, privkey.encode(encoder=nacl.encoding.HexEncoder).decode())
         console.print(f"[yellow]Generated X25519 key → {key_path}[/yellow]")
-    key_path.chmod(0o600)
+    key_path.chmod(0o600)  # tightens a key file written before 0600-on-create
 
     pubkey = bytes(privkey.public_key)
     if bytes(stake_contract.functions.getEncryptionKey(account.address).call()) == pubkey:
