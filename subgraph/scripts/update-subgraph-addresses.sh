@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # update-subgraph-addresses.sh
 # Patches subgraph/subgraph.yaml's placeholder platform-contract addresses
-# with the real addresses from a deployments JSON (foundry or hardhat schema).
+# with the real addresses from a foundry deployments JSON.
 #
 # Usage:
 #   ./scripts/update-subgraph-addresses.sh [path/to/deployments.json]
 #
-# Defaults to foundry/deployments/localhost.json, falling back to
-# hardhat/deployments/localhost.json if the first doesn't exist.
+# Defaults to foundry/deployments/localhost.json.
 
 set -euo pipefail
 
@@ -19,12 +18,9 @@ DEPLOYMENTS_JSON="${1:-}"
 if [[ -z "$DEPLOYMENTS_JSON" ]]; then
   if [[ -f "$REPO_ROOT/foundry/deployments/localhost.json" ]]; then
     DEPLOYMENTS_JSON="$REPO_ROOT/foundry/deployments/localhost.json"
-  elif [[ -f "$REPO_ROOT/hardhat/deployments/localhost.json" ]]; then
-    DEPLOYMENTS_JSON="$REPO_ROOT/hardhat/deployments/localhost.json"
   else
     echo "error: no deployments JSON found. Deploy the platform contracts first" >&2
-    echo "  (foundry: forge script script/DeployPlatform.s.sol ...," >&2
-    echo "   hardhat: npx hardhat run scripts/deploy.ts --network localhost)" >&2
+    echo "  (cd foundry && forge script script/DeployPlatform.s.sol ...)" >&2
     echo "or pass an explicit path: $0 <path/to/deployments.json>" >&2
     exit 1
   fi
