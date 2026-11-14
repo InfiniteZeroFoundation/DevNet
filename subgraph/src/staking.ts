@@ -89,9 +89,7 @@ export function handleValidatorUnstakeRequested(
   let v = loadOrCreateValidator(event.params.validator)
   v.activeStake       = v.activeStake.minus(event.params.amount)
   v.pendingWithdrawal = event.params.amount
-  v.withdrawAvailableAt = BigInt.fromI64(
-    event.params.withdrawAvailableAt as i64
-  )
+  v.withdrawAvailableAt = event.params.withdrawAvailableAt
   syncValidatorStatus(v)
   v.save()
 
@@ -99,9 +97,7 @@ export function handleValidatorUnstakeRequested(
   let u  = new UnstakeRequest(id)
   u.validator          = event.params.validator.toHexString()
   u.amount             = event.params.amount
-  u.withdrawAvailableAt = BigInt.fromI64(
-    event.params.withdrawAvailableAt as i64
-  )
+  u.withdrawAvailableAt = event.params.withdrawAvailableAt
   u.claimed         = false
   u.blockNumber     = event.block.number
   u.blockTimestamp  = event.block.timestamp
@@ -150,13 +146,13 @@ export function handleValidatorUnblacklisted(
 
 export function handleValidatorJailed(event: ValidatorJailed): void {
   let v = loadOrCreateValidator(event.params.validator)
-  v.jailedUntil = BigInt.fromI64(event.params.jailedUntil as i64)
+  v.jailedUntil = event.params.jailedUntil
   syncValidatorStatus(v)
   v.save()
 
   let j = new JailEvent(eventId(event.transaction.hash, event.logIndex))
   j.validator       = event.params.validator.toHexString()
-  j.jailedUntil     = BigInt.fromI64(event.params.jailedUntil as i64)
+  j.jailedUntil     = event.params.jailedUntil
   j.reason          = event.params.reason
   j.slasherContract = event.params.slasher
   j.blockNumber     = event.block.number
@@ -202,7 +198,7 @@ export function handleUnbondingPeriodUpdated(
   event: UnbondingPeriodUpdated
 ): void {
   let g = loadOrCreateStakeGovernance()
-  g.unbondingPeriod = BigInt.fromI64(event.params.newPeriod as i64)
+  g.unbondingPeriod = event.params.newPeriod
   g.updatedAtBlock = event.block.number
   g.updatedAtTimestamp = event.block.timestamp
   g.save()

@@ -54,7 +54,7 @@ export function syncValidatorStatus(v: Validator): void {
     v.status = "Blacklisted"
     return
   }
-  if (v.jailedUntil != null) {
+  if (v.jailedUntil !== null) {
     v.status = "Jailed"
     return
   }
