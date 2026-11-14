@@ -36,8 +36,10 @@ export function loadOrCreateValidator(address: Bytes): Validator {
     v.totalSlashed      = BigInt.zero()
     v.totalWithdrawn    = BigInt.zero()
     v.status            = "None"
-    v.blacklisted       = false
-    v.jailedUntil       = null
+    v.blacklisted           = false
+    v.jailedUntil           = null
+    v.activeRegistrations   = 0
+    v.encryptionKey         = null
   }
   return v!
 }

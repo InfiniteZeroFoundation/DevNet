@@ -218,11 +218,22 @@ type Validator @entity {
   "Timestamp until which the validator is jailed, or null if not jailed. Cleared on reactivation."
   jailedUntil: BigInt
 
+  "Running count of active task-contract registrations (from ActiveRegistrationIncremented/Decremented)."
+  activeRegistrations: Int!
+
+  "Most recently registered encryption public key, or null if none registered."
+  encryptionKey: Bytes
+
   stakeEvents: [StakeEvent!]! @derivedFrom(field: "validator")
   slashEvents: [SlashEvent!]! @derivedFrom(field: "validator")
   unstakeRequests: [UnstakeRequest!]! @derivedFrom(field: "validator")
   withdrawalClaims: [WithdrawalClaim!]! @derivedFrom(field: "validator")
   jailEvents: [JailEvent!]! @derivedFrom(field: "validator")
+  s6NoParticipationRecords: [S6NoParticipationRecord!]! @derivedFrom(field: "validator")
+  s6PartialSlashEvents: [S6PartialSlashEvent!]!         @derivedFrom(field: "validator")
+  escalationsS5: [ValidatorEscalationS5!]!              @derivedFrom(field: "validator")
+  escalationsS5Global: [ValidatorEscalationS5Global!]!  @derivedFrom(field: "validator")
+  encryptionKeyHistory: [EncryptionKeyRegistration!]!   @derivedFrom(field: "validator")
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -379,6 +390,112 @@ type SlasherRegistration @entity {
   addedAtTimestamp: BigInt!
   removedAtBlock: BigInt
   removedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — S5/S6 penalty mechanism
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Singleton (id "singleton") mirroring the S5 global-penalty parameters."""
+type S5GlobalParams @entity {
+  "singleton"
+  id: ID!
+  window: BigInt!
+  threshold: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""Singleton (id "singleton") mirroring the S5 recidivism-penalty parameters."""
+type S5RecidivismParams @entity {
+  "singleton"
+  id: ID!
+  window: BigInt!
+  threshold: BigInt!
+  jailDuration: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""Singleton (id "singleton") mirroring the S6 no-participation threshold."""
+type S6Params @entity {
+  "singleton"
+  id: ID!
+  threshold: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""A no-participation record emitted each time a validator's S6 count increments."""
+type S6NoParticipationRecord @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  count: BigInt!
+  reason: Bytes!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A partial slash fired when a validator crosses the S6 no-participation threshold."""
+type S6PartialSlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  slashedAmount: BigInt!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An S5 escalation slash (per-GI recidivism threshold exceeded)."""
+type ValidatorEscalationS5 @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  slashedAmount: BigInt!
+  giIndex: BigInt!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An S5 global escalation slash (global recidivism threshold exceeded)."""
+type ValidatorEscalationS5Global @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  slashedAmount: BigInt!
+  globalCount: BigInt!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A change to the slash treasury address."""
+type SlashTreasuryUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+  treasury: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An encryption key registration or update by a validator."""
+type EncryptionKeyRegistration @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  pubkey: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

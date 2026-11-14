@@ -129,6 +129,15 @@ dataSources:
         - SlasherRegistration
         - StakeGovernance
         - ModelStakeBounds
+        - S5GlobalParams
+        - S5RecidivismParams
+        - S6Params
+        - S6NoParticipationRecord
+        - S6PartialSlashEvent
+        - ValidatorEscalationS5
+        - ValidatorEscalationS5Global
+        - SlashTreasuryUpdate
+        - EncryptionKeyRegistration
       abis:
         - name: DinValidatorStake
           file: ./abis/DinValidatorStake.json
@@ -166,6 +175,36 @@ dataSources:
           handler: handleSlasherContractAdded
         - event: SlasherContractRemoved(indexed address)
           handler: handleSlasherContractRemoved
+
+        # S5/S6 penalty mechanism — governance params
+        - event: S5GlobalParamsUpdated(uint256,uint256)
+          handler: handleS5GlobalParamsUpdated
+        - event: S5RecidivismParamsUpdated(uint256,uint256,uint256)
+          handler: handleS5RecidivismParamsUpdated
+        - event: S6ParamsUpdated(uint256)
+          handler: handleS6ParamsUpdated
+
+        # S5/S6 penalty mechanism — validator events
+        - event: S6NoParticipationRecorded(indexed address,uint256,bytes32,indexed address)
+          handler: handleS6NoParticipationRecorded
+        - event: S6PartialSlashFired(indexed address,uint256,indexed address)
+          handler: handleS6PartialSlashFired
+        - event: ValidatorEscalatedS5(indexed address,uint256,uint256,indexed address)
+          handler: handleValidatorEscalatedS5
+        - event: ValidatorEscalatedS5Global(indexed address,uint256,uint256,indexed address)
+          handler: handleValidatorEscalatedS5Global
+
+        # Slash treasury and encryption key
+        - event: SlashTreasuryUpdated(indexed address)
+          handler: handleSlashTreasuryUpdated
+        - event: EncryptionKeyRegistered(indexed address,bytes)
+          handler: handleEncryptionKeyRegistered
+
+        # Active registration counter
+        - event: ActiveRegistrationIncremented(indexed address)
+          handler: handleActiveRegistrationIncremented
+        - event: ActiveRegistrationDecremented(indexed address)
+          handler: handleActiveRegistrationDecremented
       file: ./src/staking.ts
 
   # ── DinCoordinator ───────────────────────────────────────────────────────────

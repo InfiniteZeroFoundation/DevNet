@@ -14,6 +14,17 @@ import {
   MaxConcurrentRegistrationsPerStakeUnitUpdated,
   SlasherContractAdded,
   SlasherContractRemoved,
+  S5GlobalParamsUpdated,
+  S5RecidivismParamsUpdated,
+  S6ParamsUpdated,
+  S6NoParticipationRecorded,
+  S6PartialSlashFired,
+  ValidatorEscalatedS5,
+  ValidatorEscalatedS5Global,
+  SlashTreasuryUpdated,
+  EncryptionKeyRegistered,
+  ActiveRegistrationIncremented,
+  ActiveRegistrationDecremented,
 } from "../generated/DinValidatorStake/DinValidatorStake"
 import {
   StakeEvent,
@@ -24,6 +35,15 @@ import {
   SlasherRegistration,
   StakeGovernance,
   ModelStakeBounds,
+  S5GlobalParams,
+  S5RecidivismParams,
+  S6Params,
+  S6NoParticipationRecord,
+  S6PartialSlashEvent,
+  ValidatorEscalationS5,
+  ValidatorEscalationS5Global,
+  SlashTreasuryUpdate,
+  EncryptionKeyRegistration,
 } from "../generated/schema"
 import { eventId, loadOrCreateValidator, syncValidatorStatus } from "./utils"
 
@@ -259,4 +279,177 @@ export function handleSlasherContractRemoved(
   s.removedAtBlock     = event.block.number
   s.removedAtTimestamp = event.block.timestamp
   s.save()
+}
+
+// ─── S5/S6 penalty mechanism — governance params ──────────────────────────────
+
+function loadOrCreateS5GlobalParams(): S5GlobalParams {
+  let g = S5GlobalParams.load("singleton")
+  if (g == null) {
+    g = new S5GlobalParams("singleton")
+    g.window             = BigInt.zero()
+    g.threshold          = BigInt.zero()
+    g.updatedAtBlock     = BigInt.zero()
+    g.updatedAtTimestamp = BigInt.zero()
+  }
+  return g!
+}
+
+function loadOrCreateS5RecidivismParams(): S5RecidivismParams {
+  let g = S5RecidivismParams.load("singleton")
+  if (g == null) {
+    g = new S5RecidivismParams("singleton")
+    g.window             = BigInt.zero()
+    g.threshold          = BigInt.zero()
+    g.jailDuration       = BigInt.zero()
+    g.updatedAtBlock     = BigInt.zero()
+    g.updatedAtTimestamp = BigInt.zero()
+  }
+  return g!
+}
+
+function loadOrCreateS6Params(): S6Params {
+  let g = S6Params.load("singleton")
+  if (g == null) {
+    g = new S6Params("singleton")
+    g.threshold          = BigInt.zero()
+    g.updatedAtBlock     = BigInt.zero()
+    g.updatedAtTimestamp = BigInt.zero()
+  }
+  return g!
+}
+
+export function handleS5GlobalParamsUpdated(event: S5GlobalParamsUpdated): void {
+  let g = loadOrCreateS5GlobalParams()
+  g.window             = event.params.window
+  g.threshold          = event.params.threshold
+  g.updatedAtBlock     = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
+}
+
+export function handleS5RecidivismParamsUpdated(event: S5RecidivismParamsUpdated): void {
+  let g = loadOrCreateS5RecidivismParams()
+  g.window             = event.params.window
+  g.threshold          = event.params.threshold
+  g.jailDuration       = event.params.jailDuration
+  g.updatedAtBlock     = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
+}
+
+export function handleS6ParamsUpdated(event: S6ParamsUpdated): void {
+  let g = loadOrCreateS6Params()
+  g.threshold          = event.params.threshold
+  g.updatedAtBlock     = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
+}
+
+// ─── S5/S6 penalty mechanism — validator events ───────────────────────────────
+
+export function handleS6NoParticipationRecorded(event: S6NoParticipationRecorded): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.save()
+
+  let e = new S6NoParticipationRecord(eventId(event.transaction.hash, event.logIndex))
+  e.validator       = event.params.validator.toHexString()
+  e.count           = event.params.count
+  e.reason          = event.params.reason
+  e.slasherContract = event.params.slasher
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+export function handleS6PartialSlashFired(event: S6PartialSlashFired): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.save()
+
+  let e = new S6PartialSlashEvent(eventId(event.transaction.hash, event.logIndex))
+  e.validator       = event.params.validator.toHexString()
+  e.slashedAmount   = event.params.slashedAmount
+  e.slasherContract = event.params.slasher
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+export function handleValidatorEscalatedS5(event: ValidatorEscalatedS5): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.save()
+
+  let e = new ValidatorEscalationS5(eventId(event.transaction.hash, event.logIndex))
+  e.validator       = event.params.validator.toHexString()
+  e.slashedAmount   = event.params.slashedAmount
+  e.giIndex         = event.params.giIndex
+  e.slasherContract = event.params.slasher
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+export function handleValidatorEscalatedS5Global(event: ValidatorEscalatedS5Global): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.save()
+
+  let e = new ValidatorEscalationS5Global(eventId(event.transaction.hash, event.logIndex))
+  e.validator       = event.params.validator.toHexString()
+  e.slashedAmount   = event.params.slashedAmount
+  e.globalCount     = event.params.globalCount
+  e.slasherContract = event.params.slasher
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+// ─── Slash treasury ───────────────────────────────────────────────────────────
+
+export function handleSlashTreasuryUpdated(event: SlashTreasuryUpdated): void {
+  let e = new SlashTreasuryUpdate(eventId(event.transaction.hash, event.logIndex))
+  e.treasury        = event.params.treasury
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+// ─── Encryption key ───────────────────────────────────────────────────────────
+
+export function handleEncryptionKeyRegistered(event: EncryptionKeyRegistered): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.encryptionKey = event.params.pubkey
+  v.save()
+
+  let e = new EncryptionKeyRegistration(eventId(event.transaction.hash, event.logIndex))
+  e.validator       = event.params.validator.toHexString()
+  e.pubkey          = event.params.pubkey
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+// ─── Active registration counter ─────────────────────────────────────────────
+
+export function handleActiveRegistrationIncremented(
+  event: ActiveRegistrationIncremented
+): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  v.activeRegistrations = v.activeRegistrations + 1
+  v.save()
+}
+
+export function handleActiveRegistrationDecremented(
+  event: ActiveRegistrationDecremented
+): void {
+  let v = loadOrCreateValidator(event.params.validator)
+  if (v.activeRegistrations > 0) {
+    v.activeRegistrations = v.activeRegistrations - 1
+  }
+  v.save()
 }
