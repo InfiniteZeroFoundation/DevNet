@@ -30,7 +30,8 @@ Umer's own PRs (opened from the `umermjd11` fork) follow the same rule: one of t
 - 1 approving review from someone other than the author.
 - **The most recent push must be approved by someone other than the person who pushed it.** If a reviewer pushes fixes onto your PR, they can't approve it themselves any more. Someone else has to.
 - Stale approvals are dismissed when new commits are pushed.
-- The `CI OK` check must pass, and the branch must be **up to date with `develop`** before merging.
+- The `CI OK` check must pass on the PR.
+- PRs land through the **merge queue**. The queue tests the PR merged onto the latest `develop` (plus any PRs queued ahead of it) and merges only if `CI OK` passes there too. The branch doesn't have to be up to date by hand, so nobody clicks **Update branch** and approvals aren't reset by it.
 - Merge commits only. Squash and rebase merges are turned off, so authorship and history survive.
 - No force-pushes, no deleting the branch.
 - Only the repository admin role can bypass these rules ([No. 4.4](#44-merge-paths)).
@@ -57,18 +58,25 @@ Tag reviewers by skillset:
 
 ### 4.1 Picking the reviewer
 
-CODEOWNERS requests reviewers when you open the PR. Check that at least one requested reviewer isn't you or a co-author, and add one by hand if not. The reviewer either takes the PR or replies within **2 working days** with "can't take this — @umeradl". Silence past 2 working days escalates to Umer. There's no fixed rotation. We'll revisit that if third-party PRs stall.
+CODEOWNERS requests reviewers when you open the PR. Check that at least one requested reviewer isn't you or a co-author, and add one by hand if not. The reviewer either takes the PR or replies within **2 working days** with "can't take this — @umeradl". Silence past 2 working days escalates to Umer.
+
+**Tie-breaker for first reviews.** There's no fixed rotation. When more than one maintainer in the [reviewer pool](#3-reviewer-pool) is eligible and has the skillset for a PR, the first review goes to whoever has done the fewest reviews that week. Review count doesn't capture effort, so also weigh each person's outstanding reviews and how complex they are, and their availability. The tie-breaker only chooses among eligible reviewers: the skillset table in [No. 3](#3-reviewer-pool) still decides who is eligible, and recusal or escalation is still the right answer when a PR is outside your depth.
+
+**The 2-working-day window covers every review request**, not just the first response: the `foundry/src/**` second sign-off ([No. 4.2](#42-review-depth)) and re-reviews after the author pushes new commits (which dismiss stale approvals, [No. 2](#2-what-github-enforces)) count too. It's a window to respond or escalate in, not a deadline to finish the review:
+
+- If a review needs more time, the reviewer says so on the PR within the window and states what's left to check.
+- If a second sign-off has waited more than 2 working days, the peer reviewer pings @umeradl and @abrahamnash on the PR. For PRs from other authors, Umer or Abraham can instead route it to a security reviewer ([No. 4.2](#42-review-depth)) who isn't the PR's author or its peer reviewer.
 
 ### 4.2 Review depth
 
-- **Any PR touching `foundry/src/**`** (contract logic, storage layout, upgrade paths) needs the peer's review **plus a second sign-off** from @umeradl or @abrahamnash, or from a security reviewer they route it to. Mechanism changes also need the [mechanism sign-off](#mechanism-sign-off) below.
+- **Any PR touching `foundry/src/**`** (contract logic, storage layout, upgrade paths) needs the peer's review **plus a second sign-off** from @umeradl or @abrahamnash. When the author is @robertocarlous or @Abidoyesimze, the second sign-off is always @umeradl or @abrahamnash. For other authors, Umer or Abraham may route it to a security reviewer who isn't the PR's author or its peer reviewer. Mechanism changes also need the [mechanism sign-off](#mechanism-sign-off) below.
 - Docs-only, test-only, Python and tooling PRs need one peer.
 
-**What counts as evidence.** Required checks that are green against an up-to-date `develop` count as evidence for anything CI covers. The reviewer cites the CI run and doesn't re-run it. **Local reproduction is required only for what CI doesn't cover:**
+**What counts as evidence.** Required checks that are green on the PR count as evidence for anything CI covers. The merge queue re-runs them against the latest `develop` before anything lands. The reviewer cites the CI run and doesn't re-run it. **Local reproduction is required only for what CI doesn't cover:**
 
 - storage layout and upgrade safety in `foundry/src/**`
 - deploy and upgrade scripts in `foundry/script/**`
-- `dincli` flows against a live chain or IPFS, until the integration job is a required check ([No. 4.9](#49-ci-as-the-backbone))
+- `dincli` flows against a live chain or IPFS: run the manual **Full GI** workflow, or the suite locally ([No. 4.9](#49-ci-as-the-backbone))
 - any claimed behaviour that no test exercises
 
 The author's part: a clear description of what changed and why, and tests for the change. The reviewer's part: implementation, design, edge cases and coverage, with a concise write-up of findings and any requested fixes.
@@ -87,13 +95,15 @@ The reviewer writes three comments on the PR:
 2. **Merge-proposal table.** Per file: change, lines, diff, functionality (how and why), diff vs current `develop`, recommended merge proposal, actual merge proposal, pending proposal, local/GitHub conflict. "Actual merge proposal" is filled in by whoever performs the merge, not at review time.
 3. **Outcome comment.** Posted after the merge lands, with the real merge SHA(s), the files that deviated from the PR, and final build/test numbers.
 
-Templates: [`.claude/skills/din-pr-review/templates/`](../.claude/skills/din-pr-review/templates/). Use them with or without Claude.
+Templates: [`.claude/skills/din-pr-review/templates/`](../.claude/skills/din-pr-review/templates/).
+
+**Closing keywords.** `develop` is the default branch, so a `Closes #N` / `Fixes #N` / `Resolves #N` in a PR body or a commit message closes issue N automatically when it lands on `develop`. Use one only when the PR completes everything the issue asks, including its approval amendments. Otherwise write `Part of #N` or `Refs #N`. The reviewer checks this before approving and asks for the wording to be changed if the PR is partial. Mergers never put closing keywords in their own merge or fix commit messages (write "No. N").
 
 **Trivial changes** (typo, dead link, comment fix) still need a PR and 1 approval, but a quick approval noting "trivial" replaces the three comments.
 
 ### 4.4 Merge paths
 
-- **(A) GitHub-side merge commit — the default.** The reviewer approves, CI is green, the branch is up to date, and the reviewer merges with a merge commit. If the reviewer wants something changed first, they push the fix onto the PR branch (or open a small follow-up PR). The last-push rule then sends the final approval to someone else.
+- **(A) GitHub-side merge commit — the default.** The reviewer approves, CI is green, and the reviewer clicks **Merge when ready** to add the PR to the merge queue. **The approver queues by default:** whoever gives the final required approval queues the PR once every required check and sign-off is in, unless their review says otherwise. If they can't queue it, or aren't eligible to merge it under [No. 1](#1-the-rule) (for example, they co-authored it), they hand the step to a named eligible maintainer in the review, so no approved PR sits without an owner. When the last thing in is a `foundry/src/**` second sign-off from Umer or Abraham, Umer may queue it himself, and otherwise the peer reviewer does. The queue re-runs `CI OK` on the PR merged onto the latest `develop` and lands it with a merge commit. If that run fails, the queue drops the PR and leaves `develop` untouched; fix it on the PR branch and queue it again. If the reviewer wants something changed first, they push the fix onto the PR branch (or open a small follow-up PR). The last-push rule then sends the final approval to someone else.
 - **(B) Local merge plus follow-up fix commit — exceptional, Umer only.** For PRs that need adapting against a `develop` that has moved (renames, ABI regeneration, docs drift). It needs the admin bypass.
 
 **The admin bypass** is for emergencies and path B only. Each use gets a one-line reason in [Discussion 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170), followed by a normal reviewed PR where possible.
@@ -116,7 +126,7 @@ Any maintainer may revert a merge that breaks `develop` without waiting for the 
 
 ### 4.9 CI as the backbone
 
-The aim is for CI to carry repeatable verification so reviewers can focus on judgment. The isolated integration harness has landed ([PR 213](https://github.com/InfiniteZeroFoundation/DevNet/pull/213)); a non-blocking full-GI job is in review ([PR 242](https://github.com/InfiniteZeroFoundation/DevNet/pull/242)). The integration job becomes a required check once it has run a full GI green on `develop` for a week. Further CI stages (post-merge checks, a shared develop/testnet environment, validation on `develop` → `main` PRs) are tracked in their own issue.
+The aim is for CI to carry repeatable verification so reviewers can focus on judgment. The isolated integration harness has landed ([PR 213](https://github.com/InfiniteZeroFoundation/DevNet/pull/213)); the full-GI job landed in [PR 242](https://github.com/InfiniteZeroFoundation/DevNet/pull/242) and is a manual-only workflow (`.github/workflows/full-gi.yml`). A full GI is too heavy to run on every push, so it is never a required check: reviewers start it when a PR touches the GI flow. Further CI stages (post-merge checks, a shared develop/testnet environment, validation on `develop` → `main` PRs) are tracked in their own issue.
 
 ## 5. Other administrative work
 
@@ -126,7 +136,7 @@ A new non-trivial issue gets a verdict comment (*Approved / Approved with amendm
 
 ### 5.2 Issues: status updates and closing
 
-Anyone may post progress. Closing as **completed** needs a peer to check every proposed change, every approval amendment, every verification item and every linked PR against `origin/develop`, then post a closing comment listing what landed and where (SHAs). If anything remains, post a "done vs. remaining" status comment and leave the issue open. Closing as **not planned** or **duplicate**: anyone may do it, with a one-line reason and a link to the duplicate.
+Anyone may post progress. Closing as **completed** needs a peer to check every proposed change, every approval amendment, every verification item and every linked PR against `origin/develop`, then post a closing comment listing what landed and where (SHAs). If anything remains, post a "done vs. remaining" status comment and leave the issue open. An issue that a closing keyword closed automatically ([No. 4.3](#43-the-review-record)) gets the same check afterwards. If it closed early, reopen it with that status comment. Closing as **not planned** or **duplicate**: anyone may do it, with a one-line reason and a link to the duplicate.
 
 ### 5.3 Tasks
 
@@ -189,6 +199,6 @@ The `din-*` Claude Code skills under [`.claude/skills/`](../.claude/skills/) imp
 | Close an issue as completed, or post done vs. remaining ([No. 5.2](#52-issues-status-updates-and-closing)) | `din-close-issue` |
 | Close a task Discussion ([No. 5.3](#53-tasks)) | `din-task-close` |
 
-**When a local build is needed before merging.** A PR that merges as-is needs no local build: its required `CI OK` runs the full pipeline on GitHub's merge of the PR into `develop`, and the branch has to be up to date, so that run tests exactly what lands. When a reviewer applies fixes, they run `din-merge-build-test` on the fixed branch before pushing it, so the PR doesn't go red in public. CI then re-runs on the pushed fixes and is the gate again. In path B there's no PR CI for the deviation commit, so the local run and `din-push-develop`'s precheck are the gate.
+**When a local build is needed before merging.** A PR that merges as-is needs no local build: its required `CI OK` runs the full pipeline on GitHub's merge of the PR into `develop`, and the merge queue runs it again on the exact commit that lands. When a reviewer applies fixes, they run `din-merge-build-test` on the fixed branch before pushing it, so the PR doesn't go red in public. CI then re-runs on the pushed fixes and is the gate again. In path B there's no PR CI for the deviation commit, so the local run and `din-push-develop`'s precheck are the gate.
 
-The skills are a convenience, not a requirement. Following this file and the [templates](../.claude/skills/din-pr-review/templates/) by hand is equally valid.
+**Use the skills.** Maintainers do every step in the table above through its skill: PR reviews, review fixes, merges, direct pushes, issue approvals, issue closures and task closures. Each skill runs the peer check and the verification steps this file requires, so the record looks the same whoever does the work. Working by hand is the fallback for when the skills can't run (no Claude Code, a tool outage). Then follow this file and the [templates](../.claude/skills/din-pr-review/templates/) exactly, including running `din_peer_check.py` first.

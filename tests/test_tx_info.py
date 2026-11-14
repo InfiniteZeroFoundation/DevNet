@@ -9,7 +9,6 @@ from rich.console import Console
 
 from dincli.cli import utils
 
-
 TX_HASH_STRING = "0x" + "AbC123ef" * 8
 TX_HASH_BYTES = bytes.fromhex(TX_HASH_STRING[2:])
 TX_HASH_HEXBYTES = HexBytes(TX_HASH_BYTES)

@@ -6,7 +6,9 @@ from rich import console
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from model import ModelArchitecture
+# Preserve the public class export for service consumers and serialized models.
+from model import ModelArchitecture as ModelArchitecture
+
 console = console.Console()
 
 

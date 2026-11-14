@@ -10,14 +10,14 @@ Covers:
 """
 
 import secrets
+
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from eth_abi.packed import encode_packed
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from nacl.public import Box, PrivateKey, PublicKey, SealedBox
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from nacl.public import Box, PrivateKey
 from web3 import Web3
-from eth_abi.packed import encode_packed
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers (mirrors the production implementations in modelowner.py / auditor.py)

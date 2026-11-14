@@ -26,11 +26,12 @@ That file is the best concrete example of the fields the current services expect
 
 ## Runtime Resolution Path
 
-The main manifest-loading path is:
+The client manifest-loading path is:
 
 - runtime object: [dincli/services/runtime.py](../../dincli/services/runtime.py)
 - manifest path helpers: [dincli/cli/utils.py](../../dincli/cli/utils.py)
 - client service invocation example: [dincli/cli/client.py](../../dincli/cli/client.py)
+- worker runner: [dincli/docker/worker/worker.py](../../dincli/docker/worker/worker.py)
 
 High-level flow:
 
@@ -38,8 +39,9 @@ High-level flow:
 2. `build_service_runtime_context(...)` resolves the manifest path.
 3. `get_manifest(...)` loads the manifest JSON.
 4. The manifest is attached to a `ServiceRuntimeContext`.
-5. When a custom service is loaded, `dincli` injects that runtime into the function call.
-6. Service code reads keys through `runtime.get_manifest_key(...)` or `runtime.require_manifest_key(...)`.
+5. For `train-lms`, the host uses that context to stage the service and model inputs and create a worker job; the model cache is mounted at `/din/model`.
+6. The worker loads the mounted manifest, imports the service function, and injects a `WorkerRuntime` when the function accepts `runtime` (or `**kwargs`).
+7. Service code reads keys through `runtime.get_manifest_key(...)` or `runtime.require_manifest_key(...)`.
 
 This design keeps manifest access centralized and avoids each service doing its own filesystem or IPFS lookups for configuration.
 
@@ -70,7 +72,7 @@ Each executable service function is represented by a manifest entry that points 
 Example:
 
 ```json
-"train_client_model_and_upload_to_ipfs": {
+"train_client_model": {
   "type": "custom",
   "path": "services/client.py",
   "ipfs": "<cid>",
@@ -116,11 +118,15 @@ For custom services, the manifest entry does more than describe the file. It def
 
 For example, in the client flow:
 
-1. `dincli` reads `train_client_model_and_upload_to_ipfs` from the manifest.
-2. It resolves the local cached file path from the entry's `path`.
-3. It ensures the file exists locally, fetching from IPFS if needed.
-4. It imports the Python function dynamically.
-5. It injects the runtime context when the function accepts `runtime`.
+1. `dincli client train-lms` reads `train_client_model` from the host manifest context and resolves the cached service path from the entry's `path`.
+2. The host ensures the service, model architecture, genesis model, and (when available after GI 1) latest global model are staged locally, fetching from IPFS as needed. The client dataset must already be in the cache.
+3. The host creates a job naming `train_client_model` and starts the worker with the cache mounted at `/din/model`.
+4. The worker reads the mounted manifest, imports the Python function dynamically, and injects a `WorkerRuntime` when the function accepts `runtime` (or `**kwargs`).
+5. The service trains, saves raw weights and optionally a private artifact, and returns the selected artifact's local path as a string. The worker records that path in `result.json`.
+6. `train-lms` maps the returned `/din/model/...` path back to the host model cache and prints it.
+7. The separate `dincli client submit-lm` command independently selects an artifact using the GI, client wallet, and manifest DP settings: `models/clients/<account_address>/lm_<gi>.pth` when DP is disabled, or `lm_<gi>_<mechanism>.pth` in the same directory when enabled. It uploads that file to IPFS and submits its CID and GI to the task auditor's `submitLocalModel(...)` function.
+
+Keep the manifest's DP settings consistent between training and submission for the same model, client wallet, and GI. `submit-lm` selects the file from those settings; it does not consume the worker result directly.
 
 This lets model owners swap in custom task logic without changing `dincli` itself.
 
@@ -134,7 +140,7 @@ The DevNet manifest now supports a preferred nested `dp` block:
   "mode": "afterTraining",
   "mechanism": "post_training_gaussian",
   "parameters": {
-    "clipping_norm": 1.0,
+    "clipping_norm": 10.0,
     "noise_multiplier": 0.5,
     "laplace_scale": 0.35,
     "clip_scope": "global"
@@ -152,6 +158,19 @@ Resolution rules in the current service:
 - the noise applied is `noise_multiplier * clipping_norm`, so changing `clipping_norm` changes the noise with it;
 - `clipping_norm` must be greater than zero whenever DP is enabled. A non-positive value is rejected rather than treated as "no clipping", because noise applied without a sensitivity bound behind it is not a privacy guarantee;
 - `post_training_laplace` requires its own `laplace_scale`. It does not fall back to `noise_multiplier`, which is a differently calibrated quantity measured in different units.
+
+### Per-mechanism `clipping_norm` guidance
+
+The two mechanism families clip fundamentally different quantities, so the right `clipping_norm` differs by roughly an order of magnitude:
+
+| Mechanism | What is clipped | Typical norm (cache_model_0) | Recommended `clipping_norm` |
+|-----------|----------------|------------------------------|-----------------------------|
+| `post_training_gaussian` / `post_training_laplace` | Combined L2 norm of all final weights | ≈ 9.44 (seed=42, 2000 MNIST samples, 20 epochs, lr=0.01) | ≥ 10.0 |
+| `update_gaussian` | Combined L2 norm of the per-round weight delta | ≈ 3.62 (seed=42, 2000 MNIST samples, 20 epochs, lr=0.01) | ≥ 4.0 |
+
+Using `clipping_norm: 1.0` with `post_training_*` and `clip_scope: global` clips the combined weight norm from ≈ 9.44 down to 1.0 — a scale factor of ≈ 0.11 — discarding 89% of each weight before noise is applied. Raising `clipping_norm` to cover the actual combined norm stops the destructive clipping, but raises the noise by the same factor (`noise_scale = noise_multiplier × clipping_norm`), so `noise_multiplier` should be reduced proportionally to keep the same absolute noise standard deviation σ. Note: reducing `noise_multiplier` proportionally preserves σ but does not preserve equivalent DP privacy — a larger `clipping_norm` provides weaker privacy at the same σ because the sensitivity bound is larger. The right tradeoff requires separate privacy assessment.
+
+`update_gaussian` clips only the round-to-round weight delta, not the absolute weights. The right `clipping_norm` depends on training settings; for the reference configuration (seed=42, 2000 MNIST samples, 20 epochs, lr=0.01) the measured delta is ≈ 3.62, so `clipping_norm=4.0` leaves it unclipped. Adjust for your own training duration and dataset.
 
 **Privacy is off unless you turn it on.** A manifest with no `dp` block, or
 with `dp.enabled: false`, uploads raw trained weights with no clipping and no

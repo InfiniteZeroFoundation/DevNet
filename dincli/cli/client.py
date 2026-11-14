@@ -4,7 +4,12 @@ from typing import Optional
 import typer
 from web3 import Web3
 
-from dincli.cli.utils import CACHE_DIR, build_and_send_tx, require_custom_manifest_service, resolve_manifest_path, _confirm_or_exit
+from dincli.cli.utils import (
+    _confirm_or_exit,
+    build_and_send_tx,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.cli.worker import (
     ensure_worker_image,
     ensure_worker_packages_installed,
@@ -103,7 +108,8 @@ def train_lms(
 
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console(model_id)
 
-    taskCoordinator_contract, taskAuditor_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id), ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
+    taskCoordinator_contract = ctx.obj.get_deployed_din_task_coordinator_contract(True, model_id)
+    ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
 
     runtime = ctx.obj.build_service_runtime(role="client", model_id=model_id)
     current_GI, current_GIstate = ctx.obj.get_current_gi_and_state(taskCoordinator_contract)
@@ -316,7 +322,7 @@ def show_models(
     if has_submitted:
         console.print(f"[green]✓ Client {account.address} has submitted ![/green]")
     else:
-        console.print(f"[red]Error:[/red] No local model submission found")
+        console.print("[red]Error:[/red] No local model submission found")
         raise typer.Exit(1)
 
     has_index = taskAuditor_contract.functions.clientSubmissionIndex(ref_gi, account.address).call()
@@ -325,4 +331,4 @@ def show_models(
     
     console.print(f"[green]✓ Client {lm_submission[0]} submitted model {get_cid_from_bytes32(lm_submission[1].hex())}![/green]")
 
-    console.print(f"[bold green]✓ Local model submissions shown![/bold green]")
+    console.print("[bold green]✓ Local model submissions shown![/bold green]")

@@ -1,11 +1,16 @@
 #!/bin/bash
-anvil \
+# The single source of the local chain's flags. The isolated test harness
+# (tests/dincli/conftest.py, DIN_TEST_ISOLATED=1) starts Anvil through this
+# script as well: it sets ANVIL_BIN to the binary it resolved and appends
+# --host 127.0.0.1. Any extra arguments are forwarded to anvil.
+exec "${ANVIL_BIN:-anvil}" \
   --accounts 70 \
   --balance 10000 \
   --chain-id 1337 \
   --code-size-limit 4294967295 \
   --block-time 2 \
-  --mnemonic "test test test test test test test test test test test junk"
+  --mnemonic "test test test test test test test test test test test junk" \
+  "$@"
 #   --code-size-limit 4294967295: lifts the EIP-170 24,576-byte runtime
 #   limit, so local deploys accept contracts a real chain would reject.
 #   CI enforces the limit instead: .github/scripts/contract_size_gate.py

@@ -75,9 +75,10 @@ Value  State Name                          Description
 [3] AwaitingGenesisModel
         │ setGenesisModelIpfsHash()
         ▼
-[4] GenesisModelCreated ◄───────────────────────────[28] GIended
-        │ startGI()                                       ▲
-        ▼                                                 │ endGI()
+[4] GenesisModelCreated     ┌──────────────────────[28] GIended
+        │ startGI() ◄─────────┘                           ▲
+        │ (needs giRewardPool(gi) > 0)                    │ endGI()  (settleRewards)
+        ▼                                                 │
 [5] GIstarted                                       [27] AggregatorsSlashed
         │ startDINaggregatorsRegistration()               ▲
         ▼                                                 │ slashAggregators()
@@ -114,6 +115,8 @@ Value  State Name                          Description
         └── startLMsubmissionsEvaluationReveal() ─► [16] LMSevaluationRevealStarted
                                                       (auditors: revealAuditScore)
 ```
+
+`startGI` runs from `GenesisModelCreated` (the first GI) or `GIended` (every later one), and reverts with `TC_GIRewardPoolNotFunded` until the GI's reward pool on `DINTaskAuditor` is funded (`depositRewards`, or `DinEmission.fundGI`). `endGI` calls `DINTaskAuditor.settleRewards`, after which participants can claim; `releaseGIRegistrationSlots(gi)` is a separate owner call on an ended GI and doesn't change the state.
 
 T1/T2 aggregation submissions follow the same commit-then-reveal shape as LMS evaluation above: `commitT1Aggregation`/`commitT2Aggregation` during the `*AggregationStarted` (commit) state, then the model owner calls `startT1AggregationReveal`/`startT2AggregationReveal` to open `*AggregationRevealStarted`, during which aggregators call `revealT1Aggregation`/`revealT2Aggregation`. Only revealed CIDs are counted by `finalizeT1Aggregation`/`finalizeT2Aggregation`; a committed-but-never-revealed aggregator is excluded from finalization and remains slashable via `slashAggregators`' existing "no submission" (S2) check (issue #156 M-1, task_240926_18 Part C).
 
@@ -410,3 +413,8 @@ The `TA_` and `TC_` prefixes make it immediately clear in stack traces and event
 ### Commit-Then-Reveal Auditor Scoring
 
 `LMSevaluationStarted` and `LMSevaluationRevealStarted` split what was previously a single evaluation phase into two: auditors first commit `keccak256(abi.encode(score, vote, salt, auditor, gi, batchId, modelIndex))` (hiding their vote from other auditors until everyone has committed), then, once the model owner closes the commit window via `DINTaskCoordinator.startLMsubmissionsEvaluationReveal`, reveal the underlying `(score, vote, salt)` for it to be counted. An auditor who commits but never reveals is simply excluded from quorum/median counting, and remains slashable via the existing "missed vote" check in `slashAuditors` — no separate non-reveal handling needed.
+
+
+### Future-GI registry guard (issue #224)
+
+`ITaskModelRegistry` exposes `getModelIdByTaskAuditor(address) -> (bool exists, uint256 modelId)` and `modelDisabled(uint256) -> bool`. `IDINTaskAuditor.validateGIStart(uint256 gi)` is the coordinator-only view gate used by both coordinator start overloads. `TA_ModelNotRegistered()` and `TA_ModelDisabled(uint256 modelId)` describe registry failures; `TC_GIRewardPoolNotFunded()` retains the existing funding selector when raised by this auditor-side gate. See [auditor deployment and scope](DINTaskAuditor.md#future-gi-guard-and-deployment).

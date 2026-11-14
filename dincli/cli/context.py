@@ -1,29 +1,40 @@
 from __future__ import annotations
+
 import functools
-import inspect
-from urllib.parse import urlparse
-
-import json
-
 import importlib.util
+import inspect
+import json
 from importlib.resources import files
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
 
 from dincli.cli.contract_utils import get_contract_instance
 from dincli.cli.log import logger, logging
-from dincli.cli.utils import (CACHE_DIR, GIstatestrToIndex, GIstateToStr,
-                              ManifestPathEscapesBaseError,
-                              get_config, get_manifest, get_manifest_key, get_w3,
-                              load_account, load_config, load_din_info,
-                              resolve_manifest_path, resolve_network,
-                              get_active_account_name,
-                              validate_account_name, resolve_wallet_path)
+from dincli.cli.utils import (
+    CACHE_DIR,
+    GIstatestrToIndex,
+    GIstateToStr,
+    ManifestPathEscapesBaseError,
+    get_active_account_name,
+    get_config,
+    get_manifest,
+    get_manifest_key,
+    get_w3,
+    load_account,
+    load_config,
+    load_din_info,
+    resolve_manifest_path,
+    resolve_network,
+    resolve_wallet_path,
+    validate_account_name,
+)
 from dincli.services.ipfs import retrieve_from_ipfs
 from dincli.services.runtime import ServiceRuntimeContext, build_service_runtime_context
+
 
 def sanitize_rpc_url(url: str) -> str:
     parsed = urlparse(url)
@@ -205,6 +216,15 @@ class DinContext:
             self.console.print("[bold green]✓ DIN Registry contract address:[/bold green] ", dinregistry_address)
         artifact_path = files("dincli").joinpath("abis", "DINModelRegistry.json")
         return get_contract_instance(str(artifact_path), self.network, dinregistry_address)
+
+    def get_deployed_din_emission_contract(self, verbose: bool = True):
+        dinemission_address = load_din_info()[self.network].get("emission")
+        if not dinemission_address:
+            raise ValueError(f"No DinEmission address in din_info for network '{self.network}'")
+        if verbose:
+            self.console.print("[bold green]✓ DIN Emission contract address:[/bold green] ", dinemission_address)
+        artifact_path = files("dincli").joinpath("abis", "DinEmission.json")
+        return get_contract_instance(str(artifact_path), self.network, dinemission_address)
 
     def _get_task_manifest_context(
         self,

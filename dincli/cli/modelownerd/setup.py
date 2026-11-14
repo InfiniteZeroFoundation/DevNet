@@ -1,8 +1,10 @@
 
 import typer
 
-from dincli.cli.contract_utils import erc20_abi
-from dincli.cli.utils import build_and_send_tx, get_env_key, resolve_task_coordinator_address
+from dincli.cli.utils import (
+    build_and_send_tx,
+    resolve_task_coordinator_address,
+)
 
 setup_app = typer.Typer(help="Setup commands")
 
