@@ -8,13 +8,9 @@ Covers:
   - Fallback to RPC when the subgraph returns a GraphQL error body
 """
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import dincli.cli.dinrep as dindao_module
-
 
 # ---------------------------------------------------------------------------
 # Helpers
