@@ -399,23 +399,6 @@ type DINMintEvent @entity {
   transactionHash: Bytes!
 }
 
-"""
-An ETH treasury withdrawal from DinCoordinator.
-Requires the ETHTreasuryWithdrawn event addition (audit §6.3).
-Until that event lands this entity will not be populated.
-"""
-type TreasuryWithdrawal @entity {
-  "txHash-logIndex"
-  id: ID!
-
-  to: Bytes!
-  amount: BigInt!
-
-  blockNumber: BigInt!
-  blockTimestamp: BigInt!
-  transactionHash: Bytes!
-}
-
 """A change to the DIN-per-ETH exchange rate."""
 type ExchangeRateSnapshot @entity {
   "txHash-logIndex"

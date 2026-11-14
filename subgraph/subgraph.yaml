@@ -182,7 +182,6 @@ dataSources:
       language: wasm/assemblyscript
       entities:
         - DINMintEvent
-        - TreasuryWithdrawal
         - ExchangeRateSnapshot
         - SlasherRegistration
       abis:
