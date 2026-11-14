@@ -8,6 +8,7 @@ import {
   EligibilityFinalized,
   PassScoreUpdated,
   AuditorSlashed,
+  LocalModelSubmitted,
 } from "../generated/templates/DINTaskAuditor/DINTaskAuditor"
 import {
   GlobalIteration,
@@ -61,10 +62,11 @@ function loadOrCreateGI(gi: BigInt, blockNumber: BigInt, blockTimestamp: BigInt)
   return entity!
 }
 
-// Creates a stub LocalModelSubmission so that required relationship fields on
-// AuditScoreSubmission / EligibilityVote / EligibilityResult are never null.
-// The stub has zero-value client and modelCID until the LocalModelSubmitted
-// event lands (audit §4.2) and populates the real values.
+// Loads the LocalModelSubmission written by handleLocalModelSubmitted. Falls
+// back to a stub (zero-value client and modelCID) so that required
+// relationship fields on AuditScoreSubmission / EligibilityVote /
+// EligibilityResult are never null even if indexing started after the
+// submission was made.
 function loadOrCreateLMS(
   gi: BigInt,
   modelIndex: BigInt,
@@ -81,9 +83,7 @@ function loadOrCreateLMS(
     entity.modelIndex       = modelIndex
     entity.client           = Address.zero()
     entity.modelCID         = Bytes.fromI32(0)
-    entity.eligible         = null
     entity.finalAvgScore    = null
-    entity.approved         = null
     entity.blockNumber      = blockNumber
     entity.blockTimestamp   = blockTimestamp
     entity.transactionHash  = txHash
@@ -114,6 +114,20 @@ function loadOrCreateAuditBatch(
     entity.save()
   }
   return entity!
+}
+
+// ─── Local model submission ────────────────────────────────────────────────────
+
+export function handleLocalModelSubmitted(event: LocalModelSubmitted): void {
+  let gi  = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let lms = loadOrCreateLMS(event.params.GI, event.params.modelIndex, gi, event.block.number, event.block.timestamp, event.transaction.hash)
+
+  lms.client          = event.params.client
+  lms.modelCID        = event.params.modelCID
+  lms.blockNumber     = event.block.number
+  lms.blockTimestamp  = event.block.timestamp
+  lms.transactionHash = event.transaction.hash
+  lms.save()
 }
 
 // ─── Auditor registration ──────────────────────────────────────────────────────

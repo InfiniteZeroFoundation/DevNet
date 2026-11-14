@@ -10,7 +10,11 @@
 #
 #   2. Deploy the platform contracts and copy their addresses into
 #      subgraph.yaml (replace the 0x0000...0001–0004 placeholders):
-#        cd hardhat && npx hardhat run scripts/deploy.ts --network localhost
+#        cd foundry && forge script script/DeployPlatform.s.sol \
+#          --rpc-url http://127.0.0.1:8545 --broadcast \
+#          --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --unlocked
+#      Addresses are written to foundry/deployments/localhost.json — use the
+#      proxy addresses (the platform contracts sit behind transparent proxies).
 #
 #   3. Start the Graph node stack:
 #        cd subgraph && docker compose up -d

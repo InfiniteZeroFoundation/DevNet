@@ -11,15 +11,19 @@ schema:
 # ─── Network note ────────────────────────────────────────────────────────────
 # The network name "din-local" must match the network configured in the
 # Graph node's config.toml or networks.toml (see docker-compose.yml). The
-# Graph node maps this name to the local anvil/hardhat RPC at
+# Graph node maps this name to the local anvil RPC at
 # http://localhost:8545 (chainId 1337).
 #
 # ─── Address note ────────────────────────────────────────────────────────────
 # Placeholder addresses below must be replaced with the actual addresses
 # after deploying the platform contracts to the local chain. The canonical
 # deploy command is:
-#   cd hardhat && npx hardhat run scripts/deploy.ts --network localhost
-# Deployed addresses are written to hardhat/deployments/local.json.
+#   cd foundry && forge script script/DeployPlatform.s.sol \
+#     --rpc-url http://127.0.0.1:8545 --broadcast \
+#     --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --unlocked
+# Deployed addresses are written to foundry/deployments/localhost.json.
+# The platform contracts sit behind transparent proxies — use the PROXY
+# addresses here, not the implementation addresses.
 # A helper script (scripts/update-subgraph-addresses.sh) will patch this file
 # automatically once P4-IDX2 setup tooling is in place.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +49,7 @@ dataSources:
         - ModelKillSwitchEvent
         - FeeSnapshot
         - RegistryFeeWithdrawal
+        - FeeRouterUpdate
         - DAOAdminTransfer
       abis:
         - name: DINModelRegistry
@@ -91,11 +96,15 @@ dataSources:
         - event: FeesUpdated(uint256,uint256,uint256,uint256)
           handler: handleFeesUpdated
 
-        # Fee withdrawal and admin rotation
-        - event: FeesWithdrawn(indexed address,uint256)
-          handler: handleFeesWithdrawn
-        - event: DAOAdminUpdated(indexed address,indexed address)
-          handler: handleDAOAdminUpdated
+        # Fee sweep to DinFeeRouter and router rotation
+        - event: FeesSweptToRouter(uint256)
+          handler: handleFeesSweptToRouter
+        - event: FeeRouterUpdated(indexed address)
+          handler: handleFeeRouterUpdated
+
+        # Admin rotation (Ownable — replaces DAOAdminUpdated)
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleOwnershipTransferred
       file: ./src/registry.ts
 
   # ── DinValidatorStake ────────────────────────────────────────────────────────
@@ -193,12 +202,6 @@ dataSources:
           handler: handleCoordinatorSlasherAdded
         - event: SlasherContractRemoved(indexed address)
           handler: handleCoordinatorSlasherRemoved
-
-        # ETHTreasuryWithdrawn not yet in ABI — handler registered here for
-        # when the audit §6.3 addition lands and the ABI is updated.
-        # Uncomment once the event exists:
-        # - event: ETHTreasuryWithdrawn(indexed address,uint256)
-        #   handler: handleETHTreasuryWithdrawn
       file: ./src/coordinator.ts
 
   # ── DinToken ─────────────────────────────────────────────────────────────────
@@ -235,10 +238,6 @@ dataSources:
 # (registry.ts) when DINModelRegistry emits ModelApproved. The model ID and
 # paired contract address are passed via DataSourceContext so task-level
 # handlers can link entities back to the platform-level Model entity.
-#
-# Pending event additions (see task-contract-event-audit.md §4) are commented
-# out below. Uncomment each once the corresponding event lands in the contract
-# and the ABI is regenerated.
 # ─────────────────────────────────────────────────────────────────────────────
 
 templates:
@@ -259,10 +258,9 @@ templates:
         - Tier1Batch
         - Tier2Batch
         - AggregatorSlashEvent
-        # Pending entities (populated once proposed events land):
-        # - GIStateTransition
-        # - T1AggregationSubmission
-        # - T2AggregationSubmission
+        - GIStateTransition
+        - T1AggregationSubmission
+        - T2AggregationSubmission
       abis:
         - name: DINTaskCoordinator
           file: ./abis/DINTaskCoordinator.json
@@ -283,17 +281,19 @@ templates:
         - event: AggregatorSlashed(indexed uint256,indexed uint256,indexed address,bytes32,uint256,uint256)
           handler: handleAggregatorSlashed
 
-        # ── Pending — uncomment once events land in the contract ─────────────
-        # - event: GIStateChanged(indexed uint256,indexed uint8)
-        #   handler: handleGIStateChanged
-        # - event: T1AggregationSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
-        #   handler: handleT1AggregationSubmitted
-        # - event: T2AggregationSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
-        #   handler: handleT2AggregationSubmitted
-        # - event: T1BatchFinalized(indexed uint256,indexed uint256,bytes32)
-        #   handler: handleT1BatchFinalized
-        # - event: T2Finalized(indexed uint256,bytes32)
-        #   handler: handleT2Finalized
+        # ── GI state machine ─────────────────────────────────────────────────
+        - event: GIStateChanged(indexed uint256,indexed uint8)
+          handler: handleGIStateChanged
+
+        # ── Aggregation submissions and finalization ─────────────────────────
+        - event: T1AggregationSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT1AggregationSubmitted
+        - event: T2AggregationSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT2AggregationSubmitted
+        - event: T1BatchFinalized(indexed uint256,indexed uint256,bytes32)
+          handler: handleT1BatchFinalized
+        - event: T2Finalized(indexed uint256,bytes32)
+          handler: handleT2Finalized
       file: ./src/taskCoordinator.ts
 
   # ── DINTaskAuditor ───────────────────────────────────────────────────────────
@@ -315,12 +315,15 @@ templates:
         - EligibilityResult
         - AuditorSlashEvent
         - PassScoreUpdate
-        # Pending entity (populated once LocalModelSubmitted event lands):
-        # - LocalModelSubmission
+        - LocalModelSubmission
       abis:
         - name: DINTaskAuditor
           file: ./abis/DINTaskAuditor.json
       eventHandlers:
+        # ── Local model submission ───────────────────────────────────────────
+        - event: LocalModelSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleLocalModelSubmitted
+
         # ── Auditor registration ─────────────────────────────────────────────
         - event: DINAuditorRegistered(indexed uint256,indexed address)
           handler: handleAuditorRegistered
@@ -349,8 +352,4 @@ templates:
 
         # RewardDeposited is declared in the ABI but never emitted (dead code —
         # see task-contract-event-audit.md §5). No handler registered.
-
-        # ── Pending — uncomment once LocalModelSubmitted event lands ─────────
-        # - event: LocalModelSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
-        #   handler: handleLocalModelSubmitted
       file: ./src/taskAuditor.ts

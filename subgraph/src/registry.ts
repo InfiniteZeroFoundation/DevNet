@@ -1,4 +1,4 @@
-import { BigInt, DataSourceContext, Address } from "@graphprotocol/graph-ts"
+import { BigInt, DataSourceContext, Address, ethereum } from "@graphprotocol/graph-ts"
 import {
   ModelRegistrationRequested,
   ModelApproved,
@@ -13,8 +13,9 @@ import {
   OpenSourceUpdateFeeUpdated,
   ProprietaryUpdateFeeUpdated,
   FeesUpdated,
-  FeesWithdrawn,
-  DAOAdminUpdated,
+  FeesSweptToRouter,
+  FeeRouterUpdated,
+  OwnershipTransferred,
   DINModelRegistry,
 } from "../generated/DINModelRegistry/DINModelRegistry"
 import {
@@ -24,6 +25,7 @@ import {
   ModelKillSwitchEvent,
   FeeSnapshot,
   RegistryFeeWithdrawal,
+  FeeRouterUpdate,
   DAOAdminTransfer,
 } from "../generated/schema"
 import { eventId } from "./utils"
@@ -54,7 +56,6 @@ export function handleModelRegistrationRequested(
   req.taskAuditor       = stored.getTaskAuditor()
 
   req.processed  = false
-  req.approved   = null
   req.model      = null
 
   req.submittedAtBlock     = event.block.number
@@ -149,7 +150,6 @@ export function handleManifestUpdateRequested(
   mur.newManifestCID = stored.getNewManifestCID()
 
   mur.processed = false
-  mur.approved  = null
 
   mur.submittedAtBlock     = event.block.number
   mur.submittedAtTimestamp = event.block.timestamp
@@ -201,7 +201,7 @@ export function handleModelEnabled(event: ModelEnabled): void {
 function _applyKillSwitch(
   modelId: BigInt,
   disabled: boolean,
-  event: ModelDisabled | ModelEnabled
+  event: ethereum.Event
 ): void {
   let model = Model.load(modelId.toString())
   if (model != null) {
@@ -250,9 +250,9 @@ export function handleProprietaryUpdateFeeUpdated(
 }
 
 function _saveGranularFeeSnapshot(
-  contractAddress: import("@graphprotocol/graph-ts").Address,
+  contractAddress: Address,
   kind: string,
-  event: OpenSourceFeeUpdated | ProprietaryFeeUpdated | OpenSourceUpdateFeeUpdated | ProprietaryUpdateFeeUpdated
+  event: ethereum.Event
 ): void {
   let registry = DINModelRegistry.bind(contractAddress)
   let snap     = new FeeSnapshot(eventId(event.transaction.hash, event.logIndex))
@@ -281,11 +281,17 @@ export function handleFeesUpdated(event: FeesUpdated): void {
   snap.save()
 }
 
-export function handleFeesWithdrawn(event: FeesWithdrawn): void {
+// Registry fees are no longer withdrawn to an arbitrary address — they are
+// swept to the configured DinFeeRouter. The event carries only the amount, so
+// the recipient is read from feeRouter() at this block.
+export function handleFeesSweptToRouter(event: FeesSweptToRouter): void {
+  let registry = DINModelRegistry.bind(event.address)
+  let router   = registry.try_feeRouter()
+
   let w = new RegistryFeeWithdrawal(
     eventId(event.transaction.hash, event.logIndex)
   )
-  w.to              = event.params.to
+  w.to              = router.reverted ? Address.zero() : router.value
   w.amount          = event.params.amount
   w.blockNumber     = event.block.number
   w.blockTimestamp  = event.block.timestamp
@@ -293,12 +299,26 @@ export function handleFeesWithdrawn(event: FeesWithdrawn): void {
   w.save()
 }
 
-export function handleDAOAdminUpdated(event: DAOAdminUpdated): void {
+export function handleFeeRouterUpdated(event: FeeRouterUpdated): void {
+  let u = new FeeRouterUpdate(
+    eventId(event.transaction.hash, event.logIndex)
+  )
+  u.sourceContract  = event.address
+  u.feeRouter       = event.params.feeRouter
+  u.blockNumber     = event.block.number
+  u.blockTimestamp  = event.block.timestamp
+  u.transactionHash = event.transaction.hash
+  u.save()
+}
+
+// DINModelRegistry is Ownable — the DAO admin is the contract owner, so admin
+// rotation is tracked through OwnershipTransferred (replaces DAOAdminUpdated).
+export function handleOwnershipTransferred(event: OwnershipTransferred): void {
   let t = new DAOAdminTransfer(
     eventId(event.transaction.hash, event.logIndex)
   )
-  t.oldAdmin        = event.params.oldAdmin
-  t.newAdmin        = event.params.newAdmin
+  t.oldAdmin        = event.params.previousOwner
+  t.newAdmin        = event.params.newOwner
   t.blockNumber     = event.block.number
   t.blockTimestamp  = event.block.timestamp
   t.transactionHash = event.transaction.hash

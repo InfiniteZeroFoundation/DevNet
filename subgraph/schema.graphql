@@ -2,15 +2,13 @@
 #
 # Covers the four platform contracts:
 #   DINModelRegistry, DinValidatorStake, DinCoordinator, DinToken
+# and the per-model task contracts (DINTaskCoordinator, DINTaskAuditor) via
+# dynamic data source templates.
 #
-# Task-level contracts (DINTaskCoordinator, DINTaskAuditor) are out of scope
-# for this subgraph — deferred to P5+ dynamic data sources.
-#
-# Chain: chainId 1337 (local anvil / hardhat).
-# Event field notes: two event additions are pending a reviewed PR
-# (see subgraph/docs/event-coverage-audit.md §6). Fields marked
-# [PENDING EVENT ADDITION] are populated once those events land; until then
-# the mapping handler will set them from a storage call on approval.
+# Chain: chainId 1337 (local anvil).
+# Some registry fields not carried in their events (e.g. isOpenSource and
+# feePaid on ModelRegistrationRequest) are read from contract storage by the
+# mapping handler at the event's block.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Registry — registration requests
@@ -24,10 +22,10 @@ type ModelRegistrationRequest @entity {
   requestId: BigInt!
   requester: Bytes!
 
-  "Populated from event once §6.1 addition lands; derived from storage call until then"
+  "Read from modelRequests() storage at the request block"
   isOpenSource: Boolean!
 
-  "Fee paid at submission time in wei; populated once §6.1 addition lands"
+  "Fee paid at submission time in wei, read from modelRequests() storage"
   feePaid: BigInt!
 
   manifestCID: Bytes!
@@ -87,7 +85,7 @@ type ManifestUpdateRequest @entity {
   requestId: BigInt!
   model: Model!
 
-  "Populated from event once §6.2 addition lands; derivable from model.owner until then"
+  "Derived from Model.owner (only the model owner can request a manifest update)"
   requester: Bytes!
 
   feePaid: BigInt!
@@ -144,13 +142,28 @@ type FeeSnapshot @entity {
   transactionHash: Bytes!
 }
 
-"""An ETH fee withdrawal from DINModelRegistry."""
+"""An ETH fee sweep from DINModelRegistry to the DinFeeRouter (FeesSweptToRouter)."""
 type RegistryFeeWithdrawal @entity {
   "txHash-logIndex"
   id: ID!
 
+  "The fee router at the time of the sweep, read from feeRouter()"
   to: Bytes!
   amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""Records every change of the fee router address on DINModelRegistry (FeeRouterUpdated)."""
+type FeeRouterUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  "The contract that emitted the event"
+  sourceContract: Bytes!
+  feeRouter: Bytes!
 
   blockNumber: BigInt!
   blockTimestamp: BigInt!
@@ -161,7 +174,7 @@ type RegistryFeeWithdrawal @entity {
 # Model Registry — governance key rotation
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""Records every DAOAdmin ownership transfer."""
+"""Records every DAOAdmin (Ownable owner) transfer, from OwnershipTransferred."""
 type DAOAdminTransfer @entity {
   "txHash-logIndex"
   id: ID!
@@ -455,9 +468,7 @@ type TokenTransferEvent @entity {
 # DINTaskCoordinator and DINTaskAuditor are deployed once per model (not once
 # globally). The subgraph tracks them via data source templates instantiated
 # when DINModelRegistry emits ModelApproved.
-#
-# Event additions required before several entities below are fully populated
-# are marked [PENDING — see task-contract-event-audit.md §4].
+
 # =============================================================================
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -478,8 +489,7 @@ type GlobalIteration @entity {
   "Back-reference to the platform-level Model entity"
   model: Model!
 
-  """Current GIstates enum value as uint8.
-  Populated once GIStateChanged event lands [PENDING — audit §4.1].
+  """Current GIstates enum value as uint8, updated from GIStateChanged.
   Starts at 5 (GIstarted) — the first state reachable after model registration."""
   currentState: Int!
 
@@ -493,7 +503,7 @@ type GlobalIteration @entity {
   auditorSlashEvents: [AuditorSlashEvent!]!          @derivedFrom(field: "globalIteration")
   stateTransitions: [GIStateTransition!]!            @derivedFrom(field: "globalIteration")
 
-  "T2 winning CID — the new global model. Set once T2Finalized event lands [PENDING — audit §4.4]."
+  "T2 winning CID — the new global model. Set by T2Finalized."
   globalModelCID: Bytes
 
   "True once endGI() has been called and GIStateChanged(GIended) fires."
@@ -555,7 +565,7 @@ type Tier1Batch @entity {
   "True once finalizeT1Aggregation() selects the majority CID."
   finalized: Boolean!
 
-  "Majority-agreed aggregation CID. Set once T1BatchFinalized event lands [PENDING — audit §4.4]."
+  "Majority-agreed aggregation CID. Set by T1BatchFinalized."
   winningCID: Bytes
 
   createdAtBlock: BigInt!
@@ -579,7 +589,7 @@ type Tier2Batch @entity {
   "True once finalizeT2Aggregation() selects the majority CID."
   finalized: Boolean!
 
-  "Majority-agreed CID — the new global model for this GI. Set once T2Finalized event lands [PENDING — audit §4.4]."
+  "Majority-agreed CID — the new global model for this GI. Set by T2Finalized."
   globalModelCID: Bytes
 
   createdAtBlock: BigInt!
@@ -618,7 +628,7 @@ type AuditBatch @entity {
 
 """
 A local model submitted by a client during the LMS phase.
-Requires the LocalModelSubmitted event addition [PENDING — audit §4.2].
+Populated from the LocalModelSubmitted event.
 Until that event lands this entity will not be populated.
 """
 type LocalModelSubmission @entity {
@@ -652,7 +662,7 @@ type LocalModelSubmission @entity {
 
 """
 A T1 aggregation CID submitted by an aggregator for a specific batch.
-Requires the T1AggregationSubmitted event addition [PENDING — audit §4.3].
+Populated from the T1AggregationSubmitted event.
 """
 type T1AggregationSubmission @entity {
   "taskCoordinatorAddress-gi-batchId-aggregatorAddress"
@@ -669,7 +679,7 @@ type T1AggregationSubmission @entity {
 
 """
 A T2 aggregation CID submitted by an aggregator.
-batchId is always 0. Requires the T2AggregationSubmitted event addition [PENDING — audit §4.3].
+batchId is always 0. Populated from the T2AggregationSubmitted event.
 """
 type T2AggregationSubmission @entity {
   "taskCoordinatorAddress-gi-aggregatorAddress"
@@ -799,7 +809,6 @@ type PassScoreUpdate @entity {
 
 """
 A single GI state machine transition recorded from GIStateChanged.
-Requires the GIStateChanged event addition [PENDING — audit §4.1].
 One record per state write — the full lifecycle of a GI is reconstructable
 from the ordered sequence of GIStateTransition records for a GlobalIteration.
 newState is the uint8 value of the GIstates enum in DINShared.sol.
@@ -810,7 +819,7 @@ type GIStateTransition @entity {
 
   globalIteration: GlobalIteration!
 
-  "uint8 value of the GIstates enum (0 = AwaitingDINTaskAuditorToBeSet … 22 = GIended)"
+  "uint8 value of the GIstates enum (0 = AwaitingDINTaskAuditorToBeSet … 28 = GIended)"
   newState: Int!
 
   blockNumber: BigInt!

@@ -1,9 +1,14 @@
-import { BigInt, dataSource } from "@graphprotocol/graph-ts"
+import { BigInt, dataSource, log } from "@graphprotocol/graph-ts"
 import {
   DINValidatorRegistered,
   Tier1BatchAuto,
   Tier2BatchAuto,
   AggregatorSlashed,
+  GIStateChanged,
+  T1AggregationSubmitted,
+  T2AggregationSubmitted,
+  T1BatchFinalized,
+  T2Finalized,
 } from "../generated/templates/DINTaskCoordinator/DINTaskCoordinator"
 import {
   GlobalIteration,
@@ -11,8 +16,28 @@ import {
   Tier1Batch,
   Tier2Batch,
   AggregatorSlashEvent,
+  GIStateTransition,
+  T1AggregationSubmission,
+  T2AggregationSubmission,
 } from "../generated/schema"
 import { eventId } from "./utils"
+
+// ─── GI state enum ────────────────────────────────────────────────────────────
+
+// GIstates on develop, indexed by GIStateChanged.newState (DINShared.md §2.1)
+export const GI_STATES: string[] = [
+  "AwaitingDINTaskAuditorToBeSet", "AwaitingDINTaskCoordinatorAsSlasher", "AwaitingDINTaskAuditorAsSlasher",
+  "AwaitingGenesisModel", "GenesisModelCreated", "GIstarted",
+  "DINaggregatorsRegistrationStarted", "DINaggregatorsRegistrationClosed",
+  "DINauditorsRegistrationStarted", "DINauditorsRegistrationClosed",
+  "LMSstarted", "LMSclosed", "AuditSeedLocked", "AuditorsBatchesCreated", "AuditTestDataAssigned",
+  "LMSevaluationStarted", "LMSevaluationRevealStarted", "LMSevaluationClosed", "AggSeedLocked",
+  "T1nT2Bcreated", "T1AggregationStarted", "T1AggregationRevealStarted", "T1AggregationDone",
+  "T2AggregationStarted", "T2AggregationRevealStarted", "T2AggregationDone",
+  "AuditorsSlashed", "AggregatorsSlashed", "GIended",
+];
+
+const GI_ENDED: i32 = 28 // GI_STATES[28] == "GIended"
 
 // ─── Context helpers ──────────────────────────────────────────────────────────
 
@@ -112,4 +137,97 @@ export function handleAggregatorSlashed(event: AggregatorSlashed): void {
   e.blockTimestamp   = event.block.timestamp
   e.transactionHash  = event.transaction.hash
   e.save()
+}
+
+// ─── GI state machine ──────────────────────────────────────────────────────────
+
+export function handleGIStateChanged(event: GIStateChanged): void {
+  let gi       = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let newState = event.params.newState
+
+  if (newState < 0 || newState >= GI_STATES.length) {
+    log.warning("GIStateChanged: unknown GIstates ordinal {} for GI {}", [
+      newState.toString(), event.params.GI.toString(),
+    ])
+  }
+
+  gi.currentState = newState
+  if (newState == GI_ENDED) {
+    gi.ended            = true
+    gi.endedAtBlock     = event.block.number
+    gi.endedAtTimestamp = event.block.timestamp
+  }
+  gi.save()
+
+  let t = new GIStateTransition(gi.id + "-" + newState.toString())
+  t.globalIteration = gi.id
+  t.newState        = newState
+  t.blockNumber     = event.block.number
+  t.blockTimestamp  = event.block.timestamp
+  t.transactionHash = event.transaction.hash
+  t.save()
+}
+
+// ─── Aggregation submissions ───────────────────────────────────────────────────
+
+export function handleT1AggregationSubmitted(event: T1AggregationSubmitted): void {
+  let tcAddress = dataSource.context().getBytes("taskCoordinatorAddress")
+  let batchId   = tcAddress.toHex() + "-" + event.params.GI.toString() + "-" + event.params.batchId.toString()
+
+  let sub = new T1AggregationSubmission(batchId + "-" + event.params.aggregator.toHex())
+  sub.tier1Batch      = batchId
+  sub.aggregator      = event.params.aggregator
+  sub.cid             = event.params.cid
+  sub.blockNumber     = event.block.number
+  sub.blockTimestamp  = event.block.timestamp
+  sub.transactionHash = event.transaction.hash
+  sub.save()
+}
+
+export function handleT2AggregationSubmitted(event: T2AggregationSubmitted): void {
+  // T2 batchId is always 0 — Tier2Batch ID is keyed on gi only.
+  let batchId = giEntityId(event.params.GI)
+
+  let sub = new T2AggregationSubmission(batchId + "-" + event.params.aggregator.toHex())
+  sub.tier2Batch      = batchId
+  sub.aggregator      = event.params.aggregator
+  sub.cid             = event.params.cid
+  sub.blockNumber     = event.block.number
+  sub.blockTimestamp  = event.block.timestamp
+  sub.transactionHash = event.transaction.hash
+  sub.save()
+}
+
+// ─── Aggregation finalization ──────────────────────────────────────────────────
+
+export function handleT1BatchFinalized(event: T1BatchFinalized): void {
+  let tcAddress = dataSource.context().getBytes("taskCoordinatorAddress")
+  let id = tcAddress.toHex() + "-" + event.params.GI.toString() + "-" + event.params.batchId.toString()
+  let batch = Tier1Batch.load(id)
+  if (batch == null) {
+    log.warning("T1BatchFinalized: Tier1Batch {} not found", [id])
+    return
+  }
+  batch.finalized            = true
+  batch.winningCID           = event.params.winningCID
+  batch.finalizedAtBlock     = event.block.number
+  batch.finalizedAtTimestamp = event.block.timestamp
+  batch.save()
+}
+
+export function handleT2Finalized(event: T2Finalized): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  gi.globalModelCID = event.params.globalModelCID
+  gi.save()
+
+  let batch = Tier2Batch.load(gi.id)
+  if (batch == null) {
+    log.warning("T2Finalized: Tier2Batch {} not found", [gi.id])
+    return
+  }
+  batch.finalized            = true
+  batch.globalModelCID       = event.params.globalModelCID
+  batch.finalizedAtBlock     = event.block.number
+  batch.finalizedAtTimestamp = event.block.timestamp
+  batch.save()
 }
