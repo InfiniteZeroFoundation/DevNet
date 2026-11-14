@@ -1,5 +1,5 @@
-import { TokensMinted, Transfer } from "../generated/DinToken/DinToken"
-import { TokenMintEvent, TokenTransferEvent } from "../generated/schema"
+import { TokensMinted, TokensBurned, Transfer } from "../generated/DinToken/DinToken"
+import { TokenMintEvent, TokenBurnEvent, TokenTransferEvent } from "../generated/schema"
 import { eventId } from "./utils"
 
 export function handleTokensMinted(event: TokensMinted): void {
@@ -12,8 +12,17 @@ export function handleTokensMinted(event: TokensMinted): void {
   e.save()
 }
 
+export function handleTokensBurned(event: TokensBurned): void {
+  let e = new TokenBurnEvent(eventId(event.transaction.hash, event.logIndex))
+  e.from            = event.params.from
+  e.amount          = event.params.amount
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
 // Standard ERC20 Transfer — covers mints (from = 0x0) and normal transfers.
-// Burns are not possible in DinToken but the handler is intentionally general.
 export function handleTransfer(event: Transfer): void {
   let e = new TokenTransferEvent(eventId(event.transaction.hash, event.logIndex))
   e.from            = event.params.from

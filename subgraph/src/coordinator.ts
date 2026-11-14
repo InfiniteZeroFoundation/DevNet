@@ -4,11 +4,23 @@ import {
   ValidatorStakeContractUpdated,
   SlasherContractAdded,
   SlasherContractRemoved,
+  EmissionMinted,
+  EmissionContractUpdated,
+  MintCapUpdated,
+  FaucetRetiredEvent,
+  FeeRouterUpdated,
+  FeesSweptToRouter,
 } from "../generated/DinCoordinator/DinCoordinator"
 import {
   DINMintEvent,
   ExchangeRateSnapshot,
   SlasherRegistration,
+  EmissionMintEvent,
+  EmissionContractUpdate,
+  MintCapUpdate,
+  FaucetRetired,
+  FeeSweepToRouter,
+  FeeRouterUpdate,
 } from "../generated/schema"
 import { eventId } from "./utils"
 
@@ -86,4 +98,66 @@ export function handleCoordinatorSlasherRemoved(
   s.removedAtBlock     = event.block.number
   s.removedAtTimestamp = event.block.timestamp
   s.save()
+}
+
+// ─── Emission ─────────────────────────────────────────────────────────────────
+
+export function handleEmissionMinted(event: EmissionMinted): void {
+  let e = new EmissionMintEvent(eventId(event.transaction.hash, event.logIndex))
+  e.to              = event.params.to
+  e.amount          = event.params.amount
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+export function handleEmissionContractUpdated(event: EmissionContractUpdated): void {
+  let e = new EmissionContractUpdate(eventId(event.transaction.hash, event.logIndex))
+  e.emissionContract = event.params.emissionContract
+  e.blockNumber      = event.block.number
+  e.blockTimestamp   = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+// ─── Mint cap and faucet ──────────────────────────────────────────────────────
+
+export function handleMintCapUpdated(event: MintCapUpdated): void {
+  let e = new MintCapUpdate(eventId(event.transaction.hash, event.logIndex))
+  e.newCap          = event.params.newCap
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+export function handleFaucetRetired(event: FaucetRetiredEvent): void {
+  let e = new FaucetRetired(eventId(event.transaction.hash, event.logIndex))
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
+}
+
+// ─── Fee routing ──────────────────────────────────────────────────────────────
+
+export function handleCoordinatorFeeRouterUpdated(event: FeeRouterUpdated): void {
+  let u = new FeeRouterUpdate(eventId(event.transaction.hash, event.logIndex))
+  u.sourceContract  = event.address
+  u.feeRouter       = event.params.feeRouter
+  u.blockNumber     = event.block.number
+  u.blockTimestamp  = event.block.timestamp
+  u.transactionHash = event.transaction.hash
+  u.save()
+}
+
+export function handleCoordinatorFeesSweptToRouter(event: FeesSweptToRouter): void {
+  let e = new FeeSweepToRouter(eventId(event.transaction.hash, event.logIndex))
+  e.sourceContract  = event.address
+  e.amount          = event.params.amount
+  e.blockNumber     = event.block.number
+  e.blockTimestamp  = event.block.timestamp
+  e.transactionHash = event.transaction.hash
+  e.save()
 }

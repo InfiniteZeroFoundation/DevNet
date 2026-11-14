@@ -1443,6 +1443,19 @@
     },
     {
       "type": "function",
+      "name": "taskProtocolVersion",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
       "name": "tier1BatchCount",
       "inputs": [
         {
@@ -2414,16 +2427,6 @@
     },
     {
       "type": "error",
-      "name": "TC_EvalPhaseNotClosed",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "TC_FailedToCreateAuditorsBatches",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "TC_FailedToFinalizeEvaluation",
       "inputs": []
     },
@@ -2439,7 +2442,7 @@
     },
     {
       "type": "error",
-      "name": "TC_GIRewardPoolNotFunded",
+      "name": "TC_GINotEnded",
       "inputs": []
     },
     {
@@ -2575,6 +2578,11 @@
     {
       "type": "error",
       "name": "TC_RevealCannotBeStarted",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TC_SlotsAlreadyReleased",
       "inputs": []
     },
     {

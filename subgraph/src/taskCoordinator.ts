@@ -1,4 +1,4 @@
-import { BigInt, dataSource, log } from "@graphprotocol/graph-ts"
+import { Address, BigInt, dataSource, log } from "@graphprotocol/graph-ts"
 import {
   DINValidatorRegistered,
   Tier1BatchAuto,
@@ -9,6 +9,21 @@ import {
   T2AggregationSubmitted,
   T1BatchFinalized,
   T2Finalized,
+  T1AggregationCommitted,
+  T2AggregationCommitted,
+  AuditSeedLocked,
+  AggSeedLocked,
+  DisputeSeedLocked,
+  AuditSeedReanchored,
+  AggSeedReanchored,
+  DisputeSeedReanchored,
+  DisputeOpened,
+  DisputeResolved,
+  DisputeExpired,
+  DisputeBondClaimed,
+  RecomputationSettled,
+  ReEvaluationAssigned,
+  S2SlashFractionBpsUpdated,
 } from "../generated/templates/DINTaskCoordinator/DINTaskCoordinator"
 import {
   GlobalIteration,
@@ -19,6 +34,12 @@ import {
   GIStateTransition,
   T1AggregationSubmission,
   T2AggregationSubmission,
+  T1AggregationCommitment,
+  T2AggregationCommitment,
+  SeedLock,
+  AggregationDispute,
+  DisputeBondClaim,
+  TaskCoordinatorGovernance,
 } from "../generated/schema"
 import { eventId } from "./utils"
 
@@ -230,4 +251,272 @@ export function handleT2Finalized(event: T2Finalized): void {
   batch.finalizedAtBlock     = event.block.number
   batch.finalizedAtTimestamp = event.block.timestamp
   batch.save()
+}
+
+// ─── Commit-reveal aggregation ─────────────────────────────────────────────────
+
+function tcAddressHex(): string {
+  return dataSource.context().getBytes("taskCoordinatorAddress").toHex()
+}
+
+export function handleT1AggregationCommitted(event: T1AggregationCommitted): void {
+  let gi        = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let batchId   = tcAddressHex() + "-" + event.params.GI.toString() + "-" + event.params.batchId.toString()
+  let c         = new T1AggregationCommitment(batchId + "-" + event.params.aggregator.toHex())
+  c.globalIteration = gi.id
+  c.tier1Batch      = batchId
+  c.aggregator      = event.params.aggregator
+  c.commitHash      = event.params.commitHash
+  c.blockNumber     = event.block.number
+  c.blockTimestamp  = event.block.timestamp
+  c.transactionHash = event.transaction.hash
+  c.save()
+}
+
+export function handleT2AggregationCommitted(event: T2AggregationCommitted): void {
+  let gi      = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let batchId = giEntityId(event.params.GI)
+  let c       = new T2AggregationCommitment(batchId + "-" + event.params.aggregator.toHex())
+  c.globalIteration = gi.id
+  c.tier2Batch      = batchId
+  c.aggregator      = event.params.aggregator
+  c.commitHash      = event.params.commitHash
+  c.blockNumber     = event.block.number
+  c.blockTimestamp  = event.block.timestamp
+  c.transactionHash = event.transaction.hash
+  c.save()
+}
+
+// ─── Seed locks ────────────────────────────────────────────────────────────────
+
+function auditSeedId(gi: BigInt): string {
+  return tcAddressHex() + "-" + gi.toString() + "-Audit"
+}
+
+function aggSeedId(gi: BigInt): string {
+  return tcAddressHex() + "-" + gi.toString() + "-Agg"
+}
+
+function disputeSeedId(gi: BigInt, tierKind: i32, batchId: BigInt): string {
+  return tcAddressHex() + "-" + gi.toString() + "-Dispute-" +
+         tierKind.toString() + "-" + batchId.toString()
+}
+
+export function handleAuditSeedLocked(event: AuditSeedLocked): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let s  = new SeedLock(auditSeedId(event.params.GI))
+  s.globalIteration = gi.id
+  s.kind            = "Audit"
+  s.seed            = event.params.seed
+  s.blockNumber     = event.block.number
+  s.blockTimestamp  = event.block.timestamp
+  s.transactionHash = event.transaction.hash
+  s.save()
+}
+
+export function handleAggSeedLocked(event: AggSeedLocked): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let s  = new SeedLock(aggSeedId(event.params.GI))
+  s.globalIteration = gi.id
+  s.kind            = "Agg"
+  s.seed            = event.params.seed
+  s.blockNumber     = event.block.number
+  s.blockTimestamp  = event.block.timestamp
+  s.transactionHash = event.transaction.hash
+  s.save()
+}
+
+export function handleDisputeSeedLocked(event: DisputeSeedLocked): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let s  = new SeedLock(disputeSeedId(event.params.GI, event.params.tierKind, event.params.batchId))
+  s.globalIteration = gi.id
+  s.kind            = "Dispute"
+  s.tierKind        = event.params.tierKind
+  s.batchId         = event.params.batchId
+  s.seed            = event.params.seed
+  s.blockNumber     = event.block.number
+  s.blockTimestamp  = event.block.timestamp
+  s.transactionHash = event.transaction.hash
+  s.save()
+}
+
+export function handleAuditSeedReanchored(event: AuditSeedReanchored): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let id = auditSeedId(event.params.GI)
+  let s  = SeedLock.load(id)
+  if (s == null) {
+    s = new SeedLock(id)
+    s.globalIteration = gi.id
+    s.kind            = "Audit"
+  }
+  s.reanchoredAtBlock = event.params.newSeedBlock
+  s.blockNumber       = event.block.number
+  s.blockTimestamp    = event.block.timestamp
+  s.transactionHash   = event.transaction.hash
+  s.save()
+}
+
+export function handleAggSeedReanchored(event: AggSeedReanchored): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let id = aggSeedId(event.params.GI)
+  let s  = SeedLock.load(id)
+  if (s == null) {
+    s = new SeedLock(id)
+    s.globalIteration = gi.id
+    s.kind            = "Agg"
+  }
+  s.reanchoredAtBlock = event.params.newSeedBlock
+  s.blockNumber       = event.block.number
+  s.blockTimestamp    = event.block.timestamp
+  s.transactionHash   = event.transaction.hash
+  s.save()
+}
+
+export function handleDisputeSeedReanchored(event: DisputeSeedReanchored): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let id = disputeSeedId(event.params.GI, event.params.tierKind, event.params.batchId)
+  let s  = SeedLock.load(id)
+  if (s == null) {
+    s = new SeedLock(id)
+    s.globalIteration = gi.id
+    s.kind            = "Dispute"
+    s.tierKind        = event.params.tierKind
+    s.batchId         = event.params.batchId
+  }
+  s.reanchoredAtBlock = event.params.newSeedBlock
+  s.blockNumber       = event.block.number
+  s.blockTimestamp    = event.block.timestamp
+  s.transactionHash   = event.transaction.hash
+  s.save()
+}
+
+// ─── Aggregation disputes ──────────────────────────────────────────────────────
+
+function aggregationDisputeId(gi: BigInt, tierKind: i32, batchId: BigInt): string {
+  return tcAddressHex() + "-" + gi.toString() + "-" +
+         tierKind.toString() + "-" + batchId.toString()
+}
+
+export function handleDisputeOpened(event: DisputeOpened): void {
+  let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+  let d  = new AggregationDispute(aggregationDisputeId(event.params.GI, event.params.tierKind, event.params.batchId))
+  d.globalIteration = gi.id
+  d.tierKind        = event.params.tierKind
+  d.batchId         = event.params.batchId
+  d.challenger      = event.params.challenger
+  d.bond            = event.params.bond
+  d.status          = "Open"
+  d.openedAtBlock   = event.block.number
+  d.openedAtTimestamp = event.block.timestamp
+  d.blockNumber     = event.block.number
+  d.blockTimestamp  = event.block.timestamp
+  d.transactionHash = event.transaction.hash
+  d.save()
+}
+
+export function handleDisputeResolved(event: DisputeResolved): void {
+  let id = aggregationDisputeId(event.params.GI, event.params.tierKind, event.params.batchId)
+  let d  = AggregationDispute.load(id)
+  if (d == null) {
+    log.warning("DisputeResolved: AggregationDispute {} not found", [id])
+    return
+  }
+  d.status            = event.params.upheld ? "Upheld" : "Rejected"
+  d.upheld            = event.params.upheld
+  d.resolvedAtBlock   = event.block.number
+  d.resolvedAtTimestamp = event.block.timestamp
+  d.save()
+}
+
+export function handleCoordinatorDisputeExpired(event: DisputeExpired): void {
+  let id = aggregationDisputeId(event.params.GI, event.params.tierKind, event.params.batchId)
+  let d  = AggregationDispute.load(id)
+  if (d == null) {
+    log.warning("DisputeExpired: AggregationDispute {} not found", [id])
+    return
+  }
+  d.status            = "Expired"
+  d.resolvedAtBlock   = event.block.number
+  d.resolvedAtTimestamp = event.block.timestamp
+  d.save()
+}
+
+export function handleDisputeBondClaimed(event: DisputeBondClaimed): void {
+  let c = new DisputeBondClaim(eventId(event.transaction.hash, event.logIndex))
+  c.challenger      = event.params.challenger
+  c.amount          = event.params.amount
+  c.blockNumber     = event.block.number
+  c.blockTimestamp  = event.block.timestamp
+  c.transactionHash = event.transaction.hash
+  c.save()
+}
+
+export function handleRecomputationSettled(event: RecomputationSettled): void {
+  let id = aggregationDisputeId(event.params.GI, event.params.tierKind, event.params.batchId)
+  let d  = AggregationDispute.load(id)
+  if (d == null) {
+    let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+    d = new AggregationDispute(id)
+    d.globalIteration = gi.id
+    d.tierKind        = event.params.tierKind
+    d.batchId         = event.params.batchId
+    d.challenger      = Address.zero()
+    d.bond            = BigInt.zero()
+    d.status          = "Open"
+    d.openedAtBlock   = event.block.number
+    d.openedAtTimestamp = event.block.timestamp
+    d.blockNumber     = event.block.number
+    d.blockTimestamp  = event.block.timestamp
+    d.transactionHash = event.transaction.hash
+  }
+  d.confirmed = event.params.confirmed
+  if (d.status == "Open") {
+    d.status = event.params.confirmed ? "Upheld" : "Rejected"
+  }
+  d.resolvedAtBlock   = event.block.number
+  d.resolvedAtTimestamp = event.block.timestamp
+  d.save()
+}
+
+export function handleReEvaluationAssigned(event: ReEvaluationAssigned): void {
+  let id = aggregationDisputeId(event.params.GI, event.params.tierKind, event.params.batchId)
+  let d  = AggregationDispute.load(id)
+  if (d == null) {
+    let gi = loadOrCreateGI(event.params.GI, event.block.number, event.block.timestamp)
+    d = new AggregationDispute(id)
+    d.globalIteration = gi.id
+    d.tierKind        = event.params.tierKind
+    d.batchId         = event.params.batchId
+    d.challenger      = Address.zero()
+    d.bond            = BigInt.zero()
+    d.status          = "Open"
+    d.openedAtBlock   = event.block.number
+    d.openedAtTimestamp = event.block.timestamp
+    d.blockNumber     = event.block.number
+    d.blockTimestamp  = event.block.timestamp
+    d.transactionHash = event.transaction.hash
+  }
+  let fresh = event.params.freshAggregators
+  let out = new Array<string>()
+  for (let i = 0; i < fresh.length; i++) {
+    out.push(fresh[i].toHexString())
+  }
+  d.freshAggregators = out
+  d.save()
+}
+
+// ─── Governance parameters ─────────────────────────────────────────────────────
+
+export function handleS2SlashFractionBpsUpdated(event: S2SlashFractionBpsUpdated): void {
+  let id = event.address.toHexString()
+  let g  = TaskCoordinatorGovernance.load(id)
+  if (g == null) {
+    g = new TaskCoordinatorGovernance(id)
+    g.updatedAtBlock     = BigInt.zero()
+    g.updatedAtTimestamp = BigInt.zero()
+  }
+  g.s2SlashFractionBps = event.params.newBps
+  g.updatedAtBlock     = event.block.number
+  g.updatedAtTimestamp = event.block.timestamp
+  g.save()
 }

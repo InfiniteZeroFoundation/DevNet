@@ -1,9 +1,9 @@
 specVersion: 0.0.5
 description: >
-  DIN Protocol subgraph. Indexes the four platform contracts (DINModelRegistry,
-  DinValidatorStake, DinCoordinator, DinToken) and task-level contracts
-  (DINTaskCoordinator, DINTaskAuditor) via dynamic data source templates on the
-  local development chain (chainId 1337).
+  DIN Protocol subgraph. Indexes the six platform contracts (DINModelRegistry,
+  DinValidatorStake, DinCoordinator, DinToken, DinFeeRouter, DinTreasury) and
+  task-level contracts (DINTaskCoordinator, DINTaskAuditor) via dynamic data
+  source templates on the local development chain (chainId 1337).
 repository: https://github.com/InfiniteZeroFoundation/DevNet
 schema:
   file: ./schema.graphql
@@ -21,11 +21,13 @@ schema:
 #   cd foundry && forge script script/DeployPlatform.s.sol \
 #     --rpc-url http://127.0.0.1:8545 --broadcast \
 #     --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --unlocked
-# Deployed addresses are written to foundry/deployments/localhost.json.
+# Deployed addresses are written to foundry/deployments/<network>.json
+# (localhost for chain 1337 / anvil, sepolia_op_devnet for Optimism Sepolia).
 # The platform contracts sit behind transparent proxies — use the PROXY
-# addresses here, not the implementation addresses.
-# A helper script (scripts/update-subgraph-addresses.sh) will patch this file
-# automatically once P4-IDX2 setup tooling is in place.
+# addresses here, not the implementation addresses. The <name> keys in that
+# file (dinModelRegistry, dinValidatorStake, ...) are the proxies.
+# A helper script (./scripts/update-subgraph-addresses.sh) patches this file
+# automatically from that deployments JSON.
 # ─────────────────────────────────────────────────────────────────────────────
 
 dataSources:
@@ -223,6 +225,12 @@ dataSources:
         - DINMintEvent
         - ExchangeRateSnapshot
         - SlasherRegistration
+        - EmissionMintEvent
+        - EmissionContractUpdate
+        - MintCapUpdate
+        - FaucetRetired
+        - FeeSweepToRouter
+        - FeeRouterUpdate
       abis:
         - name: DinCoordinator
           file: ./abis/DinCoordinator.json
@@ -240,6 +248,20 @@ dataSources:
           handler: handleCoordinatorSlasherAdded
         - event: SlasherContractRemoved(indexed address)
           handler: handleCoordinatorSlasherRemoved
+
+        # Emission, mint cap, faucet retirement and fee routing
+        - event: EmissionMinted(indexed address,uint256)
+          handler: handleEmissionMinted
+        - event: EmissionContractUpdated(indexed address)
+          handler: handleEmissionContractUpdated
+        - event: MintCapUpdated(uint256)
+          handler: handleMintCapUpdated
+        - event: FaucetRetiredEvent()
+          handler: handleFaucetRetired
+        - event: FeeRouterUpdated(indexed address)
+          handler: handleCoordinatorFeeRouterUpdated
+        - event: FeesSweptToRouter(uint256)
+          handler: handleCoordinatorFeesSweptToRouter
       file: ./src/coordinator.ts
 
   # ── DinToken ─────────────────────────────────────────────────────────────────
@@ -257,16 +279,86 @@ dataSources:
       entities:
         - TokenMintEvent
         - TokenTransferEvent
+        - TokenBurnEvent
       abis:
         - name: DinToken
           file: ./abis/DinToken.json
       eventHandlers:
         - event: TokensMinted(indexed address,uint256)
           handler: handleTokensMinted
+        - event: TokensBurned(indexed address,uint256)
+          handler: handleTokensBurned
         # Standard ERC20 Transfer — includes mint (from=0x0) and burn (to=0x0)
         - event: Transfer(indexed address,indexed address,uint256)
           handler: handleTransfer
       file: ./src/token.ts
+
+  # ── DinFeeRouter ────────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinFeeRouter
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000005"  # replace after deploy
+      abi: DinFeeRouter
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - FeeSource
+        - FeeRouterConfig
+        - FeeRoutedDIN
+        - FeeRoutedETH
+      abis:
+        - name: DinFeeRouter
+          file: ./abis/DinFeeRouter.json
+      eventHandlers:
+        - event: FeeSourceAdded(indexed address)
+          handler: handleFeeSourceAdded
+        - event: FeeSourceRemoved(indexed address)
+          handler: handleFeeSourceRemoved
+        - event: TreasuryUpdated(indexed address)
+          handler: handleTreasuryUpdated
+        - event: TreasuryBpsCeilingUpdated(uint16)
+          handler: handleTreasuryBpsCeilingUpdated
+        - event: DinSplitUpdated((uint16,uint16,uint16,uint16,uint16))
+          handler: handleDinSplitUpdated
+        - event: EthSplitUpdated((uint16,uint16,uint16,uint16))
+          handler: handleEthSplitUpdated
+        - event: FeeRoutedDIN(indexed address,uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleFeeRoutedDIN
+        - event: FeeRoutedETH(indexed address,uint256,uint256,uint256,uint256,uint256)
+          handler: handleFeeRoutedETH
+      file: ./src/feeRouter.ts
+
+  # ── DinTreasury ──────────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinTreasury
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000006"  # replace after deploy
+      abi: DinTreasury
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - TreasuryEthReceived
+        - TreasuryEthWithdrawn
+        - TreasuryERC20Withdrawn
+      abis:
+        - name: DinTreasury
+          file: ./abis/DinTreasury.json
+      eventHandlers:
+        - event: EthReceived(indexed address,uint256)
+          handler: handleTreasuryEthReceived
+        - event: EthWithdrawn(indexed address,uint256)
+          handler: handleTreasuryEthWithdrawn
+        - event: ERC20Withdrawn(indexed address,indexed address,uint256)
+          handler: handleTreasuryERC20Withdrawn
+      file: ./src/treasury.ts
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamic data source templates — task-level contracts
@@ -299,6 +391,12 @@ templates:
         - GIStateTransition
         - T1AggregationSubmission
         - T2AggregationSubmission
+        - T1AggregationCommitment
+        - T2AggregationCommitment
+        - SeedLock
+        - AggregationDispute
+        - DisputeBondClaim
+        - TaskCoordinatorGovernance
       abis:
         - name: DINTaskCoordinator
           file: ./abis/DINTaskCoordinator.json
@@ -332,6 +430,44 @@ templates:
           handler: handleT1BatchFinalized
         - event: T2Finalized(indexed uint256,bytes32)
           handler: handleT2Finalized
+
+        # ── Commit-reveal aggregation ────────────────────────────────────────
+        - event: T1AggregationCommitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT1AggregationCommitted
+        - event: T2AggregationCommitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT2AggregationCommitted
+
+        # ── Seed locks ───────────────────────────────────────────────────────
+        - event: AuditSeedLocked(indexed uint256,bytes32)
+          handler: handleAuditSeedLocked
+        - event: AggSeedLocked(indexed uint256,bytes32)
+          handler: handleAggSeedLocked
+        - event: DisputeSeedLocked(indexed uint256,uint8,indexed uint256,bytes32)
+          handler: handleDisputeSeedLocked
+        - event: AuditSeedReanchored(indexed uint256,uint64)
+          handler: handleAuditSeedReanchored
+        - event: AggSeedReanchored(indexed uint256,uint64)
+          handler: handleAggSeedReanchored
+        - event: DisputeSeedReanchored(indexed uint256,uint8,indexed uint256,uint64)
+          handler: handleDisputeSeedReanchored
+
+        # ── Aggregation disputes ─────────────────────────────────────────────
+        - event: DisputeOpened(indexed uint256,uint8,indexed uint256,indexed address,uint256)
+          handler: handleDisputeOpened
+        - event: DisputeResolved(indexed uint256,uint8,indexed uint256,bool)
+          handler: handleDisputeResolved
+        - event: DisputeExpired(indexed uint256,uint8,indexed uint256)
+          handler: handleCoordinatorDisputeExpired
+        - event: DisputeBondClaimed(indexed address,uint256)
+          handler: handleDisputeBondClaimed
+        - event: RecomputationSettled(indexed uint256,uint8,indexed uint256,bool)
+          handler: handleRecomputationSettled
+        - event: ReEvaluationAssigned(indexed uint256,uint8,indexed uint256,address[])
+          handler: handleReEvaluationAssigned
+
+        # ── Governance parameters ────────────────────────────────────────────
+        - event: S2SlashFractionBpsUpdated(uint256,uint256)
+          handler: handleS2SlashFractionBpsUpdated
       file: ./src/taskCoordinator.ts
 
   # ── DINTaskAuditor ───────────────────────────────────────────────────────────
@@ -354,6 +490,16 @@ templates:
         - AuditorSlashEvent
         - PassScoreUpdate
         - LocalModelSubmission
+        - RewardDeposit
+        - RewardSettlement
+        - RewardClaim
+        - RewardSplit
+        - AuditScoreCommitment
+        - TestDataCommitment
+        - EncryptedTestDataKeys
+        - TestDataDispute
+        - AuditorScoreDeviation
+        - TaskAuditorGovernance
       abis:
         - name: DINTaskAuditor
           file: ./abis/DINTaskAuditor.json
@@ -373,6 +519,9 @@ templates:
           handler: handleAuditorsBatchesCreated
 
         # ── Scoring and eligibility ──────────────────────────────────────────
+        - event: AuditScoreCommitted(indexed uint256,indexed uint256,indexed address,uint256,bytes32)
+          handler: handleAuditScoreCommitted
+        # AuditScoreSubmitted is the reveal step for the commitment above.
         - event: AuditScoreSubmitted(indexed uint256,indexed uint256,indexed address,uint256,uint256)
           handler: handleAuditScoreSubmitted
         - event: EligibilityVoted(indexed uint256,indexed uint256,indexed uint256,address,bool)
@@ -380,14 +529,47 @@ templates:
         - event: EligibilityFinalized(indexed uint256,indexed uint256,indexed uint256,bool,uint256)
           handler: handleEligibilityFinalized
 
-        # ── Pass score governance ────────────────────────────────────────────
+        # ── Test-data flow and disputes ──────────────────────────────────────
+        - event: TestDataCommitmentStored(indexed uint256,indexed uint256,bytes32)
+          handler: handleTestDataCommitmentStored
+        - event: EncryptedTestDataKeysAssigned(indexed uint256,indexed uint256,bytes,uint256)
+          handler: handleEncryptedTestDataKeysAssigned
+        - event: TestDataDisputeOpened(indexed uint256,indexed uint256,indexed address,uint256,uint256)
+          handler: handleTestDataDisputeOpened
+        - event: TestDataDisputeUpheld(indexed uint256,indexed uint256,indexed address,uint256,uint256)
+          handler: handleTestDataDisputeUpheld
+        - event: TestDataDisputeResolvedFalse(indexed uint256,indexed uint256,indexed address,uint256)
+          handler: handleTestDataDisputeResolvedFalse
+        - event: DisputeExpired(indexed uint256,indexed uint256)
+          handler: handleTestDataDisputeExpired
+        - event: BatchPendingReassignment(indexed uint256,indexed uint256)
+          handler: handleBatchPendingReassignment
+
+        # ── S3 score deviation ───────────────────────────────────────────────
+        - event: AuditorScoreDeviation(indexed uint256,indexed uint256,uint256,indexed address,uint256,uint256,uint256,bool)
+          handler: handleAuditorScoreDeviation
+
+        # ── Rewards ──────────────────────────────────────────────────────────
+        - event: RewardDeposited(indexed uint256,indexed address,uint256)
+          handler: handleRewardDeposited
+        - event: RewardsSettled(indexed uint256,uint256,uint256,uint256,uint256)
+          handler: handleRewardsSettled
+        - event: RewardsClaimed(indexed address,uint256)
+          handler: handleRewardsClaimed
+        - event: RewardSplitUpdated((uint16,uint16,uint16,uint16))
+          handler: handleRewardSplitUpdated
+
+        # ── Pass score and slashing-parameter governance ─────────────────────
         - event: PassScoreUpdated(uint256,uint256)
           handler: handlePassScoreUpdated
+        - event: S1SlashFractionBpsUpdated(uint256,uint256)
+          handler: handleS1SlashFractionBpsUpdated
+        - event: S3DeviationThresholdUpdated(uint256,uint256)
+          handler: handleS3DeviationThresholdUpdated
+        - event: S3SlashingEnabledUpdated(bool,bool)
+          handler: handleS3SlashingEnabledUpdated
 
         # ── Auditor slashing ─────────────────────────────────────────────────
         - event: AuditorSlashed(indexed uint256,indexed uint256,indexed address,bytes32,uint256,uint256)
           handler: handleAuditorSlashed
-
-        # RewardDeposited is declared in the ABI but never emitted (dead code —
-        # see task-contract-event-audit.md §5). No handler registered.
       file: ./src/taskAuditor.ts
