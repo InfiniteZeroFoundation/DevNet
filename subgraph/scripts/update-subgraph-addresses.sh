@@ -4,9 +4,13 @@
 # with the real addresses from a foundry deployments JSON.
 #
 # Usage:
-#   ./scripts/update-subgraph-addresses.sh [path/to/deployments.json]
+#   ./scripts/update-subgraph-addresses.sh [network | path/to/deployments.json]
 #
-# Defaults to foundry/deployments/localhost.json.
+# A bare network name reads foundry/deployments/<network>.json. Defaults to
+# the DEPLOYMENTS_NETWORK env var, then "localhost" (foundry/anvil.sh chain
+# 1337). foundry/script/DeployPlatform.s.sol writes this file, and its
+# dinModelRegistry / dinValidatorStake / ... keys hold the transparent-proxy
+# addresses the subgraph must index.
 
 set -euo pipefail
 
@@ -14,16 +18,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUBGRAPH_YAML="$SCRIPT_DIR/../subgraph.yaml"
 REPO_ROOT="$SCRIPT_DIR/../.."
 
-DEPLOYMENTS_JSON="${1:-}"
-if [[ -z "$DEPLOYMENTS_JSON" ]]; then
-  if [[ -f "$REPO_ROOT/foundry/deployments/localhost.json" ]]; then
-    DEPLOYMENTS_JSON="$REPO_ROOT/foundry/deployments/localhost.json"
-  else
-    echo "error: no deployments JSON found. Deploy the platform contracts first" >&2
-    echo "  (cd foundry && forge script script/DeployPlatform.s.sol ...)" >&2
-    echo "or pass an explicit path: $0 <path/to/deployments.json>" >&2
-    exit 1
-  fi
+ARG="${1:-}"
+if [[ -z "$ARG" ]]; then
+  DEPLOYMENTS_NETWORK="${DEPLOYMENTS_NETWORK:-localhost}"
+  DEPLOYMENTS_JSON="$REPO_ROOT/foundry/deployments/$DEPLOYMENTS_NETWORK.json"
+elif [[ "$ARG" == *.json ]]; then
+  DEPLOYMENTS_JSON="$ARG"
+else
+  DEPLOYMENTS_JSON="$REPO_ROOT/foundry/deployments/$ARG.json"
+fi
+
+if [[ ! -f "$DEPLOYMENTS_JSON" ]]; then
+  echo "error: deployments JSON not found at $DEPLOYMENTS_JSON" >&2
+  echo "  deploy the platform contracts first:" >&2
+  echo "    cd foundry && forge script script/DeployPlatform.s.sol ... " >&2
+  echo "  or pass a network name / explicit path: $0 <network|path/to/deployments.json>" >&2
+  exit 1
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -40,6 +50,8 @@ CONTRACT_KEY_PAIRS=(
   DinValidatorStake dinValidatorStake
   DinCoordinator dinCoordinator
   DinToken dinToken
+  DinFeeRouter dinFeeRouter
+  DinTreasury dinTreasury
 )
 
 TMP="$(mktemp)"
