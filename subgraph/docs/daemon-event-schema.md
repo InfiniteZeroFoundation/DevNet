@@ -4,6 +4,15 @@
 **Authored by:** Robbert (P4-IDX1 deliverable)
 **Status:** Design — feeds Santiago's P4-7.1 on-chain event listening engine
 
+> **Status update (2026-11-14).** The subgraph now covers six platform
+> contracts (the original four plus `DinFeeRouter` and `DinTreasury`) and the
+> task contracts through data source templates. Task-level GI events are no
+> longer out of scope: `GIStateChanged` carries every `GIstates` transition, and
+> the commit/reveal, reward, test-data, dispute, seed, and governance events
+> listed in `Documentation/technical/audits/task-contract-event-audit.md` are
+> indexed. The "PENDING" notes in §2 and the "out of scope" wording in §3.1
+> describe the original design cut, not the current surface.
+
 ---
 
 ## Purpose
@@ -69,8 +78,8 @@ set and pending additions from the event-coverage audit.
 ModelRegistrationRequested(
     uint256 indexed requestId,
     address indexed requester
-    // PENDING: bool isOpenSource     (audit §6.1)
-    // PENDING: uint256 fee           (audit §6.1)
+    // isOpenSource / fee are not in the event; the indexer fills them from
+    // the registration request storage (audit §6.1 was not landed)
 )
 
 ModelApproved(
@@ -85,7 +94,8 @@ ModelRejected(
 ManifestUpdateRequested(
     uint256 indexed requestId,
     uint256 indexed modelId
-    // PENDING: address indexed requester  (audit §6.2)
+    // requester is not in the event; the indexer fills it from storage
+    // (audit §6.2 was not landed)
 )
 
 ManifestUpdated(
@@ -150,40 +160,48 @@ DinPerEthUpdated(uint256 newRate)
 
 ValidatorStakeContractUpdated(address indexed validatorStakeContract)
 
-// PENDING: ETHTreasuryWithdrawn(address indexed to, uint256 amount)
-//          (audit §6.3 — not yet emitted by withdraw())
+// Fee sweeps: FeeRouterUpdated(address indexed feeRouter)
+//             FeesSweptToRouter(uint256 amount)
+// Treasury outflows are now emitted by DinTreasury:
+//   EthReceived(address indexed from, uint256 amount)
+//   EthWithdrawn(address indexed to, uint256 amount)
+//   ERC20Withdrawn(address indexed token, address indexed to, uint256 amount)
 ```
 
 ---
 
 ## 3. Coverage gaps
 
-### 3.1 Task-level GI events — out of scope for platform subgraph
+### 3.1 Task-level GI events — now indexed
 
-P4-7.1 notes that the daemon must "at minimum wire: `T1AggregationStarted` →
-queue aggregation job." None of the GI-lifecycle events exist on the four
-platform contracts. They live on the task-level contracts `DINTaskCoordinator`
-and `DINTaskAuditor`, which are out of scope for this subgraph (P5+).
+At design time these events did not exist on the four platform contracts and
+task-level contracts were out of scope. Both changed:
 
-Events the daemon needs from task-level contracts once those are indexed:
+- `DINTaskCoordinator` now emits `GIStateChanged(uint indexed GI, uint8 indexed newState)`
+  for every `GIstates` transition (29 states, `GIended = 28`).
+- The subgraph indexes `DINTaskCoordinator` and `DINTaskAuditor` through data
+  source templates, so the daemon can filter on the task-contract addresses it
+  discovers from `DINModelRegistry.ModelApproved`.
 
-| Event | Contract | Daemon action |
-|---|---|---|
-| `DINaggregatorsRegistrationStarted` | DINTaskCoordinator | Queue aggregator registration job |
-| `DINauditorsRegistrationStarted` | DINTaskCoordinator | Queue auditor registration job |
-| `LMSstarted` | DINTaskCoordinator | Queue local model submission job |
-| `AuditorsBatchesCreated` | DINTaskCoordinator | Trigger test data fetch for assigned auditor batch |
-| `LMSevaluationStarted` | DINTaskCoordinator | Queue audit scoring job |
-| `T1AggregationStarted` | DINTaskCoordinator | Queue T1 aggregation job (explicitly called out in P4-7.1) |
-| `T2AggregationStarted` | DINTaskCoordinator | Queue T2 aggregation job |
-| `GIended` | DINTaskCoordinator | Finalize round, archive local model artifacts |
+The daemon still needs to map the numeric state to the lifecycle actions below.
 
-These events do not exist in the task contracts under these names today — the
-`GIstates` enum drives state transitions but the state-change itself is not
-emitted as an event with an indexed GI number. When task-level indexing is
-designed (P5+), each `GIstate` transition should emit a dedicated event with
-`uint256 indexed modelId` and `uint256 indexed gi` so the daemon can filter
-by model and iteration without scanning all events.
+| `GIstates` state | Daemon action |
+|---|---|
+| `DINaggregatorsRegistrationStarted` (6) | Queue aggregator registration job |
+| `DINauditorsRegistrationStarted` (8) | Queue auditor registration job |
+| `LMSstarted` (10) | Queue local model submission job |
+| `AuditorsBatchesCreated` (13) | Trigger test data fetch for assigned auditor batch |
+| `AuditTestDataAssigned` (14) | Confirm test-data assignment |
+| `LMSevaluationStarted` (15) | Queue commit-phase audit scoring job |
+| `LMSevaluationRevealStarted` (16) | Queue reveal-phase audit scoring job |
+| `T1AggregationStarted` (20) | Queue T1 aggregation commit job |
+| `T1AggregationRevealStarted` (21) | Queue T1 aggregation reveal job |
+| `T2AggregationStarted` (23) | Queue T2 aggregation commit job |
+| `T2AggregationRevealStarted` (24) | Queue T2 aggregation reveal job |
+| `GIended` (28) | Finalize round, archive local model artifacts |
+
+Dedicated events (`T1AggregationSubmitted`, `T2Finalized`, `LocalModelSubmitted`,
+etc.) carry the payloads; `GIStateChanged` is the trigger signal.
 
 ### 3.2 `ValidatorJailed` — dead code path
 
@@ -202,10 +220,12 @@ Without this event the daemon cannot react to a jailing in real time — it
 would only discover the status change on the next stake-related event for that
 validator.
 
-### 3.3 `ETHTreasuryWithdrawn` — missing
+### 3.3 `ETHTreasuryWithdrawn` — superseded
 
-`DinCoordinator.withdraw()` emits no event. The daemon has no way to observe
-ETH treasury outflows. Proposed addition documented in audit §6.3.
+`DinCoordinator` no longer withdraws fees directly; it sweeps them to
+`DinFeeRouter` (`FeesSweptToRouter`). Treasury outflows are emitted by
+`DinTreasury` as `EthWithdrawn`/`ERC20Withdrawn`, so the daemon can observe them
+without a new coordinator event.
 
 ---
 
@@ -217,7 +237,7 @@ connection (`eth_subscribe` with `logs` filter).
 
 Recommended approach for `dind` v1:
 - **WebSocket `eth_subscribe` logs filter** per contract address — one
-  subscription per contract, four total. Lower latency than polling and
+  subscription per contract, six total. Lower latency than polling and
   avoids block re-org edge cases that polling must handle explicitly.
 - Maintain a local `lastProcessedBlock` per contract in the daemon's
   persistent state store (SQLite or JSON per P4-1.1 choice) so subscriptions
@@ -238,7 +258,7 @@ Per Umer (2026-07-09): dincli first, then SDK, then daemon — in that order.
 
 | Phase | Consumer | Integration point |
 |---|---|---|
-| P4-IDX2 (now) | `dincli` | Replace `dindao.py` RPC loop with GraphQL query to subgraph |
+| P4-IDX2 (now) | `dincli` | Replace the `dinrep.py` RPC loop with a GraphQL query to the subgraph |
 | P4-IDX3 | `dincli` test suite | Wire call site replacement into existing tests |
 | P4-1.2 (SDK extraction) | `dincli/sdk/` | Event subscription helpers extracted from CLI internals |
 | P4-7.1 | `dind` | Santiago implements listening engine using this schema as spec |

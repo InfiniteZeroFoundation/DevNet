@@ -4,6 +4,13 @@ Conducted as part of the subgraph extension to task-level contracts
 (`feat/din-indexer`). Follows the same format as the platform-contract audit
 in `subgraph/docs/event-coverage-audit.md`.
 
+> **Status update (2026-11-14).** All proposed additions in §4 have landed, plus
+> the commit/reveal, test-data, dispute, seed-lock, reward, and S1/S2/S3
+> governance events added by later contract work. The subgraph indexes them
+> through the `DINTaskCoordinator` and `DINTaskAuditor` data source templates.
+> Sections below are kept as the audit trail; each gap section records its
+> resolution.
+
 ---
 
 ## §1 Scope
@@ -23,7 +30,12 @@ State this explicitly in any dind or operator runbook.
 
 ---
 
-## §2 Existing events
+## §2 Existing events (at audit time)
+
+The tables below list only the events that existed when this audit was written.
+For the full current event surface — including commit/reveal, test data,
+disputes, seeds, rewards, and S1/S2/S3 governance — see §4, §4a, and
+`subgraph/subgraph.yaml`.
 
 ### DINTaskCoordinator
 
@@ -51,53 +63,68 @@ State this explicitly in any dind or operator runbook.
 
 ## §3 Gap analysis
 
-### §3.1 Silent GI state machine
+### §3.1 GI state machine — resolved
 
-`GIstates` (defined in `DINShared.sol`) has 23 states. `DINTaskCoordinator`
-writes to `GIstate` at 23 sites — the constructor, the four pre-GI setup steps,
-and every phase-transition function — and **none of them emit an event**. The
-full list of silent write sites:
+At audit time `GIstates` had 23 states and `DINTaskCoordinator` wrote `GIstate`
+at 23 sites without emitting an event. `develop` now has **29 states**
+(ordinals `0..28`, `GIended = 28`) and every transition goes through
+`_setGIstate()`, which emits:
 
-| Site | Transition |
-|------|-----------|
-| `constructor` | → `AwaitingDINTaskAuditorToBeSet` |
-| `setDINTaskAuditorContract()` | → `AwaitingDINTaskCoordinatorAsSlasher` |
-| `setDINTaskCoordinatorAsSlasher()` | → `AwaitingDINTaskAuditorAsSlasher` |
-| `setDINTaskAuditorAsSlasher()` | → `AwaitingGenesisModel` |
-| `setGenesisModelIpfsHash()` | → `GenesisModelCreated` |
-| `_startGI()` | → `GIstarted` |
-| `startDINaggregatorsRegistration()` | → `DINaggregatorsRegistrationStarted` |
-| `closeDINaggregatorsRegistration()` | → `DINaggregatorsRegistrationClosed` |
-| `startDINauditorsRegistration()` | → `DINauditorsRegistrationStarted` |
-| `closeDINauditorsRegistration()` | → `DINauditorsRegistrationClosed` |
-| `startLMsubmissions()` | → `LMSstarted` |
-| `closeLMsubmissions()` | → `LMSclosed` |
-| `createAuditorsBatches()` | → `AuditorsBatchesCreated` |
-| `startLMsubmissionsEvaluation()` | → `LMSevaluationStarted` |
-| `closeLMsubmissionsEvaluation()` | → `LMSevaluationClosed` |
-| `autoCreateTier1AndTier2()` | → `T1nT2Bcreated` |
-| `startT1Aggregation()` | → `T1AggregationStarted` |
-| `finalizeT1Aggregation()` | → `T1AggregationDone` |
-| `startT2Aggregation()` | → `T2AggregationStarted` |
-| `finalizeT2Aggregation()` | → `T2AggregationDone` |
-| `slashAuditors()` | → `AuditorsSlashed` |
-| `slashAggregators()` | → `AggregatorsSlashed` |
-| `endGI()` | → `GIended` |
+```solidity
+event GIStateChanged(uint indexed GI, uint8 indexed newState);
+```
 
-The indexer cannot track which phase a model is currently in without a storage
-call per block — defeating the purpose of event-driven indexing.
+The subgraph stores the current state on `GlobalIteration` and appends a
+`GIStateTransition` row per change (`GI_STATES` in
+`subgraph/src/taskCoordinator.ts` mirrors the enum, and
+`Documentation/technical/contracts/DINShared.md §2.1` is the source of truth).
 
-### §3.2 Missing submission events
+| Ordinal | State | Set by |
+|---:|---|---|
+| 0 | `AwaitingDINTaskAuditorToBeSet` | `constructor` |
+| 1 | `AwaitingDINTaskCoordinatorAsSlasher` | `setDINTaskAuditorContract()` |
+| 2 | `AwaitingDINTaskAuditorAsSlasher` | `setDINTaskCoordinatorAsSlasher()` |
+| 3 | `AwaitingGenesisModel` | `setDINTaskAuditorAsSlasher()` |
+| 4 | `GenesisModelCreated` | `setGenesisModelIpfsHash()` |
+| 5 | `GIstarted` | `_startGI()` |
+| 6 | `DINaggregatorsRegistrationStarted` | `startDINaggregatorsRegistration()` |
+| 7 | `DINaggregatorsRegistrationClosed` | `closeDINaggregatorsRegistration()` |
+| 8 | `DINauditorsRegistrationStarted` | `startDINauditorsRegistration()` |
+| 9 | `DINauditorsRegistrationClosed` | `closeDINauditorsRegistration()` |
+| 10 | `LMSstarted` | `startLMsubmissions()` |
+| 11 | `LMSclosed` | `closeLMsubmissions()` |
+| 12 | `AuditSeedLocked` | `lockAuditSeed()` |
+| 13 | `AuditorsBatchesCreated` | `createAuditorsBatches()` |
+| 14 | `AuditTestDataAssigned` | `setTestDataAssignedFlag()` |
+| 15 | `LMSevaluationStarted` | `startLMsubmissionsEvaluation()` |
+| 16 | `LMSevaluationRevealStarted` | `startLMsubmissionsEvaluationReveal()` |
+| 17 | `LMSevaluationClosed` | `closeLMsubmissionsEvaluation()` |
+| 18 | `AggSeedLocked` | `lockAggSeed()` |
+| 19 | `T1nT2Bcreated` | `autoCreateTier1AndTier2()` |
+| 20 | `T1AggregationStarted` | `startT1Aggregation()` |
+| 21 | `T1AggregationRevealStarted` | `startT1AggregationReveal()` |
+| 22 | `T1AggregationDone` | `finalizeT1Aggregation()` |
+| 23 | `T2AggregationStarted` | `startT2Aggregation()` |
+| 24 | `T2AggregationRevealStarted` | `startT2AggregationReveal()` |
+| 25 | `T2AggregationDone` | `finalizeT2Aggregation()` |
+| 26 | `AuditorsSlashed` | `slashAuditors()` |
+| 27 | `AggregatorsSlashed` | `slashAggregators()` |
+| 28 | `GIended` | `endGI()` |
 
-| Function | Contract | Impact |
+### §3.2 Missing submission events — resolved
+
+At audit time these submissions had no event. They now emit the events listed
+in §4 and are indexed.
+
+| Function | Contract | Impact at audit time |
 |----------|---------|--------|
 | `submitLocalModel()` | `DINTaskAuditor` | `lms.py ~line 62` iterates `getClientModels()` over RPC. Cannot be replaced with a GraphQL query without a `LocalModelSubmitted` event. |
 | `submitT1Aggregation()` | `DINTaskCoordinator` | `aggregation.py ~lines 76, 95` iterates T1 batch submissions over RPC. No event means no indexer coverage. |
 | `submitT2Aggregation()` | `DINTaskCoordinator` | `aggregation.py ~line 136` iterates T2 batch submissions over RPC. Same gap. |
 
-### §3.3 Missing finalization events
+### §3.3 Missing finalization events — resolved
 
-`finalizeT1Aggregation()` iterates all T1 batches, tallies votes per CID, and
+At audit time `finalizeT1Aggregation()` iterates all T1 batches, tallies votes per CID, and
 writes the majority CID to `b.finalCID` in storage — no event emitted.
 `finalizeT2Aggregation()` does the same for the single T2 batch; its `b.finalCID`
 is the **new global model CID** for the GI — the single most important value
@@ -108,13 +135,18 @@ vote-majority tallying logic in AssemblyScript from the submission events alone.
 That is complex, divergence-prone, and fragile against any future change to the
 tally logic. The contract has already computed the winner; it should emit it.
 
+**Resolution:** `T1BatchFinalized` and `T2Finalized` (plus the commit/reveal
+events in §4.3/§4.5) now expose every winning CID directly.
+
 ---
 
-## §4 Proposed additions
+## §4 Proposed additions — landed
 
-All six additions are minimal — one declaration and one (or N, for
-`GIStateChanged`) emit site per event. No storage changes, no new state. To be
-landed as one small reviewed PR before handler implementation begins.
+All six additions were minimal — one declaration and one (or N, for
+`GIStateChanged`) emit site per event. No storage changes, no new state. They
+landed together and are indexed; later contract work extended the set with the
+commit/reveal, test-data, dispute, seed-lock, reward, and governance events
+listed in §4a.
 
 ### §4.1 GI state machine — catch-all event
 
@@ -199,19 +231,42 @@ i.e. the new global model for this GI.
 
 ---
 
-## §5 Dead code — RewardDeposited
+### §4.5 Commit/reveal events (added later)
 
-`DINTaskAuditor` declares:
+Commit-then-reveal was added to both auditor scoring and T1/T2 aggregation:
 
 ```solidity
-event RewardDeposited(address indexed modelOwner, uint256 amount);
+event AuditScoreCommitted(uint indexed gi, uint indexed batchId, address indexed auditor, uint modelIndex, bytes32 commitHash);
+event T1AggregationCommitted(uint indexed GI, uint indexed batchId, address indexed aggregator, bytes32 commitHash);
+event T2AggregationCommitted(uint indexed GI, uint indexed batchId, address indexed aggregator, bytes32 commitHash);
 ```
 
-No `depositRewards` function exists anywhere in the contract. The event is
-never emitted. **Proposal:** remove in the same PR as the event additions above,
-unless P3-5.1–5.3 (fee routing / reward distribution) introduces a real deposit
-flow — that work should decide whether the event gets an emitter or is deleted.
-Do not add an emitter here without the corresponding P3 design.
+`T1AggregationSubmitted`/`T2AggregationSubmitted` are now the reveal step. The
+subgraph links each revealed submission back to its commitment.
+
+## §4a Other indexed mechanisms
+
+| Area | Events | Entities |
+|---|---|---|
+| Auditor scoring | `AuditScoreSubmitted`, `AuditScoreCommitted`, `AuditorScoreDeviation` | `AuditScoreSubmission`, `AuditScoreCommitment`, `AuditorScoreDeviation` |
+| Test data | `TestDataCommitmentStored`, `EncryptedTestDataKeysAssigned`, `TestDataDisputeOpened`, `TestDataDisputeUpheld`, `TestDataDisputeResolvedFalse`, `BatchPendingReassignment` | `TestDataCommitment`, `EncryptedTestDataKeys`, `TestDataDispute` |
+| Seeds | `AuditSeedLocked`, `AuditSeedReanchored`, `AggSeedLocked`, `AggSeedReanchored`, `DisputeSeedLocked`, `DisputeSeedReanchored` | `SeedLock` |
+| Disputes | `DisputeOpened`, `DisputeResolved`, `ReEvaluationAssigned`, `RecomputationSettled`, `DisputeBondClaimed`, `DisputeExpired` | `AggregationDispute`, `DisputeBondClaim` |
+| Rewards | `RewardDeposited`, `RewardsSettled`, `RewardsClaimed`, `RewardSplitUpdated` | `RewardDeposit`, `RewardSettlement`, `RewardClaim`, `RewardSplit` |
+| Governance | `S1SlashFractionBpsUpdated`, `S2SlashFractionBpsUpdated`, `S3DeviationThresholdUpdated`, `S3SlashingEnabledUpdated` | `TaskAuditorGovernance`, `TaskCoordinatorGovernance` |
+
+---
+
+## §5 RewardDeposited — resolved
+
+`DINTaskAuditor` now has a real deposit flow and emits:
+
+```solidity
+event RewardDeposited(uint256 indexed gi, address indexed depositor, uint256 amount);
+```
+
+This is indexed as `RewardDeposit`, alongside `RewardsSettled`, `RewardsClaimed`,
+and `RewardSplitUpdated` (see §4a).
 
 ---
 

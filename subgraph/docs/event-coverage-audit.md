@@ -1,7 +1,8 @@
 # Event Coverage Audit — DIN Platform Contracts
 
-**Scope:** The four platform contracts indexed in P4-IDX1:
-`DINModelRegistry`, `DinValidatorStake`, `DinCoordinator`, `DinToken`.
+**Scope:** The platform contracts audited in P4-IDX1: `DINModelRegistry`,
+`DinValidatorStake`, `DinCoordinator`, `DinToken`. `feat/din-indexer` also
+indexes `DinFeeRouter` and `DinTreasury` (see §4a/§4b).
 
 **Principle:** Every meaningful state transition must be reconstructable
 from events alone. Where reconstruction requires a storage call, a minimal
@@ -10,8 +11,29 @@ supported on all Graph node backends and degrade indexing performance.
 
 **Outcome:** Two confirmed event additions (coordinated with Umer, 2026-07-09)
 to be landed as one small PR after this audit is reviewed. No storage-layout
-changes. All four contracts are behind proxies (PR #13), so re-deploying
+changes. All platform contracts are behind proxies (PR #13), so re-deploying
 locally with updated event signatures is low-friction.
+
+> **Status update (2026-11-14, `feat/din-indexer`).** This document records the
+> original P4-IDX1 audit. The indexer now covers **six** platform contracts —
+> the original four plus `DinFeeRouter` and `DinTreasury` — and the task-level
+> contracts through data source templates. Several details below are therefore
+> historical:
+>
+> - `DINModelRegistry` no longer emits `FeesWithdrawn` or `DAOAdminUpdated`;
+>   it emits `FeeRouterUpdated` and `FeesSweptToRouter` instead.
+> - `DinCoordinator` no longer holds and withdraws fees. Fee sweeps now go to
+>   `DinFeeRouter`, which splits them across the validator pool, treasury,
+>   burn, storage, and public-goods buckets. `ETHTreasuryWithdrawn` on the
+>   coordinator is not needed; `DinTreasury` emits `EthReceived`,
+>   `EthWithdrawn`, and `ERC20Withdrawn`.
+> - `DinToken.TokensBurned` is indexed, alongside `TokensMinted` and ERC-20
+>   `Transfer`/`Approval`.
+> - The §6.1/§6.2 `DINModelRegistry` field extensions were **not** landed; the
+>   indexer resolves those fields from storage where needed.
+>
+> Current coverage is the schema and `subgraph.yaml` in this repo; the tables
+> below are kept as the audit trail that motivated the final event surface.
 
 ---
 
@@ -121,6 +143,46 @@ No gaps identified.
 
 ---
 
+## 4a. DinFeeRouter
+
+### 4a.1 Events indexed
+
+| Event | Indexed fields | Non-indexed fields |
+|---|---|---|
+| `FeeSourceAdded` | `source` | — |
+| `FeeSourceRemoved` | `source` | — |
+| `TreasuryUpdated` | `treasury` | — |
+| `TreasuryBpsCeilingUpdated` | — | `ceiling` |
+| `DinSplitUpdated` | — | `split` (validator pool, treasury, burn, storage, public-goods bps) |
+| `EthSplitUpdated` | — | `split` (validator pool, treasury, storage, public-goods bps) |
+| `FeeRoutedDIN` | `payer` | `amount`, `burned`, `toTreasury`, `toValidatorPool`, `toStorage`, `toPublicGoods` |
+| `FeeRoutedETH` | `payer` | `amount`, `toTreasury`, `toValidatorPool`, `toStorage`, `toPublicGoods` |
+
+The latest split and treasury settings are folded into `FeeRouterConfig`; every
+routed fee is kept as a `FeeRoutedDIN`/`FeeRoutedETH` row. Fee sources are
+tracked in `FeeSource` with active/removed timestamps.
+
+### 4a.2 Missing transitions
+
+None. `FeeRouterConfig` has no history rows, but every config-changing event is
+emitted and the current values can be rebuilt by replaying them.
+
+---
+
+## 4b. DinTreasury
+
+### 4b.1 Events indexed
+
+| Event | Indexed fields | Non-indexed fields |
+|---|---|---|
+| `EthReceived` | `from` | `amount` |
+| `EthWithdrawn` | `to` | `amount` |
+| `ERC20Withdrawn` | `token`, `to` | `amount` |
+
+No gaps: every balance movement has a corresponding event.
+
+---
+
 ## 5. Cross-contract issue: SlasherContractAdded / SlasherContractRemoved
 
 Both `DinCoordinator` and `DinValidatorStake` emit events with **identical signatures**:
@@ -148,11 +210,12 @@ mapping. `DinCoordinator` events are recorded for audit trail completeness only.
 
 ---
 
-## 6. Proposed event additions
+## 6. Proposed event additions (historical)
 
-The following two additions were confirmed by Umer (2026-07-09, issue #24). All
-other gaps noted in this document are either handled at the schema level (§5) or
-deferred to future work.
+These were the additions proposed at audit time. §6.1/§6.2 were not landed; the
+indexer resolves those fields from storage. §6.3 was superseded by the fee
+router/treasury split. The task-contract additions did land — see
+`Documentation/technical/audits/task-contract-event-audit.md`.
 
 ### 6.1 `DINModelRegistry.ModelRegistrationRequested`
 
@@ -203,17 +266,12 @@ event ManifestUpdateRequested(
 to its submitter. The requester address is already available as `msg.sender` at emit
 time — adding it costs nothing beyond the extra log topic slot.
 
-### 6.3 `DinCoordinator.ETHTreasuryWithdrawn` (new event)
+### 6.3 `DinCoordinator.ETHTreasuryWithdrawn` — superseded
 
-**Proposed addition to `withdraw()`:**
-```solidity
-event ETHTreasuryWithdrawn(address indexed to, uint256 amount);
-```
-
-**Why:** The coordinator's `withdraw()` function transfers the full ETH balance to
-the owner with no trace. For treasury governance and audit purposes, every outflow
-should be observable on-chain. This addition is independent of the §6.1/6.2 changes
-and can be batched into the same PR.
+The coordinator no longer withdraws fees itself; it sweeps them to
+`DinFeeRouter` (`FeesSweptToRouter`). Treasury outflows are now emitted by
+`DinTreasury` as `EthWithdrawn`/`ERC20Withdrawn`, so no coordinator event is
+needed.
 
 ---
 
@@ -224,16 +282,17 @@ needs to subscribe to for reactive job scheduling. Coverage gaps are noted.
 
 | Event | Contract | dind use | Gap |
 |---|---|---|---|
-| `ModelRegistrationRequested` | DINModelRegistry | Notify DAO admin of new pending request | After §6.1 addition: adequate |
+| `ModelRegistrationRequested` | DINModelRegistry | Notify DAO admin of new pending request | Resolved from storage (no field in event) |
 | `ModelApproved` | DINModelRegistry | Trigger model-owner onboarding flow | Adequate |
 | `ModelRejected` | DINModelRegistry | Notify model owner | Adequate |
-| `ManifestUpdateRequested` | DINModelRegistry | Notify DAO admin | After §6.2 addition: adequate |
+| `ManifestUpdateRequested` | DINModelRegistry | Notify DAO admin | Resolved from storage (no requester field) |
 | `ManifestUpdated` | DINModelRegistry | Trigger manifest refresh in local cache | Adequate |
 | `ValidatorStaked` | DinValidatorStake | Update local validator-eligibility cache | Adequate |
 | `ValidatorSlashed` | DinValidatorStake | Log slash for local validator operator | Adequate |
 | `ValidatorBlacklisted` | DinValidatorStake | Halt local validator process immediately | Adequate |
 | `DinPerEthUpdated` | DinCoordinator | Update local exchange-rate cache | Adequate — old rate derivable from prior snapshot |
-| `DAOAdminUpdated` | DINModelRegistry | Alert operator of governance-key rotation | Adequate |
+| `FeeRouterUpdated` / `FeesSweptToRouter` | DinCoordinator, DINModelRegistry | Track fee routing and sweeps | Adequate |
+| `GIStateChanged` | DINTaskCoordinator template | Task-level phase trigger | Adequate — 29 states, `GIended = 28` |
 
-**Events not yet needed by dind v1** (task-contract GI events): not in scope here.
-These belong in the P4-IDX3 handoff notes once platform-contract indexing is stable.
+Task-contract GI events are now indexed through the data source templates; see
+`subgraph/docs/daemon-event-schema.md` for the trigger mapping.

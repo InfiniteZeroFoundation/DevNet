@@ -2,7 +2,7 @@
 
 ## What was done
 
-The `dindao registry list-pending-requests` command (`dincli/cli/dindao.py`) previously
+The `dincli dinrep registry list-pending-requests` command (`dincli/cli/dinrep.py`) previously
 enumerated pending model and manifest requests by calling `totalModelRequests()` /
 `totalManifestRequests()` on-chain and iterating through every index with an individual
 RPC call per entry.  Those two `for idx in range(...)` loops have been replaced with
@@ -12,9 +12,9 @@ GraphQL queries to the locally-running subgraph.
 
 | File | Location | Change |
 |------|----------|--------|
-| `dincli/cli/dindao.py` | top of file | Added `_SUBGRAPH_URL` constant and `_query_subgraph()` helper |
-| `dincli/cli/dindao.py` | `list_pending_requests` — model block | GraphQL-first, RPC fallback |
-| `dincli/cli/dindao.py` | `list_pending_requests` — manifest block | GraphQL-first, RPC fallback |
+| `dincli/cli/dinrep.py` | top of file | Added `_SUBGRAPH_URL` constant and `_query_subgraph()` helper |
+| `dincli/cli/dinrep.py` | `list_pending_requests` — model block | GraphQL-first, RPC fallback |
+| `dincli/cli/dinrep.py` | `list_pending_requests` — manifest block | GraphQL-first, RPC fallback |
 
 ### Queries issued
 
@@ -63,17 +63,17 @@ so the command remains fully functional in environments where the subgraph is no
 
 ## Follow-up candidates
 
-The same RPC-enumeration pattern appears in at least two other places.  These are
-candidates for a P5 ticket once the subgraph schema is extended to cover task-level events:
+The same RPC-enumeration pattern appears in at least two other places. The
+subgraph now indexes task-level events through dynamic data sources, so these
+loops can be migrated to GraphQL queries:
 
 | File | Approx. line | Description |
 |------|-------------|-------------|
-| `dincli/cli/modelownerd/lms.py` | ~62 | Iterates `totalLocalModelSubmissions()` to list LMS entries for the current GI |
-| `dincli/cli/modelownerd/aggregation.py` | ~76, 95, 136 | Iterates T1/T2 batch entries to build aggregation payloads |
+| `dincli/cli/modelownerd/lms.py` | ~62 | Iterates `totalLocalModelSubmissions()` to list LMS entries for the current GI. `LocalModelSubmission` covers this. |
+| `dincli/cli/modelownerd/aggregation.py` | ~76, 95, 136 | Iterates T1/T2 batch entries to build aggregation payloads. `Tier1Batch`, `Tier2Batch`, `T1AggregationSubmission`, and `T2AggregationSubmission` cover this. |
 
-These loops touch `DINTaskCoordinator` state which is task-level (not covered by the
-current platform-contract subgraph).  They should be migrated once dynamic data sources
-for task contracts are added in a future subgraph version.
+These loops still work through RPC today; migrating them is a follow-up, not a
+blocker for the indexer.
 
 ---
 
