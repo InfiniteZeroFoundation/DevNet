@@ -1,0 +1,1466 @@
+# DIN Protocol — The Graph subgraph schema
+#
+# Covers the six platform contracts:
+#   DINModelRegistry, DinValidatorStake, DinCoordinator, DinToken,
+#   DinFeeRouter, DinTreasury
+# and the per-model task contracts (DINTaskCoordinator, DINTaskAuditor) via
+# dynamic data source templates.
+#
+# Chain: chainId 1337 (local anvil).
+# Some registry fields not carried in their events (e.g. isOpenSource and
+# feePaid on ModelRegistrationRequest) are read from contract storage by the
+# mapping handler at the event's block.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — registration requests
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A request submitted by a model owner for DAO review and approval."""
+type ModelRegistrationRequest @entity {
+  "requestId as decimal string"
+  id: ID!
+
+  requestId: BigInt!
+  requester: Bytes!
+
+  "Read from modelRequests() storage at the request block"
+  isOpenSource: Boolean!
+
+  "Fee paid at submission time in wei, read from modelRequests() storage"
+  feePaid: BigInt!
+
+  manifestCID: Bytes!
+  taskCoordinator: Bytes!
+  taskAuditor: Bytes!
+
+  processed: Boolean!
+  approved: Boolean
+
+  "Set when the request is approved"
+  model: Model
+
+  submittedAtBlock: BigInt!
+  submittedAtTimestamp: BigInt!
+  processedAtBlock: BigInt
+  processedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — approved models
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An approved federated-learning model registered on the DIN protocol."""
+type Model @entity {
+  "modelId as decimal string"
+  id: ID!
+
+  modelId: BigInt!
+  owner: Bytes!
+  isOpenSource: Boolean!
+  manifestCID: Bytes!
+  taskCoordinator: Bytes!
+  taskAuditor: Bytes!
+
+  disabled: Boolean!
+
+  "The registration request that created this model"
+  registrationRequest: ModelRegistrationRequest!
+
+  manifestHistory: [ManifestUpdateRequest!]! @derivedFrom(field: "model")
+  disableEvents: [ModelKillSwitchEvent!]! @derivedFrom(field: "model")
+  globalIterations: [GlobalIteration!]! @derivedFrom(field: "model")
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — manifest update requests
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A manifest update request submitted by the model owner for DAO review."""
+type ManifestUpdateRequest @entity {
+  "requestId as decimal string"
+  id: ID!
+
+  requestId: BigInt!
+  model: Model!
+
+  "Derived from Model.owner (only the model owner can request a manifest update)"
+  requester: Bytes!
+
+  feePaid: BigInt!
+  newManifestCID: Bytes!
+
+  processed: Boolean!
+  approved: Boolean
+
+  submittedAtBlock: BigInt!
+  submittedAtTimestamp: BigInt!
+  processedAtBlock: BigInt
+  processedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — kill-switch history
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Records each ModelDisabled / ModelEnabled transition."""
+type ModelKillSwitchEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  model: Model!
+  disabled: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — fee governance
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A snapshot of protocol fees at the time of a fee-change event.
+One snapshot per fee-change transaction; latest snapshot is the current fee schedule.
+"""
+type FeeSnapshot @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  openSourceFee: BigInt!
+  proprietaryFee: BigInt!
+  openSourceUpdateFee: BigInt!
+  proprietaryUpdateFee: BigInt!
+
+  "atomic = fired by setFees(); granular = fired by an individual setter"
+  updateKind: String!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An ETH fee sweep from DINModelRegistry to the DinFeeRouter (FeesSweptToRouter)."""
+type RegistryFeeWithdrawal @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  "The fee router at the time of the sweep, read from feeRouter()"
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""Records every change of the fee router address on DINModelRegistry (FeeRouterUpdated)."""
+type FeeRouterUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  "The contract that emitted the event"
+  sourceContract: Bytes!
+  feeRouter: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Registry — governance key rotation
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Records every DAOAdmin (Ownable owner) transfer, from OwnershipTransferred."""
+type DAOAdminTransfer @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  oldAdmin: Bytes!
+  newAdmin: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — per-validator aggregate
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+Aggregate state for a single validator address, updated on every relevant event.
+Derived status (Active / Exiting / Jailed / Blacklisted / None) is computed
+from the event stream — no dedicated ValidatorStatusChanged event exists yet.
+"""
+type Validator @entity {
+  "validator address as hex string"
+  id: ID!
+
+  address: Bytes!
+
+  activeStake: BigInt!
+  pendingWithdrawal: BigInt!
+  withdrawAvailableAt: BigInt
+
+  "Active | Exiting | Jailed | Blacklisted | None"
+  status: String!
+
+  totalStaked: BigInt!
+  totalSlashed: BigInt!
+  totalWithdrawn: BigInt!
+
+  blacklisted: Boolean!
+
+  "Timestamp until which the validator is jailed, or null if not jailed. Cleared on reactivation."
+  jailedUntil: BigInt
+
+  "Running count of active task-contract registrations (from ActiveRegistrationIncremented/Decremented)."
+  activeRegistrations: Int!
+
+  "Most recently registered encryption public key, or null if none registered."
+  encryptionKey: Bytes
+
+  stakeEvents: [StakeEvent!]! @derivedFrom(field: "validator")
+  slashEvents: [SlashEvent!]! @derivedFrom(field: "validator")
+  unstakeRequests: [UnstakeRequest!]! @derivedFrom(field: "validator")
+  withdrawalClaims: [WithdrawalClaim!]! @derivedFrom(field: "validator")
+  jailEvents: [JailEvent!]! @derivedFrom(field: "validator")
+  s6NoParticipationRecords: [S6NoParticipationRecord!]! @derivedFrom(field: "validator")
+  s6PartialSlashEvents: [S6PartialSlashEvent!]!         @derivedFrom(field: "validator")
+  escalationsS5: [ValidatorEscalationS5!]!              @derivedFrom(field: "validator")
+  escalationsS5Global: [ValidatorEscalationS5Global!]!  @derivedFrom(field: "validator")
+  encryptionKeyHistory: [EncryptionKeyRegistration!]!   @derivedFrom(field: "validator")
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — individual events
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A DIN stake deposit by a validator."""
+type StakeEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A slash applied to a validator's stake."""
+type SlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+  reason: Bytes!
+
+  "Address of the slasher contract (DINTaskCoordinator or DINTaskAuditor)"
+  slasherContract: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An unstake (unbonding) request submitted by a validator."""
+type UnstakeRequest @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+  withdrawAvailableAt: BigInt!
+
+  claimed: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A completed withdrawal after the unbonding period."""
+type WithdrawalClaim @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+A jail applied to a validator (extend-only). A validator stays Jailed until
+they call reactivate() after the jail period expires — there is no silent
+auto-return (see DinValidatorStake._syncValidatorStatus()).
+"""
+type JailEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  validator: Validator!
+
+  "Timestamp until which the validator is jailed"
+  jailedUntil: BigInt!
+
+  "Arbitrary slasher-supplied reason (e.g. keccak('offline'))"
+  reason: Bytes!
+
+  "Address of the slasher contract that issued the jail"
+  slasherContract: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — governance parameters
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+Singleton (id "singleton") mirroring the DAO-settable parameters on
+DinValidatorStake. Kept up to date by the MinStakeUpdated,
+UnbondingPeriodUpdated, and MaxConcurrentRegistrationsPerStakeUnitUpdated
+handlers. Defaults to the initialize() values (minStake = 10 DIN,
+unbondingPeriod = 7 days).
+"""
+type StakeGovernance @entity {
+  "singleton"
+  id: ID!
+
+  minStake: BigInt!
+  unbondingPeriod: BigInt!
+  maxConcurrentRegistrationsPerStakeUnit: BigInt!
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""
+DAO-level per-model stake bounds. Inert storage on the contract (not yet
+consumed by task-contract registration); indexed here for governance
+audit-trail visibility.
+"""
+type ModelStakeBounds @entity {
+  "modelId as string"
+  id: ID!
+
+  modelId: BigInt!
+  min: BigInt!
+  max: BigInt!
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — slasher registry
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A slasher contract authorized to call DinValidatorStake.slash().
+sourceContract distinguishes DinCoordinator-originated events from
+DinValidatorStake-originated events — both emit identical SlasherContractAdded/
+Removed signatures (see event-coverage-audit.md §5).
+The canonical active-slasher set is derived from DinValidatorStake events only.
+"""
+type SlasherRegistration @entity {
+  "slasherAddress-sourceContract as hex pair"
+  id: ID!
+
+  slasherAddress: Bytes!
+
+  "DinCoordinator or DinValidatorStake — the contract that emitted the event"
+  sourceContract: Bytes!
+
+  active: Boolean!
+
+  addedAtBlock: BigInt!
+  addedAtTimestamp: BigInt!
+  removedAtBlock: BigInt
+  removedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator stake — S5/S6 penalty mechanism
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Singleton (id "singleton") mirroring the S5 global-penalty parameters."""
+type S5GlobalParams @entity {
+  "singleton"
+  id: ID!
+  window: BigInt!
+  threshold: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""Singleton (id "singleton") mirroring the S5 recidivism-penalty parameters."""
+type S5RecidivismParams @entity {
+  "singleton"
+  id: ID!
+  window: BigInt!
+  threshold: BigInt!
+  jailDuration: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""Singleton (id "singleton") mirroring the S6 no-participation threshold."""
+type S6Params @entity {
+  "singleton"
+  id: ID!
+  threshold: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""A no-participation record emitted each time a validator's S6 count increments."""
+type S6NoParticipationRecord @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  count: BigInt!
+  reason: Bytes!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A partial slash fired when a validator crosses the S6 no-participation threshold."""
+type S6PartialSlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  slashedAmount: BigInt!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An S5 escalation slash (per-GI recidivism threshold exceeded)."""
+type ValidatorEscalationS5 @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  slashedAmount: BigInt!
+  giIndex: BigInt!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An S5 global escalation slash (global recidivism threshold exceeded)."""
+type ValidatorEscalationS5Global @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  slashedAmount: BigInt!
+  globalCount: BigInt!
+  slasherContract: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A change to the slash treasury address."""
+type SlashTreasuryUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+  treasury: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An encryption key registration or update by a validator."""
+type EncryptionKeyRegistration @entity {
+  "txHash-logIndex"
+  id: ID!
+  validator: Validator!
+  pubkey: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinCoordinator — ETH deposits and treasury
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An ETH deposit that minted DIN tokens for a user."""
+type DINMintEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  user: Bytes!
+  ethAmount: BigInt!
+  dinAmount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A change to the DIN-per-ETH exchange rate."""
+type ExchangeRateSnapshot @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  newRate: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinToken — mint and transfer history
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A DIN token mint (always from DinCoordinator via depositAndMint)."""
+type TokenMintEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+A DIN ERC20 transfer. Indexed from the standard Transfer event.
+Includes zero-address mint/burn transfers for completeness.
+"""
+type TokenTransferEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  from: Bytes!
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# =============================================================================
+# Task-level contracts — dynamic data sources
+#
+# DINTaskCoordinator and DINTaskAuditor are deployed once per model (not once
+# globally). The subgraph tracks them via data source templates instantiated
+# when DINModelRegistry emits ModelApproved.
+
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global Iteration lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A single Global Iteration (GI) for one federated-learning model.
+Central entity linking registrations, batches, submissions, and scoring.
+"""
+type GlobalIteration @entity {
+  "taskCoordinatorAddress-gi (hex-decimal)"
+  id: ID!
+
+  gi: BigInt!
+  taskCoordinator: Bytes!
+
+  "Back-reference to the platform-level Model entity"
+  model: Model!
+
+  """Current GIstates enum value as uint8, updated from GIStateChanged.
+  Starts at 5 (GIstarted) — the first state reachable after model registration."""
+  currentState: Int!
+
+  aggregatorRegistrations: [AggregatorRegistration!]! @derivedFrom(field: "globalIteration")
+  auditorRegistrations: [AuditorRegistration!]!      @derivedFrom(field: "globalIteration")
+  tier1Batches: [Tier1Batch!]!                       @derivedFrom(field: "globalIteration")
+  tier2Batches: [Tier2Batch!]!                       @derivedFrom(field: "globalIteration")
+  auditBatches: [AuditBatch!]!                       @derivedFrom(field: "globalIteration")
+  localModelSubmissions: [LocalModelSubmission!]!    @derivedFrom(field: "globalIteration")
+  aggregatorSlashEvents: [AggregatorSlashEvent!]!    @derivedFrom(field: "globalIteration")
+  auditorSlashEvents: [AuditorSlashEvent!]!          @derivedFrom(field: "globalIteration")
+  stateTransitions: [GIStateTransition!]!            @derivedFrom(field: "globalIteration")
+  rewardDeposits: [RewardDeposit!]!                   @derivedFrom(field: "globalIteration")
+  rewardSettlements: [RewardSettlement!]!             @derivedFrom(field: "globalIteration")
+  auditScoreCommitments: [AuditScoreCommitment!]!     @derivedFrom(field: "globalIteration")
+  testDataCommitments: [TestDataCommitment!]!         @derivedFrom(field: "globalIteration")
+  testDataDisputes: [TestDataDispute!]!               @derivedFrom(field: "globalIteration")
+  auditorScoreDeviations: [AuditorScoreDeviation!]!   @derivedFrom(field: "globalIteration")
+  t1AggregationCommitments: [T1AggregationCommitment!]! @derivedFrom(field: "globalIteration")
+  t2AggregationCommitments: [T2AggregationCommitment!]! @derivedFrom(field: "globalIteration")
+  seedLocks: [SeedLock!]!                             @derivedFrom(field: "globalIteration")
+  aggregationDisputes: [AggregationDispute!]!         @derivedFrom(field: "globalIteration")
+
+  "T2 winning CID — the new global model. Set by T2Finalized."
+  globalModelCID: Bytes
+
+  "True once endGI() has been called and GIStateChanged(GIended) fires."
+  ended: Boolean!
+
+  startedAtBlock: BigInt!
+  startedAtTimestamp: BigInt!
+  endedAtBlock: BigInt
+  endedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validator registrations per GI
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An aggregator that registered for a specific Global Iteration."""
+type AggregatorRegistration @entity {
+  "taskCoordinatorAddress-gi-validatorAddress"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  validator: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An auditor that registered for a specific Global Iteration."""
+type AuditorRegistration @entity {
+  "taskAuditorAddress-gi-auditorAddress"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditor: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aggregation batches (T1 and T2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A Tier-1 aggregation batch. Created by autoCreateTier1AndTier2().
+Multiple T1 batches exist per GI; each covers a sub-set of approved models.
+"""
+type Tier1Batch @entity {
+  "taskCoordinatorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  batchId: BigInt!
+
+  t1Submissions: [T1AggregationSubmission!]! @derivedFrom(field: "tier1Batch")
+
+  "True once finalizeT1Aggregation() selects the majority CID."
+  finalized: Boolean!
+
+  "Majority-agreed aggregation CID. Set by T1BatchFinalized."
+  winningCID: Bytes
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+  finalizedAtBlock: BigInt
+  finalizedAtTimestamp: BigInt
+}
+
+"""
+The single Tier-2 aggregation batch per GI. Created alongside T1 batches.
+Its winningCID is the new global model for the iteration.
+"""
+type Tier2Batch @entity {
+  "taskCoordinatorAddress-gi (batchId is always 0)"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+
+  t2Submissions: [T2AggregationSubmission!]! @derivedFrom(field: "tier2Batch")
+
+  "True once finalizeT2Aggregation() selects the majority CID."
+  finalized: Boolean!
+
+  "Majority-agreed CID — the new global model for this GI. Set by T2Finalized."
+  globalModelCID: Bytes
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+  finalizedAtBlock: BigInt
+  finalizedAtTimestamp: BigInt
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit batches
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+An audit batch created by DINTaskAuditor.createAuditorsBatches().
+Groups a subset of auditors with a subset of local model submissions.
+"""
+type AuditBatch @entity {
+  "taskAuditorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  batchId: BigInt!
+
+  scoreSubmissions: [AuditScoreSubmission!]! @derivedFrom(field: "auditBatch")
+  scoreCommitments: [AuditScoreCommitment!]! @derivedFrom(field: "auditBatch")
+  eligibilityVotes: [EligibilityVote!]!      @derivedFrom(field: "auditBatch")
+  eligibilityResults: [EligibilityResult!]!  @derivedFrom(field: "auditBatch")
+  auditorSlashEvents: [AuditorSlashEvent!]!  @derivedFrom(field: "auditBatch")
+  scoreDeviations: [AuditorScoreDeviation!]! @derivedFrom(field: "auditBatch")
+  testDataCommitment: TestDataCommitment     @derivedFrom(field: "auditBatch")
+  encryptedTestDataKeys: EncryptedTestDataKeys @derivedFrom(field: "auditBatch")
+  testDataDispute: TestDataDispute           @derivedFrom(field: "auditBatch")
+
+  "True once BatchPendingReassignment fires for this batch."
+  pendingReassignment: Boolean!
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local model submissions
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A local model submitted by a client during the LMS phase.
+Populated from the LocalModelSubmitted event.
+Until that event lands this entity will not be populated.
+"""
+type LocalModelSubmission @entity {
+  "taskAuditorAddress-gi-modelIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  modelIndex: BigInt!
+  client: Bytes!
+  modelCID: Bytes!
+
+  "Set once EligibilityFinalized fires for this modelIndex."
+  eligible: Boolean
+  "Set once finalizeEvaluation() is called (derived from EligibilityFinalized + AuditScoreSubmitted)."
+  finalAvgScore: BigInt
+  "True if eligible and finalAvgScore >= passScore."
+  approved: Boolean
+
+  scoreSubmissions: [AuditScoreSubmission!]! @derivedFrom(field: "localModelSubmission")
+  eligibilityVotes: [EligibilityVote!]!      @derivedFrom(field: "localModelSubmission")
+  eligibilityResult: EligibilityResult       @derivedFrom(field: "localModelSubmission")
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aggregation submissions (T1 and T2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A T1 aggregation CID submitted by an aggregator for a specific batch.
+Populated from the T1AggregationSubmitted event.
+"""
+type T1AggregationSubmission @entity {
+  "taskCoordinatorAddress-gi-batchId-aggregatorAddress"
+  id: ID!
+
+  tier1Batch: Tier1Batch!
+  aggregator: Bytes!
+  cid: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+A T2 aggregation CID submitted by an aggregator.
+batchId is always 0. Populated from the T2AggregationSubmitted event.
+"""
+type T2AggregationSubmission @entity {
+  "taskCoordinatorAddress-gi-aggregatorAddress"
+  id: ID!
+
+  tier2Batch: Tier2Batch!
+  aggregator: Bytes!
+  cid: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit scoring and eligibility
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An audit score submitted by a single auditor for one local model."""
+type AuditScoreSubmission @entity {
+  "taskAuditorAddress-gi-batchId-auditorAddress-modelIndex"
+  id: ID!
+
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  auditor: Bytes!
+  score: BigInt!
+
+  "The commit-reveal commitment this score was revealed against, if any."
+  commitment: AuditScoreCommitment
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An eligibility vote cast by a single auditor for one local model."""
+type EligibilityVote @entity {
+  "taskAuditorAddress-gi-batchId-modelIndex-auditorAddress"
+  id: ID!
+
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  auditor: Bytes!
+  vote: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+The finalized eligibility result for a local model once quorum is reached.
+One record per modelIndex per GI.
+"""
+type EligibilityResult @entity {
+  "taskAuditorAddress-gi-batchId-modelIndex"
+  id: ID!
+
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  eligible: Boolean!
+  totalVotes: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slash events (task-level)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A slash applied to an aggregator by DINTaskCoordinator.slashAggregators()."""
+type AggregatorSlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  batchId: BigInt!
+  aggregator: Bytes!
+  reason: Bytes!
+  requestedAmount: BigInt!
+  actualAmount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A slash applied to an auditor by DINTaskAuditor.slashAuditors()."""
+type AuditorSlashEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  auditor: Bytes!
+  reason: Bytes!
+  requestedAmount: BigInt!
+  actualAmount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pass score governance
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A change to the auditor pass score on DINTaskAuditor."""
+type PassScoreUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  "The task auditor contract that emitted the event"
+  taskAuditor: Bytes!
+  oldScore: BigInt!
+  newScore: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GI state transition history
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A single GI state machine transition recorded from GIStateChanged.
+One record per state write — the full lifecycle of a GI is reconstructable
+from the ordered sequence of GIStateTransition records for a GlobalIteration.
+newState is the uint8 value of the GIstates enum in DINShared.sol.
+"""
+type GIStateTransition @entity {
+  "taskCoordinatorAddress-gi-newState"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+
+  "uint8 value of the GIstates enum (0 = AwaitingDINTaskAuditorToBeSet … 28 = GIended)"
+  newState: Int!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskAuditor — rewards
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A reward deposit made by a model owner for one GI."""
+type RewardDeposit @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  depositor: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""The reward split settled at the end of a GI."""
+type RewardSettlement @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  clientPool: BigInt!
+  auditorPool: BigInt!
+  aggregatorPool: BigInt!
+  treasuryShare: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A reward claim by a client, auditor, or aggregator."""
+type RewardClaim @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  claimant: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""Current reward split for a task auditor (one row per task auditor)."""
+type RewardSplit @entity {
+  "taskAuditor address"
+  id: ID!
+
+  clientBps: Int!
+  auditorBps: Int!
+  aggregatorBps: Int!
+  treasuryBps: Int!
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskAuditor — commit-reveal scoring
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A score commitment submitted during the audit reveal-free commit phase.
+AuditScoreSubmitted is the later reveal step; when it fires the matching
+commitment is marked revealed and its score recorded here.
+"""
+type AuditScoreCommitment @entity {
+  "taskAuditorAddress-gi-batchId-auditorAddress-modelIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  auditor: Bytes!
+  modelIndex: BigInt!
+  commitHash: Bytes!
+
+  revealed: Boolean!
+  score: BigInt
+  revealedAtBlock: BigInt
+  revealedAtTimestamp: BigInt
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskAuditor — test-data flow and disputes
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""The test-data commitment stored for an audit batch."""
+type TestDataCommitment @entity {
+  "taskAuditorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  commitment: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""Encrypted per-auditor test-data keys assigned to a batch."""
+type EncryptedTestDataKeys @entity {
+  "taskAuditorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  testDataCID: Bytes!
+  auditorCount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""
+A dispute over the test data assigned to an audit batch. status is one of
+Open, Upheld, ResolvedFalse, or Expired.
+"""
+type TestDataDispute @entity {
+  "taskAuditorAddress-gi-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  disputer: Bytes!
+  bond: BigInt!
+  expiresAtBlock: BigInt!
+
+  status: String!
+  bondReturned: BigInt
+  bondForfeited: BigInt
+  ownerPenalty: BigInt
+
+  openedAtBlock: BigInt!
+  openedAtTimestamp: BigInt!
+  resolvedAtBlock: BigInt
+  resolvedAtTimestamp: BigInt
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskAuditor — S3 score-deviation detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""An auditor score that deviated from the batch median (S3)."""
+type AuditorScoreDeviation @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  auditBatch: AuditBatch!
+  localModelSubmission: LocalModelSubmission!
+  auditor: Bytes!
+  modelIndex: BigInt!
+  auditorScore: BigInt!
+  medianScore: BigInt!
+  deviation: BigInt!
+  exceedsThreshold: Boolean!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskAuditor — governance parameters
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Governance parameters for one task auditor (S1/S3 slashing controls)."""
+type TaskAuditorGovernance @entity {
+  "taskAuditor address"
+  id: ID!
+
+  s1SlashFractionBps: BigInt
+  s3DeviationThreshold: BigInt
+  s3SlashingEnabled: Boolean
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskCoordinator — commit-reveal aggregation
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A T1 aggregation commit hash submitted by an aggregator."""
+type T1AggregationCommitment @entity {
+  "taskCoordinatorAddress-gi-batchId-aggregatorAddress"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  tier1Batch: Tier1Batch!
+  aggregator: Bytes!
+  commitHash: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A T2 aggregation commit hash submitted by an aggregator."""
+type T2AggregationCommitment @entity {
+  "taskCoordinatorAddress-gi-aggregatorAddress"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  tier2Batch: Tier2Batch!
+  aggregator: Bytes!
+  commitHash: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskCoordinator — seed locks
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A seed lock (or re-anchor) for a GI. kind is Audit, Agg, or Dispute; dispute
+seed locks also carry the TierKind ordinal and batchId.
+"""
+type SeedLock @entity {
+  "taskCoordinatorAddress-gi-kind[-tierKind-batchId]"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  kind: String!
+  tierKind: Int
+  batchId: BigInt
+
+  seed: Bytes
+  reanchoredAtBlock: BigInt
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskCoordinator — aggregation disputes
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+A dispute over a T1/T2 aggregation result. tierKind is the TierKind ordinal
+(0 = Tier1, 1 = Tier2). status is one of Open, Upheld, Rejected, or Expired.
+"""
+type AggregationDispute @entity {
+  "taskCoordinatorAddress-gi-tierKind-batchId"
+  id: ID!
+
+  globalIteration: GlobalIteration!
+  tierKind: Int!
+  batchId: BigInt!
+  challenger: Bytes!
+  bond: BigInt!
+
+  status: String!
+  upheld: Boolean
+  confirmed: Boolean
+  freshAggregators: [String!]
+
+  openedAtBlock: BigInt!
+  openedAtTimestamp: BigInt!
+  resolvedAtBlock: BigInt
+  resolvedAtTimestamp: BigInt
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A challenger's dispute-bond claim after a successful dispute."""
+type DisputeBondClaim @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  challenger: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DINTaskCoordinator — governance parameters
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Governance parameters for one task coordinator (S2 slashing controls)."""
+type TaskCoordinatorGovernance @entity {
+  "taskCoordinator address"
+  id: ID!
+
+  s2SlashFractionBps: BigInt
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinCoordinator — emission, mint cap, faucet, fee router
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A DIN emission minted through DinEmission by DinCoordinator."""
+type EmissionMintEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A change to the DinEmission contract pointer on DinCoordinator."""
+type EmissionContractUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  emissionContract: Bytes!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""A change to the DinToken mint cap on DinCoordinator."""
+type MintCapUpdate @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  newCap: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""Records that the DinCoordinator faucet was permanently retired."""
+type FaucetRetired @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An ETH fee sweep from DinCoordinator to the DinFeeRouter."""
+type FeeSweepToRouter @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  "DinCoordinator or DINModelRegistry — the contract that emitted the event"
+  sourceContract: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinToken — burns
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A DIN token burn (fee-router burn bucket or explicit burn)."""
+type TokenBurnEvent @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  from: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinFeeRouter
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A contract authorized to route fees through DinFeeRouter."""
+type FeeSource @entity {
+  "feeRouterAddress-sourceAddress"
+  id: ID!
+
+  source: Bytes!
+  active: Boolean!
+
+  addedAtBlock: BigInt!
+  addedAtTimestamp: BigInt!
+  removedAtBlock: BigInt
+  removedAtTimestamp: BigInt
+}
+
+"""Current DinFeeRouter configuration (one row per fee router)."""
+type FeeRouterConfig @entity {
+  "feeRouter address"
+  id: ID!
+
+  treasury: Bytes
+  treasuryBpsCeiling: Int
+
+  dinValidatorPoolBps: Int
+  dinTreasuryBps: Int
+  dinBurnBps: Int
+  dinStorageBps: Int
+  dinPublicGoodsBps: Int
+
+  ethValidatorPoolBps: Int
+  ethTreasuryBps: Int
+  ethStorageBps: Int
+  ethPublicGoodsBps: Int
+
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+"""A DIN fee routed through DinFeeRouter."""
+type FeeRoutedDIN @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  payer: Bytes!
+  amount: BigInt!
+  burned: BigInt!
+  toTreasury: BigInt!
+  toValidatorPool: BigInt!
+  toStorage: BigInt!
+  toPublicGoods: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""An ETH fee routed through DinFeeRouter."""
+type FeeRoutedETH @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  payer: Bytes!
+  amount: BigInt!
+  toTreasury: BigInt!
+  toValidatorPool: BigInt!
+  toStorage: BigInt!
+  toPublicGoods: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DinTreasury
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""ETH received by DinTreasury."""
+type TreasuryEthReceived @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  from: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""ETH withdrawn from DinTreasury."""
+type TreasuryEthWithdrawn @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+"""ERC20 tokens withdrawn from DinTreasury."""
+type TreasuryERC20Withdrawn @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  token: Bytes!
+  to: Bytes!
+  amount: BigInt!
+
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}

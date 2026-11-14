@@ -1,0 +1,16 @@
+{
+  "name": "din-protocol-subgraph",
+  "version": "0.1.0",
+  "description": "The Graph subgraph for DIN Protocol platform contracts",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "create:local": "graph create --node http://localhost:8020/ din-protocol",
+    "deploy:local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 din-protocol",
+    "remove:local": "graph remove --node http://localhost:8020/ din-protocol"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-cli": "^0.71.0",
+    "@graphprotocol/graph-ts": "^0.35.1"
+  }
+}

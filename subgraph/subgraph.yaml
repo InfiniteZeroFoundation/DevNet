@@ -1,0 +1,575 @@
+specVersion: 0.0.5
+description: >
+  DIN Protocol subgraph. Indexes the six platform contracts (DINModelRegistry,
+  DinValidatorStake, DinCoordinator, DinToken, DinFeeRouter, DinTreasury) and
+  task-level contracts (DINTaskCoordinator, DINTaskAuditor) via dynamic data
+  source templates on the local development chain (chainId 1337).
+repository: https://github.com/InfiniteZeroFoundation/DevNet
+schema:
+  file: ./schema.graphql
+
+# ─── Network note ────────────────────────────────────────────────────────────
+# The network name "din-local" must match the network configured in the
+# Graph node's config.toml or networks.toml (see docker-compose.yml). The
+# Graph node maps this name to the local anvil RPC at
+# http://localhost:8545 (chainId 1337).
+#
+# ─── Address note ────────────────────────────────────────────────────────────
+# Placeholder addresses below must be replaced with the actual addresses
+# after deploying the platform contracts to the local chain. The canonical
+# deploy command is:
+#   cd foundry && forge script script/DeployPlatform.s.sol \
+#     --rpc-url http://127.0.0.1:8545 --broadcast \
+#     --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --unlocked
+# Deployed addresses are written to foundry/deployments/<network>.json
+# (localhost for chain 1337 / anvil, sepolia_op_devnet for Optimism Sepolia).
+# The platform contracts sit behind transparent proxies — use the PROXY
+# addresses here, not the implementation addresses. The <name> keys in that
+# file (dinModelRegistry, dinValidatorStake, ...) are the proxies.
+# A helper script (./scripts/update-subgraph-addresses.sh) patches this file
+# automatically from that deployments JSON.
+# ─────────────────────────────────────────────────────────────────────────────
+
+dataSources:
+
+  # ── DINModelRegistry ────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DINModelRegistry
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000001"  # replace after deploy
+      abi: DINModelRegistry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - ModelRegistrationRequest
+        - Model
+        - ManifestUpdateRequest
+        - ModelKillSwitchEvent
+        - FeeSnapshot
+        - RegistryFeeWithdrawal
+        - FeeRouterUpdate
+        - DAOAdminTransfer
+      abis:
+        - name: DINModelRegistry
+          file: ./abis/DINModelRegistry.json
+      eventHandlers:
+        # Registration request lifecycle
+        - event: ModelRegistrationRequested(indexed uint256,indexed address)
+          handler: handleModelRegistrationRequested
+          # NOTE: missing isOpenSource and fee fields until audit §6.1 addition
+          # lands. Handler will call modelRequests(requestId) as a temporary
+          # bridge to populate those fields.
+        - event: ModelApproved(indexed uint256,indexed uint256)
+          handler: handleModelApproved
+        - event: ModelRejected(indexed uint256)
+          handler: handleModelRejected
+
+        # Manifest update lifecycle
+        - event: ManifestUpdateRequested(indexed uint256,indexed uint256)
+          handler: handleManifestUpdateRequested
+          # NOTE: missing requester field until audit §6.2 addition lands.
+          # Handler will derive requester from Model.owner as a bridge.
+        - event: ManifestUpdated(indexed uint256,indexed uint256,bytes32)
+          handler: handleManifestUpdated
+        - event: ManifestUpdateRejected(indexed uint256)
+          handler: handleManifestUpdateRejected
+
+        # Kill switch
+        - event: ModelDisabled(indexed uint256)
+          handler: handleModelDisabled
+        - event: ModelEnabled(indexed uint256)
+          handler: handleModelEnabled
+
+        # Fee governance — granular setters
+        - event: OpenSourceFeeUpdated(uint256)
+          handler: handleOpenSourceFeeUpdated
+        - event: ProprietaryFeeUpdated(uint256)
+          handler: handleProprietaryFeeUpdated
+        - event: OpenSourceUpdateFeeUpdated(uint256)
+          handler: handleOpenSourceUpdateFeeUpdated
+        - event: ProprietaryUpdateFeeUpdated(uint256)
+          handler: handleProprietaryUpdateFeeUpdated
+
+        # Fee governance — atomic setter (governance proposals)
+        - event: FeesUpdated(uint256,uint256,uint256,uint256)
+          handler: handleFeesUpdated
+
+        # Fee sweep to DinFeeRouter and router rotation
+        - event: FeesSweptToRouter(uint256)
+          handler: handleFeesSweptToRouter
+        - event: FeeRouterUpdated(indexed address)
+          handler: handleFeeRouterUpdated
+
+        # Admin rotation (Ownable — replaces DAOAdminUpdated)
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleOwnershipTransferred
+      file: ./src/registry.ts
+
+  # ── DinValidatorStake ────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinValidatorStake
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000002"  # replace after deploy
+      abi: DinValidatorStake
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Validator
+        - StakeEvent
+        - SlashEvent
+        - UnstakeRequest
+        - WithdrawalClaim
+        - JailEvent
+        - SlasherRegistration
+        - StakeGovernance
+        - ModelStakeBounds
+        - S5GlobalParams
+        - S5RecidivismParams
+        - S6Params
+        - S6NoParticipationRecord
+        - S6PartialSlashEvent
+        - ValidatorEscalationS5
+        - ValidatorEscalationS5Global
+        - SlashTreasuryUpdate
+        - EncryptionKeyRegistration
+      abis:
+        - name: DinValidatorStake
+          file: ./abis/DinValidatorStake.json
+      eventHandlers:
+        - event: ValidatorStaked(indexed address,uint256)
+          handler: handleValidatorStaked
+        - event: ValidatorSlashed(indexed address,uint256,indexed bytes32,indexed address)
+          handler: handleValidatorSlashed
+        - event: ValidatorUnstakeRequested(indexed address,uint256,uint64)
+          handler: handleValidatorUnstakeRequested
+        - event: ValidatorWithdrawalClaimed(indexed address,uint256)
+          handler: handleValidatorWithdrawalClaimed
+        - event: ValidatorBlacklisted(indexed address)
+          handler: handleValidatorBlacklisted
+        - event: ValidatorUnblacklisted(indexed address)
+          handler: handleValidatorUnblacklisted
+        - event: ValidatorJailed(indexed address,uint64,indexed bytes32,indexed address)
+          handler: handleValidatorJailed
+        - event: ValidatorReactivated(indexed address)
+          handler: handleValidatorReactivated
+        - event: MinStakeUpdated(uint256)
+          handler: handleMinStakeUpdated
+        - event: UnbondingPeriodUpdated(uint64)
+          handler: handleUnbondingPeriodUpdated
+        - event: ModelStakeBoundsUpdated(indexed uint256,uint256,uint256)
+          handler: handleModelStakeBoundsUpdated
+        - event: MaxConcurrentRegistrationsPerStakeUnitUpdated(uint256)
+          handler: handleMaxConcurrentRegistrationsPerStakeUnitUpdated
+
+        # SlasherContractAdded/Removed are emitted by both DinCoordinator and
+        # DinValidatorStake with identical signatures (see event-coverage-audit.md §5).
+        # This data source produces the canonical slasher-set records
+        # (sourceContract = DinValidatorStake address).
+        - event: SlasherContractAdded(indexed address)
+          handler: handleSlasherContractAdded
+        - event: SlasherContractRemoved(indexed address)
+          handler: handleSlasherContractRemoved
+
+        # S5/S6 penalty mechanism — governance params
+        - event: S5GlobalParamsUpdated(uint256,uint256)
+          handler: handleS5GlobalParamsUpdated
+        - event: S5RecidivismParamsUpdated(uint256,uint256,uint256)
+          handler: handleS5RecidivismParamsUpdated
+        - event: S6ParamsUpdated(uint256)
+          handler: handleS6ParamsUpdated
+
+        # S5/S6 penalty mechanism — validator events
+        - event: S6NoParticipationRecorded(indexed address,uint256,bytes32,indexed address)
+          handler: handleS6NoParticipationRecorded
+        - event: S6PartialSlashFired(indexed address,uint256,indexed address)
+          handler: handleS6PartialSlashFired
+        - event: ValidatorEscalatedS5(indexed address,uint256,uint256,indexed address)
+          handler: handleValidatorEscalatedS5
+        - event: ValidatorEscalatedS5Global(indexed address,uint256,uint256,indexed address)
+          handler: handleValidatorEscalatedS5Global
+
+        # Slash treasury and encryption key
+        - event: SlashTreasuryUpdated(indexed address)
+          handler: handleSlashTreasuryUpdated
+        - event: EncryptionKeyRegistered(indexed address,bytes)
+          handler: handleEncryptionKeyRegistered
+
+        # Active registration counter
+        - event: ActiveRegistrationIncremented(indexed address)
+          handler: handleActiveRegistrationIncremented
+        - event: ActiveRegistrationDecremented(indexed address)
+          handler: handleActiveRegistrationDecremented
+      file: ./src/staking.ts
+
+  # ── DinCoordinator ───────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinCoordinator
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000003"  # replace after deploy
+      abi: DinCoordinator
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - DINMintEvent
+        - ExchangeRateSnapshot
+        - SlasherRegistration
+        - EmissionMintEvent
+        - EmissionContractUpdate
+        - MintCapUpdate
+        - FaucetRetired
+        - FeeSweepToRouter
+        - FeeRouterUpdate
+      abis:
+        - name: DinCoordinator
+          file: ./abis/DinCoordinator.json
+      eventHandlers:
+        - event: EthDepositAndDINminted(indexed address,uint256,uint256)
+          handler: handleEthDepositAndDINminted
+        - event: DinPerEthUpdated(uint256)
+          handler: handleDinPerEthUpdated
+        - event: ValidatorStakeContractUpdated(indexed address)
+          handler: handleValidatorStakeContractUpdated
+
+        # Audit-trail records only — canonical slasher set is owned by
+        # DinValidatorStake. sourceContract set to DinCoordinator address.
+        - event: SlasherContractAdded(indexed address)
+          handler: handleCoordinatorSlasherAdded
+        - event: SlasherContractRemoved(indexed address)
+          handler: handleCoordinatorSlasherRemoved
+
+        # Emission, mint cap, faucet retirement and fee routing
+        - event: EmissionMinted(indexed address,uint256)
+          handler: handleEmissionMinted
+        - event: EmissionContractUpdated(indexed address)
+          handler: handleEmissionContractUpdated
+        - event: MintCapUpdated(uint256)
+          handler: handleMintCapUpdated
+        - event: FaucetRetiredEvent()
+          handler: handleFaucetRetired
+        - event: FeeRouterUpdated(indexed address)
+          handler: handleCoordinatorFeeRouterUpdated
+        - event: FeesSweptToRouter(uint256)
+          handler: handleCoordinatorFeesSweptToRouter
+      file: ./src/coordinator.ts
+
+  # ── DinToken ─────────────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinToken
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000004"  # replace after deploy
+      abi: DinToken
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - TokenMintEvent
+        - TokenTransferEvent
+        - TokenBurnEvent
+      abis:
+        - name: DinToken
+          file: ./abis/DinToken.json
+      eventHandlers:
+        - event: TokensMinted(indexed address,uint256)
+          handler: handleTokensMinted
+        - event: TokensBurned(indexed address,uint256)
+          handler: handleTokensBurned
+        # Standard ERC20 Transfer — includes mint (from=0x0) and burn (to=0x0)
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+      file: ./src/token.ts
+
+  # ── DinFeeRouter ────────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinFeeRouter
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000005"  # replace after deploy
+      abi: DinFeeRouter
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - FeeSource
+        - FeeRouterConfig
+        - FeeRoutedDIN
+        - FeeRoutedETH
+      abis:
+        - name: DinFeeRouter
+          file: ./abis/DinFeeRouter.json
+      eventHandlers:
+        - event: FeeSourceAdded(indexed address)
+          handler: handleFeeSourceAdded
+        - event: FeeSourceRemoved(indexed address)
+          handler: handleFeeSourceRemoved
+        - event: TreasuryUpdated(indexed address)
+          handler: handleTreasuryUpdated
+        - event: TreasuryBpsCeilingUpdated(uint16)
+          handler: handleTreasuryBpsCeilingUpdated
+        - event: DinSplitUpdated((uint16,uint16,uint16,uint16,uint16))
+          handler: handleDinSplitUpdated
+        - event: EthSplitUpdated((uint16,uint16,uint16,uint16))
+          handler: handleEthSplitUpdated
+        - event: FeeRoutedDIN(indexed address,uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleFeeRoutedDIN
+        - event: FeeRoutedETH(indexed address,uint256,uint256,uint256,uint256,uint256)
+          handler: handleFeeRoutedETH
+      file: ./src/feeRouter.ts
+
+  # ── DinTreasury ──────────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DinTreasury
+    network: din-local
+    source:
+      address: "0x0000000000000000000000000000000000000006"  # replace after deploy
+      abi: DinTreasury
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - TreasuryEthReceived
+        - TreasuryEthWithdrawn
+        - TreasuryERC20Withdrawn
+      abis:
+        - name: DinTreasury
+          file: ./abis/DinTreasury.json
+      eventHandlers:
+        - event: EthReceived(indexed address,uint256)
+          handler: handleTreasuryEthReceived
+        - event: EthWithdrawn(indexed address,uint256)
+          handler: handleTreasuryEthWithdrawn
+        - event: ERC20Withdrawn(indexed address,indexed address,uint256)
+          handler: handleTreasuryERC20Withdrawn
+      file: ./src/treasury.ts
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dynamic data source templates — task-level contracts
+#
+# One DINTaskCoordinator + DINTaskAuditor pair is deployed per model by the
+# model owner. Template instances are created inside handleModelApproved()
+# (registry.ts) when DINModelRegistry emits ModelApproved. The model ID and
+# paired contract address are passed via DataSourceContext so task-level
+# handlers can link entities back to the platform-level Model entity.
+# ─────────────────────────────────────────────────────────────────────────────
+
+templates:
+
+  # ── DINTaskCoordinator ──────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DINTaskCoordinator
+    network: din-local
+    source:
+      abi: DINTaskCoordinator
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - GlobalIteration
+        - AggregatorRegistration
+        - Tier1Batch
+        - Tier2Batch
+        - AggregatorSlashEvent
+        - GIStateTransition
+        - T1AggregationSubmission
+        - T2AggregationSubmission
+        - T1AggregationCommitment
+        - T2AggregationCommitment
+        - SeedLock
+        - AggregationDispute
+        - DisputeBondClaim
+        - TaskCoordinatorGovernance
+      abis:
+        - name: DINTaskCoordinator
+          file: ./abis/DINTaskCoordinator.json
+        # DINModelRegistry ABI needed for storage calls in handleModelApproved
+        # template-creation context — already referenced by the registry mapping.
+      eventHandlers:
+        # ── Aggregator registration ──────────────────────────────────────────
+        - event: DINValidatorRegistered(indexed uint256,indexed address)
+          handler: handleAggregatorRegistered
+
+        # ── Batch creation ───────────────────────────────────────────────────
+        - event: Tier1BatchAuto(indexed uint256,indexed uint256)
+          handler: handleTier1BatchCreated
+        - event: Tier2BatchAuto(indexed uint256,indexed uint256)
+          handler: handleTier2BatchCreated
+
+        # ── Aggregator slashing ──────────────────────────────────────────────
+        - event: AggregatorSlashed(indexed uint256,indexed uint256,indexed address,bytes32,uint256,uint256)
+          handler: handleAggregatorSlashed
+
+        # ── GI state machine ─────────────────────────────────────────────────
+        - event: GIStateChanged(indexed uint256,indexed uint8)
+          handler: handleGIStateChanged
+
+        # ── Aggregation submissions and finalization ─────────────────────────
+        - event: T1AggregationSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT1AggregationSubmitted
+        - event: T2AggregationSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT2AggregationSubmitted
+        - event: T1BatchFinalized(indexed uint256,indexed uint256,bytes32)
+          handler: handleT1BatchFinalized
+        - event: T2Finalized(indexed uint256,bytes32)
+          handler: handleT2Finalized
+
+        # ── Commit-reveal aggregation ────────────────────────────────────────
+        - event: T1AggregationCommitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT1AggregationCommitted
+        - event: T2AggregationCommitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleT2AggregationCommitted
+
+        # ── Seed locks ───────────────────────────────────────────────────────
+        - event: AuditSeedLocked(indexed uint256,bytes32)
+          handler: handleAuditSeedLocked
+        - event: AggSeedLocked(indexed uint256,bytes32)
+          handler: handleAggSeedLocked
+        - event: DisputeSeedLocked(indexed uint256,uint8,indexed uint256,bytes32)
+          handler: handleDisputeSeedLocked
+        - event: AuditSeedReanchored(indexed uint256,uint64)
+          handler: handleAuditSeedReanchored
+        - event: AggSeedReanchored(indexed uint256,uint64)
+          handler: handleAggSeedReanchored
+        - event: DisputeSeedReanchored(indexed uint256,uint8,indexed uint256,uint64)
+          handler: handleDisputeSeedReanchored
+
+        # ── Aggregation disputes ─────────────────────────────────────────────
+        - event: DisputeOpened(indexed uint256,uint8,indexed uint256,indexed address,uint256)
+          handler: handleDisputeOpened
+        - event: DisputeResolved(indexed uint256,uint8,indexed uint256,bool)
+          handler: handleDisputeResolved
+        - event: DisputeExpired(indexed uint256,uint8,indexed uint256)
+          handler: handleCoordinatorDisputeExpired
+        - event: DisputeBondClaimed(indexed address,uint256)
+          handler: handleDisputeBondClaimed
+        - event: RecomputationSettled(indexed uint256,uint8,indexed uint256,bool)
+          handler: handleRecomputationSettled
+        - event: ReEvaluationAssigned(indexed uint256,uint8,indexed uint256,address[])
+          handler: handleReEvaluationAssigned
+
+        # ── Governance parameters ────────────────────────────────────────────
+        - event: S2SlashFractionBpsUpdated(uint256,uint256)
+          handler: handleS2SlashFractionBpsUpdated
+      file: ./src/taskCoordinator.ts
+
+  # ── DINTaskAuditor ───────────────────────────────────────────────────────────
+  - kind: ethereum
+    name: DINTaskAuditor
+    network: din-local
+    source:
+      abi: DINTaskAuditor
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - GlobalIteration
+        - AuditorRegistration
+        - AuditBatch
+        - AuditScoreSubmission
+        - EligibilityVote
+        - EligibilityResult
+        - AuditorSlashEvent
+        - PassScoreUpdate
+        - LocalModelSubmission
+        - RewardDeposit
+        - RewardSettlement
+        - RewardClaim
+        - RewardSplit
+        - AuditScoreCommitment
+        - TestDataCommitment
+        - EncryptedTestDataKeys
+        - TestDataDispute
+        - AuditorScoreDeviation
+        - TaskAuditorGovernance
+      abis:
+        - name: DINTaskAuditor
+          file: ./abis/DINTaskAuditor.json
+      eventHandlers:
+        # ── Local model submission ───────────────────────────────────────────
+        - event: LocalModelSubmitted(indexed uint256,indexed uint256,indexed address,bytes32)
+          handler: handleLocalModelSubmitted
+
+        # ── Auditor registration ─────────────────────────────────────────────
+        - event: DINAuditorRegistered(indexed uint256,indexed address)
+          handler: handleAuditorRegistered
+
+        # ── Audit batch creation ─────────────────────────────────────────────
+        - event: AuditorsBatchAuto(indexed uint256,indexed uint256)
+          handler: handleAuditBatchCreated
+        - event: AuditorsBatchesCreated(indexed uint256,uint256)
+          handler: handleAuditorsBatchesCreated
+
+        # ── Scoring and eligibility ──────────────────────────────────────────
+        - event: AuditScoreCommitted(indexed uint256,indexed uint256,indexed address,uint256,bytes32)
+          handler: handleAuditScoreCommitted
+        # AuditScoreSubmitted is the reveal step for the commitment above.
+        - event: AuditScoreSubmitted(indexed uint256,indexed uint256,indexed address,uint256,uint256)
+          handler: handleAuditScoreSubmitted
+        - event: EligibilityVoted(indexed uint256,indexed uint256,indexed uint256,address,bool)
+          handler: handleEligibilityVoted
+        - event: EligibilityFinalized(indexed uint256,indexed uint256,indexed uint256,bool,uint256)
+          handler: handleEligibilityFinalized
+
+        # ── Test-data flow and disputes ──────────────────────────────────────
+        - event: TestDataCommitmentStored(indexed uint256,indexed uint256,bytes32)
+          handler: handleTestDataCommitmentStored
+        - event: EncryptedTestDataKeysAssigned(indexed uint256,indexed uint256,bytes,uint256)
+          handler: handleEncryptedTestDataKeysAssigned
+        - event: TestDataDisputeOpened(indexed uint256,indexed uint256,indexed address,uint256,uint256)
+          handler: handleTestDataDisputeOpened
+        - event: TestDataDisputeUpheld(indexed uint256,indexed uint256,indexed address,uint256,uint256)
+          handler: handleTestDataDisputeUpheld
+        - event: TestDataDisputeResolvedFalse(indexed uint256,indexed uint256,indexed address,uint256)
+          handler: handleTestDataDisputeResolvedFalse
+        - event: DisputeExpired(indexed uint256,indexed uint256)
+          handler: handleTestDataDisputeExpired
+        - event: BatchPendingReassignment(indexed uint256,indexed uint256)
+          handler: handleBatchPendingReassignment
+
+        # ── S3 score deviation ───────────────────────────────────────────────
+        - event: AuditorScoreDeviation(indexed uint256,indexed uint256,uint256,indexed address,uint256,uint256,uint256,bool)
+          handler: handleAuditorScoreDeviation
+
+        # ── Rewards ──────────────────────────────────────────────────────────
+        - event: RewardDeposited(indexed uint256,indexed address,uint256)
+          handler: handleRewardDeposited
+        - event: RewardsSettled(indexed uint256,uint256,uint256,uint256,uint256)
+          handler: handleRewardsSettled
+        - event: RewardsClaimed(indexed address,uint256)
+          handler: handleRewardsClaimed
+        - event: RewardSplitUpdated((uint16,uint16,uint16,uint16))
+          handler: handleRewardSplitUpdated
+
+        # ── Pass score and slashing-parameter governance ─────────────────────
+        - event: PassScoreUpdated(uint256,uint256)
+          handler: handlePassScoreUpdated
+        - event: S1SlashFractionBpsUpdated(uint256,uint256)
+          handler: handleS1SlashFractionBpsUpdated
+        - event: S3DeviationThresholdUpdated(uint256,uint256)
+          handler: handleS3DeviationThresholdUpdated
+        - event: S3SlashingEnabledUpdated(bool,bool)
+          handler: handleS3SlashingEnabledUpdated
+
+        # ── Auditor slashing ─────────────────────────────────────────────────
+        - event: AuditorSlashed(indexed uint256,indexed uint256,indexed address,bytes32,uint256,uint256)
+          handler: handleAuditorSlashed
+      file: ./src/taskAuditor.ts

@@ -387,3 +387,75 @@ The better production design is:
 - use The Graph or a similar indexer for pagination, filtering, and historical queries
 
 If a query pattern mainly serves dashboards, reviewers, governance interfaces, or analytics, it is usually a strong candidate for the indexer rather than additional on-chain enumeration logic.
+
+---
+
+## P4-IDX Doc-Correction Pass (feat/din-indexer)
+
+This section records decisions made and open questions resolved by the
+P4-IDX1/IDX2/IDX3 work (feat/din-indexer). Added as a correction pass per the
+convention established in PR #13.
+
+### Open questions resolved
+
+**"Should DIN use The Graph directly, or maintain a DIN-operated indexer service?"**
+Resolved: The Graph Protocol subgraph is the chosen approach. A self-hosted
+`graph-node` runs against the local Hardhat chain (chainId 1337) via
+`subgraph/docker-compose.yml`. See `subgraph/docs/event-coverage-audit.md` §1
+for the written tradeoff.
+
+**"Which DIN product queries truly require on-chain enumerable structures, if any?"**
+Resolved: None for the current platform contracts. The `list-pending-requests`
+command in `dincli/cli/dindao.py` was the primary on-chain enumeration loop
+for model and manifest requests — both loops have been replaced with GraphQL
+queries in P4-IDX3. Remaining RPC-loop candidates (`lms.py` ~line 62,
+`aggregation.py` ~lines 76, 95, 136) touch task-level contract state
+(DINTaskCoordinator), which is out of scope for this subgraph; see
+`subgraph/docs/handoff.md` for follow-up notes.
+
+**"Are there any platform-level queues whose ordering is execution-critical?"**
+Resolved: No. The model and manifest request ordering in `DINModelRegistry` is
+UI-critical only (review queue for the DAO admin). Execution semantics depend
+on the request ID (array index), not on queue position. The indexer serves this
+read pattern correctly via `processed: false` filters.
+
+**"Which current events are insufficient for reconstructing state cleanly?"**
+Resolved: Two events were audited as insufficient; both are flagged as PENDING
+additions in `subgraph/docs/event-coverage-audit.md` §6:
+- `ModelRegistrationRequested` — missing `isOpenSource` and `feePaid` in payload
+- `ManifestUpdateRequested` — missing `requester` in payload
+
+Until these additions land, the mapping handlers bridge the gap with storage
+calls (`DINModelRegistry.bind(...).modelRequests(requestId)`). A third addition
+(`ETHTreasuryWithdrawn` on `DinCoordinator.withdraw()`) is also proposed in §6.3
+but not yet merged.
+
+**"Should governance, registry, and staking data be indexed in one subgraph or separate modules?"**
+Resolved: One subgraph for all four platform contracts in P4. Dynamic data
+sources for task-level contracts (DINTaskCoordinator, DINTaskAuditor) are
+deferred to P5+ as a materially harder Graph pattern with its own deploy/hosting
+story. See `subgraph/subgraph.yaml` (network: `din-local`, 4 data sources,
+31 handlers).
+
+### Stale references in this document
+
+None found. The architectural direction, guiding principle, and contribution
+guidelines remain accurate against the current contract and CLI codebase.
+The "Governance Queries" example section is still forward-looking (DIN-DAO
+contracts are tracked in a separate issue, Start DIN-DAO #23); it is not stale,
+just not yet implemented.
+
+### Artefacts produced by P4-IDX
+
+| Artefact | Path |
+|----------|------|
+| Indexing approach tradeoff + event audit | `subgraph/docs/event-coverage-audit.md` |
+| GraphQL entity schema | `subgraph/schema.graphql` |
+| Subgraph manifest | `subgraph/subgraph.yaml` |
+| AssemblyScript handlers | `subgraph/src/` |
+| Local Graph node stack | `subgraph/docker-compose.yml` |
+| Daemon event schema | `subgraph/docs/daemon-event-schema.md` |
+| Example queries | `subgraph/docs/example-queries.md` |
+| GraphQL integration + fallback | `dincli/cli/dindao.py` |
+| Integration unit tests | `tests/test_list_pending_requests.py` |
+| Integration handoff notes | `subgraph/docs/handoff.md` |

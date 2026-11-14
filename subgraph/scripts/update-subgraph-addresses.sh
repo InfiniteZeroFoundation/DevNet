@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# update-subgraph-addresses.sh
+# Patches subgraph/subgraph.yaml's placeholder platform-contract addresses
+# with the real addresses from a foundry deployments JSON.
+#
+# Usage:
+#   ./scripts/update-subgraph-addresses.sh [network | path/to/deployments.json]
+#
+# A bare network name reads foundry/deployments/<network>.json. Defaults to
+# the DEPLOYMENTS_NETWORK env var, then "localhost" (foundry/anvil.sh chain
+# 1337). foundry/script/DeployPlatform.s.sol writes this file, and its
+# dinModelRegistry / dinValidatorStake / ... keys hold the transparent-proxy
+# addresses the subgraph must index.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUBGRAPH_YAML="$SCRIPT_DIR/../subgraph.yaml"
+REPO_ROOT="$SCRIPT_DIR/../.."
+
+ARG="${1:-}"
+if [[ -z "$ARG" ]]; then
+  DEPLOYMENTS_NETWORK="${DEPLOYMENTS_NETWORK:-localhost}"
+  DEPLOYMENTS_JSON="$REPO_ROOT/foundry/deployments/$DEPLOYMENTS_NETWORK.json"
+elif [[ "$ARG" == *.json ]]; then
+  DEPLOYMENTS_JSON="$ARG"
+else
+  DEPLOYMENTS_JSON="$REPO_ROOT/foundry/deployments/$ARG.json"
+fi
+
+if [[ ! -f "$DEPLOYMENTS_JSON" ]]; then
+  echo "error: deployments JSON not found at $DEPLOYMENTS_JSON" >&2
+  echo "  deploy the platform contracts first:" >&2
+  echo "    cd foundry && forge script script/DeployPlatform.s.sol ... " >&2
+  echo "  or pass a network name / explicit path: $0 <network|path/to/deployments.json>" >&2
+  exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "error: jq is required (https://jqlang.github.io/jq/)" >&2
+  exit 1
+fi
+
+echo "Reading addresses from $DEPLOYMENTS_JSON"
+
+# yaml "name:" value -> key in the deployments JSON. Plain array of pairs
+# ("contract key") — associative arrays require bash 4, which macOS does not ship.
+CONTRACT_KEY_PAIRS=(
+  DINModelRegistry dinModelRegistry
+  DinValidatorStake dinValidatorStake
+  DinCoordinator dinCoordinator
+  DinToken dinToken
+  DinFeeRouter dinFeeRouter
+  DinTreasury dinTreasury
+)
+
+TMP="$(mktemp)"
+cp "$SUBGRAPH_YAML" "$TMP"
+
+for ((i = 0; i < ${#CONTRACT_KEY_PAIRS[@]}; i += 2)); do
+  contract="${CONTRACT_KEY_PAIRS[$i]}"
+  key="${CONTRACT_KEY_PAIRS[$i + 1]}"
+  address="$(jq -r --arg k "$key" '.[$k] // empty' "$DEPLOYMENTS_JSON")"
+  if [[ -z "$address" ]]; then
+    echo "error: key '$key' not found in $DEPLOYMENTS_JSON" >&2
+    rm -f "$TMP"
+    exit 1
+  fi
+
+  # Scope the replacement to this data source's block: find "name: <contract>",
+  # then the next "address:" line after it, and patch only that one line.
+  name_line="$(grep -n "name: $contract\$" "$TMP" | head -1 | cut -d: -f1)"
+  if [[ -z "$name_line" ]]; then
+    echo "warning: data source '$contract' not found in subgraph.yaml, skipping" >&2
+    continue
+  fi
+  offset="$(tail -n "+$name_line" "$TMP" | grep -n "address:" | head -1 | cut -d: -f1)"
+  address_line=$((name_line + offset - 1))
+
+  sed -i.bak "${address_line}s|address: \".*\"|address: \"$address\"|" "$TMP"
+  rm -f "$TMP.bak"
+  echo "  $contract -> $address"
+done
+
+mv "$TMP" "$SUBGRAPH_YAML"
+echo "Updated $SUBGRAPH_YAML"
