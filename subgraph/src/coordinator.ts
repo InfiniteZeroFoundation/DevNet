@@ -87,22 +87,3 @@ export function handleCoordinatorSlasherRemoved(
   s.removedAtTimestamp = event.block.timestamp
   s.save()
 }
-
-// ─── Treasury withdrawal ──────────────────────────────────────────────────────
-// ETHTreasuryWithdrawn is not yet in the ABI (audit §6.3). The handler is
-// kept here as a stub; uncomment and add the import once the event lands.
-
-// import { ETHTreasuryWithdrawn } from "../generated/DinCoordinator/DinCoordinator"
-// import { TreasuryWithdrawal } from "../generated/schema"
-
-// export function handleETHTreasuryWithdrawn(
-//   event: ETHTreasuryWithdrawn
-// ): void {
-//   let w = new TreasuryWithdrawal(eventId(event.transaction.hash, event.logIndex))
-//   w.to              = event.params.to
-//   w.amount          = event.params.amount
-//   w.blockNumber     = event.block.number
-//   w.blockTimestamp  = event.block.timestamp
-//   w.transactionHash = event.transaction.hash
-//   w.save()
-// }
