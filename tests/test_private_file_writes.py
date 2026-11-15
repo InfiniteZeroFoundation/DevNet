@@ -83,10 +83,10 @@ def test_write_private_text_keeps_the_old_file_when_the_write_fails(tmp_path, mo
 
 def test_testdata_secrets_are_written_owner_only(tmp_path, umask_022, renamed_modes):
     auditor_batches._save_testdata_secret(tmp_path, 1, 0, b"\x01" * 32, b"\x02" * 32)
-    auditor_batches._stage_testdata_secret(tmp_path, 1, 0, b"\x03" * 32, b"\x02" * 32)
+    commitment = auditor_batches._stage_testdata_secret(tmp_path, 1, 0, b"\x03" * 32, b"\x02" * 32)
 
     confirmed = auditor_batches._testdata_secret_path(tmp_path, 1, 0)
-    pending = auditor_batches._pending_testdata_secret_path(tmp_path, 1, 0)
+    pending = auditor_batches._pending_testdata_secret_path(tmp_path, 1, 0, commitment)
     assert renamed_modes == {str(confirmed): 0o600, str(pending): 0o600}
     assert _mode(confirmed) == _mode(pending) == 0o600
 

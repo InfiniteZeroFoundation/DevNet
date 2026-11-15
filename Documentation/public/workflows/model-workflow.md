@@ -450,9 +450,13 @@ dincli model-owner lms-evaluation show <model_id> --auditors --models
 > `create-testdataset --submit` saves each batch's key and plaintext hash to
 > `<model dir>/audits/testdata_keys/`, owner-only (mode 0600) from the moment
 > each file is created. Keep them: you need them to answer a test-data dispute
-> (`dincli model-owner disputes resolve-test-data`). A new key is kept as
-> `gi_<gi>_batch_<id>.pending.json` until its assignment transaction succeeds,
-> so a failed retry never replaces the key behind the on-chain commitment.
+> (`dincli model-owner disputes resolve-test-data`). Each new key is kept in
+> its own `gi_<gi>_batch_<id>.pending.<commitment>.json` until its assignment
+> transaction succeeds, and becomes `gi_<gi>_batch_<id>.json` then. A retry
+> adds a pending file instead of replacing one, so the key behind the
+> on-chain commitment stays on disk even if an earlier attempt landed
+> without a receipt and the retry then failed. `resolve-test-data` reveals
+> only the saved key that reproduces the on-chain commitment.
 
 **Auditors** evaluate their assigned batches and commit the scores (repeat for each auditor):
 

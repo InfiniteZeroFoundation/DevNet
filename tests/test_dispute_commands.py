@@ -105,7 +105,7 @@ def test_resolve_test_data_recovers_a_landed_but_unconfirmed_k(tmp_path, sent):
     disputes.resolve_test_data(ctx, model_id=0, gi=2, batch_id=1)
 
     assert sent == [("resolveTestDataDispute", (2, 1, K_ONCHAIN, PLAINTEXT))]
-    assert not auditor_batches._pending_testdata_secret_path(tmp_path, 2, 1).exists()
+    assert auditor_batches._pending_testdata_secret_paths(tmp_path, 2, 1) == []
     assert auditor_batches._load_testdata_secret(tmp_path, 2, 1, COMMITMENT) == (K_ONCHAIN, PLAINTEXT)
 
 
@@ -247,7 +247,7 @@ class _ReassignCtxObj(FakeCtxObj):
         return create_audit_testDataCIDs
 
 
-def _reassign(monkeypatch, tmp_path, *, lands):
+def _reassign(monkeypatch, tmp_path, *, lands, receipt=None, new_k=b"\x66" * 32):
     monkeypatch.setattr(auditor_batches, "CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(auditor_batches, "get_bytes32_from_cid", lambda cid: "11" * 32)
     monkeypatch.setattr(disputes, "get_manifest_key", lambda *a, **kw: {"type": "custom", "path": "svc.py", "ipfs": "cid"})
@@ -257,10 +257,11 @@ def _reassign(monkeypatch, tmp_path, *, lands):
 
     def fake_send(ctx, fn, *a, **kw):
         sent.append(fn)
-        return SimpleNamespace(status=1) if lands else None
+        has_receipt = lands if receipt is None else receipt
+        return SimpleNamespace(status=1) if has_receipt else None
 
     monkeypatch.setattr(disputes, "build_and_send_tx", fake_send)
-    (tmp_path / "dataset" / "test").mkdir(parents=True)
+    (tmp_path / "dataset" / "test").mkdir(parents=True, exist_ok=True)
     (tmp_path / "dataset" / "test" / "test_dataset.pt").write_bytes(b"x")
 
     task_auditor = FakeContract("0xA0", testDataDisputes=(CHALLENGER, BOND, 0, False, True),
@@ -268,9 +269,9 @@ def _reassign(monkeypatch, tmp_path, *, lands):
     ctx_obj = _ReassignCtxObj(coordinator=FakeContract("0xC0", GI=2, GIstate=0), auditor=task_auditor,
                               stake=FakeContract("0x5A", getEncryptionKey=AUDITOR_KEY), model_base_dir=tmp_path)
     ctx_obj.account.sign_message = lambda msg: SimpleNamespace(signature=b"\x01" * 65)
-    ctx_obj.new_k = b"\x66" * 32
+    ctx_obj.new_k = new_k
     ctx = SimpleNamespace(obj=ctx_obj)
-    if lands:
+    if lands and receipt is not False:
         disputes.reassign_test_data(ctx, model_id=0, gi=None, batch_id=1, test_data_path=None)
     else:
         with pytest.raises(typer.Exit):
@@ -294,5 +295,19 @@ def test_landed_reassign_confirms_the_new_k(monkeypatch, tmp_path):
 
     new_commitment = sent[0].args[4]
     assert new_commitment == auditor_batches._testdata_commitment(2, 1, b"\x66" * 32, PLAINTEXT)
-    assert not auditor_batches._pending_testdata_secret_path(tmp_path, 2, 1).exists()
+    assert auditor_batches._pending_testdata_secret_paths(tmp_path, 2, 1) == []
     assert auditor_batches._load_testdata_secret(tmp_path, 2, 1, new_commitment) == (b"\x66" * 32, PLAINTEXT)
+
+
+def test_lost_reassign_receipt_then_failed_retry_keeps_the_landed_k(monkeypatch, tmp_path):
+    # The reassignment lands but its receipt is lost; a retry with a new K
+    # then fails. The landed K must still be found for the on-chain commitment.
+    auditor_batches._save_testdata_secret(tmp_path, 2, 1, K_ONCHAIN, PLAINTEXT)
+    k1, k2 = b"\x66" * 32, b"\x77" * 32
+
+    sent = _reassign(monkeypatch, tmp_path, lands=True, receipt=False, new_k=k1)
+    landed_commitment = sent[0].args[4]
+    _reassign(monkeypatch, tmp_path, lands=False, new_k=k2)
+
+    assert landed_commitment == auditor_batches._testdata_commitment(2, 1, k1, PLAINTEXT)
+    assert auditor_batches._load_testdata_secret(tmp_path, 2, 1, landed_commitment) == (k1, PLAINTEXT)

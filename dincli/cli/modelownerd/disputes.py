@@ -10,7 +10,7 @@ from dincli.cli.modelownerd.auditor_batches import (
     _encrypt_batch_testdata,
     _load_owner_x25519_key,
     _load_testdata_secret,
-    _pending_testdata_secret_path,
+    _pending_testdata_secret_paths,
     _stage_testdata_secret,
     _testdata_secret_path,
 )
@@ -61,7 +61,7 @@ def resolve_test_data(
     secret = _load_testdata_secret(model_base_dir, gi, batch_id, commitment)
     if secret is None:
         saved = [p for p in (_testdata_secret_path(model_base_dir, gi, batch_id),
-                             _pending_testdata_secret_path(model_base_dir, gi, batch_id)) if p.exists()]
+                             *_pending_testdata_secret_paths(model_base_dir, gi, batch_id)) if p.exists()]
         if saved:
             console.print(f"[bold red]✗ No saved K for GI {gi} batch {batch_id} matches its on-chain commitment, so revealing would uphold the dispute. Checked: {', '.join(str(p) for p in saved)}[/bold red]")
         else:
@@ -170,7 +170,7 @@ def reassign_test_data(
     )
     if receipt is None:
         raise typer.Exit(1)
-    _confirm_testdata_secret(model_base_path, ref_gi, batch_id)
+    _confirm_testdata_secret(model_base_path, ref_gi, batch_id, commitment)
 
 
 # ── Aggregation disputes (DINTaskCoordinator, S4) ───────────────────────────

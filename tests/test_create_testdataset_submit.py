@@ -534,9 +534,10 @@ def test_missing_auditor_encryption_key_exits_before_any_tx(monkeypatch, tmp_pat
     assert "register-encryption-key" in out
 
 
-def _record_assigns(monkeypatch, fail_batches=()):
+def _record_assigns(monkeypatch, fail_batches=(), lost_receipt_batches=()):
     """Fakes build_and_send_tx; returns {batch_id: commitment} for the assign
-    txs that succeed (batches in `fail_batches` get no receipt)."""
+    txs that land on-chain. Batches in `fail_batches` don't land and get no
+    receipt; batches in `lost_receipt_batches` land but get no receipt."""
     landed = {}
 
     def fake(ctx, fn, *a, **kw):
@@ -544,6 +545,8 @@ def _record_assigns(monkeypatch, fail_batches=()):
             if fn[1] in fail_batches:
                 return None
             landed[fn[1]] = fn[2]
+            if fn[1] in lost_receipt_batches:
+                return None
         return SimpleNamespace(transactionHash=b"\xab" * 32)
 
     monkeypatch.setattr(atb, "build_and_send_tx", fake)
@@ -559,7 +562,7 @@ def test_submit_saves_each_batch_secret_owner_only(monkeypatch, tmp_path):
     for batch_id in (0, 1):
         path = atb._testdata_secret_path(tmp_path, 0, batch_id)
         assert path.stat().st_mode & 0o777 == 0o600
-        assert not atb._pending_testdata_secret_path(tmp_path, 0, batch_id).exists()
+        assert atb._pending_testdata_secret_paths(tmp_path, 0, batch_id) == []
         K, plaintext_keccak = atb._load_testdata_secret(tmp_path, 0, batch_id, landed[batch_id])
         assert len(K) == 32
         assert plaintext_keccak == b"\x00" * 32
@@ -585,3 +588,50 @@ def test_failed_retry_keeps_the_k_behind_the_onchain_commitment(monkeypatch, tmp
     secret = atb._load_testdata_secret(tmp_path, 0, 1, onchain)
     assert secret is not None
     assert atb._testdata_commitment(0, 1, *secret) == onchain
+
+
+@pytest.mark.parametrize("older_confirmed_k", [False, True])
+def test_lost_receipt_then_failed_retry_keeps_the_landed_k(monkeypatch, tmp_path, older_confirmed_k):
+    # Santiago's PR No. 341 case: the first assignment lands but its receipt
+    # is lost, so its K is only pending; the retry then fails without
+    # changing the chain. The K behind the on-chain commitment must survive,
+    # with or without an older confirmed K already saved.
+    if older_confirmed_k:
+        atb._save_testdata_secret(tmp_path, 0, 1, b"\x44" * 32, b"\x00" * 32)
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    landed = _record_assigns(monkeypatch, lost_receipt_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx)
+    onchain = landed[1]
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    _record_assigns(monkeypatch, fail_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx, batch=[1])
+
+    # Both attempts' keys are still on disk, each in its own pending file.
+    assert len(atb._pending_testdata_secret_paths(tmp_path, 0, 1)) == 2
+    secret = atb._load_testdata_secret(tmp_path, 0, 1, onchain)
+    assert secret is not None
+    assert atb._testdata_commitment(0, 1, *secret) == onchain
+    # The match is promoted to confirmed; the failed retry's K stays pending.
+    assert atb._read_secret(atb._testdata_secret_path(tmp_path, 0, 1)) == secret
+    assert len(atb._pending_testdata_secret_paths(tmp_path, 0, 1)) == 1
+
+
+def test_lost_receipt_then_landed_retry_confirms_the_retry_k(monkeypatch, tmp_path):
+    # If the retry lands, its commitment replaces the first one on-chain and
+    # its K becomes the confirmed one.
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    _record_assigns(monkeypatch, lost_receipt_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx)
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    landed = _record_assigns(monkeypatch)
+    _invoke(tmp_path, ctx, batch=[1])
+
+    secret = atb._read_secret(atb._testdata_secret_path(tmp_path, 0, 1))
+    assert atb._testdata_commitment(0, 1, *secret) == landed[1]
+    assert atb._load_testdata_secret(tmp_path, 0, 1, landed[1]) == secret

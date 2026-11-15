@@ -62,16 +62,24 @@ def _load_owner_x25519_key(console) -> PrivateKey:
 # (DINTaskAuditor.resolveTestDataDispute), so both are kept per (gi, batch).
 # K decrypts the batch's test data, so the files are owner-only.
 #
-# A new K is staged in the pending file before its assign/reassign tx and
-# moved over the confirmed file only once the tx succeeds. A failed retry
-# therefore never replaces the K that matches the on-chain commitment, and a
-# crash after a successful tx still leaves the new K on disk (pending).
+# Each new K is staged in its own pending file, named by the commitment it
+# produces, before its assign/reassign tx, and moved over the confirmed file
+# only once that tx succeeds. A retry stages a new file next to the earlier
+# ones instead of replacing them, so the K behind whatever commitment is
+# on-chain stays on disk whatever happened to earlier attempts: a failed
+# retry, a lost receipt, a crash after the tx landed, or a lost receipt
+# followed by a failed retry. Pending files are only removed by promotion.
 def _testdata_secret_path(model_base_dir: Path, gi: int, batch_id: int) -> Path:
     return Path(model_base_dir) / "audits" / "testdata_keys" / f"gi_{gi}_batch_{batch_id}.json"
 
 
-def _pending_testdata_secret_path(model_base_dir: Path, gi: int, batch_id: int) -> Path:
-    return _testdata_secret_path(model_base_dir, gi, batch_id).with_suffix(".pending.json")
+def _pending_testdata_secret_path(model_base_dir: Path, gi: int, batch_id: int, commitment: bytes) -> Path:
+    return _testdata_secret_path(model_base_dir, gi, batch_id).with_suffix(f".pending.{bytes(commitment).hex()}.json")
+
+
+def _pending_testdata_secret_paths(model_base_dir: Path, gi: int, batch_id: int) -> List[Path]:
+    confirmed = _testdata_secret_path(model_base_dir, gi, batch_id)
+    return sorted(confirmed.parent.glob(f"{confirmed.stem}.pending.*.json"))
 
 
 def _secret_json(K: bytes, plaintext_keccak: bytes) -> str:
@@ -83,15 +91,21 @@ def _save_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, K: bytes
     write_private_text(_testdata_secret_path(model_base_dir, gi, batch_id), _secret_json(K, plaintext_keccak))
 
 
-def _stage_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, K: bytes, plaintext_keccak: bytes) -> None:
-    """Writes a not-yet-committed K to the pending file; the confirmed file is untouched."""
-    write_private_text(_pending_testdata_secret_path(model_base_dir, gi, batch_id), _secret_json(K, plaintext_keccak))
+def _stage_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, K: bytes, plaintext_keccak: bytes) -> bytes:
+    """Writes a not-yet-committed K to its own pending file and returns its
+    commitment. The confirmed file and earlier pending files are untouched."""
+    commitment = _testdata_commitment(gi, batch_id, K, plaintext_keccak)
+    write_private_text(
+        _pending_testdata_secret_path(model_base_dir, gi, batch_id, commitment),
+        _secret_json(K, plaintext_keccak),
+    )
+    return commitment
 
 
-def _confirm_testdata_secret(model_base_dir: Path, gi: int, batch_id: int) -> None:
-    """Promotes the pending K to confirmed, after its tx succeeded."""
+def _confirm_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, commitment: bytes) -> None:
+    """Promotes the pending K for `commitment` to confirmed, after its tx succeeded."""
     os.replace(
-        _pending_testdata_secret_path(model_base_dir, gi, batch_id),
+        _pending_testdata_secret_path(model_base_dir, gi, batch_id, commitment),
         _testdata_secret_path(model_base_dir, gi, batch_id),
     )
 
@@ -105,16 +119,16 @@ def _read_secret(path: Path):
 
 def _load_testdata_secret(model_base_dir: Path, gi: int, batch_id: int, commitment: bytes):
     """Returns the saved (K, plaintext_keccak) that matches the on-chain
-    `commitment`, or None. Checks the confirmed file first, then the pending
-    one (a tx that landed before the process could confirm it); a matching
-    pending secret is promoted to confirmed."""
-    for path in (_testdata_secret_path(model_base_dir, gi, batch_id),
-                 _pending_testdata_secret_path(model_base_dir, gi, batch_id)):
+    `commitment`, or None. Checks the confirmed file first, then every
+    pending one (a tx that landed before the process could confirm it); a
+    matching pending secret is promoted to confirmed."""
+    for path in [_testdata_secret_path(model_base_dir, gi, batch_id),
+                 *_pending_testdata_secret_paths(model_base_dir, gi, batch_id)]:
         secret = _read_secret(path)
         if secret is None or _testdata_commitment(gi, batch_id, *secret) != bytes(commitment):
             continue
-        if path.name.endswith(".pending.json"):
-            _confirm_testdata_secret(model_base_dir, gi, batch_id)
+        if path != _testdata_secret_path(model_base_dir, gi, batch_id):
+            os.replace(path, _testdata_secret_path(model_base_dir, gi, batch_id))
         return secret
     return None
 
@@ -405,9 +419,9 @@ def create_testdataset(
                     account, stake_contract, owner_privkey, ref_gi,
                     batch_auditors_by_id[batch_id], batch_info,
                 )
-                # Staged before the tx (a crash after it lands must not lose
-                # K), confirmed only once it succeeds, so a failed retry can't
-                # replace the K behind an earlier on-chain commitment.
+                # Staged in its own file before the tx (a crash after it
+                # lands must not lose K), confirmed only once it succeeds, so
+                # no retry can replace the K behind an earlier commitment.
                 _stage_testdata_secret(model_base_path, ref_gi, batch_id, batch_info["K"], batch_info["plaintext_keccak"])
 
                 time.sleep(5)
@@ -424,7 +438,7 @@ def create_testdataset(
                 if tx_receipt is None:
                     failed_batch_ids.append(batch_id)
                 else:
-                    _confirm_testdata_secret(model_base_path, ref_gi, batch_id)
+                    _confirm_testdata_secret(model_base_path, ref_gi, batch_id, commitment)
         except Exception as e:
             console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")
             raise typer.Exit(1)
