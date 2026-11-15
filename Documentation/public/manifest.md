@@ -10,22 +10,16 @@ The manifest is a JSON file containing the metadata for your model and task. It 
 The manifest file must be placed at:
 
 ```
-<root_dir>/tasks/<network>/task_<coordinator_address>/manifest.json
+<root_dir>/tasks/<network>/<coordinator_address>/manifest.json
 ```
 
 For example:
 ```
-<root_dir>/tasks/sepolia_op_devnet/task_0x1e31...4b133/manifest.json
+<root_dir>/tasks/sepolia_op_devnet/0x1e31...4b133/manifest.json
 ```
 
 > [!NOTE]
-> The manifest file must already exist at this path before running
-> `dincli model-owner model create-genesis-model` — it exits with an error if
-> the file is missing, it is not created automatically. To create it from a
-> default template, run `dincli model-owner task cache-default-artifacts`
-> first; that only works where the configured network has a `default_manifest`
-> CID set (currently just `local` — `sepolia_op_devnet` and `mainnet` have no
-> default to cache from, so you must supply your own manifest file there).
+> `dincli model-owner model create-genesis-model` needs the manifest in the task directory and exits with an error if it is missing; it is not created automatically. To start from the reference MNIST model, run `dincli model-owner task create-task-dir` and then `dincli model-owner task cache-default-artifacts`, which fetches the default manifest, services, ABIs and requirements (their CIDs are the `default_*` entries in `dincli/config/din_info.json`). Only `local` has these defaults set at the moment; on `sepolia_op_devnet` and `mainnet` there is nothing to cache from, so supply your own manifest file.
 
 ---
 
@@ -158,8 +152,12 @@ Please find the example/template manifest file at [cache_model_0/manifest.json](
 
 ## Updating the Manifest
 
-Once the model is registered and assigned a model ID, the manifest file should be updated with the `Model ID` field and re-uploaded to IPFS. The following dincli command can be used to update the model CID in the DINModelRegistry contract:
+Once the model is registered and assigned a model ID, the manifest file can be updated (for example, with the `Model ID` field or new service CIDs) and re-uploaded. Changing the manifest CID in `DINModelRegistry` is a request, with its own fee, that the DIN-Representative approves:
 
 ```bash
-dincli task model-owner update-manifest-request <model_id> [--manifestCID <manifest_cid>] [--manifestpath <manifest_path>]
+# model owner: upload the manifest and submit the update request
+dincli task model-owner update-manifest-request <model_id> [--manifestpath <manifest_path> | --manifestCID <manifest_cid>]
+
+# DIN-Representative
+dincli dinrep registry approve-manifest-update <request_id>
 ```

@@ -75,9 +75,10 @@ Value  State Name                          Description
 [3] AwaitingGenesisModel
         │ setGenesisModelIpfsHash()
         ▼
-[4] GenesisModelCreated ◄───────────────────────────[28] GIended
-        │ startGI()                                       ▲
-        ▼                                                 │ endGI()
+[4] GenesisModelCreated     ┌──────────────────────[28] GIended
+        │ startGI() ◄─────────┘                           ▲
+        │ (needs giRewardPool(gi) > 0)                    │ endGI()  (settleRewards)
+        ▼                                                 │
 [5] GIstarted                                       [27] AggregatorsSlashed
         │ startDINaggregatorsRegistration()               ▲
         ▼                                                 │ slashAggregators()
@@ -114,6 +115,8 @@ Value  State Name                          Description
         └── startLMsubmissionsEvaluationReveal() ─► [16] LMSevaluationRevealStarted
                                                       (auditors: revealAuditScore)
 ```
+
+`startGI` runs from `GenesisModelCreated` (the first GI) or `GIended` (every later one), and reverts with `TC_GIRewardPoolNotFunded` until the GI's reward pool on `DINTaskAuditor` is funded (`depositRewards`, or `DinEmission.fundGI`). `endGI` calls `DINTaskAuditor.settleRewards`, after which participants can claim; `releaseGIRegistrationSlots(gi)` is a separate owner call on an ended GI and doesn't change the state.
 
 T1/T2 aggregation submissions follow the same commit-then-reveal shape as LMS evaluation above: `commitT1Aggregation`/`commitT2Aggregation` during the `*AggregationStarted` (commit) state, then the model owner calls `startT1AggregationReveal`/`startT2AggregationReveal` to open `*AggregationRevealStarted`, during which aggregators call `revealT1Aggregation`/`revealT2Aggregation`. Only revealed CIDs are counted by `finalizeT1Aggregation`/`finalizeT2Aggregation`; a committed-but-never-revealed aggregator is excluded from finalization and remains slashable via `slashAggregators`' existing "no submission" (S2) check (issue #156 M-1, task_240926_18 Part C).
 
