@@ -4,6 +4,7 @@ import json
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 
@@ -11,6 +12,48 @@ from dincli.dind import health as health_module
 from dincli.dind.capabilities import resource_snapshot as _real_resource_snapshot
 from dincli.dind.health import HealthHandler, HealthServer
 from dincli.dind.state import StateStore
+
+
+@contextmanager
+def _running_health_server(store, monkeypatch, before_ready=None):
+    """Wait for serving entry, after both discovery metadata writes commit."""
+    ready = threading.Event()
+    serve_forever = health_module._ThreadingHTTPServer.serve_forever
+
+    def serve_when_ready(http_server, **kwargs):
+        ready.set()
+        return serve_forever(http_server, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(health_module._ThreadingHTTPServer, "serve_forever", serve_when_ready)
+        server = HealthServer("127.0.0.1", 0, store)
+
+        def run():
+            try:
+                server.run()
+            finally:
+                store.close()  # StateStore connections are thread-local.
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            if before_ready is not None:
+                before_ready(server, ready)
+            assert ready.wait(5), "HealthServer never reached serving entry"
+            yield server
+        finally:
+            # shutdown() blocks until serve_forever runs; never call it on
+            # a server whose startup failed before entering the serving loop.
+            if ready.wait(5):
+                shutdown = threading.Thread(target=server.shutdown, daemon=True)
+                shutdown.start()
+                shutdown.join(timeout=5)
+                assert not shutdown.is_alive(), "HealthServer shutdown timed out"
+            thread.join(timeout=5)
+            # Only clean up failed startup; normal shutdown must release its own port.
+            if not ready.is_set() and not thread.is_alive() and hasattr(server, "server"):
+                server.server.server_close()
+            assert not thread.is_alive(), "HealthServer thread did not stop"
 
 
 class FakeServer:
@@ -166,7 +209,7 @@ def test_health_no_network_gpu_probe(monkeypatch, tmp_path):
     store.close()
 
 
-def test_status_command_reads_degraded_through_503(tmp_path):
+def test_status_command_reads_degraded_through_503(tmp_path, monkeypatch):
     """BL-20: `dind status` must render "Health: degraded" for a 503
     response, not fall into the "(health endpoint unavailable)" branch that
     urlopen's HTTPError-on-non-2xx would otherwise cause."""
@@ -182,16 +225,6 @@ def test_status_command_reads_degraded_through_503(tmp_path):
     paths = StateDirs(tmp_path)
     store = StateStore(paths.db_path)
     store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
-
-    server = HealthServer("127.0.0.1", 0, store)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if hasattr(server, "server"):
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("HealthServer never bound")
 
     paths.pid_path.write_text(str(os_module.getpid()))
     lock_fd = acquire_state_lock(paths.lock_path)
@@ -212,46 +245,77 @@ def test_status_command_reads_degraded_through_503(tmp_path):
         ),
     )
 
-    try:
-        runner = CliRunner()
-        result = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
+    # Force the exact old race: self.server exists, but discovery metadata
+    # has not been published. No scheduling delay or default-port service
+    # is needed to reproduce the incorrect readiness predicate.
+    publishing = threading.Event()
+    release_publication = threading.Event()
+    set_meta = store.set_meta
 
-        assert result.exit_code == 0, result.output
-        assert "Health:    degraded" in result.output
-        assert "(health endpoint unavailable)" not in result.output
+    def gated_set_meta(key, value):
+        if key == "health_host":
+            publishing.set()
+            assert release_publication.wait(5), "metadata publication not released"
+        set_meta(key, value)
+
+    monkeypatch.setattr(store, "set_meta", gated_set_meta)
+    runner = CliRunner()
+
+    def before_ready(server, ready):
+        from urllib.error import URLError
+
+        from dincli.dind import main as main_module
+
+        try:
+            assert publishing.wait(5), "HealthServer did not reach publication"
+            assert hasattr(server, "server")  # The old readiness check passes.
+            assert store.get_meta("health_host") is None
+            assert store.get_meta("health_port") is None
+            assert not ready.is_set()  # The replacement does not pass early.
+            attempted = []
+
+            def unavailable(url, **kwargs):
+                attempted.append(url)
+                raise URLError("unpublished test endpoint")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(main_module, "resolve_health_host", lambda: "127.0.0.1")
+                patch.setattr(main_module, "resolve_health_port", lambda: 1)
+                patch.setattr(main_module.urllib.request, "urlopen", unavailable)
+                early = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
+            assert early.exit_code == 0, early.output
+            assert attempted == ["http://127.0.0.1:1/health"]
+            assert "(health endpoint unavailable)" in early.output
+            assert "Health:    degraded" not in early.output
+        finally:
+            release_publication.set()
+
+    try:
+        with _running_health_server(store, monkeypatch, before_ready):
+            result = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
+
+            assert result.exit_code == 0, result.output
+            assert "Health:    degraded" in result.output
+            assert "(health endpoint unavailable)" not in result.output
     finally:
+        release_publication.set()
         control_server.shutdown()
         control_thread.join(timeout=5)
         release_state_lock(lock_fd)
-        server.shutdown()
-        thread.join(timeout=5)
         store.close()
 
 
-def test_health_server_releases_port(tmp_path):
+def test_health_server_releases_port(tmp_path, monkeypatch):
     store = StateStore(tmp_path / "test.db")
-    server = HealthServer("127.0.0.1", 0, store)
-
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    for _ in range(100):
-        if hasattr(server, "server"):
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("HealthServer never bound")
-
-    host, port = server.server.server_address
-
-    server.shutdown()
-    thread.join(timeout=5)
-    assert not thread.is_alive()
-
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    store.initialize()
     try:
-        probe.bind((host, port))
-    finally:
-        probe.close()
+        with _running_health_server(store, monkeypatch) as server:
+            host, port = server.server.server_address
 
-    store.close()
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind((host, port))
+        finally:
+            probe.close()
+    finally:
+        store.close()
