@@ -3,6 +3,7 @@ import os
 import time
 from datetime import datetime
 from getpass import getpass
+from pathlib import Path
 from typing import NamedTuple, Optional
 
 import typer
@@ -166,6 +167,37 @@ def read_after_write(read_fn, *, baseline, attempts=5, delay=2.0) -> ReadResult:
         if i < attempts - 1:
             time.sleep(delay)
     return ReadResult(value=last_value, settled=False, observed=observed)
+
+
+def write_private_text(path: Path, text: str) -> None:
+    """Atomically writes `text` to `path`, owner-only (0600) from the first byte.
+
+    The data goes to a sibling temp file opened with mode 0600 (fchmod'd too,
+    in case a stale temp file was left with a wider mode) and is then renamed
+    over `path`. Neither the temp file nor `path` is ever readable by other
+    users, whatever the umask, and an interrupted write leaves the previous
+    `path` untouched.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass  # no fchmod (Windows); the 0600 open mode still applies
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def _cleanup_stale_session() -> None:
