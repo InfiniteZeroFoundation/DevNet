@@ -1,0 +1,1030 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "approveManifestUpdate",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "approveModel",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "dinValidatorStake",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDinValidatorStake"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "disableModel",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "enableModel",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "feeRouter",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDinFeeRouter"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getModel",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "isOpenSource",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "manifestCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "createdAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "taskCoordinator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "taskAuditor",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getModelIdByTaskAuditor",
+      "inputs": [
+        {
+          "name": "taskAuditor",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "exists",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getModelIdByTaskCoordinator",
+      "inputs": [
+        {
+          "name": "taskCoordinator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "exists",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initialize",
+      "inputs": [
+        {
+          "name": "dinValidatorStake_",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "manifestRequests",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "newManifestCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "requester",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "feePaid",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "processed",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "approved",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "modelDisabled",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "modelRequests",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "requester",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "isOpenSource",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "manifestCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "taskCoordinator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "taskAuditor",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "feePaid",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "processed",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "approved",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "createdAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "openSourceFee",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "openSourceUpdateFee",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "proprietaryFee",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "proprietaryUpdateFee",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "rejectManifestUpdate",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "rejectModel",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "requestManifestUpdate",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "newManifestCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "requestModelRegistration",
+      "inputs": [
+        {
+          "name": "manifestCID",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "taskCoordinator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "taskAuditor",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "isOpenSource",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "setFeeRouter",
+      "inputs": [
+        {
+          "name": "feeRouter_",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setFees",
+      "inputs": [
+        {
+          "name": "_openSourceFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_proprietaryFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_openSourceUpdateFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_proprietaryUpdateFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setOpenSourceFee",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setOpenSourceUpdateFee",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setProprietaryFee",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setProprietaryUpdateFee",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "sweepFeesToRouter",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "totalManifestRequests",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalModelRequests",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalModels",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "FeeRouterUpdated",
+      "inputs": [
+        {
+          "name": "feeRouter",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FeesSweptToRouter",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FeesUpdated",
+      "inputs": [
+        {
+          "name": "openSourceFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "proprietaryFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "openSourceUpdateFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "proprietaryUpdateFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Initialized",
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ManifestUpdateRejected",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ManifestUpdateRequested",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ManifestUpdated",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "newCID",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ModelApproved",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ModelDisabled",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ModelEnabled",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ModelRegistrationRequested",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "requester",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ModelRejected",
+      "inputs": [
+        {
+          "name": "requestId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OpenSourceFeeUpdated",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OpenSourceUpdateFeeUpdated",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProprietaryFeeUpdated",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProprietaryUpdateFeeUpdated",
+      "inputs": [
+        {
+          "name": "newFee",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "AlreadyProcessed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "AuditorNoLongerSlasher",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "AuditorOwnershipChanged",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "CoordinatorNoLongerSlasher",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "CoordinatorOwnershipChanged",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "FeeRouterNotSet",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InsufficientFee",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidInitialization",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidModelId",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidRequestId",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ModelIsDisabled",
+      "inputs": [
+        {
+          "name": "modelId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotInitializing",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotModelOwner",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotOwnerOfTaskAuditor",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotOwnerOfTaskCoordinator",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ReentrancyGuardReentrantCall",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "RefundFailed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TaskAuditorAlreadyRegistered",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TaskCoordinatorAlreadyRegistered",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TaskCoordinatorEqualsTaskAuditor",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ZeroAddress",
+      "inputs": []
+    }
+  ]
+}
