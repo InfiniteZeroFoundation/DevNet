@@ -166,6 +166,22 @@ def test_all_committed_sends_nothing(tmp_path, worker_stubs):
     assert state["commits"] == []
 
 
+def test_worker_policy_failure_never_commits_a_rejection_vote(tmp_path, worker_stubs):
+    """A bad manifest is a failed job, not an eligible=False score to commit."""
+    state = {"committed": set(), "commits": []}
+    ctx = _make_ctx(_make_auditor_contract(state), tmp_path)
+
+    with patch.object(auditor, "build_and_send_tx") as send, patch.object(
+        auditor,
+        "read_worker_result",
+        return_value={"status": "error", "error": "manifest policy conflict"},
+    ):
+        _run(ctx)
+
+    send.assert_not_called()
+    assert state["commits"] == []
+
+
 def test_cache_written_before_send_and_matches_sent_commit(tmp_path, worker_stubs):
     """build_and_send_tx returning None (revert, or receipt wait failed on a
     tx that may still mine) must still leave the preimage of the hash that
