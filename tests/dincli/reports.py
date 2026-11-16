@@ -15,7 +15,6 @@ import stat
 import uuid
 from pathlib import Path
 
-
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _ADDRESS = re.compile(r"0x[0-9a-fA-F]{40}\Z")
 _MODEL = re.compile(r"model_([0-9]{1,10})\Z")

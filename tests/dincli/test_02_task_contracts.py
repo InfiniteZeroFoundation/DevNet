@@ -12,11 +12,11 @@ SDK candidates:
   register_slashers_on_task_contracts(network, model_owner_account)
 """
 
-import json
-import pytest
-from pathlib import Path
+import re
 
-from tests.dincli.constants import ARTIFACT_BASE, DIN_INFO_PATH
+import pytest
+
+from tests.dincli.constants import ARTIFACT_BASE, DUMP_ABI_DIR
 
 ARTIFACTS = {
     "task_coordinator": ARTIFACT_BASE / "DINTaskCoordinator.sol/DINTaskCoordinator.json",
@@ -28,7 +28,7 @@ ARTIFACTS = {
 def ensure_artifacts():
     missing = [name for name, path in ARTIFACTS.items() if not path.exists()]
     if missing:
-        pytest.skip(f"Hardhat artifacts missing for: {missing}.")
+        pytest.skip(f"Foundry artifacts missing for: {missing} (run forge build).")
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def ensure_artifacts():
 
 def test_connect_wallet_model_owner(run, state):
     """Switch to account 1 — model owner."""
-    result = run(["system", "connect-wallet", "modelowner"])
+    result = run(["system", "connect-demo-wallet", "modelowner"])
     assert result.returncode == 0
 
 
@@ -49,8 +49,18 @@ def test_eth_balance_model_owner(run):
     assert "ETH" in result.stdout or "eth" in result.stdout.lower()
 
 
+def _deployed_address(stdout: str, contract: str) -> str:
+    """The address in the CLI's "✓ <contract> contract deployed at: 0x…" line."""
+    match = re.search(rf"{contract} contract deployed at:\s*(0x[a-fA-F0-9]{{40}})", stdout)
+    assert match, f"No deployed {contract} address in output:\n{stdout}"
+    return match.group(1)
+
+
 def test_deploy_task_coordinator(run, state):
     """Deploy DINTaskCoordinator as model owner.
+
+    --model-id is left to its default (DINModelRegistry.totalModels() = 0),
+    and the deploy sets DinToken on the new coordinator.
 
     SDK candidate: deploy_task_coordinator(network, account, artifact_path)
     """
@@ -59,21 +69,14 @@ def test_deploy_task_coordinator(run, state):
         "--artifact", str(ARTIFACTS["task_coordinator"]),
     ], timeout=180)
     assert result.returncode == 0
-
-    # Address is written to .env in cwd — parse it from stdout as fallback
-    # The CLI prints the deployed address; extract it for state.
-    for line in result.stdout.splitlines():
-        if "0x" in line and len(line.strip()) >= 42:
-            import re
-            match = re.search(r"0x[a-fA-F0-9]{40}", line)
-            if match:
-                state["task_coordinator_address"] = match.group(0)
-                break
+    assert "totalModels() = 0" in result.stdout
+    assert "DinToken set on DINTaskCoordinator" in result.stdout
+    state["task_coordinator_address"] = _deployed_address(result.stdout, "DINTaskCoordinator")
 
 
 def test_dump_abi_task_coordinator(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["task_coordinator"]),
     ])
     assert result.returncode == 0
@@ -82,6 +85,10 @@ def test_dump_abi_task_coordinator(run):
 def test_deploy_task_auditor(run, state):
     """Deploy DINTaskAuditor as model owner.
 
+    --model-id defaults to the coordinator's modelId(); the deploy sets
+    DinToken on the new auditor (rewards deposit needs it) before linking
+    it to the coordinator.
+
     SDK candidate: deploy_task_auditor(network, account, artifact_path)
     """
     result = run([
@@ -89,19 +96,13 @@ def test_deploy_task_auditor(run, state):
         "--artifact", str(ARTIFACTS["task_auditor"]),
     ], timeout=180)
     assert result.returncode == 0
-
-    for line in result.stdout.splitlines():
-        if "0x" in line:
-            import re
-            match = re.search(r"0x[a-fA-F0-9]{40}", line)
-            if match:
-                state["task_auditor_address"] = match.group(0)
-                break
+    assert "DinToken set on DINTaskAuditor" in result.stdout
+    state["task_auditor_address"] = _deployed_address(result.stdout, "DINTaskAuditor")
 
 
 def test_dump_abi_task_auditor(run):
     result = run([
-        "system", "dump-abi", "--official",
+        "system", "dump-abi", "--output", str(DUMP_ABI_DIR),
         "--artifact", str(ARTIFACTS["task_auditor"]),
     ])
     assert result.returncode == 0
@@ -112,7 +113,7 @@ def test_din_rep_authorizes_task_coordinator_as_slasher(run, state):
 
     SDK candidate: dinrep_add_slasher(network, account, task_coordinator=addr)
     """
-    run(["system", "connect-wallet", "dinrep"])
+    run(["system", "connect-demo-wallet", "dinrep"])
     result = run(["dinrep", "add-slasher", "--taskCoordinator"])
     assert result.returncode == 0
 
@@ -128,7 +129,7 @@ def test_model_owner_registers_task_coordinator_slasher(run):
 
     SDK candidate: model_owner_add_slasher(network, account, task_coordinator=addr)
     """
-    run(["system", "connect-wallet", "modelowner"])
+    run(["system", "connect-demo-wallet", "modelowner"])
     result = run(["model-owner", "add-slasher", "--taskCoordinator"])
     assert result.returncode == 0
 

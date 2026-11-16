@@ -19,9 +19,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dincli.cli import aggregator
-from dincli.cli.aggregator import (TIER1, TIER2, _agg_commit_hash,
-                                   _agg_commit_store_path, _save_agg_commit,
-                                   aggregate_t1, aggregate_t2)
+from dincli.cli.aggregator import (
+    TIER1,
+    TIER2,
+    _agg_commit_hash,
+    _agg_commit_store_path,
+    _save_agg_commit,
+    aggregate_t1,
+    aggregate_t2,
+)
 
 GI = 1
 ACCOUNT = "0x" + "11" * 20
@@ -103,7 +109,7 @@ def worker_stubs(tmp_path):
 
 
 def _read_cache(model_base_dir, tier, batch_id=0):
-    with open(_agg_commit_store_path(model_base_dir, tier, GI, batch_id)) as f:
+    with open(_agg_commit_store_path(model_base_dir, tier, GI, batch_id, ACCOUNT)) as f:
         return json.load(f)
 
 
@@ -115,7 +121,7 @@ def test_already_committed_batch_is_skipped_and_cache_untouched(tmp_path, tier, 
     state = {"committed": True, "commits": []}
     contract = _make_contract(state)
     ctx = _make_ctx(contract, tmp_path)
-    _save_agg_commit(tmp_path, tier, GI, 0, OLD_CID, OLD_SALT)
+    _save_agg_commit(tmp_path, tier, GI, 0, OLD_CID, OLD_SALT, ACCOUNT)
     before = _read_cache(tmp_path, tier)
 
     with patch.object(aggregator, "build_and_send_tx") as send, \
@@ -140,7 +146,7 @@ def test_cache_written_before_send_and_matches_sent_commit(tmp_path, worker_stub
     state = {"committed": False, "commits": []}
     contract = _make_contract(state)
     ctx = _make_ctx(contract, tmp_path)
-    cache_path = _agg_commit_store_path(tmp_path, tier, GI, 0)
+    cache_path = _agg_commit_store_path(tmp_path, tier, GI, 0, ACCOUNT)
     seen_at_send = {}
 
     def _send(ctx_, fn, *args, **kwargs):

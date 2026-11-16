@@ -1,6 +1,6 @@
 ---
 name: din-pr-merge
-description: Use when actually merging a PR into InfiniteZeroFoundation/DevNet's `develop` — "merge PR #N", "merge this into develop", or any request to land a PR after it's been reviewed. Any maintainer who isn't the PR's author or a co-author can run it (checked first with `.claude/scripts/din_peer_check.py`). Path A (the default, per Developer/MAINTAINING.md No. 4.4): push any review fixes onto the PR branch, then add it to the `develop` merge queue once the approval and `CI OK` gates pass; the queue re-runs CI on the latest `develop` and lands it with a merge commit. Path B (Umer only per MAINTAINING No. 4.4, exceptional): the local stash-merge-pop flow plus a deviation commit, pushed through `din-push-develop` with the admin bypass. Either way it ends with the merger watching `develop` CI and posting the outcome comment (`outcome-comment.md`). Runs after `din-pr-review`. Not for reviewing a PR (use `din-pr-review`) and not for generic git merges outside this repo's PR workflow.
+description: Use when actually merging a PR into InfiniteZeroFoundation/DevNet's `develop` — "merge PR #N", "merge this into develop", or any request to land a PR after it's been reviewed. Run it as the PR's final approver, the eligible maintainer they named in their review, or Umer (Developer/MAINTAINING.md No. 1, No. 4.4); never as the PR's author or a co-author (checked first with `.claude/scripts/din_peer_check.py`). Path A (the default, per Developer/MAINTAINING.md No. 4.4): push any review fixes onto the PR branch, then add it to the `develop` merge queue once the approval and `CI OK` gates pass; the queue re-runs CI on the latest `develop` and lands it with a merge commit. Path B (Umer only per MAINTAINING No. 4.4, exceptional): the local stash-merge-pop flow plus a deviation commit, pushed through `din-push-develop` with the admin bypass. Either way it ends with the merger watching `develop` CI and posting the outcome comment (`outcome-comment.md`). Runs after `din-pr-review`. Not for reviewing a PR (use `din-pr-review`) and not for generic git merges outside this repo's PR workflow.
 ---
 
 # DIN DevNet PR merge
@@ -17,7 +17,7 @@ setup is [`.claude/scripts/README.md`](../../scripts/README.md).
 
 | | Path A — GitHub-side merge commit | Path B — local merge + deviation commit |
 |---|---|---|
-| Who | Any maintainer who isn't the author or a co-author | Umer only (MAINTAINING No. 4.4; `din_peer_check.py path-b`) |
+| Who | The final approver, the eligible maintainer they named in their review, or Umer (MAINTAINING No. 1, No. 4.4); never the author or a co-author | Umer only (MAINTAINING No. 4.4; `din_peer_check.py path-b`) |
 | When | The default, for every PR | Exceptional: the PR needs adapting against a `develop` that has moved (renames, ABI regeneration, docs drift) and pushing fixes onto the PR branch isn't practical |
 | Fixes | Pushed onto the PR branch (or a small follow-up PR); the last-push rule sends the final approval to someone else | A separate deviation commit on top of the merge, on `develop` |
 | Gate | The `develop` ruleset: 1 approval of the latest push, `CI OK`, then the merge queue's own `CI OK` run | The admin bypass; log a one-line reason in [Discussion 170](https://github.com/InfiniteZeroFoundation/DevNet/discussions/170) |
@@ -88,22 +88,42 @@ should take the final approval, then stop. That person runs this skill from A2.
 R=InfiniteZeroFoundation/DevNet
 gh pr view <N> -R $R --json headRefOid,mergeStateStatus,reviewDecision,isDraft,reviews \
   --jq '{head: .headRefOid, state: .mergeStateStatus, decision: .reviewDecision, draft: .isDraft,
-         approvals: [.reviews[] | select(.state=="APPROVED") | {by: .author.login, at: .commit.oid}]}'
+         approvals: [.reviews[] | select(.state=="APPROVED") | {by: .author.login, at: .commit.oid, at_time: .submittedAt, body}]}'
 gh pr checks <N> -R $R
+gh api user --jq .login   # the operator
 ```
 
 All of these must hold:
 
 - `isDraft` is false.
 - An approval from an eligible peer is **on the current head SHA**.
+- **The operator owns the queue step** (MAINTAINING No. 4.4). The final
+  required approval is the last one on the current head, or the second
+  sign-off below if that came last. One of these holds:
+  - the operator gave that final approval;
+  - the final approver's review (or a comment from them on the PR) names the
+    operator as the maintainer to queue it;
+  - the last thing in was a `foundry/src/**` second sign-off from @umeradl or
+    @abrahamnash, and the operator is Umer or the PR's peer reviewer;
+  - the operator is Umer: No. 1 lets "the peer who reviewed it, or Umer"
+    merge, as long as the peer check passed.
+
+  Also read the final approver's review: if it says to hold off queueing (or
+  to wait for something), respect that. If no case holds, don't queue: tell
+  the operator who owns the step and ping that person on the PR.
 - `CI OK` is green on that head.
 - `mergeStateStatus` isn't `DIRTY`. `DIRTY` means a merge conflict with
   `develop`: ask the author to resolve it. Being behind `develop` is fine — the merge queue tests the PR on
   top of the latest `develop`, so don't run `gh pr update-branch` (it would
   make the operator the last pusher and reset the approval).
 - **`foundry/src/**` touched?** The second sign-off (MAINTAINING No. 4.2) is
-  on the PR, as an approval or a comment from @umeradl, @abrahamnash or a
-  security reviewer they named.
+  on the PR, as an approval or a comment, and it's independent of the peer
+  review:
+  - author @robertocarlous or @Abidoyesimze: it comes from @umeradl or
+    @abrahamnash, never a routed reviewer;
+  - any other author: from @umeradl, @abrahamnash, or a security reviewer one
+    of them routed it to on the PR, who isn't the PR's author or its peer
+    reviewer.
 - **Mechanism change?** The mechanism sign-off is on the PR (MAINTAINING No. 4.2).
 - No unresolved "Changes requested" from anyone (MAINTAINING No. 7).
 

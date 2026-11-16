@@ -15,7 +15,6 @@ import tomllib
 from pathlib import Path
 
 import pytest
-import typer
 from typer.main import get_group
 from typer.testing import CliRunner
 

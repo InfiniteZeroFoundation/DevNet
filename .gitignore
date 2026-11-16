@@ -23,6 +23,7 @@ tasks/local/0x4657105FC932625CD289107aAE7B2174a822b709/services/__pycache__/*
 /tasks/*
 /scripts/*
 !scripts/preflight.py
+!scripts/dp_noise_multiplier_sweep.py
 /hardhat/ignition/*
 # /hardhat/scripts/*
 # /hardhat/test/*

@@ -1,10 +1,16 @@
 from pathlib import Path
+
 import typer
 from rich.table import Table
 
-from dincli.cli.utils import (GIstateToStr, build_and_send_tx, ensure_batch_seed_locked,
-                               get_manifest_key, require_custom_manifest_service,
-                               resolve_manifest_path)
+from dincli.cli.utils import (
+    GIstateToStr,
+    build_and_send_tx,
+    ensure_batch_seed_locked,
+    get_manifest_key,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
 from dincli.services.cid_utils import get_cid_from_bytes32
 
 aggregation_app = typer.Typer(help="Aggregation commands")
@@ -40,7 +46,7 @@ def create_tier1_tier2_batches(
             lock_fn="lockAggSeed", label="T1/T2 batch",
         )
 
-    console.print(f"[bold green]Creating Tier 1 & Tier 2 batches[/bold green]")
+    console.print("[bold green]Creating Tier 1 & Tier 2 batches[/bold green]")
     
     try:
         tx_receipt = build_and_send_tx(
@@ -73,7 +79,7 @@ def show_t1_batches(
     ref_gi = ctx.obj.validate_gi_LTE_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_LTE_given_GIstate(ref_gi, curr_GI,GIstate, "T1nT2Bcreated","Can not show Tier 1 batches at this time.")
 
-    console.print(f"[green]✓ Showing Tier 1 batches[/green]")
+    console.print("[green]✓ Showing Tier 1 batches[/green]")
 
 
     t1_count = task_coordinator_Contract.functions.tier1BatchCount(ref_gi).call()
@@ -177,7 +183,7 @@ def start_t1_aggregation(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1nT2Bcreated","Can not start Tier 1 aggregation at this time.")
     
-    console.print(f"[bold green]Starting Tier 1 Aggregation[/bold green]")
+    console.print("[bold green]Starting Tier 1 Aggregation[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -209,7 +215,7 @@ def start_t1_aggregation_reveal(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationStarted", "Can not start Tier 1 aggregation reveal at this time.")
 
-    console.print(f"[bold green]Starting Tier 1 Aggregation reveal window[/bold green]")
+    console.print("[bold green]Starting Tier 1 Aggregation reveal window[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -241,7 +247,7 @@ def close_t1_aggregation(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationRevealStarted","Can not close Tier 1 aggregation at this time.")
     
-    console.print(f"[bold green]Finalizing Tier 1 Aggregation[/bold green]")
+    console.print("[bold green]Finalizing Tier 1 Aggregation[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -272,7 +278,7 @@ def start_t2_aggregation(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T1AggregationDone","Can not start Tier 2 aggregation at this time.")
 
-    console.print(f"[bold green]Starting Tier 2 Aggregation[/bold green]")
+    console.print("[bold green]Starting Tier 2 Aggregation[/bold green]")
     try:
         tx_receipt = build_and_send_tx(
             ctx,
@@ -304,7 +310,7 @@ def start_t2_aggregation_reveal(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationStarted", "Can not start Tier 2 aggregation reveal at this time.")
 
-    console.print(f"[bold green]Starting Tier 2 Aggregation reveal window[/bold green]")
+    console.print("[bold green]Starting Tier 2 Aggregation reveal window[/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -343,7 +349,7 @@ def close_t2_aggregation(
     ref_gi = ctx.obj.validate_gi_ET_curr_GI(gi, curr_GI)
     ctx.obj.validate_GIstate_ET_given_GIstate(GIstate, "T2AggregationRevealStarted", "Can not close Tier 2 aggregation at this time.")
 
-    console.print(f"[bold green]Finalizing Tier 2 Aggregation[/bold green]")
+    console.print("[bold green]Finalizing Tier 2 Aggregation[/bold green]")
     try:
         tx_receipt = build_and_send_tx(
             ctx,

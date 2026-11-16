@@ -187,8 +187,8 @@ def _check_rpc(url: str, network: str | None = None) -> int:
 def _check_ipfs_config() -> int:
     """Check that the resolved IPFSConfig has the required fields for its provider."""
     try:
-        from dincli.services.ipfs import resolve_ipfs_config  # type: ignore[import]
         from dincli.cli.utils import IPFSConfig  # type: ignore[import]
+        from dincli.services.ipfs import resolve_ipfs_config  # type: ignore[import]
         cfg: IPFSConfig = resolve_ipfs_config()
         provider = cfg.provider
         if provider == "env":

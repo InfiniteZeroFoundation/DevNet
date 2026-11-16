@@ -15,6 +15,10 @@ from platformdirs import user_cache_dir, user_config_dir
 from rich.console import Console
 from web3 import Web3
 
+from dincli.cli.contract_utils import get_contract_instance
+from dincli.cli.log import logger
+from dincli.services.cid_utils import get_cid_from_bytes32
+
 _ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _PASSWORD_TTL_DEFAULT = 900
 _PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
@@ -22,10 +26,6 @@ _PASSWORD_CACHE: dict[str, tuple[str, float]] = {}
 # Sentinel so callers can inject an already-fetched DIN_WALLET_PASSWORD value
 # (fetched once per unlock) while callers that omit it self-fetch as before.
 _UNSET = object()
-
-from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.log import logger
-from dincli.services.cid_utils import get_cid_from_bytes32
 
 console = Console()
 

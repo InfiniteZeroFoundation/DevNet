@@ -6,11 +6,12 @@ from dincli.cli.auditor import app as auditor_app
 from dincli.cli.client import app as client_app
 from dincli.cli.context import DinContext
 from dincli.cli.core import GlobalOptionsGroup
-from dincli.cli.dintoken import app as dintoken_app
 from dincli.cli.dinrep import app as dinrep_app
+from dincli.cli.dintoken import app as dintoken_app
 from dincli.cli.ipfs import app as ipfs_app
 from dincli.cli.modelowner import app as model_owner_app
 from dincli.cli.rewards import app as rewards_app
+
 # Import role-specific subcommands
 from dincli.cli.system import app as system_app
 from dincli.cli.task import app as task_app
@@ -90,7 +91,7 @@ def main(
     if configured_network:
         console.print(f"[bold cyan]Active Network:[/bold cyan] {configured_network}")
     else:
-        console.print(f"[bold cyan]Network[/bold cyan] not configured")
+        console.print("[bold cyan]Network[/bold cyan] not configured")
     
     if version:
         console.print(f"[bold cyan]DIN CLI[/bold cyan] v{__version__} — Decentralized Intelligence Network")

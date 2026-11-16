@@ -4,8 +4,11 @@ from importlib.resources import files
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
-from dincli.cli.utils import (build_and_send_tx, get_env_key,
-                               resolve_task_coordinator_address)
+from dincli.cli.utils import (
+    build_and_send_tx,
+    get_env_key,
+    resolve_task_coordinator_address,
+)
 
 app = typer.Typer(help="Commands for the DIN-Representative")
 

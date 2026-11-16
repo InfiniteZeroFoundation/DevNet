@@ -13,7 +13,9 @@ import pytest
 
 from tests.dincli import diagnostics
 from tests.dincli.diagnostics import (
-    Diagnostics, DiagnosticsLimitError, DiagnosticsWriteError,
+    Diagnostics,
+    DiagnosticsLimitError,
+    DiagnosticsWriteError,
 )
 
 

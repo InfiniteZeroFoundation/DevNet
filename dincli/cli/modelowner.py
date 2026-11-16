@@ -9,7 +9,7 @@ from dincli.cli.modelownerd.lms import lms_app
 from dincli.cli.modelownerd.lms_evaluation import lms_evaluation_app
 from dincli.cli.modelownerd.model import model_app
 from dincli.cli.modelownerd.rewards import rewards_app
-from dincli.cli.modelownerd.setup import (add_slasher)
+from dincli.cli.modelownerd.setup import add_slasher
 from dincli.cli.modelownerd.slash import slash_app
 from dincli.cli.modelownerd.task import task_app
 

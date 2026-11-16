@@ -1,19 +1,28 @@
 import json
 import secrets
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import List
-import typer
-from rich.table import Table
-from web3 import Web3
-from nacl.public import Box, PublicKey, PrivateKey
+
 import nacl.encoding
+import typer
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from eth_abi.packed import encode_packed
 from eth_account.messages import encode_defunct
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from nacl.public import Box, PrivateKey, PublicKey
+from rich.table import Table
+from web3 import Web3
 
-from dincli.cli.utils import CONFIG_DIR, GIstateToStr, build_and_send_tx, ensure_batch_seed_locked, get_manifest_key, require_custom_manifest_service, resolve_manifest_path
-from dincli.services.cid_utils import get_bytes32_from_cid, get_cid_from_bytes32
+from dincli.cli.utils import (
+    CONFIG_DIR,
+    GIstateToStr,
+    build_and_send_tx,
+    ensure_batch_seed_locked,
+    get_manifest_key,
+    require_custom_manifest_service,
+    resolve_manifest_path,
+)
+from dincli.services.cid_utils import get_bytes32_from_cid
 
 auditor_batches_app = typer.Typer(help="Auditor Batches commands")
 
@@ -141,7 +150,7 @@ def create(
             lock_fn="lockAuditSeed", label="auditor-batch",
         )
 
-    console.print(f"[bold green]Creating auditor batches [/bold green]")
+    console.print("[bold green]Creating auditor batches [/bold green]")
 
     try:
         tx_receipt = build_and_send_tx(
@@ -275,7 +284,7 @@ def create_testdataset(
         )
         raise typer.Exit(1)
 
-    console.print(f"[bold green]Creating test dataset![/bold green]")
+    console.print("[bold green]Creating test dataset![/bold green]")
 
     audtor_batch_count = taskauditor_contract.functions.AuditorsBatchCount(ref_gi).call()
 
@@ -301,11 +310,11 @@ def create_testdataset(
     
     console.print("audit_testDataCIDs", audit_testDataCIDs)
     
-    console.print(f"[bold green] ✓ Created test subdatasets![/bold green]")
+    console.print("[bold green] ✓ Created test subdatasets![/bold green]")
 
     if submit:
 
-        console.print(f"[bold green]Assigning test dataset![/bold green]")
+        console.print("[bold green]Assigning test dataset![/bold green]")
 
         owner_privkey = _load_owner_x25519_key(console)
 
@@ -314,6 +323,7 @@ def create_testdataset(
         # must re-upload the manifest and update the on-chain CID for auditors on
         # other machines to receive it (standard manifest update workflow).
         import json as _json
+
         from dincli.cli.utils import get_manifest_path
         owner_pubkey_hex = bytes(owner_privkey.public_key).hex()
         _manifest_path = get_manifest_path(effective_network, model_id=model_id)
@@ -322,7 +332,7 @@ def create_testdataset(
             if _manifest.get("owner_encryption_pubkey") != owner_pubkey_hex:
                 _manifest["owner_encryption_pubkey"] = owner_pubkey_hex
                 _manifest_path.write_text(_json.dumps(_manifest, indent=2))
-                console.print(f"[dim]owner_encryption_pubkey written to manifest — re-upload manifest to distribute to auditors[/dim]")
+                console.print("[dim]owner_encryption_pubkey written to manifest — re-upload manifest to distribute to auditors[/dim]")
 
         stake_contract = ctx.obj.get_deployed_din_stake_contract(verbose=False)
 

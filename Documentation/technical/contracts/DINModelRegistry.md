@@ -18,7 +18,7 @@ Core capabilities:
 
 - **Two-phase model registration** — submit a request, the DIN-Representative approves or rejects.
 - **Two-phase manifest updates** — same request/approval flow.
-- **Kill switch** — the DIN-Representative can instantly disable any model.
+- **Kill switch** — disabling blocks future GIs on compatible task pairs, manifest updates and emission funding.
 - **Dynamic fee governance** — all four fee parameters are adjustable by the DIN-Representative. Requests keep exactly the required fee; any overpayment is refunded to the caller.
 - **Fee routing** — accumulated ETH fees are swept to `DinFeeRouter` (`sweepFeesToRouter`), which splits them across validator pool / treasury / storage / public goods.
 - **Transferable admin** — the owner role can be handed to a multisig or timelock (`transferOwnership`).
@@ -294,7 +294,7 @@ function requestModelRegistration(
 8. **Emit** `ModelRegistrationRequested`.
 9. **Refund:** if `msg.value > requiredFee`, send the overpayment back to `msg.sender` with a low-level `call` — revert `RefundFailed` if it fails. This runs last (checks-effects-interactions) and the function is `nonReentrant`.
 
-> **Note:** The required fee is held in the contract regardless of whether the request is approved or rejected.
+> **Fee policy:** The required registration fee is a nonrefundable, pay-to-apply anti-spam cost: neither approval nor rejection refunds it. This is intentional (Abraham, [issue #224, 26 October 2026](https://github.com/InfiniteZeroFoundation/DevNet/issues/224#issuecomment-6406239550)). Any amount paid above the required fee is still refunded in the request transaction.
 
 ---
 
@@ -372,18 +372,14 @@ function disableModel(uint256 modelId) external onlyOwner
 function enableModel(uint256 modelId)  external onlyOwner
 ```
 
-- Sets / clears `modelDisabled[modelId]`.
-- `modelDisabled` is `public`, so downstream contracts *could* read it (`modelRegistry.modelDisabled(modelId)`), but today neither `DINTaskCoordinator` nor `DINTaskAuditor` does.
-- Emits `ModelDisabled` / `ModelEnabled`.
-- **Disabled ≠ Deleted.** History, ownership, and manifest are preserved for auditability.
+- Sets / clears `modelDisabled[modelId]` and emits `ModelDisabled` / `ModelEnabled`.
+- Preserves history, ownership and manifest.
 
-What disabling actually does today:
+For the current Foundry task pair, both `startGI(gi)` and `startGI(gi, score)` call the auditor's `validateGIStart(gi)` before changing the pass score, GI counter or state. The auditor requires an approved registry entry for its own address, checks that entry's `modelDisabled` flag, and requires a funded pool. It uses the registry-assigned ID, including ID zero, rather than the constructor's anticipated stake-floor ID. An unregistered model or failed registry read prevents starting a GI. Pre-funding or private funding cannot bypass a disabled flag; reenabling permits starting again if the other prerequisites hold.
 
-| Effect | Enforced? |
-|--------|-----------|
-| Blocks `requestManifestUpdate` (`notDisabled` modifier) | ✅ |
-| Blocks `approveManifestUpdate` for that model | ✅ |
-| Stops GIs, LM submissions, aggregation, audits or slashing in the task contracts | ❌ — not checked by `DINTaskCoordinator` / `DINTaskAuditor` (§19 No. 6) |
+Disabling blocks subsequent GI starts, manifest updates and emission funding. It does **not** abort or freeze an in-flight GI: submissions, audits, aggregation, slashing, settlement and reward claims continue. A start ordered before disable may succeed. Existing funds remain in their pools; this change adds no cancellation, refund or recovery path.
+
+Both task contracts are non-upgradeable. Existing deployed pairs keep their previous behavior and need a newly deployed compatible pair to gain this protection; there is no automatic retrofit. Deploy the new coordinator together with the new auditor wired to the canonical platform registry proxy. An old coordinator can bypass the new auditor guard, and a new coordinator cannot call this guard on an old auditor. Immutable wiring prevents later reassignment but does not prove the supplied registry is canonical. The DIN-Representative must review the task code, pairing and registry address before slasher authorization and approval; arbitrary custom or malicious task code is outside this enforcement guarantee.
 
 ---
 
@@ -464,7 +460,7 @@ DINModelRegistry
   └── calls → DinFeeRouter.routeFeeETH{value}(this)    [sweepFeesToRouter]
 ```
 
-No contract currently reads `modelDisabled`: `DINTaskCoordinator` and `DINTaskAuditor` do not check it, so the kill switch only blocks manifest updates in the registry itself (see §19 No. 6).
+`DinEmission` checks `modelDisabled` before funding. Compatible task pairs check approval and disabled status through the auditor before starting a GI; see §11 for deployment and in-flight limitations.
 
 ---
 
@@ -477,9 +473,9 @@ No contract currently reads `modelDisabled`: `DINTaskCoordinator` and `DINTaskAu
 | Slasher status revoked between request and approval | `isSlasherContract()` revalidated inside `approveModel()` |
 | Coordinator / auditor reused across models | `_modelIdByTaskCoordinator` / `_modelIdByTaskAuditor` uniqueness enforced at approval |
 | Silent manifest change by model owner | Manifest updates require DIN-Representative approval |
-| Malicious approved model | Kill switch (`disableModel`) provides instant remediation |
+| Malicious approved model | `disableModel` blocks future GIs on reviewed compatible task pairs; in-flight work continues |
 | Disabled model manifest still approved | `approveManifestUpdate` checks `modelDisabled` before writing |
-| Fee spam on registration | Fee required at request time; retained on rejection |
+| Fee spam on registration | Nonrefundable pay-to-apply anti-spam fee on approval and rejection |
 | Overpayment kept by the registry | Anything above the required fee is refunded in the same call; `feePaid` records only the required fee |
 | Re-entrancy through the refund call | The refund is the last step (checks-effects-interactions) and both request functions are `nonReentrant` (`ReentrancyGuardTransient`) |
 | Admin key compromise | `transferOwnership` enables migration to multisig / timelock |
@@ -494,7 +490,7 @@ No contract currently reads `modelDisabled`: `DINTaskCoordinator` and `DINTaskAu
 - `taskCoordinator` and `taskAuditor` addresses are permanent after approval — no mechanism to update them.
 - Pending requests never expire — a stale request remains approvable indefinitely (a `uint256 expiresAt` field could address this).
 - Single admin key (the DIN-Representative) — no multi-sig quorum or on-chain voting yet (migrate via `transferOwnership`).
-- The kill switch (`modelDisabled`) is not enforced by the task contracts (see §19 No. 6).
+- The future-GI guard depends on compatible, reviewed task code wired to the canonical registry; it does not abort in-flight work (§11).
 
 ---
 
@@ -532,4 +528,4 @@ Observations from the PR 13 review worth tracking:
 - **No. 3 — Single-step ownership transfer:** `transferOwnership` is one-step; a typoed address is unrecoverable. `Ownable2StepUpgradeable` would make handover safer.
 - **No. 4 — Repurposed error names:** `CoordinatorNoLongerSlasher` / `AuditorNoLongerSlasher` now also fire on first-time request validation, where "no longer" is a misnomer. Selector-stable but slightly misleading in traces.
 - **No. 5 — Admin revert selector changed:** unauthorized admin calls revert with `OwnableUnauthorizedAccount` instead of `NotDINDAOAdmin` — anything decoding revert reasons (tests, dincli error handling) must use the new selector.
-- **No. 6 — Kill switch is not enforced downstream:** neither `DINTaskCoordinator` nor `DINTaskAuditor` reads `modelDisabled`, so disabling a model does not stop its GIs, submissions, or slashing — it only blocks manifest-update requests/approvals in the registry.
+- **No. 6 — Future-GI guard implemented (#224):** compatible current task pairs reject new GIs for unregistered or disabled models. Existing deployments and in-flight work retain their behavior; abort remains outside this scope (§11).

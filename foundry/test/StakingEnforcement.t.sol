@@ -16,12 +16,14 @@ import {DinCoordinator} from "../src/DinCoordinator.sol";
 import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {GIstates} from "../src/DINShared.sol";
 import {
     TC_StakeBelowModelFloor,
     TC_ConcurrentRegistrationCapReached,
     TC_WrongGI,
+    TC_GINotEnded,
     TC_SlotsAlreadyReleased,
     TA_StakeBelowModelFloor,
     TA_ConcurrentRegistrationCapReached,
@@ -84,7 +86,7 @@ contract StakingEnforcementTest is Test {
 
         vm.startPrank(modelOwner);
         tc = new DINTaskCoordinator(address(stake), MODEL_ID);
-        ta = new DINTaskAuditor(address(stake), address(tc), MODEL_ID);
+        ta = new DINTaskAuditor(address(stake), address(tc), MODEL_ID, address(new EnabledModelRegistry()));
         tc.setDINTaskAuditorContract(address(ta));
         ta.setDinToken(address(token));
         vm.stopPrank();
@@ -234,7 +236,7 @@ contract StakingEnforcementTest is Test {
         // Deploy a second coordinator for the same stake contract
         vm.startPrank(modelOwner);
         DINTaskCoordinator tc2 = new DINTaskCoordinator(address(stake), 2);
-        DINTaskAuditor ta2 = new DINTaskAuditor(address(stake), address(tc2), 2);
+        DINTaskAuditor ta2 = new DINTaskAuditor(address(stake), address(tc2), 2, address(new EnabledModelRegistry()));
         tc2.setDINTaskAuditorContract(address(ta2));
         ta2.setDinToken(address(token));
         vm.stopPrank();
@@ -488,6 +490,15 @@ contract StakingEnforcementTest is Test {
         vm.expectRevert(TC_SlotsAlreadyReleased.selector);
         tc.releaseGIRegistrationSlots(1);
         vm.stopPrank();
+    }
+
+    function test_releaseGIRegistrationSlots_revertsWhenGINotEnded() public {
+        // GI 1 is still in progress (never driven to GIended) -- neither
+        // "_GI < current GI" nor "_GI == current GI && GIstate == GIended"
+        // holds, so the call must revert rather than release slots early.
+        vm.prank(modelOwner);
+        vm.expectRevert(TC_GINotEnded.selector);
+        tc.releaseGIRegistrationSlots(1);
     }
 
     // ── one address can't hold both roles in a GI (issue No. 180) ────────────

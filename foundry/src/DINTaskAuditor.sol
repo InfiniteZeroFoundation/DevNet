@@ -18,6 +18,9 @@ interface IBurnableDinToken {
 contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
+    /// @notice Canonical platform registry, fixed at deployment; review wiring before approval.
+    ITaskModelRegistry public immutable modelRegistry;
+
     IDinValidatorStake public dinvalidatorStakeContract;
 
     IDINTaskCoordinator public dintaskcoordinatorContract;
@@ -401,14 +404,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     /// @param _dinvalidatorStakeContract_address Address of the DinValidatorStake proxy.
     /// @param _dintaskcoordinator_contract_address Address of the paired DINTaskCoordinator.
     /// @param modelId_ Model registry ID for this deployment, used for per-model stake enforcement.
+    /// @param modelRegistry_ Canonical DINModelRegistry proxy; cannot be changed after deployment.
     constructor(
         address _dinvalidatorStakeContract_address,
         address _dintaskcoordinator_contract_address,
-        uint256 modelId_
+        uint256 modelId_,
+        address modelRegistry_
     ) Ownable(msg.sender) {
         if (
             _dinvalidatorStakeContract_address == address(0) ||
-            _dintaskcoordinator_contract_address == address(0)
+            _dintaskcoordinator_contract_address == address(0) ||
+            modelRegistry_.code.length == 0
         ) revert TA_InvalidAddress();
         dinvalidatorStakeContract = IDinValidatorStake(
             _dinvalidatorStakeContract_address
@@ -417,6 +423,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             _dintaskcoordinator_contract_address
         );
         modelId = modelId_;
+        modelRegistry = ITaskModelRegistry(modelRegistry_);
 
         params = Params({
             auditorsPerBatch: 3,
@@ -426,6 +433,19 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             passScore: 50,
             MIN_MODELS_PER_BATCH: 2
         });
+    }
+
+    /// @notice Checks registry approval, enabled status and funding before a new GI.
+    /// @dev Only the paired coordinator calls this, from both startGI overloads,
+    ///      before any mutation. Reverse lookup uses the approved ID rather than
+    ///      the constructor's anticipated stake-floor ID. Registry failures revert
+    ///      closed. In-flight phases, settlement and claims remain available.
+    /// @param gi Next GI whose reward pool must be funded.
+    function validateGIStart(uint256 gi) external view onlyTaskCoordinator {
+        (bool exists, uint256 registeredId) = modelRegistry.getModelIdByTaskAuditor(address(this));
+        if (!exists) revert TA_ModelNotRegistered();
+        if (modelRegistry.modelDisabled(registeredId)) revert TA_ModelDisabled(registeredId);
+        if (giRewardPool[gi] == 0) revert TC_GIRewardPoolNotFunded();
     }
 
     /// @notice Wires the DIN token used for reward deposits and payouts.
@@ -463,7 +483,7 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      pool (typically the model owner, but not restricted to them --
     ///      matches the "market-set pool" framing in MECHANISM_DESIGN §5,
     ///      nothing stops a third party topping up a pool they care about).
-    ///      DINTaskCoordinator._startGI checks giRewardPool(_GI) > 0 as a
+    ///      DINTaskCoordinator._startGI calls validateGIStart(_GI) as a
     ///      precondition before that GI can start.
     ///
     ///      `gi` must be the current GI or a future one: GI only ever moves
@@ -687,16 +707,19 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         // Per-model stake floor: enforced when the model owner has set a non-zero bound.
         uint256 floorMin = dinvalidatorStakeContract.getModelStakeMin(modelId);
-        if (floorMin > 0 && dinvalidatorStakeContract.getStake(msg.sender) < floorMin)
-            revert TA_StakeBelowModelFloor();
-
         // Concurrent-registration cap: enforced when the DAO has set a non-zero value.
         uint256 capPerUnit = dinvalidatorStakeContract.maxConcurrentRegistrationsPerStakeUnit();
-        if (capPerUnit > 0) {
-            uint256 maxAllowed = (dinvalidatorStakeContract.getStake(msg.sender) /
-                dinvalidatorStakeContract.minStake()) * capPerUnit;
-            if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
-                revert TA_ConcurrentRegistrationCapReached();
+        if (floorMin > 0 || capPerUnit > 0) {
+            // Single getStake() read shared by both checks below (issue #249 finding 1).
+            uint256 stake = dinvalidatorStakeContract.getStake(msg.sender);
+            if (floorMin > 0 && stake < floorMin)
+                revert TA_StakeBelowModelFloor();
+            if (capPerUnit > 0) {
+                uint256 maxAllowed = (stake /
+                    dinvalidatorStakeContract.minStake()) * capPerUnit;
+                if (dinvalidatorStakeContract.activeRegistrationCount(msg.sender) >= maxAllowed)
+                    revert TA_ConcurrentRegistrationCapReached();
+            }
         }
 
         dinAuditors[_GI].push(msg.sender);
@@ -792,22 +815,25 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         uint _GI
     ) internal view returns (address[] memory activePool) {
         address[] storage registeredPool = dinAuditors[_GI];
+        uint len = registeredPool.length;
+        // issue #249 finding 2: cache each isValidatorActive result from the
+        // counting pass instead of re-querying it in the fill pass below.
+        bool[] memory active = new bool[](len);
         uint activeCount;
 
-        for (uint i = 0; i < registeredPool.length; i++) {
-            if (
-                dinvalidatorStakeContract.isValidatorActive(registeredPool[i])
-            ) {
+        for (uint i = 0; i < len; i++) {
+            bool isActive = dinvalidatorStakeContract.isValidatorActive(registeredPool[i]);
+            active[i] = isActive;
+            if (isActive) {
                 activeCount++;
             }
         }
 
         activePool = new address[](activeCount);
         uint ptr;
-        for (uint i = 0; i < registeredPool.length; i++) {
-            address auditor = registeredPool[i];
-            if (dinvalidatorStakeContract.isValidatorActive(auditor)) {
-                activePool[ptr++] = auditor;
+        for (uint i = 0; i < len; i++) {
+            if (active[i]) {
+                activePool[ptr++] = registeredPool[i];
             }
         }
     }
@@ -854,15 +880,16 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         return (scores[count / 2 - 1] + scores[count / 2]) / 2;
     }
 
-    /// @notice Partitions active auditors and submitted models into audit batches.
+    /// @notice Partitions registered auditors and submitted models into audit batches.
     /// @dev Called by the paired DINTaskCoordinator, which has already locked
     ///      and passed in `seed` (issue #156 H-2) -- anchored at
     ///      DINTaskCoordinator.closeLMsubmissions, before this function could
-    ///      possibly run, so nobody can steer batch assignment by timing the
-    ///      call. Rejects a zero seed independently of the coordinator's own
-    ///      check (defense-in-depth, same principle as the M-3 fix elsewhere
-    ///      in this contract). Returns false is never reached; reverts on any
-    ///      failure condition.
+    ///      possibly run. Rejects a zero seed independently of the coordinator's
+    ///      own check (defense-in-depth). Shuffles the fixed per-GI registration
+    ///      list (dinAuditors[_GI]); batch layout is derived from the registered
+    ///      count so an unstake between lockAuditSeed and this call only forfeits
+    ///      the leaver's own seat (issue #243). Returns false is never reached;
+    ///      reverts on any failure condition.
     /// @param _GI Current GI index.
     /// @param seed Locked, ungrindable seed from DINTaskCoordinator.auditSeed.
     /// @return True on success.
@@ -874,42 +901,63 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             revert TA_CannotCreateAuditorsBatches();
         if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
-        // Filter the historical registration list down to currently active auditors.
-        address[] memory auditorPool = _activeAuditorPool(_GI);
-        uint aLen = auditorPool.length;
-
-        if (aLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
+        // ▸ 1. Shuffle the fixed per-GI registration list (issue #243).
+        address[] memory regList = dinAuditors[_GI];
+        uint rLen = regList.length;
+        if (rLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
         // Domain-separated derived seeds, same reasoning as the coordinator's
         // AGG_ADDR/AGG_IDX split -- independent of aggSeed since this derives
         // from the separately-locked auditSeed.
-        _shuffleAddressArray(auditorPool, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
+        _shuffleAddressArray(regList, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
 
-        // ▸ 2. Build list of local model indexes
+        // ▸ 2. Build list of local model indexes (unchanged).
         LMSubmission[] storage lmlist = lmSubmissions[_GI];
         uint[] memory modelIdx = new uint[](lmlist.length);
-
-        for (uint i = 0; i < lmlist.length; i++) {
-            modelIdx[i] = i;
-        }
+        for (uint i = 0; i < lmlist.length; i++) modelIdx[i] = i;
         _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AUD_IDX")));
 
-        // ▸ 3. Create batches, Greedily fill Auditors batches
+        // ▸ 3. Compute batch count from registered count, then cap by active count so
+        //      the seat fill below can never exhaust the reserve (issue #243 liveness).
+        uint mLen = modelIdx.length;
+        uint batchCnt = mLen / params.modelsPerBatch
+            + (mLen % params.modelsPerBatch >= params.MIN_MODELS_PER_BATCH ? 1 : 0);
+        if (batchCnt * params.auditorsPerBatch > rLen)
+            batchCnt = rLen / params.auditorsPerBatch;
+
+        uint activeCount;
+        for (uint i = 0; i < rLen;) {
+            if (dinvalidatorStakeContract.isValidatorActive(regList[i])) activeCount++;
+            unchecked { i++; }
+        }
+        if (batchCnt * params.auditorsPerBatch > activeCount)
+            batchCnt = activeCount / params.auditorsPerBatch;
+        if (activeCount < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
+
+        uint vPre = batchCnt * params.auditorsPerBatch;
+
+        // ▸ 4. Position-stable seat fill. Inactive seat-holder at position i is
+        //      replaced by the first active reserve entry (positions vPre..rLen-1).
+        //      The activeCount cap guarantees resPtr never reaches rLen.
+        uint resPtr = vPre;
+        for (uint i = 0; i < vPre;) {
+            if (!dinvalidatorStakeContract.isValidatorActive(regList[i])) {
+                while (resPtr < rLen && !dinvalidatorStakeContract.isValidatorActive(regList[resPtr]))
+                    { unchecked { resPtr++; } }
+                unchecked { regList[i] = regList[resPtr++]; }
+            }
+            unchecked { i++; }
+        }
+
+        // ▸ 5. Build audit batches from the position-stable validator array.
         uint vPtr;
         uint mPtr;
-        uint Batchcnt;
-
-        while (
-            vPtr + params.auditorsPerBatch <= auditorPool.length &&
-            (mPtr + params.modelsPerBatch <= modelIdx.length ||
-                (mPtr + params.MIN_MODELS_PER_BATCH <= modelIdx.length &&
-                    mPtr + params.modelsPerBatch > modelIdx.length))
-        ) {
-            AuditBatch storage b = auditBatches[_GI].push();
-            b.batchId = Batchcnt++;
+        for (uint b = 0; b < batchCnt; b++) {
+            AuditBatch storage batch = auditBatches[_GI].push();
+            batch.batchId = b;
 
             for (uint256 k = 0; k < params.auditorsPerBatch; k++) {
-                b.auditors.push(auditorPool[vPtr + k]);
-                isBatchAuditor[_GI][b.batchId][auditorPool[vPtr + k]] = true;
+                batch.auditors.push(regList[vPtr + k]);
+                isBatchAuditor[_GI][b][regList[vPtr + k]] = true;
             }
 
             uint modelsToAssign = params.modelsPerBatch;
@@ -918,17 +966,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             }
 
             for (uint256 k = 0; k < modelsToAssign; k++) {
-                b.modelIndexes.push(modelIdx[mPtr + k]);
-                isBatchModelIndex[_GI][b.batchId][modelIdx[mPtr + k]] = true;
+                batch.modelIndexes.push(modelIdx[mPtr + k]);
+                isBatchModelIndex[_GI][b][modelIdx[mPtr + k]] = true;
             }
 
-            emit AuditorsBatchAuto(_GI, b.batchId);
+            emit AuditorsBatchAuto(_GI, b);
 
             vPtr += params.auditorsPerBatch;
             mPtr += modelsToAssign;
         }
 
-        emit AuditorsBatchesCreated(_GI, Batchcnt);
+        emit AuditorsBatchesCreated(_GI, batchCnt);
         return true;
     }
 
@@ -1231,9 +1279,14 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint b = 0; b < batches; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
+            // issue #249 finding 3: both lengths are loop-invariant per
+            // batch; cache instead of re-reading storage on every iteration
+            // (modelIndexes.length) or per-model (auditors.length x3).
+            uint modelIndexCount = batch.modelIndexes.length;
+            uint auditorCount = batch.auditors.length;
 
             // For each model assigned to this batch
-            for (uint m = 0; m < batch.modelIndexes.length; m++) {
+            for (uint m = 0; m < modelIndexCount; m++) {
                 uint modelIndex = batch.modelIndexes[m];
                 if (modelIndex >= submissions.length) {
                     // Defensive: skip if bad index
@@ -1250,15 +1303,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
                 // Collect scores from auditors who actually voted. Bounded by
                 // batch.auditors.length (params.auditorsPerBatch, demo: 3,
                 // spec: up to 10), so an in-memory sort here is cheap.
-                uint256[] memory votedScores = new uint256[](
-                    batch.auditors.length
-                );
-                address[] memory votedAuditors = new address[](
-                    batch.auditors.length
-                );
+                uint256[] memory votedScores = new uint256[](auditorCount);
+                address[] memory votedAuditors = new address[](auditorCount);
                 uint votes;
 
-                for (uint a = 0; a < batch.auditors.length; a++) {
+                for (uint a = 0; a < auditorCount; a++) {
                     address auditor = batch.auditors[a];
                     if (hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         votedScores[votes] = auditScores[_GI][b][auditor][
@@ -1359,12 +1408,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
         for (uint b = 0; b < batchCount; b++) {
             AuditBatch storage batch = auditBatches[_GI][b];
-            for (uint a = 0; a < batch.auditors.length; a++) {
+            // issue #249 finding 3: both lengths are loop-invariant per
+            // batch; cache instead of re-reading storage on every iteration
+            // of the loops they bound (modelIndexes.length was re-read up to
+            // auditorCount x modelIndexCount times without this).
+            uint auditorCount = batch.auditors.length;
+            uint modelIndexCount = batch.modelIndexes.length;
+            for (uint a = 0; a < auditorCount; a++) {
                 address auditor = batch.auditors[a];
                 bool missedVote = false;
                 bool exceededDeviation = false;
 
-                for (uint m = 0; m < batch.modelIndexes.length; m++) {
+                for (uint m = 0; m < modelIndexCount; m++) {
                     uint modelIndex = batch.modelIndexes[m];
                     if (!hasAuditedLM[_GI][b][auditor][modelIndex]) {
                         missedVote = true;

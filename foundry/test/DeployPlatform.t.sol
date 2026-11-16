@@ -10,6 +10,7 @@ import {DinValidatorStake} from "../src/DinValidatorStake.sol";
 import {DINModelRegistry} from "../src/DINModelRegistry.sol";
 import {DinTreasury} from "../src/DinTreasury.sol";
 import {DinFeeRouter} from "../src/DinFeeRouter.sol";
+import {EnabledModelRegistry} from "./utils/EnabledModelRegistry.sol";
 import {DINTaskAuditor} from "../src/DINTaskAuditor.sol";
 import {DINTaskCoordinator} from "../src/DINTaskCoordinator.sol";
 import {TA_InvalidSlashFraction, TC_InvalidSlashFraction} from "../src/DINShared.sol";
@@ -706,7 +707,7 @@ contract SlashFractionZeroBpsTest is Test {
     function setUp() public {
         // Deploy a stub stake contract address — the setter guards don't call it.
         tc = new DINTaskCoordinator(address(0x1), 1);
-        ta = new DINTaskAuditor(address(0x1), address(tc), 1);
+        ta = new DINTaskAuditor(address(0x1), address(tc), 1, address(new EnabledModelRegistry()));
     }
 
     function test_setS1SlashFractionBps_rejectsZero() public {

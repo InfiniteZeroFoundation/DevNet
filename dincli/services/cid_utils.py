@@ -27,7 +27,8 @@ def get_cid_from_bytes32(byte32_hex: str, version: int = 1, encoding: str = "bas
     Converts a raw 32-byte SHA2-256 digest (hex) back into a CID.
 
     Args:
-        byte32_hex: 64-character hex string (raw digest, NO '1220' prefix).
+        byte32_hex: 64-character hex string (raw digest, NO '1220' prefix; an
+            optional '0x' prefix is stripped).
         version: 0 or 1.
         encoding: 'base32' (recommended for v1) or 'base58btc'.
 
@@ -36,8 +37,13 @@ def get_cid_from_bytes32(byte32_hex: str, version: int = 1, encoding: str = "bas
     """
     from multibase import encode  # local import keeps top-level deps minimal
 
+    digest_hex = str(byte32_hex)
+    # Accept a 0x-prefixed digest too: "1220" + "0x..." isn't valid hex.
+    if digest_hex[:2].lower() == "0x":
+        digest_hex = digest_hex[2:]
+
     # Reconstruct the full multihash: 12 = sha2-256, 20 = 32-byte length
-    multihash_hex = "1220" + str(byte32_hex)
+    multihash_hex = "1220" + digest_hex
     multihash_bytes = bytes.fromhex(multihash_hex)
 
     # Build CIDv1 (dag-pb is standard for IPFS file data)

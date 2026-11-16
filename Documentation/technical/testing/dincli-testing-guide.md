@@ -37,9 +37,9 @@ python -m pytest tests/dincli/test_01_platform.py \
 ```
 
 That's it. The conftest will:
-- Compile contracts: `npx hardhat compile` always (the task-contract deploy and
-  `dump-abi` tests still use Hardhat artifacts), plus `forge build` for the
-  default `foundry` toolchain
+- Compile contracts: `forge build` always (the platform deploy, the
+  task-contract deploys and the `dump-abi` tests all use `foundry/out`), plus
+  `npx hardhat compile` only for the `hardhat` platform toolchain
 - Kill any existing chain node and start a fresh one (clean EVM state): Anvil
   for `foundry`, a Hardhat node for `hardhat`
 - Start the IPFS daemon if it is not already running
@@ -165,9 +165,9 @@ that runs `pytest tests/dincli/ -v -x -m integration --tb=short` with
   heavy to run on every commit or push. Maintainers run it on demand, for
   example before merging a change to the GI flow.
 - **Not a required check:** it lives outside `ci.yml`, so `CI OK` never
-  depends on it, and it will not become required. It is expected to fail after
-  `test_01` until task_061026_21 moves the suite to the foundry task contracts
-  and demo wallets.
+  depends on it, and it will not become required. Locally, an isolated run
+  (`DIN_TEST_ISOLATED=1`) walks one full GI from `startGI` to `GIended`, plus
+  reward claim/withdraw and slot release: 186 tests in about 30 minutes.
 - **Setup:** Foundry (`FOUNDRY_VERSION`), Node 20, Python 3.12 with CPU torch,
   Kubo `v0.43.1` (sha256-verified) and the runner's Docker. `forge build` and
   `npx hardhat compile` run first, in the runner's normal environment, so the
@@ -206,7 +206,8 @@ other than `.env.example` in the repo root or `foundry/`, Foundry and Kubo
 
 ```bash
 (cd foundry && npm ci && forge build)
-(cd hardhat && npm ci && npx hardhat compile)
+# only for PLATFORM_DEPLOY_TOOLCHAIN=hardhat:
+# (cd hardhat && npm ci && npx hardhat compile)
 python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
 python -m pip install -e ".[test]"
 docker build -f dincli/docker/worker/Dockerfile -t din-worker:dev .
@@ -224,10 +225,10 @@ at the end of the session. The logs stay in `DIN_TEST_RESULTS_DIR`.
 ### Managed services (`managed_services` fixture)
 
 Before any test runs, the fixture does the following:
-1. **Solidity compilation** — runs `npx hardhat compile` in `hardhat/` (the
-   task-contract deploys and `dump-abi` tests use Hardhat artifacts), and
-   `forge build` in `foundry/` when the toolchain is `foundry` (the platform is
-   deployed from `foundry/out/` via `DeployPlatform.s.sol`). In isolated mode
+1. **Solidity compilation** — runs `forge build` in `foundry/` (the task
+   contracts and `dump-abi` tests use `foundry/out/`, and so does the default
+   platform deploy via `DeployPlatform.s.sol`), and `npx hardhat compile` in
+   `hardhat/` only when `PLATFORM_DEPLOY_TOOLCHAIN=hardhat`. In isolated mode
    the `DIN_TEST_SVM_DIR` compilers, if set, are copied into scratch first.
 2. **Fresh chain node** — kills any running node and launches a clean one on
    port `8545`: `foundry/anvil.sh` (70 accounts, chain ID 1337) for `foundry`,
@@ -239,6 +240,27 @@ Before any test runs, the fixture does the following:
 4. **Docker daemon** *(pre-requisite, not managed)* — must already be running
    on the host to execute containerized client training, evaluation, and
    aggregation in Phase 4.
+
+### Seeded default artifacts (`seeded_default_artifacts` fixture, isolated mode)
+
+`model-owner task cache-default-artifacts` and `add-default-test-data` fetch
+the CIDs in din_info's `default_*` entries. The isolated Kubo node is offline
+and empty, and the published `default_manifest` has no provider on the public
+network, so isolated runs seed their own copy (`tests/dincli/seed.py`):
+
+- the reference model's services, per-role requirements and test dataset
+  from `cache_model_0/`, the task-contract ABIs from `dincli/abis/` (the
+  `cache_model_0/abis/` copies predate the richer GI states), and a manifest
+  built from `cache_model_0/manifest.json` with those CIDs;
+- the `cid_services/` files for `system dataset distribute-mnist`, which
+  reproduce their pinned CIDs.
+
+Files are added with Kubo's default layout, the one dincli verifies
+downloads against. The fixture then points this run's din_info `default_*`
+entries (including `default_test_dataset`) at the new CIDs. It runs after
+`din_info_backup`, so `din_info.json` is restored unpatched at teardown.
+Legacy (non-isolated) runs still fetch the published defaults through the
+host's IPFS node.
 
 ### Fixture ordering and `autouse`
 
@@ -265,10 +287,11 @@ The full session setup chain, in execution order:
 
 ```
 din_tmp                    (create/wipe temp dirs)
-  └─ managed_services      (autouse: compile, fresh Hardhat node, IPFS)
+  └─ managed_services      (autouse: forge build, fresh chain node, IPFS)
 bootstrap                  (autouse) depends on:
   ├─ managed_services      (already up)
   ├─ din_info_backup       (snapshot din_info.json for restore at teardown)
+  ├─ seeded_default_artifacts (isolated mode: seed IPFS, patch din_info defaults)
   └─ run ─ din_env, workdir
      then: configure-demo + configure-network --network local
 ```
@@ -306,7 +329,7 @@ If you see torch import errors in Phase 4, confirm those paths are correct.
 
 ### Chain accounts
 
-The GI harness uses accounts 0–22 and 50–58 (59 accounts total).
+The GI harness uses accounts 0–22 and 50–58 (32 accounts; indices up to 58).
 `foundry/anvil.sh` already starts Anvil with `--accounts 70`. For the
 `hardhat` toolchain, Hardhat's default is 20 accounts, so `hardhat.config.ts`
 must set `accounts.count` to at least 60. If you see an "account index out of
@@ -347,24 +370,30 @@ graph TD
 
 | Phase | File | Description |
 |-------|------|--------------|
-| 1 | `test_01_platform.py` | Deploy 4 platform contracts as DIN-Representative (account 0) |
-| 2 | `test_02_task_contracts.py` | Deploy task contracts + authorise slashers (accounts 0 and 1) |
+| 1 | `test_01_platform.py` | Deploy the 7 platform contracts as DIN-Representative (account 0) and import them |
+| 2 | `test_02_task_contracts.py` | Deploy task contracts from `foundry/out` (default `--model-id`, DinToken set) + authorise slashers (accounts 0 and 1) |
 | 3 | `test_03_registration.py` | Genesis model creation, IPFS upload, registry request + approval |
-| 4 | `test_04_gi.py` | Full Global Iteration: aggregator/auditor/client/eval/aggregation/slash/end |
+| 4 | `test_04_gi.py` | One complete GI, state asserted after every phase: funding, registration + keys, LMS, seeds + test data, evaluation and aggregation with reveals, slashing, end, claims, release slots |
 
 The harness is the blocking prerequisite for contract upgrade redeployments
 (P3 WP 6.1). Pass all phases before pushing contract changes to testnet.
 
 ### Phase 1: Platform Deployment (`test_01_platform.py`)
 - **Role**: `Account 0` (DIN-Representative).
-- **Deploys**: `DinCoordinator` (and `DinToken` internally), `DinValidatorStake`,
-  `DINModelRegistry`.
-- **Outputs**: official ABIs and platform contract addresses, stored in the
-  shared session `state`.
+- **Deploys**: the seven platform contracts behind transparent proxies
+  (`DinCoordinator`, `DinToken`, `DinValidatorStake`, `DINModelRegistry`,
+  `DinTreasury`, `DinFeeRouter`, `DinEmission`) with `DeployPlatform.s.sol`
+  (or the hardhat script), then `system import-deployments`. Checks each
+  per-proxy `proxyAdmin*` key and its `proxy_admin_*` din_info entry.
+- **Outputs**: platform contract addresses in din_info and the shared session
+  `state`. The `dump-abi` tests write to the run's scratch dir (`--output`),
+  so no tracked file changes.
 
 ### Phase 2: Task & Slasher Setup (`test_02_task_contracts.py`)
 - **Role**: `Account 1` (Model Owner).
-- **Deploys**: `DINTaskCoordinator`, `DINTaskAuditor`.
+- **Deploys**: `DINTaskCoordinator`, `DINTaskAuditor` from `foundry/out`,
+  leaving `--model-id` to its default (`totalModels()` = 0) and checking that
+  each deploy set the contract's DinToken.
 - **Authorizations**: `Account 0` authorizes the new task contracts as
   legitimate slashers; the model owner then registers the slashers back onto
   the task contracts.
@@ -380,19 +409,37 @@ The harness is the blocking prerequisite for contract upgrade redeployments
   6. `Account 0` inspects and approves the registration request.
 
 ### Phase 4: Global Iteration (GI) Lifecycle (`test_04_gi.py`)
-The core federated training round:
-1. **Window opening** — opens registration for aggregators and auditors.
+One complete GI (GI 1 of model 0). After every phase the test asserts the GI
+state by name (`task gi show-state`):
+1. **Funding** — the model owner buys DIN and deposits 50 DIN into GI 1's
+   reward pool, then starts the GI (`GIstarted`).
 2. **Staking & joining** — 12 aggregators (accounts `11–22`) and 9 auditors
-   (accounts `50–58`) buy DIN tokens, stake, and register.
+   (accounts `50–58`) buy DIN tokens, stake, and register; each auditor
+   registers an encryption key. An aggregator trying to register as an
+   auditor is refused (dual-role guard).
 3. **Training (LMS)** — a distributed MNIST shard dataset is generated and
-   assigned to 9 clients (accounts `2` and `4–10`); clients run local
-   training inside containerized workers (Docker) and upload model weights.
-4. **Evaluation** — auditors receive partitioned batches of trained local
-   models, evaluate accuracy against test data, and submit scores on-chain.
-5. **Aggregation** — aggregators pull approved weights and perform Tier 1
-   (sub-batch averaging) and Tier 2 (global consensus model) aggregation.
-6. **Slashing & cleanup** — under-performing validators are slashed and the
-   Global Iteration is ended.
+   assigned to 9 clients (accounts `2–10`, i.e. `range(2, 11)`); clients
+   train inside containerized workers (Docker), then submit with `submit-lm`.
+4. **Seed, batches, test data** — an auditor locks the auditor seed
+   (`AuditSeedLocked`), the owner creates the batches
+   (`AuditorsBatchesCreated`) and assigns encrypted test data
+   (`AuditTestDataAssigned`).
+5. **Evaluation** — auditors evaluate and commit, the owner opens the reveal
+   window, auditors reveal, the owner closes (`LMSevaluationClosed`).
+6. **Aggregation** — an aggregator locks the T1/T2 seed (`AggSeedLocked`),
+   the owner creates the batches; T1 then T2 each go commit → reveal →
+   close; the owner records the T2 score. After each reveal window the test
+   reads the batch seats and the `T1AggregationSubmitted` /
+   `T2AggregationSubmitted` reveal events and fails if any seated aggregator
+   didn't reveal (a T1 batch can finalize on 2 of 3 reveals, so reaching
+   `GIended` alone wouldn't catch it). A reveal command that finds no local
+   commit for a batch the wallet is seated in prints a distinct message,
+   which the test rejects; an unseated aggregator's reveal is a no-op.
+7. **Slashing & end** — auditors then aggregators are slashed and the GI
+   ends (`GIended`, ordinal 28).
+8. **Rewards** — one client, one auditor and one aggregator claim and
+   withdraw their GI 1 reward (each DIN balance must rise); the owner
+   releases GI 1's registration slots.
 
 ---
 

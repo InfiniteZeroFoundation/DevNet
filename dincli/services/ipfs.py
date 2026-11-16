@@ -4,10 +4,11 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 
 import requests
-from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 from rich.console import Console
+
 from dincli.cli.log import logger
 from dincli.cli.utils import (
     FILEBASE_IPFS_ADD_URL,

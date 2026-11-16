@@ -51,8 +51,8 @@ def harness(monkeypatch, tmp_path):
 
 def fake_services(harness, monkeypatch):
     """Return real ownership wrappers around fake processes and temporary logs."""
-    from tests.dincli.services import OwnedService
     from tests.dincli import services
+    from tests.dincli.services import OwnedService
 
     harness.RESULTS_DIR.mkdir()
     handles = []
@@ -212,7 +212,7 @@ def test_isolated_bootstrap_provisions_then_cleans_demo_accounts(harness, fail_b
         if fail_bootstrap:
             raise RuntimeError("bootstrap command failed")
 
-    fixture = harness.bootstrap.__wrapped__(None, None, run)
+    fixture = harness.bootstrap.__wrapped__(None, None, None, run)
     if fail_bootstrap:
         with pytest.raises(RuntimeError, match="bootstrap command failed"):
             next(fixture)
@@ -237,7 +237,7 @@ def test_isolated_bootstrap_preserves_existing_public_accounts(harness, fail_boo
         if fail_bootstrap:
             raise RuntimeError("bootstrap command failed")
 
-    fixture = harness.bootstrap.__wrapped__(None, None, run)
+    fixture = harness.bootstrap.__wrapped__(None, None, None, run)
     if fail_bootstrap:
         with pytest.raises(RuntimeError, match="bootstrap command failed"):
             next(fixture)

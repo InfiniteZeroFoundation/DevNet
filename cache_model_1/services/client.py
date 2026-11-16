@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.optim as optim
 from rich.console import Console
 from torch.utils.data import DataLoader
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # The genesis model file stores the serialized model object. Importing the class

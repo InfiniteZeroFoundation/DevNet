@@ -173,7 +173,7 @@ The per-slasher ring is namespaced by the **calling task contract** because `giI
 
 Increments `s6NoParticipationCount[validator]` and emits `S6NoParticipationRecorded`. Below `s6NoParticipationThreshold` it returns `0`. At or above it, it slashes `MIN_STAKE × (count − threshold + 1) / 10`, capped at `MIN_STAKE` (10% more per breach), and emits `S6PartialSlashFired`. The count never resets.
 
-> No contract in `foundry/src` currently calls `recordNoParticipation` — the task contracts deliberately skip it where `slashPartial` already applies ("No S6 recordNoParticipation here…"), so S6 is implemented but not wired (§14 No. 1).
+> **Parked for testnet** ([Abraham, 26 October 2026, #224](https://github.com/InfiniteZeroFoundation/DevNet/issues/224#issuecomment-6406239550)): S1/S2 plus S5 already cover missed work. Retain S6 storage, parameters, API, events and tests without activating it; revisit after testnet only if a real gap appears, with a definition that avoids double penalties. No contract in `foundry/src` currently calls `recordNoParticipation` — the task contracts deliberately skip it where `slashPartial` already applies ("No S6 recordNoParticipation here…"), so S6 is implemented but not wired (§14 No. 1).
 
 ### 7.5 Jailing — `jailValidator(validator, duration, reason)`
 
@@ -314,7 +314,7 @@ Until step 8, slasher management through the coordinator reverts `ValidatorStake
 
 ## 14. Review Notes & Open Caveats
 
-- **No. 1 — S6 is not wired:** `recordNoParticipation` exists and is tested, but no task contract calls it, so the S6 counter never moves in practice.
+- **No. 1 — S6 parked for testnet (intentional):** `recordNoParticipation` exists and is tested, but no task contract calls it, so the S6 counter never moves in practice.
 - **No. 2 — S5 escalation on a blacklisted validator reverts the whole slash:** escalation calls `_jailInternal`, which reverts `ValidatorIsBlacklisted`. A task contract's slashing loop hitting a blacklisted repeat offender would revert, not just skip that validator.
 - **No. 3 — Jail exit does not require `reactivate()`:** after `jailedUntil` passes, any status-syncing call (e.g. `stake`) recomputes the status, bypassing `reactivate()`'s `StakeBelowFloor` check (the later sync still requires `≥ MIN_STAKE` for `Active`).
 - **No. 4 — Stale NatSpec (partly fixed, issue No. 180):** the `setModelStakeBounds` / `setMaxConcurrentRegistrationsPerStakeUnit` NatSpec now says where the task contracts enforce both (§8), `activeRegistrationCount` names `releaseGIRegistrationSlots` as the decrement, and `getModelStakeMin` names the `onlyOwner` (DIN-Representative) setter instead of "the model owner". Still open: `modelMinStakeBounds[].max` is never read.
