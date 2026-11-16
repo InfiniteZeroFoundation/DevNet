@@ -16,14 +16,17 @@ def sent(monkeypatch):
     return record_txs(monkeypatch, rewards, owner_rewards, dintoken)
 
 
-def make_ctx(*, gi=3, pool=0, din_token="0xD1", balance=100 * DIN, settled=True,
+def make_ctx(*, gi=3, pool=0, din_token="0xD1", balance=100 * DIN, settled=True, settled_gis=(),
              claimed=False, claimable=0, registered=True, emission_funded=False, emission_amount=5 * DIN):
+    # GI 2 is the claim tests' GI; `settled` toggles it. Funding targets
+    # other GIs, so `settled_gis` marks those settled when a test needs it.
+    settled_set = set(settled_gis) | ({2} if settled else set())
     coordinator = FakeContract("0xC0", GI=gi, GIstate=0)
     auditor = FakeContract(
         "0xA0",
         dinToken=din_token,
         giRewardPool=pool,
-        giRewardSnapshot=(1, 2, 3, 4, settled),
+        giRewardSnapshot=lambda g: (1, 2, 3, 4, g in settled_set),
         rewardClaimed=claimed,
         claimable=claimable,
     )
@@ -80,6 +83,18 @@ def test_deposit_refuses_more_than_the_balance(sent):
     assert sent == []
 
 
+def test_deposit_refuses_a_settled_gi_before_any_tx(sent):
+    # The current GI can still be funded until settleRewards runs; after
+    # that the deposit would never be paid out (TA_RewardsAlreadySettled).
+    ctx = make_ctx(gi=3, settled_gis=(3,))
+
+    with pytest.raises(typer.Exit):
+        owner_rewards.deposit(ctx, model_id=0, amount=1, gi=3)
+
+    assert sent == []
+    assert "TA_RewardsAlreadySettled" in ctx.obj.console.text()
+
+
 # ── model-owner rewards fund-emission ───────────────────────────────────────
 
 def test_fund_emission_calls_fund_gi_with_the_task_auditor(sent):
@@ -94,6 +109,7 @@ def test_fund_emission_calls_fund_gi_with_the_task_auditor(sent):
     ({"registered": False}, "UnregisteredTaskAuditor"),
     ({"emission_funded": True}, "GIAlreadyFunded"),
     ({"emission_amount": 0}, "EmissionExhausted"),
+    ({"gi": 4, "settled_gis": (5,)}, "TA_RewardsAlreadySettled"),
 ])
 def test_fund_emission_fails_fast(sent, kwargs, message):
     ctx = make_ctx(**kwargs)
