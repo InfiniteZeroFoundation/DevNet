@@ -1,0 +1,37 @@
+# DIN daemon (dind) — systemd TEMPLATE unit.
+#
+# The instance name after the "@" is the user dind runs as: %i below expands
+# to it. Install and enable for one user:
+#
+#     sudo cp dind@.service /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now dind@<user>.service
+#
+# Optional per-user environment file: /etc/dind/<user>.env (%E is /etc for a
+# system unit). The leading "-" makes it optional.
+#
+# ExecStart needs `dind` on systemd's PATH, which does not include virtualenvs.
+# If dincli is installed in a venv, use the absolute path to its bin/dind.
+
+[Unit]
+Description=DIN Daemon (dind) — Decentralized Intelligence Network
+Documentation=https://github.com/InfiniteZeroFoundation/DevNet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=-%E/dind/%i.env
+ExecStart=dind start
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dind
+
+[Install]
+WantedBy=multi-user.target
