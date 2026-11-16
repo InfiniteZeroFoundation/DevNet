@@ -203,10 +203,12 @@ def start(
         # wrote_pid guards against deleting artifacts this invocation never
         # wrote (e.g. the "already running" branch above, raised while still
         # holding the lock).
-        if wrote_pid:
-            remove_pid(paths.pid_path)
-            control.remove_descriptor(paths.control_path)
-        release_state_lock(lock_fd)
+        try:
+            if wrote_pid:
+                remove_pid(paths.pid_path)
+                control.remove_descriptor(paths.control_path)
+        finally:
+            release_state_lock(lock_fd)
 
 
 @app.command()

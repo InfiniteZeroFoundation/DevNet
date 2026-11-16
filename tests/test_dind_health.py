@@ -4,7 +4,7 @@ import json
 import socket
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from io import BytesIO
 from pathlib import Path
 
@@ -223,86 +223,94 @@ def test_status_command_reads_degraded_through_503(tmp_path, monkeypatch):
     from dincli.dind.paths import StateDirs
 
     paths = StateDirs(tmp_path)
-    store = StateStore(paths.db_path)
-    store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
+    with ExitStack() as cleanup:
+        store = StateStore(paths.db_path)
+        cleanup.callback(store.close)
+        store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
 
-    paths.pid_path.write_text(str(os_module.getpid()))
-    lock_fd = acquire_state_lock(paths.lock_path)
+        paths.pid_path.write_text(str(os_module.getpid()))
+        lock_fd = acquire_state_lock(paths.lock_path)
+        assert lock_fd is not None
+        cleanup.callback(release_state_lock, lock_fd)
 
-    # `status` only proceeds to the /health block once it has verified this
-    # is the instance the descriptor names (review finding 4) — a bare held
-    # lock is no longer treated as "running" on its own, so this test needs
-    # a real control endpoint standing in for the daemon under test.
-    control_socket_path = control.socket_path_for(tmp_path)
-    control_server = control.ControlServer(control_socket_path, "the-instance", threading.Event())
-    control_server.start()
-    control_thread = threading.Thread(target=control_server.run, daemon=True)
-    control_thread.start()
-    control.write_descriptor(
-        paths.control_path,
-        control.ControlDescriptor(
-            instance_id="the-instance", socket_path=str(control_socket_path), pid=os_module.getpid()
-        ),
-    )
+        # `status` only proceeds to the /health block once it has verified this
+        # is the instance the descriptor names (review finding 4) — a bare held
+        # lock is no longer treated as "running" on its own, so this test needs
+        # a real control endpoint standing in for the daemon under test.
+        control_socket_path = control.socket_path_for(tmp_path)
+        control_server = control.ControlServer(control_socket_path, "the-instance", threading.Event())
+        control_thread = threading.Thread(target=control_server.run, daemon=True)
 
-    # Force the exact old race: self.server exists, but discovery metadata
-    # has not been published. No scheduling delay or default-port service
-    # is needed to reproduce the incorrect readiness predicate.
-    publishing = threading.Event()
-    release_publication = threading.Event()
-    set_meta = store.set_meta
+        def join_control():
+            if control_thread.ident is not None:
+                control_thread.join(timeout=5)
+                assert not control_thread.is_alive(), "ControlServer thread did not stop"
 
-    def gated_set_meta(key, value):
-        if key == "health_host":
-            publishing.set()
-            assert release_publication.wait(5), "metadata publication not released"
-        set_meta(key, value)
+        # ExitStack runs each callback even if an earlier cleanup raises.
+        # Register shutdown before start(), which can partially acquire resources.
+        cleanup.callback(join_control)
+        cleanup.callback(control_server.shutdown)
+        control_server.start()
+        control_thread.start()
+        control.write_descriptor(
+            paths.control_path,
+            control.ControlDescriptor(
+                instance_id="the-instance", socket_path=str(control_socket_path), pid=os_module.getpid()
+            ),
+        )
 
-    monkeypatch.setattr(store, "set_meta", gated_set_meta)
-    runner = CliRunner()
+        # Force the exact old race: self.server exists, but discovery metadata
+        # has not been published. No scheduling delay or default-port service
+        # is needed to reproduce the incorrect readiness predicate.
+        publishing = threading.Event()
+        release_publication = threading.Event()
+        cleanup.callback(release_publication.set)
+        set_meta = store.set_meta
 
-    def before_ready(server, ready):
-        from urllib.error import URLError
+        def gated_set_meta(key, value):
+            if key == "health_host":
+                publishing.set()
+                assert release_publication.wait(5), "metadata publication not released"
+            set_meta(key, value)
 
-        from dincli.dind import main as main_module
+        monkeypatch.setattr(store, "set_meta", gated_set_meta)
+        runner = CliRunner()
 
-        try:
-            assert publishing.wait(5), "HealthServer did not reach publication"
-            assert hasattr(server, "server")  # The old readiness check passes.
-            assert store.get_meta("health_host") is None
-            assert store.get_meta("health_port") is None
-            assert not ready.is_set()  # The replacement does not pass early.
-            attempted = []
+        def before_ready(server, ready):
+            from urllib.error import URLError
 
-            def unavailable(url, **kwargs):
-                attempted.append(url)
-                raise URLError("unpublished test endpoint")
+            from dincli.dind import main as main_module
 
-            with monkeypatch.context() as patch:
-                patch.setattr(main_module, "resolve_health_host", lambda: "127.0.0.1")
-                patch.setattr(main_module, "resolve_health_port", lambda: 1)
-                patch.setattr(main_module.urllib.request, "urlopen", unavailable)
-                early = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
-            assert early.exit_code == 0, early.output
-            assert attempted == ["http://127.0.0.1:1/health"]
-            assert "(health endpoint unavailable)" in early.output
-            assert "Health:    degraded" not in early.output
-        finally:
-            release_publication.set()
+            try:
+                assert publishing.wait(5), "HealthServer did not reach publication"
+                assert hasattr(server, "server")  # The old readiness check passes.
+                assert store.get_meta("health_host") is None
+                assert store.get_meta("health_port") is None
+                assert not ready.is_set()  # The replacement does not pass early.
+                attempted = []
 
-    try:
+                def unavailable(url, **kwargs):
+                    attempted.append(url)
+                    raise URLError("unpublished test endpoint")
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(main_module, "resolve_health_host", lambda: "127.0.0.1")
+                    patch.setattr(main_module, "resolve_health_port", lambda: 1)
+                    patch.setattr(main_module.urllib.request, "urlopen", unavailable)
+                    early = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
+                assert early.exit_code == 0, early.output
+                assert attempted == ["http://127.0.0.1:1/health"]
+                assert "(health endpoint unavailable)" in early.output
+                assert "Health:    degraded" not in early.output
+            finally:
+                release_publication.set()
+
         with _running_health_server(store, monkeypatch, before_ready):
             result = runner.invoke(app, ["status", "--state-dir", str(tmp_path)])
 
             assert result.exit_code == 0, result.output
             assert "Health:    degraded" in result.output
             assert "(health endpoint unavailable)" not in result.output
-    finally:
-        release_publication.set()
-        control_server.shutdown()
-        control_thread.join(timeout=5)
-        release_state_lock(lock_fd)
-        store.close()
 
 
 def test_health_server_releases_port(tmp_path, monkeypatch):

@@ -5,11 +5,13 @@ CLI level: a crashed daemon's stale PID file must still be cleaned up by
 `start`, and `stop`/`status` must trust the lock over the PID file.
 """
 
+import errno
 import os
 import subprocess
 import sys
 import threading
 
+import pytest
 from typer.testing import CliRunner
 
 from dincli.dind import control
@@ -81,6 +83,70 @@ def test_start_cleans_stale_pid_and_proceeds(tmp_path, monkeypatch):
         assert not paths.pid_path.exists()
     finally:
         _reset_dincli_logger()
+
+
+@pytest.mark.parametrize("failed_cleanup", ["pid", "descriptor"])
+def test_start_releases_lock_when_artifact_cleanup_raises(tmp_path, monkeypatch, failed_cleanup):
+    from dincli.dind import logging as logging_module
+    from dincli.dind import main as main_module
+    from dincli.dind import signals
+
+    paths = StateDirs(tmp_path)
+    opened = []
+    released = []
+    startup_error = RuntimeError("stop startup before creating servers")
+    cleanup_error = OSError(errno.EACCES, f"cannot remove {failed_cleanup}")
+
+    def track_acquire(path):
+        fd = acquire_state_lock(path)
+        opened.append(fd)
+        return fd
+
+    def track_release(fd):
+        released.append(fd)
+        release_state_lock(fd)
+
+    def fail_startup(_stop_event):
+        raise startup_error
+
+    def remove_pid_or_fail(path):
+        assert path == paths.pid_path
+        if failed_cleanup == "pid":
+            raise cleanup_error
+        remove_pid(path)
+
+    descriptor_calls = []
+
+    def remove_descriptor_or_fail(path):
+        assert path == paths.control_path
+        descriptor_calls.append(path)
+        # The first call removes stale artifacts before writing our PID.
+        if len(descriptor_calls) == 2:
+            raise cleanup_error
+
+    monkeypatch.setattr(main_module, "acquire_state_lock", track_acquire)
+    monkeypatch.setattr(main_module, "release_state_lock", track_release)
+    monkeypatch.setattr(main_module, "remove_pid", remove_pid_or_fail)
+    monkeypatch.setattr(control, "remove_descriptor", remove_descriptor_or_fail)
+    monkeypatch.setattr(logging_module, "configure_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(signals, "install_shutdown_handlers", fail_startup)
+    monkeypatch.delenv("DIN_DIND_TEST_PID_DELAY_S", raising=False)
+    try:
+        with pytest.raises(OSError) as excinfo:
+            main_module.start(state_dir=str(tmp_path), health_host="127.0.0.1", health_port=0)
+        assert excinfo.value is cleanup_error
+        assert excinfo.value.__context__ is startup_error
+        assert len(opened) == 1 and opened[0] is not None
+        # Check the actual owned fd, before a probe can reuse its number.
+        with pytest.raises(OSError) as closed_error:
+            os.fstat(opened[0])
+        assert closed_error.value.errno == errno.EBADF
+        assert released == opened
+        assert len(descriptor_calls) == (1 if failed_cleanup == "pid" else 2)
+    finally:
+        for fd in opened:
+            if fd is not None and fd not in released:
+                release_state_lock(fd)
 
 
 def test_stop_refuses_to_signal_live_process_when_lock_free(tmp_path):

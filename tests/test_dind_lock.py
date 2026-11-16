@@ -26,10 +26,16 @@ def test_second_acquire_blocked_while_first_held(tmp_path):
     lock_path = tmp_path / "dind.lock"
     fd1 = acquire_state_lock(lock_path)
     assert fd1 is not None
+    fd2 = None
     try:
-        assert acquire_state_lock(lock_path) is None
+        fd2 = acquire_state_lock(lock_path)
+        assert fd2 is None
     finally:
-        release_state_lock(fd1)
+        try:
+            if fd2 is not None:
+                release_state_lock(fd2)
+        finally:
+            release_state_lock(fd1)
 
     # Free again after release.
     fd2 = acquire_state_lock(lock_path)
@@ -42,9 +48,11 @@ def test_is_locked_reflects_holder(tmp_path):
     assert is_locked(lock_path) is False
 
     fd = acquire_state_lock(lock_path)
-    assert is_locked(lock_path) is True
-
-    release_state_lock(fd)
+    assert fd is not None
+    try:
+        assert is_locked(lock_path) is True
+    finally:
+        release_state_lock(fd)
     assert is_locked(lock_path) is False
 
 
@@ -54,24 +62,73 @@ def test_non_contention_errors_propagate(tmp_path, monkeypatch):
     from dincli.dind import lock as lock_module
 
     real_flock = lock_module.fcntl.flock
+    real_close = os.close
+    opened = []
+    closed = []
+    error = OSError(errno.EROFS, "read-only filesystem")
 
     def fake_flock(fd, op):
         if op & lock_module.fcntl.LOCK_EX:
-            raise OSError(errno.EROFS, "read-only filesystem")
+            opened.append(fd)
+            raise error
         return real_flock(fd, op)
 
+    def track_close(fd):
+        real_close(fd)
+        closed.append(fd)
+
     monkeypatch.setattr(lock_module.fcntl, "flock", fake_flock)
+    monkeypatch.setattr(lock_module.os, "close", track_close)
 
-    with pytest.raises(OSError) as excinfo:
-        acquire_state_lock(lock_path)
-    assert excinfo.value.errno == errno.EROFS
+    try:
+        with pytest.raises(OSError) as excinfo:
+            acquire_state_lock(lock_path)
+        assert excinfo.value is error
+        assert len(opened) == 1
+        # Check before another open can reuse the descriptor. Acquiring an
+        # unlocked file again would not prove the first descriptor was closed.
+        with pytest.raises(OSError) as closed_error:
+            os.fstat(opened[0])
+        assert closed_error.value.errno == errno.EBADF
+        assert closed == opened
+    finally:
+        for fd in opened:
+            if fd not in closed:
+                real_close(fd)
 
-    # The fd from the failed attempt must have been closed, not leaked: a
-    # real acquire against the same path must still succeed afterwards.
-    monkeypatch.setattr(lock_module.fcntl, "flock", real_flock)
-    fd = acquire_state_lock(lock_path)
+
+def test_release_closes_fd_when_unlock_raises(tmp_path, monkeypatch):
+    from dincli.dind import lock as lock_module
+
+    fd = acquire_state_lock(tmp_path / "dind.lock")
     assert fd is not None
-    release_state_lock(fd)
+    real_close = os.close
+    closed = []
+    error = OSError(errno.EIO, "unlock failed")
+
+    def fail_unlock(actual_fd, op):
+        assert actual_fd == fd
+        assert op == lock_module.fcntl.LOCK_UN
+        raise error
+
+    def track_close(actual_fd):
+        real_close(actual_fd)
+        closed.append(actual_fd)
+
+    try:
+        monkeypatch.setattr(lock_module.fcntl, "flock", fail_unlock)
+        monkeypatch.setattr(lock_module.os, "close", track_close)
+        with pytest.raises(OSError) as excinfo:
+            release_state_lock(fd)
+        assert excinfo.value is error
+        with pytest.raises(OSError) as closed_error:
+            os.fstat(fd)
+        assert closed_error.value.errno == errno.EBADF
+        assert closed == [fd]  # Exactly once, even on an unlock failure.
+    finally:
+        # Negative controls must not leave the deliberately leaked lock held.
+        if fd not in closed:
+            real_close(fd)
 
 
 def test_lock_released_on_hard_kill(tmp_path):

@@ -72,8 +72,10 @@ def release_state_lock(fd: int) -> None:
     ``finally``.
     """
     _require_fcntl()
-    fcntl.flock(fd, fcntl.LOCK_UN)
-    os.close(fd)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def is_locked(lock_path: str | Path) -> bool:
