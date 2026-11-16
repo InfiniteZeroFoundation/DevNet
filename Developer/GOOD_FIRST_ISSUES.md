@@ -4,6 +4,9 @@ Welcome to InfiniteZero Network DevNet. This is a live, open experiment in build
 
 This document is your entry point for beginner-friendly contributions across federated learning, privacy-preserving systems, blockchain coordination, and developer tooling. Each detailed issue lives in `Developer/issues/`.
 
+> [!NOTE]
+> For the current list of beginner-friendly tasks, see the [good first issue label](https://github.com/InfiniteZeroFoundation/DevNet/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22). This page gives background on the longer-running areas below.
+
 ---
 
 ## What We're Building
