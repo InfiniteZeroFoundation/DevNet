@@ -225,11 +225,24 @@ bound), giving an L1 sensitivity of `clipping_norm` and an (ε, 0)-DP guarantee
 at `laplace_scale = 1 / ε` (noise scale `b = clipping_norm / ε`) under that
 definition. Which neighbor definition DevNet should claim is still open — under
 a replace-one definition (any clipped delta vs. any other) the sensitivity is
-`2 * clipping_norm`, which halves the ε for the same noise. This has not
-had DP-specialist review, and it covers only the floating tensors that are
-actually clipped and noised — non-floating (integer) buffers in the
-`state_dict` pass through unchanged (see **Clipping Behavior** below) and are
-presumed non-sensitive, not privatized by this mechanism.
+`2 * clipping_norm`, double the zero-delta definition's bound above. At a
+fixed noise scale `b`, doubling the sensitivity doubles ε (since ε = Δ₁ / b)
+— this weakens the privacy guarantee, not strengthens it. Matching the same
+target ε under the replace-one definition instead requires doubling the
+noise scale, to `b = 2 * clipping_norm / ε`. This has not had DP-specialist
+review.
+
+Both neighbor definitions above hold the reference model fixed and vary only
+the client's own update between the two neighboring cases; the guarantee
+does not cover a change to the reference model itself, or privacy accumulated
+across rounds — each round's `update_laplace` call is a separately noised
+mechanism, and composing many rounds' guarantees into one cross-round bound
+is a distinct, unaddressed question.
+
+This also covers only the floating tensors that are actually clipped and
+noised — non-floating (integer) buffers in the `state_dict` pass through
+unchanged (see **Clipping Behavior** below) and are presumed non-sensitive,
+not privatized by this mechanism.
 
 Use when:
 
