@@ -62,7 +62,7 @@ Events are grouped by how immediately the daemon must react.
 | `ValidatorUnstakeRequested(address validator, uint256 amount, uint64 withdrawAvailableAt)` | DinValidatorStake | Record in local unstake tracker. Daemon can surface `withdrawAvailableAt` countdown in `/health`. |
 | `ValidatorWithdrawalClaimed(address validator, uint256 amount)` | DinValidatorStake | Record completion of withdrawal in local history. |
 | `DinPerEthUpdated(uint256 newRate)` | DinCoordinator | Update local exchange-rate cache. Relevant for cost estimation in future reward projections. |
-| `DAOAdminUpdated(address oldAdmin, address newAdmin)` | DINModelRegistry | Alert operator of governance-key rotation. Log at WARN level. |
+| `OwnershipTransferred(address previousOwner, address newOwner)` | DINModelRegistry | Alert operator of governance-key rotation. Log at WARN level. |
 | `EthDepositAndDINminted(address user, uint256 ethAmount, uint256 dinAmount)` | DinCoordinator | Relevant only if user matches local operator wallet. Record in local token history. |
 
 ---
@@ -111,9 +111,9 @@ ManifestUpdateRejected(
 ModelDisabled(uint256 indexed modelId)
 ModelEnabled(uint256 indexed modelId)
 
-DAOAdminUpdated(
-    address indexed oldAdmin,
-    address indexed newAdmin
+OwnershipTransferred(
+    address indexed previousOwner,
+    address indexed newOwner
 )
 ```
 
