@@ -16,12 +16,7 @@ from dincli.dind import control
 from dincli.dind.lock import acquire_state_lock, release_state_lock
 from dincli.dind.main import app
 from dincli.dind.paths import StateDirs
-from dincli.dind.process import (
-    is_process_running,
-    read_pid,
-    remove_pid,
-    write_pid,
-)
+from dincli.dind.process import read_pid, remove_pid, write_pid
 
 runner = CliRunner()
 
@@ -51,22 +46,6 @@ def test_read_pid_none_when_garbage(tmp_path):
     pid_path = tmp_path / "garbage.pid"
     pid_path.write_text("abc")
     assert read_pid(pid_path) is None
-
-
-def test_is_process_running_self():
-    assert is_process_running(os.getpid()) is True
-
-
-def test_is_process_running_dead():
-    import subprocess
-
-    proc = subprocess.Popen(["true"])
-    proc.wait()
-    assert is_process_running(proc.pid) is False
-
-
-def test_is_process_running_nonexistent():
-    assert is_process_running(99999999) is False
 
 
 def test_remove_pid_missing_is_noop(tmp_path):

@@ -1,7 +1,6 @@
-"""PID file read/write, liveness detection, signal dispatch."""
+"""PID file bookkeeping; daemon identity and shutdown use lock/control state."""
 
 import os
-import signal
 from pathlib import Path
 
 
@@ -25,15 +24,3 @@ def write_pid(pid_path: Path) -> None:
 def remove_pid(pid_path: Path) -> None:
     if pid_path.exists():
         pid_path.unlink(missing_ok=True)
-
-
-def is_process_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
-def send_signal(pid: int, sig: int = signal.SIGTERM) -> None:
-    os.kill(pid, sig)
