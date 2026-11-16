@@ -164,12 +164,12 @@ At most one slash per auditor per batch; S1 takes priority. Emits `AuditorSlashe
 
 | Step | Function | Notes |
 |------|----------|-------|
-| Fund | `depositRewards(gi, amount)` — anyone | `gi` must be ≥ the current GI and non-zero; pulls DIN. The coordinator refuses to `startGI` an unfunded GI. |
+| Fund | `depositRewards(gi, amount)` — anyone | `gi` must be ≥ the current GI and non-zero, and not yet settled (`TA_RewardsAlreadySettled`: claims pay from the snapshot, so a later deposit would never be paid out); pulls DIN. The coordinator refuses to `startGI` an unfunded GI. |
 | Settle | `settleRewards(gi, aggregatorTotalWeight)` — coordinator's `endGI` | Splits `giRewardPool[gi]` by `rewardSplit`. The treasury share (plus rounding dust) is forwarded in full to `slashTreasury()`, or burned if no treasury is set. Stores a snapshot. No participant loops. |
 | Credit | `claimReward(gi)` — each participant, once per GI | Client: `clientPool × finalMedianScore / giTotalApprovedScore` (approved submissions only). Auditor: `auditorPool × auditorGIWeight / giTotalAuditWeight` (one unit per revealed vote). Aggregator: `aggregatorPool × aggregatorWeight / aggregatorTotalWeight` (read from the coordinator). Reverts `TA_NoRewardEarned` if all three are zero. |
 | Withdraw | `claimRewards()` | Pull payment of the accumulated `claimable` balance. |
 
-`DinEmission.fundGI` funds pools through the same `depositRewards` path, using freshly minted emission DIN.
+`DinEmission.fundGI` funds pools through the same `depositRewards` path, using freshly minted emission DIN, so the settled-GI check applies to it too.
 
 ---
 
