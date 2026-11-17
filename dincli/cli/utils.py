@@ -1034,6 +1034,7 @@ def build_and_send_tx(
     tx_params: Optional[dict] = None,
     exit_on_failure: bool = True,
     show_tx_hash: bool = True,
+    redact_exception: bool = False,
 ):
     effective_network, w3, account, console = ctx.obj.get_en_w3_account_console()
     base_tx_params = ctx.obj.get_tx_params()
@@ -1043,7 +1044,10 @@ def build_and_send_tx(
     try:
         base_tx_params["gas"] = int(w3.eth.estimate_gas(contract_function.build_transaction(base_tx_params)) * 1.1)
     except Exception as e:
-        console.print(f"[bold red] X Transaction estimation failed: {e}[/bold red]")
+        if redact_exception:
+            console.print("[bold red] X Transaction estimation failed.[/bold red]")
+        else:
+            console.print(f"[bold red] X Transaction estimation failed: {e}[/bold red]")
         if exit_on_failure:
             raise typer.Exit(1)
         return None
@@ -1067,9 +1071,8 @@ def build_and_send_tx(
         console.print(
             f"[bold red]✗ {error_msg}[/bold red]"
         )
-        console.print(
-            f"[bold red]Exception: {e}[/bold red]"
-        )
+        if not redact_exception:
+            console.print(f"[bold red]Exception: {e}[/bold red]")
 
         if exit_on_failure:
             raise typer.Exit(1)

@@ -19,6 +19,26 @@ Each service file must be uploaded and pinned to IPFS. The resulting CID is then
 
 Sample service files are located in the `devnet/cache_model_0/services/` directory.
 
+## Audit scoring policy
+
+Reference auditors read auditor eligibility and acceptance thresholds from the
+manifest's `audit_scoring_policy` object. A malformed or conflicting policy is
+a worker failure, not a `0` / rejected-candidate vote. This is distinct from
+`gm_scoring_policy` and the Global Iteration pass score: those controls remain
+separate.
+
+For compatibility, an older manifest may use `scoring_policy` only when
+`audit_scoring_policy` is absent. The legacy name emits a deprecation warning.
+A manifest that supplies both names must supply identical objects; otherwise the
+auditor rejects it rather than silently choosing one. Policy objects merge
+recursively with reference defaults, so overriding
+`metrics.thresholds.min_accuracy` does not erase the sibling threshold
+defaults.
+
+The current on-chain auditor aggregation rule is the median. The
+`validator_aggregation` metadata in the reference manifests therefore says
+`median`; this documentation change does not alter contract scoring.
+
 ---
 
 ## 1. `model.py`
