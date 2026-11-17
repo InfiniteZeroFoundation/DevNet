@@ -73,7 +73,6 @@ RUN groupadd --gid "$DIN_GID" dinuser \
 USER dinuser
 WORKDIR /home/dinuser
 
-# dincli is a CLI, not yet a daemon (the `dind` daemon is a future phase). To
-# keep a long-lived container that operators `docker compose exec` into, the
-# main process just idles. When `dind` exists this CMD becomes its entrypoint.
-CMD ["sleep", "infinity"]
+# dind daemon entrypoint: the long-lived container process that drives the
+# protocol event loop, health endpoint, and job queue.
+CMD ["dind", "start"]
