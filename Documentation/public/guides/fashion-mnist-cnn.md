@@ -156,19 +156,16 @@ mkdir -p "$TASK_DIR/services"
 cp cache_model_1/services/*.py             "$TASK_DIR/services/"
 ```
 
-Upload each service file to IPFS and update the manifest CIDs:
+The reference manifest already carries CIDs for its shipped service files. If
+you change a service, upload **only that changed file** and replace its
+corresponding `"ipfs"` value in `$TASK_DIR/manifest.json`:
 
 ```bash
-dincli ipfs upload -f "$TASK_DIR/services/model.py"
-dincli ipfs upload -f "$TASK_DIR/services/client.py"
-dincli ipfs upload -f "$TASK_DIR/services/modelowner.py"
-dincli ipfs upload -f "$TASK_DIR/services/auditor.py"
-dincli ipfs upload -f "$TASK_DIR/services/aggregator.py"
+dincli ipfs upload -f "$TASK_DIR/services/<changed-service>.py"
 ```
 
-Fill the returned CIDs into the corresponding `"ipfs"` fields in
-`$TASK_DIR/manifest.json`.  Also fill in `DINTaskCoordinator_Contract` and
-`DINTaskAuditor_Contract` with the deployed addresses from Step 5.
+Also fill in `DINTaskCoordinator_Contract` and `DINTaskAuditor_Contract` with
+the deployed addresses from Step 5.
 
 ---
 
