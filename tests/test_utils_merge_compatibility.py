@@ -30,3 +30,36 @@ def test_wallet_paths_still_use_sdk_configuration(tmp_path, monkeypatch):
     assert utils.resolve_wallet_path("merge-test") == (expected, False)
     utils.atomic_write_wallet(expected, {"merge": "sdk"})
     assert utils.resolve_wallet_path("merge-test") == (expected, True)
+
+
+@pytest.mark.parametrize("code", ["tx_estimation_failed", "tx_failed", "tx_reverted"])
+@pytest.mark.parametrize("redact", [False, True])
+@pytest.mark.parametrize("with_cause", [False, True])
+def test_sdk_transaction_errors_respect_redaction(monkeypatch, code, redact, with_cause):
+    from types import SimpleNamespace
+    from dincli.sdk import tx
+    from dincli.sdk.errors import TransactionError
+
+    secret = "synthetic-audit-payload-secret"
+    error = TransactionError(secret, code=code)
+    if with_cause:
+        error.__cause__ = RuntimeError(secret)
+
+    def fail(*args, **kwargs):
+        raise error
+
+    output = []
+    console = SimpleNamespace(print=output.append)
+    ctx = SimpleNamespace(obj=SimpleNamespace(
+        session=object(),
+        get_en_w3_account_console=lambda: (None, None, None, console),
+    ))
+    monkeypatch.setattr(tx, "send", fail)
+    assert utils.build_and_send_tx(
+        ctx, object(), "Sending", "Sent", "Failed",
+        exit_on_failure=False, redact_exception=redact,
+    ) is None
+    rendered = "\n".join(output)
+    assert (secret in rendered) == (not redact and code != "tx_reverted")
+    if redact and code == "tx_estimation_failed":
+        assert "Transaction estimation failed." in rendered

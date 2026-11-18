@@ -150,6 +150,17 @@ def _auditors_missing_encryption_key(stake_contract, auditors) -> List[str]:
     return [a for a in auditors if len(stake_contract.functions.getEncryptionKey(a).call()) == 0]
 
 
+def _print_created_audit_datasets(console, audit_testDataCIDs) -> None:
+    """Report the public upload references without rendering batch secrets."""
+    console.print(
+        f"[dim]Created {len(audit_testDataCIDs)} encrypted audit dataset(s).[/dim]"
+    )
+    for batch_id, batch_info in enumerate(audit_testDataCIDs):
+        console.print(
+            f"[dim]Batch {batch_id}: ciphertext CID {batch_info['raw_cid']}[/dim]"
+        )
+
+
 def _encrypt_batch_testdata(account, stake_contract, owner_privkey, gi: int, batch_auditors, batch_info):
     """Builds the assignAuditTestDataset / reassignAuditTestDataset payload for
     one batch: (encrypted_cid, encrypted_keys, commitment)."""
@@ -362,9 +373,15 @@ def create_testdataset(
             f"Test dataset not found at {test_data_path.resolve()}"
         )
     
-    audit_testDataCIDs = fn(audtor_batch_count, curr_GI, str(model_base_path), str(test_data_path))
-    
-    console.print("audit_testDataCIDs", audit_testDataCIDs)
+    try:
+        audit_testDataCIDs = fn(audtor_batch_count, curr_GI, str(model_base_path), str(test_data_path))
+        _print_created_audit_datasets(console, audit_testDataCIDs)
+    except Exception as exc:
+        console.print(
+            "[red]Error:[/red] Failed to create encrypted audit datasets "
+            f"({type(exc).__name__})."
+        )
+        raise typer.Exit(1)
     
     console.print("[bold green] ✓ Created test subdatasets![/bold green]")
 
@@ -434,13 +451,14 @@ def create_testdataset(
                     f"Test dataset assigned for auditor batch : {batch_id}",
                     f"Failed to assign test dataset for auditor batch : {batch_id}",
                     exit_on_failure=False,
+                    redact_exception=True,
                 )
                 if tx_receipt is None:
                     failed_batch_ids.append(batch_id)
                 else:
                     _confirm_testdata_secret(model_base_path, ref_gi, batch_id, commitment)
-        except Exception as e:
-            console.print(f"[red]Error:[/red] Failed to assign test dataset for auditor batches: {e}")
+        except Exception:
+            console.print("[red]Error:[/red] Failed to assign test dataset for auditor batches.")
             raise typer.Exit(1)
 
         if failed_batch_ids:
@@ -464,7 +482,7 @@ def create_testdataset(
             if _is_flag_already_set_revert(e):
                 flag_already_set = True
             else:
-                console.print(f"[bold red]✗ Failed to set test dataset assigned flag: {e}[/bold red]")
+                console.print("[bold red]✗ Failed to set test dataset assigned flag.[/bold red]")
                 raise typer.Exit(1)
 
         if flag_already_set:
@@ -477,6 +495,7 @@ def create_testdataset(
                 "Test dataset assigned for auditor batches",
                 "Failed to set test dataset assigned flag",
                 exit_on_failure=False,
+                redact_exception=True,
             )
             if flag_receipt is None:
                 console.print("[bold red]✗ Failed to set test dataset assigned flag.[/bold red]")

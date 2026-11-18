@@ -509,6 +509,7 @@ def build_and_send_tx(
     tx_params: Optional[dict] = None,
     exit_on_failure: bool = True,
     show_tx_hash: bool = True,
+    redact_exception: bool = False,
 ):
     from dincli.sdk.errors import TX_ESTIMATION_FAILED, TX_REVERTED, TransactionError
     from dincli.sdk.tx import send as sdk_send
@@ -530,20 +531,25 @@ def build_and_send_tx(
                         on_event=_on_event)
     except TransactionError as err:
         if err.code == TX_ESTIMATION_FAILED:
-            reason = err.__cause__ or err.message
-            console.print(f"[bold red] X Transaction estimation failed: {reason}[/bold red]")
+            if redact_exception:
+                console.print("[bold red] X Transaction estimation failed.[/bold red]")
+            else:
+                reason = err.__cause__ or err.message
+                console.print(f"[bold red] X Transaction estimation failed: {reason}[/bold red]")
         elif err.code == TX_REVERTED:
             console.print(f"[bold red] X {error_msg}[/bold red]")
         else:
-            reason = err.__cause__ or err.message
             console.print(f"[bold red]✗ {error_msg}[/bold red]")
-            console.print(f"[bold red]Exception: {reason}[/bold red]")
+            if not redact_exception:
+                reason = err.__cause__ or err.message
+                console.print(f"[bold red]Exception: {reason}[/bold red]")
         if exit_on_failure:
             raise typer.Exit(1) from err
         return None
 
     console.print(f"[bold green] ✓ {success_msg}[/bold green]")
     return info._raw  # unchanged return contract (D5)
+
     
 def ensure_batch_seed_locked(
     ctx,
