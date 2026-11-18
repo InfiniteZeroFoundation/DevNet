@@ -37,6 +37,7 @@ def test_wallet_paths_still_use_sdk_configuration(tmp_path, monkeypatch):
 @pytest.mark.parametrize("with_cause", [False, True])
 def test_sdk_transaction_errors_respect_redaction(monkeypatch, code, redact, with_cause):
     from types import SimpleNamespace
+
     from dincli.sdk import tx
     from dincli.sdk.errors import TransactionError
 
