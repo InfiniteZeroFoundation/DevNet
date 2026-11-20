@@ -120,8 +120,8 @@ jobs:
         working-directory: hardhat
         run: npx hardhat compile
 
-      - name: Install torch (CPU)
-        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Install model-owner dependencies (CPU)
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu -r cache_model_0/requirements/modelowner/requirements.txt
       - name: Install dincli + test deps
         run: python -m pip install -e ".[test]"
 
