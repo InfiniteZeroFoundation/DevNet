@@ -20,7 +20,7 @@
       "algorithms": {
          "eligibility": "eligibility_anomaly_gate",
          "utility": "holdout_delta_score",
-         "validator_aggregation": "legacy_mean_until_contract_v2"
+         "validator_aggregation": "median"
       },
       "normalization": {
          "contract_score_scale": "percent_0_100",
@@ -80,7 +80,7 @@
    "getGenesisModelIpfs": {
       "type": "custom",
       "path": "services/modelowner.py",
-      "ipfs": "",
+      "ipfs": "bafybeigkjdhq3lc47gqgd6jt5ei23y3feaekhi3hder3hj4x7fgkphpvx4",
       "stakeholders": [
          "modelowner"
       ]
@@ -88,7 +88,7 @@
    "getscoreforGM": {
       "type": "custom",
       "path": "services/modelowner.py",
-      "ipfs": "",
+      "ipfs": "bafybeigkjdhq3lc47gqgd6jt5ei23y3feaekhi3hder3hj4x7fgkphpvx4",
       "stakeholders": [
          "modelowner"
       ]
@@ -96,7 +96,7 @@
    "ModelArchitecture": {
       "type": "custom",
       "path": "services/model.py",
-      "ipfs": "",
+      "ipfs": "bafybeigct5qg55a5vrl4oqenh25q6w7jruudjhaywzihlddkke6xkkbopq",
       "stakeholders": [
          "modelowner",
          "auditors",
@@ -107,7 +107,7 @@
    "train_client_model": {
       "type": "custom",
       "path": "services/client.py",
-      "ipfs": "",
+      "ipfs": "bafybeifokaojqdi65b4jizlfoth7dcnx575i4rppbcwzradgrbus2yyj6m",
       "stakeholders": [
          "clients"
       ]
@@ -115,7 +115,7 @@
    "create_audit_testDataCIDs": {
       "type": "custom",
       "path": "services/modelowner.py",
-      "ipfs": "",
+      "ipfs": "bafybeigkjdhq3lc47gqgd6jt5ei23y3feaekhi3hder3hj4x7fgkphpvx4",
       "stakeholders": [
          "modelowner"
       ]
@@ -123,7 +123,7 @@
    "Score_model_by_auditor": {
       "type": "custom",
       "path": "services/auditor.py",
-      "ipfs": "",
+      "ipfs": "bafybeidue4cqllowgvxs3f7btv6uxf4v5ggi7gouohccrtjgvlaehs5ipy",
       "stakeholders": [
          "auditors"
       ]
@@ -131,7 +131,7 @@
    "ScoringUtils": {
       "type": "custom",
       "path": "services/scoring.py",
-      "ipfs": "",
+      "ipfs": "bafybeiaz6ioytviz4r6fpaud6j23bcuyu3fwtg7pilgox6ylwp2udk7hga",
       "stakeholders": [
          "auditors"
       ]
@@ -139,7 +139,7 @@
    "get_aggregated_cid_t1": {
       "type": "custom",
       "path": "services/aggregator.py",
-      "ipfs": "",
+      "ipfs": "bafybeie3iwrwgfoncavhikmb4k4alhcs7k7ivt35k3svabbcsldjjcfkx4",
       "stakeholders": [
          "aggregators"
       ]
@@ -147,7 +147,7 @@
    "get_aggregated_cid_t2": {
       "type": "custom",
       "path": "services/aggregator.py",
-      "ipfs": "",
+      "ipfs": "bafybeie3iwrwgfoncavhikmb4k4alhcs7k7ivt35k3svabbcsldjjcfkx4",
       "stakeholders": [
          "aggregators"
       ]

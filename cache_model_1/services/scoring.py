@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import json
+import logging
 import math
 import random
 from dataclasses import asdict, dataclass
@@ -79,38 +81,82 @@ class AuditScoringResult:
     raw_metrics: dict[str, Any]
 
 
-def load_scoring_policy(model_base_dir: str | Path) -> dict[str, Any]:
-    """Load the manifest scoring policy while preserving a safe default.
+_LOGGER = logging.getLogger(__name__)
 
-    Custom service files are executed as standalone Python modules by `dincli`.
-    They currently receive `model_base_dir` but not a full runtime context, so
-    the reference auditor service resolves `manifest.json` from the model
-    directory here. This keeps the first scoring implementation compatible with
-    the existing CLI and contract while still making policy machine-readable.
+# These sections are objects even when a particular reference default has no
+# entry for them yet. Rejecting scalar replacements catches malformed manifests
+# at the boundary instead of silently treating them as policy configuration.
+_POLICY_OBJECT_SECTIONS = frozenset(
+    {
+        "algorithms",
+        "evaluation",
+        "eligibility_checks",
+        "metrics",
+        "normalization",
+        "pass_scoring",
+        "validator_consensus",
+    }
+)
+
+
+def _merge_scoring_policy(defaults: dict[str, Any], overrides: dict[str, Any], path: str = "") -> dict[str, Any]:
+    """Recursively merge a manifest policy into immutable reference defaults."""
+
+    merged = copy.deepcopy(defaults)
+    for key, value in overrides.items():
+        field_path = f"{path}.{key}" if path else key
+        default_value = merged.get(key)
+        expects_object = isinstance(default_value, dict) or key in _POLICY_OBJECT_SECTIONS
+
+        if expects_object:
+            if not isinstance(value, dict):
+                raise ValueError(f"audit scoring policy field {field_path} must be an object")
+            nested_defaults = default_value if isinstance(default_value, dict) else {}
+            merged[key] = _merge_scoring_policy(nested_defaults, value, field_path)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def load_scoring_policy(model_base_dir: str | Path) -> dict[str, Any]:
+    """Load the manifest's auditor policy with explicit compatibility rules.
+
+    `audit_scoring_policy` is canonical. `scoring_policy` is read only from
+    legacy manifests that omit the canonical field; manifests containing both
+    fields must make them identical so no policy is silently selected.
     """
 
     manifest_path = Path(model_base_dir) / "manifest.json"
     if not manifest_path.exists():
-        return DEFAULT_SCORING_POLICY
+        return copy.deepcopy(DEFAULT_SCORING_POLICY)
 
     with manifest_path.open("r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
-    policy = manifest.get("scoring_policy")
-    if not isinstance(policy, dict):
-        return DEFAULT_SCORING_POLICY
+    canonical_present = "audit_scoring_policy" in manifest
+    legacy_present = "scoring_policy" in manifest
+    canonical = manifest.get("audit_scoring_policy")
+    legacy = manifest.get("scoring_policy")
 
-    # Merge only one level deep. The policy is intentionally simple for this
-    # first pass, and explicit defaults make older manifests keep working.
-    merged = dict(DEFAULT_SCORING_POLICY)
-    for key, value in policy.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            nested = dict(merged[key])
-            nested.update(value)
-            merged[key] = nested
-        else:
-            merged[key] = value
-    return merged
+    if canonical_present and not isinstance(canonical, dict):
+        raise ValueError("manifest audit_scoring_policy must be an object")
+    if legacy_present and not isinstance(legacy, dict):
+        raise ValueError("manifest scoring_policy must be an object")
+
+    if canonical_present and legacy_present and canonical != legacy:
+        raise ValueError("manifest audit_scoring_policy conflicts with legacy scoring_policy")
+
+    if canonical_present:
+        policy = canonical
+    elif legacy_present:
+        _LOGGER.warning(
+            "manifest uses deprecated scoring_policy; rename it to audit_scoring_policy"
+        )
+        policy = legacy
+    else:
+        return copy.deepcopy(DEFAULT_SCORING_POLICY)
+
+    return _merge_scoring_policy(DEFAULT_SCORING_POLICY, policy)
 
 
 def _iter_floating_tensors(state_dict: dict[str, torch.Tensor]):

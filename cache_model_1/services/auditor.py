@@ -32,7 +32,9 @@ def _load_artifacts(test_data_path, genesis_model_path, local_model_path):
     and utility scoring.
     """
 
-    testdata = torch.load(test_data_path, weights_only=False)
+    # Audit shards are the data-only `(input, label)` sequences produced by
+    # modelowner.py. Refuse pickle globals from a model-owner supplied shard.
+    testdata = torch.load(test_data_path, weights_only=True)
 
     # The genesis artifact in this reference task is a serialized model object.
     # We evaluate it as the baseline, then load the submitted state_dict into
@@ -54,7 +56,7 @@ def Score_model_by_auditor(gi, genesis_model_cid, batch_id, model_index, auditor
     This is the first implementation of the scoring design in
     `Developer/issues/scoring-mechanism/`:
 
-    1. read `scoring_policy` from the manifest;
+    1. read `audit_scoring_policy` from the manifest;
     2. run `eligibility_anomaly_gate` against the submitted state_dict;
     3. evaluate baseline and candidate models on the holdout shard;
     4. normalize the result into today's contract score plus future V2 fields;
@@ -74,8 +76,12 @@ def Score_model_by_auditor(gi, genesis_model_cid, batch_id, model_index, auditor
     (task_240826_10 §A) — so no network or crypto access happens here.
     """
 
+    # A manifest policy error is an operator/configuration failure, not a
+    # candidate-quality result. Let it reach the worker wrapper so the CLI
+    # reports a failed job and never turns it into a `(0, False)` vote.
+    policy = load_scoring_policy(model_base_dir)
+
     try:
-        policy = load_scoring_policy(model_base_dir)
 
         base_dir = Path(model_base_dir)
         test_data_path = base_dir / "dataset" / "auditor" / "TestDatasets" / f"auditorDataset_{gi}_{batch_id}.pt"

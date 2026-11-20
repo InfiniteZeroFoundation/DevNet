@@ -12,13 +12,18 @@ rewards_app = typer.Typer(help="Fund GI reward pools")
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 
-def _resolve_funding_gi(console, task_coordinator, gi: Optional[int]) -> int:
+def _resolve_funding_gi(console, task_coordinator, task_auditor, gi: Optional[int]) -> int:
     """depositRewards accepts the current GI or a later one (TA_InvalidRewardGI
-    otherwise). Defaults to the next GI, the one `gi start` needs funded."""
+    otherwise), as long as its rewards aren't settled yet (TA_RewardsAlreadySettled).
+    Defaults to the next GI, the one `gi start` needs funded."""
     curr_gi = task_coordinator.functions.GI().call()
     target_gi = gi if gi is not None else curr_gi + 1
     if target_gi == 0 or target_gi < curr_gi:
         console.print(f"[bold red]✗ GI {target_gi} can't be funded: the current GI is {curr_gi}, and only it or a later GI can be.[/bold red]")
+        raise typer.Exit(1)
+    # giRewardSnapshot getter: (clientPool, auditorPool, aggregatorPool, aggregatorTotalWeight, settled)
+    if task_auditor.functions.giRewardSnapshot(target_gi).call()[4]:
+        console.print(f"[bold red]✗ GI {target_gi}'s rewards are already settled; a deposit now would never be paid out (TA_RewardsAlreadySettled). Fund the next GI instead.[/bold red]")
         raise typer.Exit(1)
     return target_gi
 
@@ -36,7 +41,7 @@ def deposit(
     task_auditor = ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
     din_token = ctx.obj.get_deployed_din_token_contract(verbose=False)
 
-    target_gi = _resolve_funding_gi(console, task_coordinator, gi)
+    target_gi = _resolve_funding_gi(console, task_coordinator, task_auditor, gi)
     amount_wei = Web3.to_wei(Decimal(str(amount)), "ether")
     if amount_wei <= 0:
         console.print("[bold red]✗ --amount must be positive.[/bold red]")
@@ -77,7 +82,7 @@ def fund_emission(
     task_auditor = ctx.obj.get_deployed_din_task_auditor_contract(True, model_id)
     emission = ctx.obj.get_deployed_din_emission_contract()
 
-    target_gi = _resolve_funding_gi(console, task_coordinator, gi)
+    target_gi = _resolve_funding_gi(console, task_coordinator, task_auditor, gi)
 
     # fundGI reverts for these; checking first names the cause.
     exists, registry_model_id = ctx.obj.get_deployed_din_registry_contract(verbose=False).functions.getModelIdByTaskAuditor(task_auditor.address).call()
