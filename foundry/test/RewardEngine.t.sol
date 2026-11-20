@@ -40,6 +40,9 @@ contract RewardEngineTest is Test {
     DINTaskAuditor ta;
     bool skipRegistration;
     bool disableDuringGI;
+    /// @dev Issue #309: when set, this T1 aggregator commits but never
+    ///      reveals in _runFullHonestGI (the batch still finalizes 2 of 3).
+    address skipT1Reveal;
 
     address admin = makeAddr("admin");
     address modelOwner = makeAddr("modelOwner");
@@ -275,6 +278,7 @@ contract RewardEngineTest is Test {
         tc.startT1AggregationReveal(1);
 
         for (uint i = 0; i < t1aggs.length; i++) {
+            if (t1aggs[i] == skipT1Reveal) continue;
             vm.prank(t1aggs[i]);
             tc.revealT1Aggregation(1, 0, realCID, TEST_SALT);
         }
@@ -854,6 +858,36 @@ contract RewardEngineTest is Test {
         assertEq(tc.aggregatorWeight(1, agg2), 1);
         assertEq(tc.aggregatorWeight(1, agg3), 1);
         assertEq(tc.totalAggregatorWeight(1), 3);
+    }
+
+    /// @dev Issue #309: an aggregator who committed but never revealed
+    ///      earns nothing, and the two who revealed split the whole
+    ///      aggregator pool between them.
+    function test_claimReward_nonRevealingAggregator_earnsNothing_revealersSplitPool() public {
+        uint256 pool = 10_000 ether;
+        skipT1Reveal = agg3;
+        _runFullHonestGI(pool);
+
+        assertEq(tc.aggregatorWeight(1, agg3), 0);
+        assertEq(tc.totalAggregatorWeight(1), 2);
+
+        vm.prank(modelOwner);
+        tc.endGI(1);
+
+        vm.prank(agg3);
+        vm.expectRevert(abi.encodeWithSignature("TA_NoRewardEarned()"));
+        ta.claimReward(1);
+
+        vm.prank(agg1);
+        ta.claimReward(1);
+        vm.prank(agg2);
+        ta.claimReward(1);
+
+        uint256 aggregatorPool = (pool * 1500) / 10000;
+        assertEq(ta.claimable(agg1), aggregatorPool / 2);
+        assertEq(ta.claimable(agg2), aggregatorPool / 2);
+        assertEq(ta.claimable(agg1) + ta.claimable(agg2), aggregatorPool, "revealers split the whole pool");
+        assertEq(ta.claimable(agg3), 0);
     }
 
     function test_endGI_snapshotsAggregatorTotalWeight() public {

@@ -706,6 +706,92 @@ contract AggregatorCommitRevealTest is Test {
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // Issue #309: only aggregators who revealed earn reward weight.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev T1: of 3 assigned, one commits but never reveals. The batch
+    ///      still finalizes (2 of 3), and only the 2 revealers get weight.
+    function test_aggregatorWeight_t1CommittedButUnrevealed_getsNoWeight() public {
+        _runToT1AggregationStarted();
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+
+        _commitT1(t1aggs[0], 0, CID_A);
+        _commitT1(t1aggs[1], 0, CID_A);
+        _commitT1(t1aggs[2], 0, CID_A);
+        _openT1RevealPhase();
+        _revealT1(t1aggs[0], 0, CID_A);
+        _revealT1(t1aggs[1], 0, CID_A);
+
+        vm.prank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+
+        assertEq(tc.aggregatorWeight(1, t1aggs[0]), 1);
+        assertEq(tc.aggregatorWeight(1, t1aggs[1]), 1);
+        assertEq(tc.aggregatorWeight(1, t1aggs[2]), 0, "committed but never revealed: no weight");
+        assertEq(tc.totalAggregatorWeight(1), 2, "total stays the sum of per-aggregator weights");
+    }
+
+    /// @dev T1: one assigned aggregator never commits at all.
+    function test_aggregatorWeight_t1NeverCommitted_getsNoWeight() public {
+        _runToT1AggregationStarted();
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+
+        _commitT1(t1aggs[0], 0, CID_A);
+        _commitT1(t1aggs[1], 0, CID_A);
+        _openT1RevealPhase();
+        _revealT1(t1aggs[0], 0, CID_A);
+        _revealT1(t1aggs[1], 0, CID_A);
+
+        vm.prank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+
+        assertEq(tc.aggregatorWeight(1, t1aggs[2]), 0, "never committed: no weight");
+        assertEq(tc.totalAggregatorWeight(1), 2);
+    }
+
+    /// @dev T1: a revealer who missed consensus keeps their weight (the
+    ///      BAD_CONSENSUS slash is their penalty, not lost reward weight).
+    function test_aggregatorWeight_t1RevealedButOffConsensus_keepsWeight() public {
+        _runToT1AggregationStarted();
+        (, address[] memory t1aggs, , , ) = tc.getTier1Batch(1, 0);
+
+        _commitT1(t1aggs[0], 0, CID_A);
+        _commitT1(t1aggs[1], 0, CID_A);
+        _commitT1(t1aggs[2], 0, CID_B);
+        _openT1RevealPhase();
+        _revealT1(t1aggs[0], 0, CID_A);
+        _revealT1(t1aggs[1], 0, CID_A);
+        _revealT1(t1aggs[2], 0, CID_B);
+
+        vm.prank(modelOwner);
+        tc.finalizeT1Aggregation(1);
+
+        assertEq(tc.aggregatorWeight(1, t1aggs[2]), 1, "revealed off-consensus: keeps weight");
+        assertEq(tc.totalAggregatorWeight(1), 3);
+    }
+
+    /// @dev T2: all 3 T1 aggregators reveal (weight 1 each), then one of the
+    ///      3 T2 aggregators never commits. Only the 2 T2 revealers add weight.
+    function test_aggregatorWeight_t2NonSubmitter_getsNoWeight() public {
+        address[] memory t2aggs = _runToT2AggregationStarted();
+        assertEq(tc.totalAggregatorWeight(1), 3, "sanity: 3 T1 revealers");
+
+        _commitT2(t2aggs[0], CID_B);
+        _commitT2(t2aggs[1], CID_B);
+        _openT2RevealPhase();
+        _revealT2(t2aggs[0], CID_B);
+        _revealT2(t2aggs[1], CID_B);
+
+        vm.prank(modelOwner);
+        tc.finalizeT2Aggregation(1);
+
+        assertEq(tc.aggregatorWeight(1, t2aggs[0]), 1);
+        assertEq(tc.aggregatorWeight(1, t2aggs[1]), 1);
+        assertEq(tc.aggregatorWeight(1, t2aggs[2]), 0, "T2 non-submitter: no weight");
+        assertEq(tc.totalAggregatorWeight(1), 5);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // Full-GI walk through the new T1/T2 reveal states.
     // ─────────────────────────────────────────────────────────────────────
 
