@@ -5,8 +5,8 @@
 The `dincli dinrep registry list-pending-requests` command (`dincli/cli/dinrep.py`) previously
 enumerated pending model and manifest requests by calling `totalModelRequests()` /
 `totalManifestRequests()` on-chain and iterating through every index with an individual
-RPC call per entry.  Those two `for idx in range(...)` loops have been replaced with
-GraphQL queries to the locally-running subgraph.
+RPC call per entry.  When `DIN_SUBGRAPH_URL` is set, those two `for idx in range(...)` loops are
+replaced by GraphQL queries to that subgraph. Otherwise the RPC loops run.
 
 ### Integration point
 
@@ -21,7 +21,7 @@ GraphQL queries to the locally-running subgraph.
 **Model registration requests**
 ```graphql
 {
-  modelRegistrationRequests(where: { processed: false }, first: 1000) {
+  modelRegistrationRequests(where: { processed: false }, first: 1000, orderBy: requestId, orderDirection: asc) {
     requestId
     requester
     isOpenSource
@@ -33,7 +33,7 @@ GraphQL queries to the locally-running subgraph.
 **Manifest update requests**
 ```graphql
 {
-  manifestUpdateRequests(where: { processed: false }, first: 1000) {
+  manifestUpdateRequests(where: { processed: false }, first: 1000, orderBy: requestId, orderDirection: asc) {
     requestId
     model { modelId }
     requester
@@ -57,7 +57,7 @@ so the command remains fully functional in environments where the subgraph is no
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `DIN_SUBGRAPH_URL` | `http://localhost:8000/subgraphs/name/din-protocol/graphql` | Override the subgraph endpoint (CI, staging, custom port) |
+| `DIN_SUBGRAPH_URL` | unset (RPC only) | Opt in to the subgraph path, e.g. `http://localhost:8000/subgraphs/name/din-protocol/graphql` for the local graph-node. It must index the same deployment as `--network`. There's no default, because the query has no network filter. |
 
 ---
 
