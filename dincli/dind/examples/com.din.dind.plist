@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.din.dind</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>dind</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/dind.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/dind.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DIN_DIND_STATE_DIR</key>
+        <string>/usr/local/var/dind</string>
+        <key>DIN_DIND_HEALTH_HOST</key>
+        <string>127.0.0.1</string>
+        <key>DIN_DIND_HEALTH_PORT</key>
+        <string>8787</string>
+    </dict>
+</dict>
+</plist>
