@@ -9,6 +9,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -80,8 +81,8 @@ def start(
             typer.echo(f"dind already starting in {resolved}", err=True)
         raise typer.Exit(1)
 
-    wrote_pid = False
-    try:
+    with ExitStack() as resources:
+        resources.callback(release_state_lock, lock_fd)
         host = resolve_health_host(health_host)
         port = resolve_health_port(health_port)
         validate_health_port(port)
@@ -123,10 +124,32 @@ def start(
             time.sleep(float(_test_delay_s))
 
         write_pid(paths.pid_path)
-        wrote_pid = True
+        def remove_instance_files():
+            remove_pid(paths.pid_path)
+            control.remove_descriptor(paths.control_path)
+
+        resources.callback(remove_instance_files)
 
         stop_event = threading.Event()
         install_shutdown_handlers(stop_event)
+
+        instance_id = control.new_instance_id()
+        state = StateStore(paths.db_path)
+        resources.callback(state.close)
+        state.initialize()
+        try:
+            health = resources.enter_context(HealthServer(host, port, state))
+        except OSError as exc:
+            typer.echo(f"Cannot bind dind health endpoint {host}:{port}: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        health.publish_endpoint()
+        state.set_meta("started_at", datetime.now(timezone.utc).isoformat())
+        state.reset_running_jobs()
+
+        health_thread = threading.Thread(target=health.serve_forever, daemon=True)
+        health_thread.start()
+        resources.callback(health_thread.join)
+        resources.callback(health.shutdown)
 
         # Local control channel (review finding 4): lets `stop`/`status`
         # verify they're talking to THIS instance instead of trusting a
@@ -138,7 +161,6 @@ def start(
         # control-unavailable state and refuse to guess rather than
         # fall back to signalling a PID (see control.py, main.py::stop()).
         control_server = None
-        instance_id = control.new_instance_id()
         try:
             control_socket_path = control.socket_path_for(paths.state_dir)
             control_server = control.ControlServer(control_socket_path, instance_id, stop_event)
@@ -156,23 +178,20 @@ def start(
                 "dind control endpoint unavailable (%s) — `dind stop` will "
                 "require a process supervisor for this run.", e,
             )
+            if control_server is not None:
+                control_server.shutdown()
             control_server = None
 
-        state = StateStore(paths.db_path)
-        # Schema migration first, once, before the health thread opens its
-        # own per-thread connection — see StateStore.initialize().
-        state.initialize()
-        state.set_meta("started_at", datetime.now(timezone.utc).isoformat())
-        state.reset_running_jobs()
-
-        health = HealthServer(host, port, state)
-        health_thread = threading.Thread(target=health.run, daemon=True)
-        health_thread.start()
-
-        control_thread = None
         if control_server is not None:
             control_thread = threading.Thread(target=control_server.run, daemon=True)
-            control_thread.start()
+            try:
+                control_thread.start()
+            except RuntimeError:
+                control_server.shutdown()
+                raise
+            # Stop the accept loop before joining its thread.
+            resources.callback(control_thread.join, 5)
+            resources.callback(control_server.shutdown)
 
         # A bare DinSession(): every property is lazy, so construction
         # touches neither the chain nor the keystore (§3.7). No new flags.
@@ -187,28 +206,7 @@ def start(
             shutdown_count_str = state.get_meta("shutdown_count") or "0"
             state.set_meta("shutdown_count", str(int(shutdown_count_str) + 1))
 
-            if control_server is not None:
-                control_server.shutdown()
-                if control_thread is not None:
-                    control_thread.join(timeout=5)
-            control.remove_descriptor(paths.control_path)
-
-            health.shutdown()
-            health_thread.join(timeout=5)
-
-            state.close()
-
-            logger.info("dind daemon shut down")
-    finally:
-        # wrote_pid guards against deleting artifacts this invocation never
-        # wrote (e.g. the "already running" branch above, raised while still
-        # holding the lock).
-        try:
-            if wrote_pid:
-                remove_pid(paths.pid_path)
-                control.remove_descriptor(paths.control_path)
-        finally:
-            release_state_lock(lock_fd)
+    logger.info("dind daemon shut down")
 
 
 @app.command()
@@ -403,6 +401,37 @@ def status(
         )
     except Exception:
         typer.echo("  (health endpoint unavailable)")
+
+
+@app.command()
+def healthcheck(state_dir: str | None = STATE_DIR) -> None:
+    """Exit successfully only for a healthy response from this daemon instance."""
+    from dincli.dind.state import StateStore
+
+    paths = StateDirs(resolve_state_dir(state_dir))
+    if not is_locked(paths.lock_path):
+        raise typer.Exit(1)
+
+    store = StateStore(paths.db_path)
+    try:
+        host = store.get_meta("health_host")
+        port = store.get_meta("health_port")
+        instance_id = store.get_meta("health_instance")
+        if not host or not port or not instance_id:
+            raise typer.Exit(1)
+        if host == "0.0.0.0":
+            host = "127.0.0.1"
+        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=3) as response:
+            payload = json.load(response)
+        if not isinstance(payload, dict) or payload.get("instance_id") != instance_id:
+            raise typer.Exit(1)
+        if payload.get("status") != "healthy":
+            raise typer.Exit(1)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Health check failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        store.close()
 
 
 preferences_app = typer.Typer(help="Local daemon preferences.")

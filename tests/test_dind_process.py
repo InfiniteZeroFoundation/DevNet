@@ -372,3 +372,33 @@ def test_start_not_blocked_by_stale_pid_reused_by_unrelated_live_process(tmp_pat
         unrelated.kill()
         unrelated.wait(timeout=10)
         _reset_dincli_logger()
+
+
+def test_occupied_health_port_leaves_job_pending_and_allows_retry(tmp_path, monkeypatch):
+    import socket
+    import sqlite3
+
+    from dincli.dind.state import StateStore
+
+    monkeypatch.setenv("DIN_DIND_MAX_TICKS", "1")
+    paths = StateDirs(tmp_path)
+    store = StateStore(paths.db_path)
+    store.initialize()
+    job_id = store.enqueue("demo")
+    try:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            args = ["start", "--state-dir", str(tmp_path), "--health-port", str(port)]
+            result = runner.invoke(app, args)
+            assert result.exit_code == 1
+            assert "Cannot bind" in result.output
+            assert store.get_job_counts()["pending"] == 1
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        with sqlite3.connect(paths.db_path) as conn:
+            assert conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone() == ("done",)
+    finally:
+        store.close()
+        _reset_dincli_logger()

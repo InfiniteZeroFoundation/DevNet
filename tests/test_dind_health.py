@@ -18,19 +18,19 @@ from dincli.dind.state import StateStore
 def _running_health_server(store, monkeypatch, before_ready=None):
     """Wait for serving entry, after both discovery metadata writes commit."""
     ready = threading.Event()
-    serve_forever = health_module._ThreadingHTTPServer.serve_forever
+    serve_forever = health_module.ThreadingHTTPServer.serve_forever
 
     def serve_when_ready(http_server, **kwargs):
         ready.set()
         return serve_forever(http_server, **kwargs)
 
-    with monkeypatch.context() as patch:
-        patch.setattr(health_module._ThreadingHTTPServer, "serve_forever", serve_when_ready)
-        server = HealthServer("127.0.0.1", 0, store)
+    with monkeypatch.context() as patch, HealthServer("127.0.0.1", 0, store) as server:
+        patch.setattr(health_module.ThreadingHTTPServer, "serve_forever", serve_when_ready)
 
         def run():
             try:
-                server.run()
+                server.publish_endpoint()
+                server.serve_forever()
             finally:
                 store.close()  # StateStore connections are thread-local.
 
@@ -50,9 +50,6 @@ def _running_health_server(store, monkeypatch, before_ready=None):
                 shutdown.join(timeout=5)
                 assert not shutdown.is_alive(), "HealthServer shutdown timed out"
             thread.join(timeout=5)
-            # Only clean up failed startup; normal shutdown must release its own port.
-            if not ready.is_set() and not thread.is_alive() and hasattr(server, "server"):
-                server.server.server_close()
             assert not thread.is_alive(), "HealthServer thread did not stop"
 
 
@@ -62,14 +59,15 @@ class FakeServer:
 
 def _make_handler(store, path="/health"):
     handler = HealthHandler.__new__(HealthHandler)
-    handler.state = store
-    handler.start_time = time.time()
     handler.path = path
     handler.requestline = "GET " + path + " HTTP/1.0"
     handler.request_version = "HTTP/1.0"
     handler.command = "GET"
     handler.client_address = ("", 0)
     handler.server = FakeServer()
+    handler.server.instance_id = "the-instance"
+    handler.server.state = store
+    handler.server.start_time = time.time()
     handler._headers_buffer = []
     wfile = BytesIO()
     handler.wfile = wfile
@@ -259,7 +257,7 @@ def test_status_command_reads_degraded_through_503(tmp_path, monkeypatch):
             ),
         )
 
-        # Force the exact old race: self.server exists, but discovery metadata
+        # Force the exact old race: the listener exists, but discovery metadata
         # has not been published. No scheduling delay or default-port service
         # is needed to reproduce the incorrect readiness predicate.
         publishing = threading.Event()
@@ -283,7 +281,7 @@ def test_status_command_reads_degraded_through_503(tmp_path, monkeypatch):
 
             try:
                 assert publishing.wait(5), "HealthServer did not reach publication"
-                assert hasattr(server, "server")  # The old readiness check passes.
+                assert server.fileno() >= 0  # The old readiness check passes.
                 assert store.get_meta("health_host") is None
                 assert store.get_meta("health_port") is None
                 assert not ready.is_set()  # The replacement does not pass early.
@@ -318,7 +316,7 @@ def test_health_server_releases_port(tmp_path, monkeypatch):
     store.initialize()
     try:
         with _running_health_server(store, monkeypatch) as server:
-            host, port = server.server.server_address
+            host, port = server.server_address
 
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -327,3 +325,32 @@ def test_health_server_releases_port(tmp_path, monkeypatch):
             probe.close()
     finally:
         store.close()
+
+
+def test_healthcheck_uses_published_endpoint_and_instance(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from dincli.dind.lock import acquire_state_lock, release_state_lock
+    from dincli.dind.main import app
+    from dincli.dind.paths import StateDirs
+
+    paths = StateDirs(tmp_path)
+    runner = CliRunner()
+    args = ["healthcheck", "--state-dir", str(tmp_path)]
+    with ExitStack() as cleanup:
+        store = StateStore(paths.db_path)
+        cleanup.callback(store.close)
+        lock = acquire_state_lock(paths.lock_path)
+        assert lock is not None
+        cleanup.callback(release_state_lock, lock)
+        with _running_health_server(store, monkeypatch) as server:
+            # Keep one independent client connected across both probe and shutdown.
+            cleanup.enter_context(socket.create_connection(server.server_address))
+            assert runner.invoke(app, args).exit_code == 0
+            store.set_meta("health_instance", "different-instance")
+            assert runner.invoke(app, args).exit_code == 1
+            store.set_meta("health_instance", server.instance_id)
+            store.set_meta("last_tick", "2025-01-01T00:00:00+00:00")
+            result = runner.invoke(app, args)
+            assert result.exit_code == 1
+            assert "503" in result.output
