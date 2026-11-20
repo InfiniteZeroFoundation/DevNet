@@ -29,3 +29,15 @@ def test_dind_imports_no_cli():
     assert result.returncode == 0, (
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
+
+
+def test_container_probe_starts_without_cli(tmp_path):
+    script = textwrap.dedent("""
+        import sys
+        from dincli.dind.healthcheck import check_health
+
+        assert check_health(sys.argv[1]) == 1
+        assert "typer" not in sys.modules
+        assert "dincli.dind.main" not in sys.modules
+    """)
+    subprocess.run([sys.executable, "-c", script, str(tmp_path)], check=True)

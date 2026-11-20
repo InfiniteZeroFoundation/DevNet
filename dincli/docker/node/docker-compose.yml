@@ -83,7 +83,7 @@ services:
     # Swarm). Operators who want restart-on-unhealthy need an external
     # watchdog acting on this status.
     healthcheck:
-      test: ["CMD", "dind", "healthcheck"]
+      test: ["CMD", "python", "-m", "dincli.dind.healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 3

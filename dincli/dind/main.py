@@ -406,32 +406,9 @@ def status(
 @app.command()
 def healthcheck(state_dir: str | None = STATE_DIR) -> None:
     """Exit successfully only for a healthy response from this daemon instance."""
-    from dincli.dind.state import StateStore
+    from dincli.dind.healthcheck import check_health
 
-    paths = StateDirs(resolve_state_dir(state_dir))
-    if not is_locked(paths.lock_path):
-        raise typer.Exit(1)
-
-    store = StateStore(paths.db_path)
-    try:
-        host = store.get_meta("health_host")
-        port = store.get_meta("health_port")
-        instance_id = store.get_meta("health_instance")
-        if not host or not port or not instance_id:
-            raise typer.Exit(1)
-        if host == "0.0.0.0":
-            host = "127.0.0.1"
-        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=3) as response:
-            payload = json.load(response)
-        if not isinstance(payload, dict) or payload.get("instance_id") != instance_id:
-            raise typer.Exit(1)
-        if payload.get("status") != "healthy":
-            raise typer.Exit(1)
-    except (OSError, ValueError) as exc:
-        typer.echo(f"Health check failed: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    finally:
-        store.close()
+    raise typer.Exit(check_health(state_dir))
 
 
 preferences_app = typer.Typer(help="Local daemon preferences.")
