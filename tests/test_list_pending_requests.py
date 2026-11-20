@@ -6,11 +6,24 @@ Covers:
   - GraphQL path: manifest update requests returned from subgraph
   - Fallback to RPC when the subgraph endpoint is unreachable
   - Fallback to RPC when the subgraph returns a GraphQL error body
+  - The subgraph is opt-in: with DIN_SUBGRAPH_URL unset, no HTTP call is made
+  - Every listing says which source it came from
+  - Both queries order by requestId
 """
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import dincli.cli.dinrep as dindao_module
+
+SUBGRAPH_URL = "http://graph.example:8000/subgraphs/name/din-protocol/graphql"
+
+
+@pytest.fixture(autouse=True)
+def _subgraph_opt_in(monkeypatch):
+    """Most tests exercise the subgraph path, which needs DIN_SUBGRAPH_URL set."""
+    monkeypatch.setenv("DIN_SUBGRAPH_URL", SUBGRAPH_URL)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -159,3 +172,65 @@ def test_rpc_fallback_on_http_error():
         dindao_module.list_pending_requests(ctx, req_type="model")
 
     registry.functions.totalModelRequests.return_value.call.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Opt-in, source line and ordering (PR No. 355 review No. 1 and No. 2)
+# ---------------------------------------------------------------------------
+
+
+def test_no_subgraph_call_without_opt_in(monkeypatch):
+    monkeypatch.delenv("DIN_SUBGRAPH_URL", raising=False)
+    ctx, msgs, registry = _make_ctx()
+    with patch.object(dindao_module._requests, "post") as post:
+        dindao_module.list_pending_requests(ctx, req_type=None)
+
+    post.assert_not_called()
+    registry.functions.totalModelRequests.return_value.call.assert_called_once()
+    registry.functions.totalManifestRequests.return_value.call.assert_called_once()
+    output = "\n".join(str(m) for m in msgs)
+    assert output.count("Source: local DINModelRegistry over RPC.") == 2
+
+
+def test_blank_subgraph_url_counts_as_unset(monkeypatch):
+    monkeypatch.setenv("DIN_SUBGRAPH_URL", "   ")
+    ctx, msgs, registry = _make_ctx()
+    with patch.object(dindao_module._requests, "post") as post:
+        dindao_module.list_pending_requests(ctx, req_type="model")
+
+    post.assert_not_called()
+    registry.functions.totalModelRequests.return_value.call.assert_called_once()
+
+
+def test_subgraph_listing_names_its_source():
+    ctx, msgs, _ = _make_ctx()
+    fake_data = {"modelRegistrationRequests": []}
+    with patch.object(dindao_module._requests, "post", return_value=_make_response(fake_data)) as post:
+        dindao_module.list_pending_requests(ctx, req_type="model")
+
+    assert post.call_args.args[0] == SUBGRAPH_URL
+    output = "\n".join(str(m) for m in msgs)
+    assert f"Source: subgraph at {SUBGRAPH_URL}" in output
+    assert "local deployment" in output
+
+
+def test_failed_subgraph_says_it_fell_back():
+    ctx, msgs, registry = _make_ctx()
+    with patch.object(dindao_module._requests, "post", side_effect=ConnectionError("refused")):
+        dindao_module.list_pending_requests(ctx, req_type="manifest")
+
+    registry.functions.totalManifestRequests.return_value.call.assert_called_once()
+    output = "\n".join(str(m) for m in msgs)
+    assert "Subgraph query failed; listing from the local DINModelRegistry over RPC instead." in output
+
+
+def test_queries_order_by_request_id():
+    ctx, _, _ = _make_ctx()
+    empty = {"modelRegistrationRequests": [], "manifestUpdateRequests": []}
+    with patch.object(dindao_module._requests, "post", return_value=_make_response(empty)) as post:
+        dindao_module.list_pending_requests(ctx, req_type=None)
+
+    queries = [c.kwargs["json"]["query"] for c in post.call_args_list]
+    assert len(queries) == 2
+    for query in queries:
+        assert "orderBy: requestId, orderDirection: asc" in query

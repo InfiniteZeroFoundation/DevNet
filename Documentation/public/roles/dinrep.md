@@ -144,6 +144,8 @@ Model registration follows a **request → approval** flow. Model Owners submit 
 dincli dinrep registry list-pending-requests [-t model|manifest]
 ```
 
+By default this reads `DINModelRegistry` over RPC on the selected `--network`. To read from a subgraph instead, set `DIN_SUBGRAPH_URL` to its GraphQL endpoint. The subgraph must index the same deployment as `--network`, and it can lag the chain. Each list prints which source it came from. If the subgraph call fails, the command falls back to RPC and says so.
+
 **Inspect a single request:**
 
 ```bash
