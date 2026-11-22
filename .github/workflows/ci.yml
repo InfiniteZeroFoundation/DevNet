@@ -66,6 +66,11 @@ jobs:
         working-directory: foundry
         run: forge build
 
+      # indexer-nest ships ABIs copied from foundry/out; fail if they drift
+      # from the freshly built artifacts.
+      - name: indexer-nest ABI drift check
+        run: python3 indexer-nest/spike/sync-abis.py --check
+
       - name: Verify task artifact bundles
         run: python3 .github/scripts/check_task_artifacts.py
 
