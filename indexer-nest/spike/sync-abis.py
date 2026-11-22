@@ -12,7 +12,9 @@ writes them.
 DINTask.json is DINTaskCoordinator's and DINTaskAuditor's ABIs merged (one nuthatch template takes
 one ABI), without their constructors. Entries are compared as JSON and order does not matter.
 """
-import json, os, sys
+import json
+import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NEST = os.path.dirname(HERE)

@@ -1,4 +1,6 @@
 import sys
+
+
 def u256(w):
     """SQL expression: the 32 low hex digits of word `w` (a 64-char hex string) as DECIMAL(38,0)."""
     terms=[]

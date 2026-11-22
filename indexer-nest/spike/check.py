@@ -7,7 +7,11 @@ anvil, and where the chain can say it, against the chain: `cast call` at the hea
 Exit status 1 if any check fails. A view with no rows on the run is reported as UNCHECKED, not as
 passing: nothing in the run produces its events. Needs `cast` (foundry) on PATH for the chain checks.
 """
-import json, shutil, subprocess, sys, urllib.request
+import json
+import shutil
+import subprocess
+import sys
+import urllib.request
 
 NEST = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8289"
 RPC = sys.argv[2] if len(sys.argv) > 2 else "http://127.0.0.1:8545"
@@ -78,7 +82,10 @@ check("fee_router_config", pick(fc, "treasury_bps_ceiling", "din_validator_pool_
 check("fee_router_config.treasury is account 30", fc[0]["treasury"], "0x1bcb8e569eedab4668e55145cfeaf190902d3cf2")
 
 snaps = sorted(one("fee_snapshots"), key=lambda x: (x["block_number"], x["log_index"]))
-fee = lambda *v: dict(zip(("open_source_fee", "proprietary_fee", "open_source_update_fee", "proprietary_update_fee"), map(str, v)))
+def fee(*v):
+    names = ("open_source_fee", "proprietary_fee", "open_source_update_fee", "proprietary_update_fee")
+    return dict(zip(names, map(str, v)))
+
 check("fee_snapshots: five, four granular then one atomic", [s["update_kind"] for s in snaps], ["granular"] * 4 + ["atomic"])
 # each single setter changes one fee; the other three are read from the chain, so they carry the earlier setters
 check("fee_snapshots: granular snapshots carry the setters made so far",
@@ -126,7 +133,9 @@ check("validators: the three auditors registered an encryption key", sum(1 for x
 check("validators: nobody jailed, blacklisted or withdrawn", (any(x["jailed"] or x["blacklisted"] for x in va.values()), {x["total_withdrawn"] for x in va.values()}), (False, {"0"}))
 
 # --- the GI's flow: 3 local models, 3 auditors in one batch, 6 aggregators in one T1 batch and one T2 batch (NuthatchGI.s.sol)
-CID = lambda n: "0x" + "%064x" % n
+def CID(n):
+    return "0x" + "%064x" % n
+
 t1 = one("tier1_batches")
 check("tier1_batches: one, finalized with CID A", pick(t1, "gi", "batch_id", "finalized", "winning_cid"),
       [{"gi": "1", "batch_id": "0", "finalized": True, "winning_cid": CID(0xA1)}])
