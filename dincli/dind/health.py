@@ -16,6 +16,11 @@ behind-schedule risks a restart loop under sustained load while destroying
 the state needed to diagnose a hung loop. A genuinely stopped process is
 what ``restart: unless-stopped`` already covers. Operators who want
 restart-on-unhealthy need an external watchdog acting on the 503.
+
+Issue #345: when a ChainHealthMonitor is attached, the body also carries the
+config/RPC/signer checks and each configured model's GI + phase. A failed
+check is "unhealthy" (also 503). The handler only reads the monitor's latest
+snapshot; the network calls happen on the monitor's own thread.
 """
 
 import json
@@ -27,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
 from dincli.dind.capabilities import resource_snapshot
+from dincli.dind.chain_health import snapshot_is_healthy
 from dincli.dind.state import StateStore
 
 logger = logging.getLogger("dincli")
@@ -88,7 +94,14 @@ class HealthHandler(BaseHTTPRequestHandler):
         state_dir = self.server.state.db_path.parent
         snap = resource_snapshot(state_dir)
 
-        return {
+        chain = None
+        monitor = getattr(self.server, "chain_monitor", None)
+        if monitor is not None:
+            chain = monitor.snapshot()
+            if not snapshot_is_healthy(chain):
+                status = "unhealthy"
+
+        payload = {
             "status": status,
             "uptime_s": uptime_s,
             "pid": pid,
@@ -105,6 +118,11 @@ class HealthHandler(BaseHTTPRequestHandler):
                 "cpu_speed_mhz": snap["cpu_speed_mhz"],
             },
         }
+        if chain is not None:
+            payload["checked_at"] = chain["checked_at"]
+            payload["checks"] = chain["checks"]
+            payload["models"] = chain["models"]
+        return payload
 
 
 class HealthServer(ThreadingHTTPServer):
@@ -113,6 +131,7 @@ class HealthServer(ThreadingHTTPServer):
         self.state = state
         self.start_time = time.time()
         self.instance_id = uuid4().hex
+        self.chain_monitor = None  # set by `dind start` (issue #345)
 
     def publish_endpoint(self) -> None:
         host, port = self.server_address

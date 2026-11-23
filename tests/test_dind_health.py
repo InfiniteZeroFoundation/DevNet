@@ -8,10 +8,15 @@ from contextlib import ExitStack, contextmanager
 from io import BytesIO
 from pathlib import Path
 
+import pytest
+
+from dincli.dind import config as dind_config
 from dincli.dind import health as health_module
 from dincli.dind.capabilities import resource_snapshot as _real_resource_snapshot
+from dincli.dind.chain_health import ChainHealthMonitor
 from dincli.dind.health import HealthHandler, HealthServer
 from dincli.dind.state import StateStore
+from dincli.sdk.errors import NetworkError
 
 
 @contextmanager
@@ -354,3 +359,271 @@ def test_healthcheck_uses_published_endpoint_and_instance(tmp_path, monkeypatch)
             result = runner.invoke(app, args)
             assert result.exit_code == 1
             assert "503" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Issue #345: config/RPC/signer checks and per-model GI phase
+# ---------------------------------------------------------------------------
+
+_MODEL = "0x6Ce502a2E01e2828B692983A8c206E187119753d"
+_SECRET_URL = "https://rpc.example/v3/SECRET-API-KEY"
+
+
+class _Call:
+    def __init__(self, value):
+        self._value = value
+
+    def call(self):
+        if isinstance(self._value, Exception):
+            raise self._value
+        return self._value
+
+
+class _FakeChain:
+    """Stands in for w3: block number plus GI()/GIstate() per coordinator."""
+
+    def __init__(self, gi=2, state=6, block=123):
+        self.gi, self.state, self.block = gi, state, block
+        outer = self
+
+        class _Eth:
+            @property
+            def block_number(self):
+                return outer.block
+
+            def contract(self, address, abi):
+                class _Functions:
+                    def GI(self):
+                        return _Call(outer.gi)
+
+                    def GIstate(self):
+                        return _Call(outer.state)
+
+                class _Contract:
+                    functions = _Functions()
+
+                return _Contract()
+
+        self.eth = _Eth()
+
+
+class _FakeSigner:
+    def __init__(self, ok=True):
+        self.ok = ok
+
+    def can_decrypt(self):
+        return self.ok
+
+
+class _FakeSession:
+    def __init__(self, chain=None, signer=None, network="local", w3_error=None):
+        self._chain = chain if chain is not None else _FakeChain()
+        self.signer = signer if signer is not None else _FakeSigner()
+        self.network = network
+        self._w3_error = w3_error
+
+    @property
+    def w3(self):
+        if self._w3_error is not None:
+            raise self._w3_error
+        return self._chain
+
+
+def _ok_rpc_config(monkeypatch):
+    monkeypatch.setattr(
+        "dincli.sdk.config.resolve_network_value",
+        lambda network, key: _SECRET_URL,
+    )
+
+
+def _health_body(store, monitor):
+    handler, wfile = _make_handler(store)
+    handler.server.chain_monitor = monitor
+    handler.do_GET()
+    response = wfile.getvalue()
+    return _status_line(response), json.loads(response.split(b"\r\n\r\n", 1)[1])
+
+
+def _fresh_tick(store):
+    from datetime import datetime, timezone
+
+    store.set_meta("last_tick", datetime.now(timezone.utc).isoformat())
+
+
+def test_health_reports_gi_phase_per_model(tmp_path, monkeypatch):
+    _ok_rpc_config(monkeypatch)
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    monitor = ChainHealthMonitor([_MODEL], session=_FakeSession())
+    monitor.refresh()
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"200" in status_line
+    assert body["status"] == "healthy"
+    assert body["checks"]["config"] == {"ok": True, "network": "local"}
+    assert body["checks"]["rpc"] == {"ok": True, "block": 123}
+    assert body["checks"]["signer"] == {"ok": True}
+    [model] = body["models"]
+    assert model["coordinator"] == _MODEL
+    assert model["gi"] == 2
+    assert model["state"] == "DINaggregatorsRegistrationStarted"
+    assert model["state_code"] == 6
+    assert model["observed_for_s"] >= 0
+    store.close()
+
+
+def test_health_unreachable_rpc_is_unhealthy_503(tmp_path, monkeypatch):
+    _ok_rpc_config(monkeypatch)
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    error = NetworkError(f"could not reach {_SECRET_URL}", code="rpc_unreachable")
+    monitor = ChainHealthMonitor([_MODEL], session=_FakeSession(w3_error=error))
+    monitor.refresh()
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"503" in status_line
+    assert body["status"] == "unhealthy"
+    assert body["checks"]["rpc"] == {"ok": False, "error": "rpc_unreachable"}
+    assert body["models"] == [{"coordinator": _MODEL, "error": "rpc_unavailable"}]
+    assert "SECRET" not in json.dumps(body)
+    store.close()
+
+
+def test_health_missing_signer_is_unhealthy_503(tmp_path, monkeypatch):
+    _ok_rpc_config(monkeypatch)
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    session = _FakeSession(signer=_FakeSigner(ok=False))
+    monitor = ChainHealthMonitor([], session=session)
+    monitor.refresh()
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"503" in status_line
+    assert body["status"] == "unhealthy"
+    assert body["checks"]["signer"] == {"ok": False, "error": "signer_unavailable"}
+    assert body["checks"]["rpc"]["ok"] is True
+    store.close()
+
+
+def test_health_signer_error_never_leaks_message(tmp_path, monkeypatch):
+    _ok_rpc_config(monkeypatch)
+
+    class _RaisingSigner:
+        def can_decrypt(self):
+            raise RuntimeError("password=hunter2 keystore={...}")
+
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    monitor = ChainHealthMonitor([], session=_FakeSession(signer=_RaisingSigner()))
+    monitor.refresh()
+
+    _, body = _health_body(store, monitor)
+
+    assert body["checks"]["signer"] == {"ok": False, "error": "signer_unavailable"}
+    assert "hunter2" not in json.dumps(body)
+    store.close()
+
+
+def test_health_missing_rpc_config_is_unhealthy(tmp_path, monkeypatch):
+    def missing(network, key):
+        raise KeyError("rpc_url not set for network 'local'")
+
+    monkeypatch.setattr("dincli.sdk.config.resolve_network_value", missing)
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    monitor = ChainHealthMonitor([], session=_FakeSession())
+    monitor.refresh()
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"503" in status_line
+    assert body["checks"]["config"] == {"ok": False, "error": "config_error"}
+    assert body["checks"]["rpc"] == {"ok": False, "error": "config_error"}
+    store.close()
+
+
+def test_health_model_read_failure_is_unhealthy(tmp_path, monkeypatch):
+    _ok_rpc_config(monkeypatch)
+    chain = _FakeChain(gi=ValueError("not a coordinator"))
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    monitor = ChainHealthMonitor([_MODEL], session=_FakeSession(chain=chain))
+    monitor.refresh()
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"503" in status_line
+    assert body["models"] == [{"coordinator": _MODEL, "error": "model_read_failed"}]
+    store.close()
+
+
+def test_health_before_first_refresh_is_unhealthy(tmp_path):
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    monitor = ChainHealthMonitor([_MODEL], session=_FakeSession())
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"503" in status_line
+    assert body["checks"]["rpc"] == {"ok": False, "error": "checks_pending"}
+    store.close()
+
+
+def test_health_stale_snapshot_is_unhealthy(tmp_path, monkeypatch):
+    _ok_rpc_config(monkeypatch)
+    store = StateStore(tmp_path / "test.db")
+    _fresh_tick(store)
+    monitor = ChainHealthMonitor([_MODEL], session=_FakeSession(), interval_s=1.0)
+    monitor.refresh()
+    snap, taken = monitor._latest
+    monitor._latest = (snap, taken - 60)  # refresh thread hung for a minute
+
+    status_line, body = _health_body(store, monitor)
+
+    assert b"503" in status_line
+    assert body["checks"]["rpc"] == {"ok": False, "error": "checks_stale"}
+    store.close()
+
+
+def test_observed_since_holds_until_state_changes(monkeypatch):
+    _ok_rpc_config(monkeypatch)
+    chain = _FakeChain(gi=2, state=6)
+    monitor = ChainHealthMonitor([_MODEL], session=_FakeSession(chain=chain))
+
+    first = monitor.refresh()["models"][0]["observed_since"]
+    time.sleep(0.01)
+    assert monitor.refresh()["models"][0]["observed_since"] == first
+
+    chain.state = 10
+    model = monitor.refresh()["models"][0]
+    assert model["state"] == "LMSstarted"
+    assert model["observed_since"] != first
+
+
+def test_resolve_health_models_env(monkeypatch):
+    lower = _MODEL.lower()
+    monkeypatch.setenv("DIN_DIND_HEALTH_MODELS", f" {lower}, ,{_MODEL} ")
+    assert dind_config.resolve_health_models() == [_MODEL]
+
+
+def test_resolve_health_models_config_list(monkeypatch):
+    monkeypatch.delenv("DIN_DIND_HEALTH_MODELS", raising=False)
+    monkeypatch.setattr(
+        dind_config, "load_config", lambda: {"dind_health_models": [_MODEL]}
+    )
+    assert dind_config.resolve_health_models() == [_MODEL]
+
+
+def test_resolve_health_models_default_empty(monkeypatch):
+    monkeypatch.delenv("DIN_DIND_HEALTH_MODELS", raising=False)
+    monkeypatch.setattr(dind_config, "load_config", lambda: {})
+    assert dind_config.resolve_health_models() == []
+
+
+def test_resolve_health_models_rejects_bad_address(monkeypatch):
+    monkeypatch.setenv("DIN_DIND_HEALTH_MODELS", "0x1234")
+    with pytest.raises(ValueError, match="not a valid address"):
+        dind_config.resolve_health_models()

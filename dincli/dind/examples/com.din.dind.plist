@@ -11,8 +11,13 @@
     </array>
     <key>RunAtLoad</key>
     <true/>
+    <!-- Restart only after a crash. With a plain <true/>, launchd also
+         relaunches after a clean `dind stop`, so dind could not be stopped. -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <key>StandardOutPath</key>
     <string>/usr/local/var/log/dind.log</string>
     <key>StandardErrorPath</key>

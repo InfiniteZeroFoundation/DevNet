@@ -402,3 +402,65 @@ def test_occupied_health_port_leaves_job_pending_and_allows_retry(tmp_path, monk
     finally:
         store.close()
         _reset_dincli_logger()
+
+
+_HEALTH_MODEL = "0x6Ce502a2E01e2828B692983A8c206E187119753d"
+
+
+def test_start_runs_chain_health_monitor_for_configured_models(tmp_path, monkeypatch):
+    """Issue #345: `dind start` hands DIN_DIND_HEALTH_MODELS (checksummed) to
+    the chain-health monitor, attaches it to /health, and stops it on exit."""
+    from dincli.dind import chain_health
+    from dincli.dind import health as health_module
+
+    seen = {}
+
+    class SpyMonitor:
+        def __init__(self, models):
+            seen["models"] = models
+            seen["events"] = []
+
+        def start(self):
+            seen["events"].append("start")
+
+        def stop(self):
+            seen["events"].append("stop")
+
+    attached = []
+    publish_endpoint = health_module.HealthServer.publish_endpoint
+
+    def spy_publish(server):
+        attached.append(server.chain_monitor)
+        return publish_endpoint(server)
+
+    monkeypatch.setattr(chain_health, "ChainHealthMonitor", SpyMonitor)
+    monkeypatch.setattr(health_module.HealthServer, "publish_endpoint", spy_publish)
+    monkeypatch.setenv("DIN_DIND_MAX_TICKS", "1")
+    monkeypatch.setenv("DIN_DIND_HEALTH_MODELS", _HEALTH_MODEL.lower())
+    try:
+        result = runner.invoke(
+            app, ["start", "--state-dir", str(tmp_path), "--health-port", "0"]
+        )
+        assert result.exit_code == 0, result.output
+        assert seen["models"] == [_HEALTH_MODEL]
+        assert seen["events"] == ["start", "stop"]
+        assert len(attached) == 1 and isinstance(attached[0], SpyMonitor)
+    finally:
+        _reset_dincli_logger()
+
+
+def test_start_rejects_invalid_health_models_and_releases_lock(tmp_path, monkeypatch):
+    paths = StateDirs(tmp_path)
+    monkeypatch.setenv("DIN_DIND_HEALTH_MODELS", "not-an-address")
+    try:
+        result = runner.invoke(
+            app, ["start", "--state-dir", str(tmp_path), "--health-port", "0"]
+        )
+        assert result.exit_code != 0
+        assert isinstance(result.exception, ValueError)
+        assert "not a valid address" in str(result.exception)
+        fd = acquire_state_lock(paths.lock_path)
+        assert fd is not None, "state lock still held after a failed start"
+        release_state_lock(fd)
+    finally:
+        _reset_dincli_logger()

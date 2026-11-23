@@ -141,6 +141,37 @@ def resolve_log_backup_count(flag: int | None = None) -> int:
     return value
 
 
+def resolve_health_models() -> list[str]:
+    """Task-coordinator addresses whose GI phase /health reports.
+
+    DIN_DIND_HEALTH_MODELS (comma-separated) > config.json
+    ``dind_health_models`` (a list or a comma-separated string) > none.
+    Returns checksummed addresses. Like the log resolvers, a malformed value
+    is a configuration mistake and raises instead of being skipped.
+    """
+    raw = os.environ.get("DIN_DIND_HEALTH_MODELS")
+    if raw is None:
+        raw = load_config().get("dind_health_models") or []
+
+    items = raw.split(",") if isinstance(raw, str) else list(raw)
+    items = [str(item).strip() for item in items if str(item).strip()]
+
+    # Imported here, not at module level: healthcheck.py imports this module
+    # and must stay fast to start (see 08bc067).
+    from web3 import Web3
+
+    models = []
+    for item in items:
+        if not Web3.is_address(item):
+            raise ValueError(
+                f"DIN_DIND_HEALTH_MODELS: not a valid address: {item!r}"
+            )
+        address = Web3.to_checksum_address(item)
+        if address not in models:
+            models.append(address)
+    return models
+
+
 def validate_health_port(port: int) -> None:
     # 0 (ephemeral) is valid: two daemons racing a fixed port would fail on
     # bind rather than on the lock, measuring the wrong thing. health.py
