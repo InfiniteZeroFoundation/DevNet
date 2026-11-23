@@ -1,13 +1,14 @@
 # dincli/core.py
 from __future__ import annotations
 
+import os
 import sys
 from typing import List
 
 import click
 from typer.core import TyperGroup
 
-from dincli.cli.utils import ChainIdMismatchError
+from dincli.sdk.errors import DinError
 
 
 class GlobalOptionsGroup(TyperGroup):
@@ -37,6 +38,13 @@ class GlobalOptionsGroup(TyperGroup):
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
-        except (ChainIdMismatchError, ConnectionError) as e:
+        except (DinError, ConnectionError) as e:
+            # DIN_DEBUG=1 (exact match, not truthiness — DIN_DEBUG=0/false would
+            # otherwise enable debug) re-raises the sanitized exception so the
+            # stack is recovered. Every `from None` upstream still suppresses the
+            # provider cause, which may carry a credential — debug mode is not an
+            # exception to that disclosure policy.
+            if os.getenv("DIN_DEBUG") == "1":
+                raise
             click.secho(str(e), err=True, fg="red")
             sys.exit(1)

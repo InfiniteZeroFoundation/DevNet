@@ -8,6 +8,7 @@ from hexbytes import HexBytes
 from rich.console import Console
 
 from dincli.cli import utils
+from dincli.sdk.session import DinSession
 
 TX_HASH_STRING = "0x" + "AbC123ef" * 8
 TX_HASH_BYTES = bytes.fromhex(TX_HASH_STRING[2:])
@@ -85,20 +86,30 @@ def test_missing_explorer_does_not_interrupt_receipt_wait(monkeypatch, captured_
     console, output = captured_console
     monkeypatch.setattr(utils, "load_din_info", lambda: {"local": {}})
     tx_hash = TX_HASH_HEXBYTES
-    receipt = SimpleNamespace(status=1)
+    receipt = SimpleNamespace(
+        status=1, transactionHash=tx_hash, blockNumber=1, gasUsed=21000,
+        contractAddress=None, logs=[],
+    )
     eth = SimpleNamespace(
+        chain_id=1337, gas_price=10, max_priority_fee=1,
+        get_transaction_count=Mock(return_value=0),
         estimate_gas=Mock(return_value=21000),
         send_raw_transaction=Mock(return_value=tx_hash),
         wait_for_transaction_receipt=Mock(return_value=receipt),
     )
     account = SimpleNamespace(
-        sign_transaction=Mock(return_value=SimpleNamespace(raw_transaction=b"signed"))
+        address=lambda: "0x" + "12" * 20,
+        sign_transaction=Mock(return_value=SimpleNamespace(
+            raw_transaction=b"signed", hash=tx_hash,
+        )),
     )
+    session = DinSession(network="local", signer=account)
+    session._w3 = SimpleNamespace(eth=eth)
     context = SimpleNamespace(obj=SimpleNamespace(
         get_en_w3_account_console=lambda: (
             "local", SimpleNamespace(eth=eth), account, console
         ),
-        get_tx_params=lambda: {"nonce": 0},
+        session=session,
     ))
     contract_function = SimpleNamespace(build_transaction=Mock(return_value={"nonce": 0}))
 
@@ -108,10 +119,13 @@ def test_missing_explorer_does_not_interrupt_receipt_wait(monkeypatch, captured_
     )
 
     eth.send_raw_transaction.assert_called_once_with(b"signed")
-    eth.wait_for_transaction_receipt.assert_called_once_with(tx_hash)
+    expected_hash = "0x" + tx_hash.hex()
+    eth.wait_for_transaction_receipt.assert_called_once_with(
+        expected_hash, timeout=120.0, poll_latency=0.1,
+    )
     assert result is receipt
     text = output.getvalue()
-    assert f"Transaction hash: {tx_hash.hex()}\n" in text
+    assert f"Transaction hash: {expected_hash}\n" in text
     assert "✓ Transaction succeeded" in text
     assert "Transaction failed" not in text
     assert "Exception:" not in text
