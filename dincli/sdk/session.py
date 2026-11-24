@@ -37,7 +37,7 @@ from typing import Protocol, runtime_checkable
 from web3 import Web3
 
 from dincli.sdk.config import load_config, resolve_network
-from dincli.sdk.wallet import KeystoreSigner
+from dincli.sdk.wallet import KeystoreSigner, resolve_active_wallet_name
 
 
 @runtime_checkable
@@ -89,7 +89,9 @@ class DinSession:
     """Lazily resolves network, web3, account, config. No printing, no exit, no prompts.
 
     Default signer when none supplied: ``KeystoreSigner(wallet_name)`` —
-    non-interactive, so a bare ``DinSession()`` can never hang.
+    non-interactive, so a bare ``DinSession()`` can never hang. With no
+    ``wallet`` argument the name comes from DIN_WALLET_NAME, then config
+    ``wallet_name``, then "default" — the same order the CLI uses.
     """
 
     def __init__(self, network: str | None = None,
@@ -126,7 +128,9 @@ class DinSession:
     @property
     def signer(self) -> SignerProvider:
         if self._signer is None:
-            self._signer = KeystoreSigner(self._wallet_name or "default")
+            self._signer = KeystoreSigner(
+                self._wallet_name or resolve_active_wallet_name()
+            )
         return self._signer
 
     @property

@@ -19,6 +19,7 @@ from dincli import __version__
 from dincli.dind import control
 from dincli.dind.config import (
     resolve_health_host,
+    resolve_health_models,
     resolve_health_port,
     resolve_max_ticks,
     resolve_state_dir,
@@ -87,6 +88,7 @@ def start(
         port = resolve_health_port(health_port)
         validate_health_port(port)
         max_ticks = resolve_max_ticks()
+        health_models = resolve_health_models()
 
         from dincli.dind.daemon import DaemonLoop
         from dincli.dind.health import HealthServer
@@ -142,6 +144,14 @@ def start(
         except OSError as exc:
             typer.echo(f"Cannot bind dind health endpoint {host}:{port}: {exc}", err=True)
             raise typer.Exit(1) from exc
+        # Issue #345: config/RPC/signer checks and per-model GI phase for
+        # /health, refreshed on the monitor's own thread.
+        from dincli.dind.chain_health import ChainHealthMonitor
+
+        chain_monitor = ChainHealthMonitor(health_models)
+        health.chain_monitor = chain_monitor
+        chain_monitor.start()
+        resources.callback(chain_monitor.stop)
         health.publish_endpoint()
         state.set_meta("started_at", datetime.now(timezone.utc).isoformat())
         state.reset_running_jobs()

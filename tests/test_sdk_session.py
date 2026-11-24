@@ -150,6 +150,27 @@ class TestDinSessionSignerInjection:
         assert isinstance(signer, KeystoreSigner)
         assert signer._wallet_name == "testwallet"  # pyright: ignore[reportPrivateUsage]
 
+    def test_bare_session_uses_connected_wallet(self, monkeypatch):
+        """A bare DinSession() (what dind builds) signs with the wallet the
+        operator connected, in the CLI's order: env, then config, then
+        "default" — not always "default"."""
+        config = {"wallet_name": "from-config"}
+        monkeypatch.setattr("dincli.sdk.wallet.get_config", config.get)
+
+        monkeypatch.setenv("DIN_WALLET_NAME", "from-env")
+        assert DinSession().signer._wallet_name == "from-env"  # pyright: ignore[reportPrivateUsage]
+
+        monkeypatch.delenv("DIN_WALLET_NAME")
+        assert DinSession().signer._wallet_name == "from-config"  # pyright: ignore[reportPrivateUsage]
+
+        config.clear()
+        assert DinSession().signer._wallet_name == "default"  # pyright: ignore[reportPrivateUsage]
+
+    def test_bare_session_rejects_invalid_wallet_name(self, monkeypatch):
+        monkeypatch.setenv("DIN_WALLET_NAME", "../etc/passwd")
+        with pytest.raises(ValueError, match="Invalid account name"):
+            DinSession().signer
+
 
 # ---------------------------------------------------------------------------
 # Daemon adapter reference (D3)
