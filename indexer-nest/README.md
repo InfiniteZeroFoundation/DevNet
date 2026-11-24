@@ -14,7 +14,10 @@ One binary, no Docker or Postgres. Events land in local SQL; `views/*.sql` hold 
 ./anvil.sh --host 127.0.0.1
 
 # in another shell: the platform, one model taken through GI 1 to GIended, then the owner-side
-# governance calls (three forge scripts in spike/; it runs forge clean first)
+# governance calls (three forge scripts in spike/, copied into foundry/script/ for the run and removed on exit; it runs
+# `forge clean` first, which deletes foundry/out and foundry/cache, so run `forge build` again after)
+# CI does not compile these scripts, so they can break when DeployPlatform.s.sol or a contract
+# signature changes.
 spike/run.sh
 
 # here (indexer-nest/)
@@ -228,11 +231,16 @@ indexer-nest/spike/sync-abis.py            # rewrite indexer-nest/abis/
 indexer-nest/spike/sync-abis.py --check    # exit 1 if abis/ differs from forge build; for CI
 ```
 
+`schema.json`, `llms.txt` and `semantic.toml` are derived from `abis/` and the addresses in
+`nuthatch.toml`, and `sync-abis.py` does not touch them. `nuthatch dev` does not regenerate them
+either: it rewrites `schema.json` only when it is older than `nuthatch.toml`, and leaves `llms.txt`
+alone (they are hashed into the NID). After `sync-abis.py` or an address change, run
+`nuthatch schema --dir indexer-nest` and commit the result.
+
 `--check` compares entries as JSON, so key order and formatting do not matter. It also prints a note if
 `subgraph/abis/` disagrees with the build. On `develop` at 409bf2c, after `forge build`, `--check`
 passes: all eight files already equal the build, and the six that `subgraph/abis/` also has equal
-those too. I have not added it to `.github/workflows/`: that is the maintainers' call, and it needs
-`forge build` to have run first, which `ci.yml` may or may not already do.
+those too. CI runs `sync-abis.py --check` after `forge build`.
 
 ## dincli's read path
 

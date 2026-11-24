@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 // Run after NuthatchSpike.s.sol: takes GI 1 from its local-model submissions to GIended, so the
