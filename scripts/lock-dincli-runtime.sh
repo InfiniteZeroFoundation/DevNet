@@ -33,7 +33,10 @@ fi
 
 uv_version=0.10.9
 index=https://pypi.org/simple
-tmp=$(mktemp -d)
+mkdir -p requirements
+# Stage on the lock's filesystem so publishing the completed output is atomic.
+tmp=$(mktemp -d requirements/.dincli-lock.XXXXXXXX)
+tmp=$(cd "$tmp" && pwd)
 trap 'rm -rf -- "$tmp"' EXIT
 
 # Do not inherit private indexes, pip constraints, or tool configuration.
@@ -42,16 +45,20 @@ isolated=(env -i "PATH=$PATH" "HOME=$tmp" PIP_CONFIG_FILE=/dev/null)
 "${isolated[@]}" "$tmp/venv/bin/python" -m pip --isolated \
     --disable-pip-version-check install --quiet --no-deps --index-url "$index" "uv==$uv_version"
 
-mkdir -p requirements
+candidate="$tmp/dincli-runtime.txt"
+if [[ -f "$lock" ]]; then
+    cp -- "$lock" "$candidate"
+fi
 "${isolated[@]}" "$tmp/venv/bin/uv" --no-config pip compile pyproject.toml \
     --python-version 3.12 --universal --no-header --default-index "$index" \
-    --output-file "$lock" "${compile_args[@]}" >/dev/null
-require_lock
+    --output-file "$candidate" "${compile_args[@]}" >/dev/null
+[[ -s "$candidate" ]]
 {
     printf '# Generated from pyproject.toml by scripts/lock-dincli-runtime.sh (uv %s).\n' "$uv_version"
-    cat -- "$lock"
+    cat -- "$candidate"
 } > "$tmp/lock-with-header"
-cat "$tmp/lock-with-header" > "$lock"
+mv -- "$tmp/lock-with-header" "$lock"
+require_lock
 
 if [[ "$mode" == --check ]]; then
     git diff --exit-code -- "$lock"
