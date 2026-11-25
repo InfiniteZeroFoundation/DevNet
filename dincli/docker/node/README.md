@@ -245,6 +245,32 @@ Any failed check, or a model whose state can't be read, makes the status
 The checks refresh every 15 seconds in the background, so a slow RPC never
 slows the endpoint down.
 
+### Watch for stalled training rounds
+
+Set `DIN_DIND_HEALTH_MODELS` on dind to the coordinator addresses you want
+to watch. With this checkout installed, run the monitor alongside a local dind
+in the same network namespace (for Compose, prefix the command with
+`docker compose exec din-node`):
+
+```sh
+python -m dincli.dind.gi_monitor --threshold-s 600 --interval-s 15
+```
+
+The monitor polls loopback port 8787 (override with `--port`) and writes JSON
+lines to stdout. The example uses ten minutes for every phase from `GIstarted`
+through `AggregatorsSlashed`. The team can choose a production threshold,
+phase policy and destination separately.
+
+A `stalled` line identifies the coordinator, GI, phase and observed seconds.
+It appears once per stall. A `recovered` line gives the later phase or GI that
+cleared it. Missing models, failed reads and observation resets have separate
+diagnostics and keep open alerts pending. A dind restart can reset the timer.
+Restarting the monitor clears its in-memory alert history.
+
+The timer measures how long this daemon has observed the GI and phase. The
+on-chain transition time, activity within the phase and cause of a delay
+cannot be inferred from these snapshots.
+
 ### Upgrades and your data
 
 `docker compose up -d --build` rebuilds the image with the new code and replaces
