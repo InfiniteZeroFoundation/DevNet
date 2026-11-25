@@ -8,6 +8,7 @@ rubber stamp.
 import io
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -151,3 +152,21 @@ def test_indented_fence_up_to_three_spaces_counts():
 
 def test_prose_is_yielded_when_there_are_no_fences():
     assert _prose("one\ntwo") == ["one", "two"]
+
+def test_runtime_lock_follows_requested_dependency_extras(tmp_path, monkeypatch):
+    checker = _load("check_runtime_lock.py")
+    graph = {
+        "dincli": ["backend[crypto]", 'pytest; extra == "test"'],
+        "backend": ['adapter; extra == "crypto"'],
+        "adapter": [],
+    }
+    monkeypatch.setattr(checker, "distribution", lambda name: SimpleNamespace(
+        version="1", requires=graph[name],
+    ))
+    lock = tmp_path / "runtime.txt"
+    monkeypatch.setattr(checker, "LOCK", lock)
+    lock.write_text("backend==1\nadapter==1\n")
+    checker.main()
+    lock.write_text("backend==1\n")
+    with pytest.raises(SystemExit, match="Missing runtime pin: adapter==1"):
+        checker.main()
