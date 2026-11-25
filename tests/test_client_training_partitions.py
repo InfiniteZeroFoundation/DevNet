@@ -12,9 +12,9 @@ def test_saved_partitions_contain_only_the_accounts_samples(tmp_path, capsys):
     save_client_partitions(samples, accounts, tmp_path)
 
     assert capsys.readouterr().out.splitlines() == [
-        f"  [1/3] 3 samples → {tmp_path}/0xCarol/data.pt",
-        f"  [2/3] 3 samples → {tmp_path}/0xAlice/data.pt",
-        f"  [3/3] 4 samples → {tmp_path}/0xBob/data.pt",
+        f"  [1/3] 3 samples → {tmp_path / '0xCarol' / 'data.pt'}",
+        f"  [2/3] 3 samples → {tmp_path / '0xAlice' / 'data.pt'}",
+        f"  [3/3] 4 samples → {tmp_path / '0xBob' / 'data.pt'}",
     ]
     for account, labels in zip(accounts, groups, strict=True):
         saved = torch.load(tmp_path / account / "data.pt", weights_only=False)
