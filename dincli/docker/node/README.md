@@ -248,7 +248,8 @@ slows the endpoint down.
 ### Watch for stalled training rounds
 
 Set `DIN_DIND_HEALTH_MODELS` on dind to the coordinator addresses you want
-to watch. With this checkout installed, run the monitor alongside a local dind
+to watch. dind reads each GI and phase at the block height in `checks.rpc.block`.
+With this checkout installed, run the monitor alongside a local dind
 in the same network namespace (for Compose, prefix the command with
 `docker compose exec din-node`):
 
@@ -264,7 +265,10 @@ phase policy and destination separately.
 A `stalled` line identifies the coordinator, GI, phase and observed seconds.
 It appears once per stall. A `recovered` line gives the later phase or GI that
 cleared it. Missing models, failed reads and observation resets have separate
-diagnostics and keep open alerts pending. A dind restart can reset the timer.
+diagnostics and keep open alerts pending. A `daemon_restarted` event means the
+daemon instance changed. The monitor rejects contradictory timers and snapshots
+older than 60 seconds. It follows the first observed network for the life of the
+process. If you intentionally switch networks, restart the monitor.
 Restarting the monitor clears its in-memory alert history.
 
 The timer measures how long this daemon has observed the GI and phase. The
