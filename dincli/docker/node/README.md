@@ -403,6 +403,7 @@ job status first).
   installs — `dincli/dind/examples/` — shipped with the `dind` daemon in
   PR #32.)
 - The `docker.sock` exposure above is accepted for devnet, not solved.
-- Image pins Python (`3.12-slim`) and `dincli` (built from source, deps pinned via
-  `dincli/requirements.txt`). For stricter reproducibility, pin the base image by
-  digest and `docker-ce-cli` to an exact version.
+- The image uses Python `3.12-slim` and builds `dincli` from source with the same
+  [runtime lock](../../../requirements/dincli-runtime.txt) used by Python CI.
+  For stricter reproducibility, pin the base image by digest and
+  `docker-ce-cli` to an exact version.
