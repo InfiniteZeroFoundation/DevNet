@@ -448,7 +448,9 @@ contract AuditorCommitRevealTest is Test {
         for (uint i = 0; i < batchAuditors.length; i++) {
             keys[i] = abi.encodePacked("encrypted-key-for-", batchAuditors[i]);
         }
-        bytes32 commitment = keccak256(abi.encodePacked(uint256(1), uint256(0), bytes32("K"), bytes32("plaintext")));
+        bytes32 key = "K";
+        bytes32 plaintext = "plaintext";
+        bytes32 commitment = keccak256(abi.encodePacked(uint256(1), uint256(0), key, plaintext));
 
         bytes memory encCID = abi.encodePacked(bytes32(uint256(0xDA7A)));
         vm.prank(modelOwner);
