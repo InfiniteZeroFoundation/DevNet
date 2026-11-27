@@ -494,12 +494,18 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
     ///      balance forever with no sweep path. Rejecting that case here is
     ///      cheap and catches both a mistyped GI number and a genuinely
     ///      unreachable one.
-    /// @param gi GI index to fund. Must be >= the coordinator's current GI.
+    ///
+    ///      The current GI is also refused once settleRewards has run: claims
+    ///      pay from giRewardSnapshot, so a later deposit would never reach
+    ///      anyone. DinEmission.fundGI deposits through here, so this covers
+    ///      emission funding too.
+    /// @param gi GI index to fund. Must be >= the coordinator's current GI and not yet settled.
     /// @param amount DIN amount to deposit, in wei (18 decimals).
     function depositRewards(uint256 gi, uint256 amount) external {
         if (amount == 0) revert TA_AmountMustBePositive();
         if (gi == 0 || gi < dintaskcoordinatorContract.GI())
             revert TA_InvalidRewardGI();
+        if (giRewardSnapshot[gi].settled) revert TA_RewardsAlreadySettled();
         dinToken.safeTransferFrom(msg.sender, address(this), amount);
         giRewardPool[gi] += amount;
         emit RewardDeposited(gi, msg.sender, amount);
@@ -880,15 +886,16 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         return (scores[count / 2 - 1] + scores[count / 2]) / 2;
     }
 
-    /// @notice Partitions active auditors and submitted models into audit batches.
+    /// @notice Partitions registered auditors and submitted models into audit batches.
     /// @dev Called by the paired DINTaskCoordinator, which has already locked
     ///      and passed in `seed` (issue #156 H-2) -- anchored at
     ///      DINTaskCoordinator.closeLMsubmissions, before this function could
-    ///      possibly run, so nobody can steer batch assignment by timing the
-    ///      call. Rejects a zero seed independently of the coordinator's own
-    ///      check (defense-in-depth, same principle as the M-3 fix elsewhere
-    ///      in this contract). Returns false is never reached; reverts on any
-    ///      failure condition.
+    ///      possibly run. Rejects a zero seed independently of the coordinator's
+    ///      own check (defense-in-depth). Shuffles the fixed per-GI registration
+    ///      list (dinAuditors[_GI]); batch layout is derived from the registered
+    ///      count so an unstake between lockAuditSeed and this call only forfeits
+    ///      the leaver's own seat (issue #243). Returns false is never reached;
+    ///      reverts on any failure condition.
     /// @param _GI Current GI index.
     /// @param seed Locked, ungrindable seed from DINTaskCoordinator.auditSeed.
     /// @return True on success.
@@ -900,42 +907,63 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             revert TA_CannotCreateAuditorsBatches();
         if (seed == bytes32(0)) revert TA_AuditSeedNotLocked();
 
-        // Filter the historical registration list down to currently active auditors.
-        address[] memory auditorPool = _activeAuditorPool(_GI);
-        uint aLen = auditorPool.length;
-
-        if (aLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
+        // ▸ 1. Shuffle the fixed per-GI registration list (issue #243).
+        address[] memory regList = dinAuditors[_GI];
+        uint rLen = regList.length;
+        if (rLen < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
         // Domain-separated derived seeds, same reasoning as the coordinator's
         // AGG_ADDR/AGG_IDX split -- independent of aggSeed since this derives
         // from the separately-locked auditSeed.
-        _shuffleAddressArray(auditorPool, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
+        _shuffleAddressArray(regList, keccak256(abi.encodePacked(seed, "AUD_ADDR")));
 
-        // ▸ 2. Build list of local model indexes
+        // ▸ 2. Build list of local model indexes (unchanged).
         LMSubmission[] storage lmlist = lmSubmissions[_GI];
         uint[] memory modelIdx = new uint[](lmlist.length);
-
-        for (uint i = 0; i < lmlist.length; i++) {
-            modelIdx[i] = i;
-        }
+        for (uint i = 0; i < lmlist.length; i++) modelIdx[i] = i;
         _shuffleUintArray(modelIdx, keccak256(abi.encodePacked(seed, "AUD_IDX")));
 
-        // ▸ 3. Create batches, Greedily fill Auditors batches
+        // ▸ 3. Compute batch count from registered count, then cap by active count so
+        //      the seat fill below can never exhaust the reserve (issue #243 liveness).
+        uint mLen = modelIdx.length;
+        uint batchCnt = mLen / params.modelsPerBatch
+            + (mLen % params.modelsPerBatch >= params.MIN_MODELS_PER_BATCH ? 1 : 0);
+        if (batchCnt * params.auditorsPerBatch > rLen)
+            batchCnt = rLen / params.auditorsPerBatch;
+
+        uint activeCount;
+        for (uint i = 0; i < rLen;) {
+            if (dinvalidatorStakeContract.isValidatorActive(regList[i])) activeCount++;
+            unchecked { i++; }
+        }
+        if (batchCnt * params.auditorsPerBatch > activeCount)
+            batchCnt = activeCount / params.auditorsPerBatch;
+        if (activeCount < params.auditorsPerBatch) revert TA_NotEnoughAuditors();
+
+        uint vPre = batchCnt * params.auditorsPerBatch;
+
+        // ▸ 4. Position-stable seat fill. Inactive seat-holder at position i is
+        //      replaced by the first active reserve entry (positions vPre..rLen-1).
+        //      The activeCount cap guarantees resPtr never reaches rLen.
+        uint resPtr = vPre;
+        for (uint i = 0; i < vPre;) {
+            if (!dinvalidatorStakeContract.isValidatorActive(regList[i])) {
+                while (resPtr < rLen && !dinvalidatorStakeContract.isValidatorActive(regList[resPtr]))
+                    { unchecked { resPtr++; } }
+                unchecked { regList[i] = regList[resPtr++]; }
+            }
+            unchecked { i++; }
+        }
+
+        // ▸ 5. Build audit batches from the position-stable validator array.
         uint vPtr;
         uint mPtr;
-        uint Batchcnt;
-
-        while (
-            vPtr + params.auditorsPerBatch <= auditorPool.length &&
-            (mPtr + params.modelsPerBatch <= modelIdx.length ||
-                (mPtr + params.MIN_MODELS_PER_BATCH <= modelIdx.length &&
-                    mPtr + params.modelsPerBatch > modelIdx.length))
-        ) {
-            AuditBatch storage b = auditBatches[_GI].push();
-            b.batchId = Batchcnt++;
+        for (uint b = 0; b < batchCnt; b++) {
+            AuditBatch storage batch = auditBatches[_GI].push();
+            batch.batchId = b;
 
             for (uint256 k = 0; k < params.auditorsPerBatch; k++) {
-                b.auditors.push(auditorPool[vPtr + k]);
-                isBatchAuditor[_GI][b.batchId][auditorPool[vPtr + k]] = true;
+                batch.auditors.push(regList[vPtr + k]);
+                isBatchAuditor[_GI][b][regList[vPtr + k]] = true;
             }
 
             uint modelsToAssign = params.modelsPerBatch;
@@ -944,17 +972,17 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
             }
 
             for (uint256 k = 0; k < modelsToAssign; k++) {
-                b.modelIndexes.push(modelIdx[mPtr + k]);
-                isBatchModelIndex[_GI][b.batchId][modelIdx[mPtr + k]] = true;
+                batch.modelIndexes.push(modelIdx[mPtr + k]);
+                isBatchModelIndex[_GI][b][modelIdx[mPtr + k]] = true;
             }
 
-            emit AuditorsBatchAuto(_GI, b.batchId);
+            emit AuditorsBatchAuto(_GI, b);
 
             vPtr += params.auditorsPerBatch;
             mPtr += modelsToAssign;
         }
 
-        emit AuditorsBatchesCreated(_GI, Batchcnt);
+        emit AuditorsBatchesCreated(_GI, batchCnt);
         return true;
     }
 
@@ -999,7 +1027,11 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
 
     /// @notice Records the encrypted test dataset CID, per-auditor encrypted keys, and
     ///         content commitment for a specific audit batch.
-    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked.
+    /// @dev Must be called once per batch before setTestDataAssignedFlag is invoked,
+    ///      and only while the coordinator is in AuditorsBatchesCreated
+    ///      (TA_CannotAssignTestData otherwise). After AuditTestDataAssigned, a
+    ///      batch's test data and commitment change only through the dispute
+    ///      route, reassignAuditTestDataset (Discussion #231).
     ///      `encryptedKeys[i]` must correspond to `auditBatches[gi][batchId].auditors[i]`
     ///      (same order createAuditorsBatches populated them in). Each auditor must have
     ///      a registered X25519 encryption key on DinValidatorStake before this call.
@@ -1019,6 +1051,10 @@ contract DINTaskAuditor is Ownable, ReentrancyGuardTransient {
         bytes[] calldata encryptedKeys,
         bytes32 commitment
     ) external onlyOwner onlyCurrentGI(gi) {
+        if (
+            dintaskcoordinatorContract.GIstate() !=
+            GIstates.AuditorsBatchesCreated
+        ) revert TA_CannotAssignTestData();
         AuditBatch storage batch = _batchAt(gi, batchId);
         if (encryptedKeys.length != batch.auditors.length)
             revert TA_EncryptedKeyCountMismatch();

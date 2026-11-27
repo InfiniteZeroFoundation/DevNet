@@ -21,6 +21,7 @@ the model is registered), `get_task_dir(coordinator)` for the model owner
 while preparing the task.
 """
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -95,7 +96,7 @@ def test_resolve_manifest_path_allows_a_path_equal_to_base_itself(tmp_path):
 def _make_dincontext():
     ctx = DinContext.__new__(DinContext)  # bypass __init__ (no config/log I/O needed)
     ctx.console = MagicMock()
-    ctx._resolved_network = "local"
+    ctx._session = SimpleNamespace(network="local")
     return ctx
 
 
@@ -335,7 +336,7 @@ def test_create_testdataset_rejects_manifest_path_escape(mock_get_manifest_key):
 
 def test_resolve_task_contract_artifact_path_falls_back_on_escape(monkeypatch, tmp_path):
     ctx = _make_dincontext()
-    ctx._resolved_network = "local"
+    ctx._session = SimpleNamespace(network="local")
 
     model_id = 1
     model_base_path = tmp_path / "local" / f"model_{model_id}"

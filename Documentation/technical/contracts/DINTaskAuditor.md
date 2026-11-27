@@ -121,13 +121,18 @@ Both task contracts are non-upgradeable. Existing deployed pairs keep their prev
 
 ## 6. Batches & Test Data
 
-- **`createAuditorsBatches(gi, seed)`** (from the coordinator, state `AuditSeedLocked`) — `seed` is the coordinator's locked `auditSeed[gi]` (see [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock)). A zero seed reverts with `TA_AuditSeedNotLocked`; the coordinator checks this too, so this is a second guard. The function then:
-  1. filters `dinAuditors[gi]` to auditors still `isValidatorActive` at call time (`TA_NotEnoughAuditors` if fewer than `auditorsPerBatch` remain);
-  2. shuffles the active auditors with `keccak256(seed, "AUD_ADDR")` and the model indexes with `keccak256(seed, "AUD_IDX")` (Fisher-Yates, in memory);
-  3. greedily forms batches of 3 auditors × 3 models (the last batch may take 2). Leftover auditors and models are unused.
+- **`createAuditorsBatches(gi, seed)`** (from the coordinator, state `AuditSeedLocked`) — `seed` is the coordinator's locked `auditSeed[gi]` (see [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock)). A zero seed reverts with `TA_AuditSeedNotLocked`; the coordinator checks this too, so this is a second guard.
 
-  Emits `AuditorsBatchAuto` per batch and `AuditorsBatchesCreated`. The seed comes from a block hash, so the residual trust assumptions in the coordinator doc apply here as well; one of them is specific to this function: a validator can still change the active pool by unstaking after the seed is locked and before this call.
-- **`assignAuditTestDataset(gi, batchId, testDataCID, encryptedKeys[], commitment)`** (owner) — stores the encrypted test-data CID (`AES-256-GCM(K, rawCID ‖ Sign(ownerSK, rawCID))`) and one encrypted copy of `K` per auditor, in the batch's auditor order. Every auditor must have an X25519 key on `DinValidatorStake`. Also stores `commitment = keccak256(gi, batchId, keccak256(K), keccak256(plaintext))`. Blocked while the batch awaits reassignment.
+  **Position-stable seat assignment** (issue #243): batch layout is derived from the fixed per-GI registration list (`dinAuditors[_GI]`), not the live active pool. An unstake between seed-lock and this call forfeits only the leaver's own seat; every other auditor's batch and seat position is fixed. Active count caps `batchCnt` so the fill never exhausts the reserve (liveness fix).
+
+  The function:
+  1. Shuffles the fixed per-GI list `dinAuditors[_GI]` in memory with `keccak256(seed, "AUD_ADDR")` and the model indexes with `keccak256(seed, "AUD_IDX")` (Fisher-Yates).
+  2. Computes `batchCnt` from registered count and model count (`rLen / auditorsPerBatch` cap), then further caps by `activeCount / auditorsPerBatch` so the fill below is guaranteed to succeed. If `activeCount < auditorsPerBatch`, the call reverts with `TA_NotEnoughAuditors` and GI state remains `AuditSeedLocked`, leaving the owner free to retry once enough validators become active again.
+  3. Position-stable seat fill: for each primary seat i inactive, draws from the reserve (`batchCnt*auditorsPerBatch..rLen-1`). The active-count cap ensures the reserve is never exhausted.
+  4. Forms batches of `auditorsPerBatch` auditors × `modelsPerBatch` models each (last batch may take `MIN_MODELS_PER_BATCH`). Leftover auditors and models are unused.
+
+  Emits `AuditorsBatchAuto` per batch and `AuditorsBatchesCreated`. Residual trust assumptions (sequencer trust, re-roll by declining to lock) are described in [DINTaskCoordinator §6.3](DINTaskCoordinator.md#63-batch-assignment-seed-lock).
+- **`assignAuditTestDataset(gi, batchId, testDataCID, encryptedKeys[], commitment)`** (owner) — stores the encrypted test-data CID (`AES-256-GCM(K, rawCID ‖ Sign(ownerSK, rawCID))`) and one encrypted copy of `K` per auditor, in the batch's auditor order. Every auditor must have an X25519 key on `DinValidatorStake`. Also stores `commitment = keccak256(gi, batchId, keccak256(K), keccak256(plaintext))`. Only callable while the coordinator is in `AuditorsBatchesCreated` (`TA_CannotAssignTestData` otherwise); the owner may overwrite a batch's data until `setTestDataAssignedFlag` moves the GI to `AuditTestDataAssigned`, after which test data changes only through `reassignAuditTestDataset` after an upheld dispute. Blocked while the batch awaits reassignment.
 - **`setTestDataAssignedFlag(gi, true)`** (from the coordinator, state `AuditorsBatchesCreated`) — reverts `TA_TestDataNotAssigned` unless every batch of the GI has a stored `testDataCommitments` entry. On success the coordinator moves to `AuditTestDataAssigned`, which `startLMsubmissionsEvaluation` requires; leaving `AuditorsBatchesCreated` is what makes the call one-shot.
 
 ---
@@ -159,12 +164,12 @@ At most one slash per auditor per batch; S1 takes priority. Emits `AuditorSlashe
 
 | Step | Function | Notes |
 |------|----------|-------|
-| Fund | `depositRewards(gi, amount)` — anyone | `gi` must be ≥ the current GI and non-zero; pulls DIN. The coordinator refuses to `startGI` an unfunded GI. |
+| Fund | `depositRewards(gi, amount)` — anyone | `gi` must be ≥ the current GI and non-zero, and not yet settled (`TA_RewardsAlreadySettled`: claims pay from the snapshot, so a later deposit would never be paid out); pulls DIN. The coordinator refuses to `startGI` an unfunded GI. |
 | Settle | `settleRewards(gi, aggregatorTotalWeight)` — coordinator's `endGI` | Splits `giRewardPool[gi]` by `rewardSplit`. The treasury share (plus rounding dust) is forwarded in full to `slashTreasury()`, or burned if no treasury is set. Stores a snapshot. No participant loops. |
 | Credit | `claimReward(gi)` — each participant, once per GI | Client: `clientPool × finalMedianScore / giTotalApprovedScore` (approved submissions only). Auditor: `auditorPool × auditorGIWeight / giTotalAuditWeight` (one unit per revealed vote). Aggregator: `aggregatorPool × aggregatorWeight / aggregatorTotalWeight` (read from the coordinator). Reverts `TA_NoRewardEarned` if all three are zero. |
 | Withdraw | `claimRewards()` | Pull payment of the accumulated `claimable` balance. |
 
-`DinEmission.fundGI` funds pools through the same `depositRewards` path, using freshly minted emission DIN.
+`DinEmission.fundGI` funds pools through the same `depositRewards` path, using freshly minted emission DIN, so the settled-GI check applies to it too.
 
 ---
 

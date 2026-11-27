@@ -37,6 +37,8 @@ Two of those ways — C-1 and C-2 below — are rated **Critical**, not High: bo
 
 ### C-1. Sybil-cheap gas-DoS: unbounded auditor/aggregator registration feeds four O(n) or worse loops with no pagination
 
+**Fixed — [PR #91](https://github.com/InfiniteZeroFoundation/DevNet/pull/91) ([discussion #88](https://github.com/InfiniteZeroFoundation/DevNet/discussions/88)).** Each GI allows up to 300 auditor registrations and 300 aggregator registrations. `registerDINAuditor` and `registerDINaggregator` enforce their respective caps before adding a participant. This bounds the registration pools used by the loops below. The original gas measurements and spec-scale extrapolation describe the audited revision.
+
 **Contracts / functions:**
 - `DINTaskAuditor.sol`: `_activeAuditorPool()` (L275-297), `slashAuditors()` (L620-659), `finalizeEvaluation()` (L552-612)
 - `DINTaskCoordinator.sol`: `_activeAggregatorPool()` (L410-432), `slashAggregators()` (L678-755), `finalizeT1Aggregation()` (L549-582), `finalizeT2Aggregation()` (L627-660)
@@ -87,6 +89,8 @@ Either number is **5.6×–7.5× over Optimism's ~30M block gas limit** as of th
 
 ### C-2. Zero-CID sentinel collision permanently bricks `finalizeT1Aggregation` / `finalizeT2Aggregation` for the whole GI
 
+**Fixed — [PR #91](https://github.com/InfiniteZeroFoundation/DevNet/pull/91) ([discussion #88](https://github.com/InfiniteZeroFoundation/DevNet/discussions/88)).** The coordinator rejects a zero aggregation CID with `TC_ZeroCID`. When [PR #197](https://github.com/InfiniteZeroFoundation/DevNet/pull/197) replaced the original submission functions with commit-reveal, it preserved the check in both `revealT1Aggregation` and `revealT2Aggregation`, before either records a vote.
+
 **Contract / functions:** `DINTaskCoordinator.sol`, `finalizeT1Aggregation()` (L549-582), `finalizeT2Aggregation()` (L627-660), and the corresponding `submitT1Aggregation()` / `submitT2Aggregation()` which accept an unvalidated `_aggregationCID`.
 
 **Confirmed exploitable — PoC: `test_finalizeT1Aggregation_zeroCID_bricksEntireGI` in `foundry/test/SecurityFindings.t.sol`.**
@@ -116,6 +120,8 @@ Because `finalizeT1Aggregation`/`finalizeT2Aggregation` loop over **every batch 
 ## High Severity
 
 ### H-1. No quorum enforced before Tier-1/Tier-2 aggregation is accepted as "final" — a single aggregator's output can become the consensus result
+
+**Fixed — [PR #91](https://github.com/InfiniteZeroFoundation/DevNet/pull/91) ([discussion #88](https://github.com/InfiniteZeroFoundation/DevNet/discussions/88)).** Both finalizers now require at least two revealed submissions per batch (`T1_AGGREGATORS_PER_BATCH / 2 + 1`). The reveals may name different CIDs. Once the batch meets this participation quorum, the finalizer selects the CID with the most votes.
 
 **Contract / functions:** `DINTaskCoordinator.sol`, `finalizeT1Aggregation()` (L549-582), `finalizeT2Aggregation()` (L627-660).
 
@@ -165,7 +171,7 @@ This doesn't cause direct fund loss, but it undermines the core assumption that 
 
 ### M-2. `DINModelRegistry.disableModel()` kill-switch doesn't reach the live task contracts
 
-**Resolution (#224, Oct 26 decision):** the current Foundry coordinator calls auditor-side registry validation from both `startGI` overloads. Approved/enabled status is required before each new GI, including pre-funded pools. New compatible task pairs with reviewed canonical registry wiring are required; old deployments and in-flight GIs are unchanged. The historical scenario and broader recommendation below are retained as audit context; GI abort is outside this fix.
+**Resolution — [PR #305](https://github.com/InfiniteZeroFoundation/DevNet/pull/305) (#224, Oct 26 decision):** the current Foundry coordinator calls auditor-side registry validation from both `startGI` overloads. Approved/enabled status is required before each new GI, including pre-funded pools. New compatible task pairs with reviewed canonical registry wiring are required; old deployments and in-flight GIs are unchanged. The historical scenario and broader recommendation below are retained as audit context; GI abort is outside this fix.
 
 **Original finding — tracked in [#224](https://github.com/InfiniteZeroFoundation/DevNet/issues/224) / BL-34** (re-confirmed against `develop` @ `740a613`, 2026-10; superseded for new compatible pairs by the resolution above).
 
