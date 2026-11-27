@@ -1,5 +1,6 @@
 import os
 from importlib.resources import files
+from urllib.parse import urlsplit
 
 import requests as _requests
 import typer
@@ -11,17 +12,30 @@ from dincli.cli.utils import (
     resolve_task_coordinator_address,
 )
 
-_SUBGRAPH_URL = os.environ.get(
-    "DIN_SUBGRAPH_URL",
-    "http://localhost:8000/subgraphs/name/din-protocol/graphql",
-)
+
+def _subgraph_url() -> str | None:
+    """The subgraph endpoint, or None when the operator hasn't opted in.
+
+    There is deliberately no default. A subgraph indexes one deployment, and
+    the query carries no network filter, so a localhost default would answer
+    for whatever chain the local graph-node indexes, regardless of --network.
+    """
+    url = os.environ.get("DIN_SUBGRAPH_URL", "").strip()
+    return url or None
 
 
 def _query_subgraph(query: str, *, timeout: int = 5) -> dict | None:
-    """POST a GraphQL query to the local subgraph. Returns the data dict or None on any error."""
+    """POST a GraphQL query to the subgraph named by DIN_SUBGRAPH_URL.
+
+    Returns the data dict, or None if DIN_SUBGRAPH_URL is unset or the call
+    fails for any reason.
+    """
+    url = _subgraph_url()
+    if url is None:
+        return None
     try:
         resp = _requests.post(
-            _SUBGRAPH_URL,
+            url,
             json={"query": query},
             timeout=timeout,
         )
@@ -430,6 +444,36 @@ def sweep_coordinator_fees(
     _sweep_fees_to_router(ctx, ctx.obj.get_deployed_din_coordinator_contract(), "DinCoordinator", yes)
 
 
+def _subgraph_host(url: str) -> str:
+    """Host and port only: hosted endpoints carry an API key in the path or userinfo."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        return f"{host}:{parts.port}" if parts.port is not None else host
+    except ValueError:
+        return ""
+
+
+def _print_source(console, network: str, from_subgraph: bool) -> None:
+    """Say where a pending-request list came from, so a wrong source is visible."""
+    if from_subgraph:
+        host = _subgraph_host(_subgraph_url() or "")
+        where = f"subgraph at {host}" if host else "subgraph"
+        console.print(
+            f"  [dim]Source: {where} (DIN_SUBGRAPH_URL). "
+            f"It must index the {network} deployment, and it can lag the chain.[/dim]"
+        )
+    elif _subgraph_url() is not None:
+        console.print(
+            f"  [yellow]Subgraph query failed; listing from the {network} "
+            f"DINModelRegistry over RPC instead.[/yellow]"
+        )
+    else:
+        console.print(f"  [dim]Source: {network} DINModelRegistry over RPC.[/dim]")
+
+
 @registry_app.command("list-pending-requests")
 def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None, "--type", "-t", help="Type of request: 'model' or 'manifest'")):
     """Get all unprocessed Model and ManifestUpdate requests."""
@@ -448,9 +492,11 @@ def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None,
         # 1000 unprocessed requests. Fine for DevNet scale; the RPC-fallback
         # path below does not share this cap.
         gql_data = _query_subgraph(
-            "{ modelRegistrationRequests(where: { processed: false }, first: 1000)"
+            "{ modelRegistrationRequests(where: { processed: false }, first: 1000,"
+            " orderBy: requestId, orderDirection: asc)"
             " { requestId requester isOpenSource feePaid } }"
         )
+        _print_source(console, effective_network, gql_data is not None)
         if gql_data is not None:
             for r in gql_data.get("modelRegistrationRequests", []):
                 console.print(
@@ -480,9 +526,11 @@ def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None,
         # 1000 unprocessed requests. Fine for DevNet scale; the RPC-fallback
         # path below does not share this cap.
         gql_data = _query_subgraph(
-            "{ manifestUpdateRequests(where: { processed: false }, first: 1000)"
+            "{ manifestUpdateRequests(where: { processed: false }, first: 1000,"
+            " orderBy: requestId, orderDirection: asc)"
             " { requestId model { modelId } requester feePaid } }"
         )
+        _print_source(console, effective_network, gql_data is not None)
         if gql_data is not None:
             for r in gql_data.get("manifestUpdateRequests", []):
                 console.print(
