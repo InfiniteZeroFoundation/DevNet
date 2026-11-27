@@ -210,8 +210,31 @@ def test_subgraph_listing_names_its_source():
 
     assert post.call_args.args[0] == SUBGRAPH_URL
     output = "\n".join(str(m) for m in msgs)
-    assert f"Source: subgraph at {SUBGRAPH_URL}" in output
+    assert "Source: subgraph at graph.example:8000 (DIN_SUBGRAPH_URL)." in output
     assert "local deployment" in output
+
+
+@pytest.mark.parametrize(
+    "url, shown",
+    [
+        ("https://gateway.example/api/dummy-api-key-1234/subgraphs/id/Qm123", "gateway.example"),
+        ("https://user:dummy-api-key-1234@graph.example:8443/subgraphs/name/din", "graph.example:8443"),
+        ("https://graph.example/subgraphs/name/din?api_key=dummy-api-key-1234", "graph.example"),
+    ],
+)
+def test_source_line_does_not_leak_subgraph_api_key(monkeypatch, url, shown):
+    monkeypatch.setenv("DIN_SUBGRAPH_URL", url)
+    ctx, msgs, _ = _make_ctx()
+    fake_data = {"modelRegistrationRequests": []}
+    with patch.object(dindao_module._requests, "post", return_value=_make_response(fake_data)) as post:
+        dindao_module.list_pending_requests(ctx, req_type="model")
+
+    # The request still goes to the full URL, key included...
+    assert post.call_args.args[0] == url
+    # ...but the CLI output names only the host and port.
+    output = "\n".join(str(m) for m in msgs)
+    assert "dummy-api-key-1234" not in output
+    assert f"Source: subgraph at {shown} (DIN_SUBGRAPH_URL)." in output
 
 
 def test_failed_subgraph_says_it_fell_back():

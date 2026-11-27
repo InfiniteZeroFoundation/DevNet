@@ -1,5 +1,6 @@
 import os
 from importlib.resources import files
+from urllib.parse import urlsplit
 
 import requests as _requests
 import typer
@@ -443,11 +444,25 @@ def sweep_coordinator_fees(
     _sweep_fees_to_router(ctx, ctx.obj.get_deployed_din_coordinator_contract(), "DinCoordinator", yes)
 
 
+def _subgraph_host(url: str) -> str:
+    """Host and port only: hosted endpoints carry an API key in the path or userinfo."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        return f"{host}:{parts.port}" if parts.port is not None else host
+    except ValueError:
+        return ""
+
+
 def _print_source(console, network: str, from_subgraph: bool) -> None:
     """Say where a pending-request list came from, so a wrong source is visible."""
     if from_subgraph:
+        host = _subgraph_host(_subgraph_url() or "")
+        where = f"subgraph at {host}" if host else "subgraph"
         console.print(
-            f"  [dim]Source: subgraph at {_subgraph_url()} (DIN_SUBGRAPH_URL). "
+            f"  [dim]Source: {where} (DIN_SUBGRAPH_URL). "
             f"It must index the {network} deployment, and it can lag the chain.[/dim]"
         )
     elif _subgraph_url() is not None:
