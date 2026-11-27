@@ -407,3 +407,45 @@ job status first).
   [runtime lock](../../../requirements/dincli-runtime.txt) used by Python CI.
   For stricter reproducibility, pin the base image by digest and
   `docker-ce-cli` to an exact version.
+
+### Cohort alerts (opt-in)
+
+Run one `python -m dincli.dind.cohort_monitor` process beside the monitored
+daemon. Use `--help` for the required arguments. Supply the RPC endpoint in
+`DIN_MONITOR_RPC_URL` and the private incident-channel adapter's HTTPS endpoint
+in `DIN_ALERT_URL`. The adapter must accept JSON POSTs, route them to the
+on-call destination, and deduplicate the stable `Idempotency-Key`. A 2xx
+acknowledges delivery. Timeouts and other statuses leave the alert queued.
+
+Use a persistent, writable SQLite file for `--state`, dedicated to this monitor
+and deployment. Set the chain ID, token and stake **proxy** addresses, and first
+block explicitly. The RPC must support finalized blocks and filtered
+`eth_getLogs`. One poll advances by at most `--batch-blocks`; choose a batch
+and interval that keep up with the chain and fit the RPC plan. The node's local
+health port must observe the same deployment. GI stalls and recoveries use the
+existing daemon monitor. Its observation history is in memory, so a restart
+during a stall can miss the recovery. Queued alerts and the chain cursor
+survive restart. Monitor disk space and stderr for poll or delivery failures.
+
+A large mint is one token-proxy `TokensMinted` at or above `--mint-wei`
+(18 decimals). A spike is an upward crossing of `--slash-count` actual stake
+deductions in the trailing `--window-blocks` finalized blocks, including the
+current block. Only `ValidatorSlashed` counts. Coordinator, transfer and
+reason-specific events can describe the same operation. Confirm these
+thresholds, block window, GI duration, polling rate and destination with the
+operators before enabling the monitor.
+
+**Capacity remains unverified.** Ten validators over ten rounds give 100
+validator-rounds. Measure RPC reads, transactions, receipt polls, retries and
+burst concurrency per round, plus health and monitoring traffic over the
+cohort duration. For IPFS measure artifact sizes, pins, retention, gateway
+downloads and concurrent transfers, accounting for shared CIDs and retries.
+Compare peak rates and totals against each account's limits with agreed
+headroom and replay a representative workload after DevNet 2.0 is available.
+
+Record the actual chain, provider plans, quotas, rate-limit behavior and
+endpoints privately. Candidate fallbacks are an independent same-chain RPC
+endpoint with matching finalized-log history and a separately operated IPFS
+pinning service or Kubo node with replicated cohort CIDs and gateway access.
+Verify RPC catch-up and CID upload/retrieval through the fallback before
+calling it ready. Operator selection and failover measurements are pending.
