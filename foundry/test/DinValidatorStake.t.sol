@@ -200,7 +200,7 @@ contract DinValidatorStakeTest is Test {
         uint256 supplyBefore = token.totalSupply();
 
         vm.prank(slasher);
-        uint256 slashed = stake.slash(alice, MIN, bytes32("test"));
+        uint256 slashed = stake.slash(alice, MIN, "test");
 
         uint256 expectedBurn = slashed / 2;
         assertEq(supplyBefore - token.totalSupply(), expectedBurn);
@@ -211,7 +211,7 @@ contract DinValidatorStakeTest is Test {
         uint256 treasuryBefore = token.balanceOf(address(treasury));
 
         vm.prank(slasher);
-        uint256 slashed = stake.slash(alice, MIN, bytes32("test"));
+        uint256 slashed = stake.slash(alice, MIN, "test");
 
         uint256 expectedTreasury = slashed - slashed / 2;
         assertEq(token.balanceOf(address(treasury)) - treasuryBefore, expectedTreasury);
@@ -240,7 +240,7 @@ contract DinValidatorStakeTest is Test {
         uint256 treasuryBefore = token.balanceOf(address(treasury));
 
         vm.prank(slasher);
-        uint256 slashed = bareStake.slash(bob, MIN, bytes32("test"));
+        uint256 slashed = bareStake.slash(bob, MIN, "test");
 
         // 100% burned
         assertEq(supplyBefore - token.totalSupply(), slashed);
@@ -253,20 +253,20 @@ contract DinValidatorStakeTest is Test {
     function test_jailValidator_onlySlasher() public {
         _mintAndStake(alice, MIN);
         vm.expectRevert(DinValidatorStake.NotSlasherContract.selector);
-        stake.jailValidator(alice, 1 days, bytes32("bad"));
+        stake.jailValidator(alice, 1 days, "bad");
     }
 
     function test_jailValidator_revertsOnZeroAddress() public {
         vm.prank(slasher);
         vm.expectRevert(DinValidatorStake.InvalidAddress.selector);
-        stake.jailValidator(address(0), 1 days, bytes32("bad"));
+        stake.jailValidator(address(0), 1 days, "bad");
     }
 
     function test_jailValidator_revertsOnZeroDuration() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
         vm.expectRevert(DinValidatorStake.InvalidJailDuration.selector);
-        stake.jailValidator(alice, 0, bytes32("bad"));
+        stake.jailValidator(alice, 0, "bad");
     }
 
     function test_jailValidator_revertsForBlacklisted() public {
@@ -275,13 +275,13 @@ contract DinValidatorStakeTest is Test {
 
         vm.prank(slasher);
         vm.expectRevert(DinValidatorStake.ValidatorIsBlacklisted.selector);
-        stake.jailValidator(alice, 1 days, bytes32("bad"));
+        stake.jailValidator(alice, 1 days, "bad");
     }
 
     function test_jailValidator_setsJailedStatus() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.jailValidator(alice, 1 days, bytes32("bad"));
+        stake.jailValidator(alice, 1 days, "bad");
 
         (,,, , DinValidatorStake.ValidatorStatus status) = stake.validators(alice);
         assertEq(uint256(status), uint256(DinValidatorStake.ValidatorStatus.Jailed));
@@ -290,13 +290,13 @@ contract DinValidatorStakeTest is Test {
     function test_jailValidator_extendsNeverShortens() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.jailValidator(alice, 7 days, bytes32("first"));
+        stake.jailValidator(alice, 7 days, "first");
 
         (,,, uint64 jailedUntilAfterFirst,) = stake.validators(alice);
 
         // Second jail with shorter duration — must NOT shorten
         vm.prank(slasher);
-        stake.jailValidator(alice, 1 days, bytes32("second"));
+        stake.jailValidator(alice, 1 days, "second");
 
         (,,, uint64 jailedUntilAfterSecond,) = stake.validators(alice);
         assertEq(jailedUntilAfterSecond, jailedUntilAfterFirst);
@@ -314,7 +314,7 @@ contract DinValidatorStakeTest is Test {
     function test_reactivate_revertsIfJailPeriodActive() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.jailValidator(alice, 7 days, bytes32("bad"));
+        stake.jailValidator(alice, 7 days, "bad");
 
         vm.prank(alice);
         vm.expectRevert(DinValidatorStake.JailPeriodNotExpired.selector);
@@ -324,10 +324,10 @@ contract DinValidatorStakeTest is Test {
     function test_reactivate_revertsIfStakeBelowFloor() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.jailValidator(alice, 1 days, bytes32("bad"));
+        stake.jailValidator(alice, 1 days, "bad");
         // Slash most of the stake so it falls below MIN_STAKE
         vm.prank(slasher);
-        stake.slash(alice, MIN - 1, bytes32("slash"));
+        stake.slash(alice, MIN - 1, "slash");
 
         vm.warp(block.timestamp + 2 days);
 
@@ -339,7 +339,7 @@ contract DinValidatorStakeTest is Test {
     function test_reactivate_fullLifecycle() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.jailValidator(alice, 1 days, bytes32("bad"));
+        stake.jailValidator(alice, 1 days, "bad");
 
         vm.warp(block.timestamp + 2 days);
 
@@ -353,9 +353,9 @@ contract DinValidatorStakeTest is Test {
     function test_reactivate_requiresTopUpIfSlashedBelowFloor() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.slash(alice, MIN / 2, bytes32("penalised"));
+        stake.slash(alice, MIN / 2, "penalised");
         vm.prank(slasher);
-        stake.jailValidator(alice, 1 days, bytes32("offline"));
+        stake.jailValidator(alice, 1 days, "offline");
 
         vm.warp(block.timestamp + 1 days + 1);
 
@@ -376,7 +376,7 @@ contract DinValidatorStakeTest is Test {
     function test_reactivate_allowsRestaking() public {
         _mintAndStake(alice, MIN);
         vm.prank(slasher);
-        stake.jailValidator(alice, 1 days, bytes32("bad"));
+        stake.jailValidator(alice, 1 days, "bad");
 
         vm.warp(block.timestamp + 2 days);
         vm.prank(alice);

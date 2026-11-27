@@ -229,6 +229,10 @@ error TA_BatchDoesNotExist();
 error TA_BatchIDMismatch();
 /// @dev GI state does not permit setting the test data assigned flag.
 error TA_CannotSetTestDataAssignedFlag();
+/// @dev assignAuditTestDataset outside AuditorsBatchesCreated: once test data is
+///      assigned (or evaluation has started), changes go through the dispute
+///      route, reassignAuditTestDataset.
+error TA_CannotAssignTestData();
 /// @dev The flag value supplied must be true; false is not accepted here.
 error TA_FlagMustBeTrue();
 /// @dev setTestDataAssignedFlag: some audit batch of the GI has no stored test-data commitment yet.

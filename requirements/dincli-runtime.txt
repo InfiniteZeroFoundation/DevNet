@@ -1,0 +1,194 @@
+# Generated from pyproject.toml by scripts/lock-dincli-runtime.sh (uv 0.10.9).
+aiohappyeyeballs==2.7.1
+    # via aiohttp
+aiohttp==3.14.5
+    # via web3
+aiosignal==1.4.0
+    # via aiohttp
+annotated-types==0.8.0
+    # via pydantic
+attrs==26.1.0
+    # via aiohttp
+bitarray==3.12.4
+    # via eth-account
+blake3==1.0.11
+    # via py-multihash
+certifi==2026.11.20
+    # via requests
+cffi==2.1.1 ; platform_python_implementation != 'PyPy'
+    # via
+    #   cryptography
+    #   pynacl
+charset-normalizer==3.5.3
+    # via requests
+ckzg==2.1.8
+    # via eth-account
+click==8.5.1
+    # via
+    #   dincli (pyproject.toml)
+    #   typer
+cryptography==50.0.2
+    # via dincli (pyproject.toml)
+cytoolz==1.2.0 ; implementation_name == 'cpython'
+    # via eth-utils
+eth-abi==6.0.0
+    # via
+    #   dincli (pyproject.toml)
+    #   eth-account
+    #   web3
+eth-account==0.14.0
+    # via
+    #   dincli (pyproject.toml)
+    #   web3
+eth-hash==0.8.0
+    # via
+    #   eth-utils
+    #   web3
+eth-keyfile==0.10.0
+    # via eth-account
+eth-keys==0.8.0
+    # via
+    #   eth-account
+    #   eth-keyfile
+eth-rlp==3.0.0
+    # via eth-account
+eth-typing==6.0.0
+    # via
+    #   eth-abi
+    #   eth-keys
+    #   eth-utils
+    #   py-ecc
+    #   web3
+eth-utils==6.0.0
+    # via
+    #   dincli (pyproject.toml)
+    #   eth-abi
+    #   eth-account
+    #   eth-keyfile
+    #   eth-keys
+    #   eth-rlp
+    #   py-ecc
+    #   rlp
+    #   web3
+frozenlist==1.8.0
+    # via
+    #   aiohttp
+    #   aiosignal
+hexbytes==2.0.0
+    # via
+    #   eth-account
+    #   eth-rlp
+    #   web3
+idna==3.20
+    # via
+    #   requests
+    #   yarl
+markdown-it-py==4.3.0
+    # via rich
+mdurl==0.1.2
+    # via markdown-it-py
+mmh3==5.3.1
+    # via py-multihash
+morphys==1.0
+    # via
+    #   py-cid
+    #   py-multibase
+multidict==7.2.1
+    # via
+    #   aiohttp
+    #   yarl
+parsimonious==0.10.0
+    # via eth-abi
+platformdirs==4.5.0
+    # via dincli (pyproject.toml)
+propcache==0.5.4
+    # via
+    #   aiohttp
+    #   yarl
+py-cid==0.5.0
+    # via dincli (pyproject.toml)
+py-ecc==8.0.0
+    # via eth-keyfile
+py-multibase==2.1.0
+    # via
+    #   dincli (pyproject.toml)
+    #   py-cid
+py-multicodec==1.1.0
+    # via py-cid
+py-multihash==4.0.0
+    # via py-cid
+pycparser==3.12 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+    # via cffi
+pycryptodome==3.24.1
+    # via
+    #   eth-hash
+    #   eth-keyfile
+pydantic==2.14.4
+    # via
+    #   eth-account
+    #   eth-utils
+    #   web3
+pydantic-core==2.50.5
+    # via pydantic
+pygments==2.21.0
+    # via rich
+pynacl==1.6.2
+    # via dincli (pyproject.toml)
+python-baseconv==1.2.2
+    # via py-multibase
+python-dotenv==1.2.4
+    # via dincli (pyproject.toml)
+pyunormalize==18.0.0
+    # via web3
+pywin32==312 ; sys_platform == 'win32'
+    # via web3
+regex==2026.11.24
+    # via parsimonious
+requests==2.34.2
+    # via
+    #   dincli (pyproject.toml)
+    #   web3
+rich==14.3.4
+    # via
+    #   dincli (pyproject.toml)
+    #   typer
+rlp==5.0.0
+    # via
+    #   eth-account
+    #   eth-rlp
+shellingham==1.5.4
+    # via typer
+toolz==1.2.0 ; implementation_name == 'cpython' or implementation_name == 'pypy'
+    # via
+    #   cytoolz
+    #   eth-utils
+typer==0.20.0
+    # via dincli (pyproject.toml)
+types-requests==2.33.0.20261030
+    # via web3
+typing-extensions==4.16.0
+    # via
+    #   aiohttp
+    #   aiosignal
+    #   eth-typing
+    #   pydantic
+    #   pydantic-core
+    #   typer
+    #   typing-inspection
+    #   web3
+typing-inspection==0.4.5
+    # via pydantic
+urllib3==2.8.0
+    # via
+    #   requests
+    #   types-requests
+varint==1.0.2
+    # via
+    #   py-multicodec
+    #   py-multihash
+web3==7.16.0
+    # via dincli (pyproject.toml)
+websockets==15.0.1
+    # via web3
+yarl==1.25.1
+    # via aiohttp
