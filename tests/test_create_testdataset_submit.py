@@ -1,3 +1,4 @@
+import base64
 import secrets
 from types import SimpleNamespace
 
@@ -344,6 +345,32 @@ def _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor, stake=No
     monkeypatch.setattr(DinContext, "load_custom_fn", lambda self, *a, **kw: fake_fn)
 
 
+_SYNTHETIC_AUDIT_KEY = bytes(range(32))
+_SYNTHETIC_PLAINTEXT_HASH = bytes(range(32, 64))
+
+
+def _patch_fixed_secret_batch_factory(monkeypatch):
+    """Return deterministic test-only values that must never reach CLI output."""
+    def fake_fn(batch_count, gi, model_base_path, test_data_path):
+        return [
+            {
+                "raw_cid": f"cid-{i}",
+                "K": _SYNTHETIC_AUDIT_KEY,
+                "plaintext_keccak": _SYNTHETIC_PLAINTEXT_HASH,
+            }
+            for i in range(batch_count)
+        ]
+
+    monkeypatch.setattr(DinContext, "load_custom_fn", lambda self, *a, **kw: fake_fn)
+
+
+def _assert_output_redacts_batch_secrets(output):
+    for secret in (_SYNTHETIC_AUDIT_KEY, _SYNTHETIC_PLAINTEXT_HASH):
+        assert repr(secret) not in output
+        assert secret.hex() not in output
+        assert base64.b64encode(secret).decode() not in output
+
+
 def _make_test_data_file(tmp_path):
     test_data_file = tmp_path / "test_dataset.pt"
     test_data_file.write_bytes(b"dummy")
@@ -635,3 +662,169 @@ def test_lost_receipt_then_landed_retry_confirms_the_retry_k(monkeypatch, tmp_pa
     secret = atb._read_secret(atb._testdata_secret_path(tmp_path, 0, 1))
     assert atb._testdata_commitment(0, 1, *secret) == landed[1]
     assert atb._load_testdata_secret(tmp_path, 0, 1, landed[1]) == secret
+
+
+# ---------------------------------------------------------------------------
+# Issue #328: dataset-assignment output is operator-visible, so it may expose
+# public ciphertext CIDs/counts but never a batch key, plaintext hash or an
+# exception whose text embeds either one.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_creation_summary_shows_cid_and_redacts_batch_secrets(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=2)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+
+    result = runner.invoke(
+        main_app, _cli_args(1, _make_test_data_file(tmp_path), submit=False)
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Created 2 encrypted audit dataset(s)." in result.output
+    assert "Batch 0: ciphertext CID cid-0" in result.output
+    assert "Batch 1: ciphertext CID cid-1" in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_retry_output_redacts_batch_secrets(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=2)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+
+    def fail_first_assign(ctx, contract_function, *args, **kwargs):
+        if isinstance(contract_function, tuple) and contract_function[1] == 0:
+            return None
+        return SimpleNamespace(transactionHash=b"\xab" * 32)
+
+    monkeypatch.setattr(atb, "build_and_send_tx", fail_first_assign)
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert "--batch 0" in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_assignment_exception_redacts_embedded_batch_secret(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+
+    def raise_with_secret(*args, **kwargs):
+        raise RuntimeError(
+            f"test failure key={_SYNTHETIC_AUDIT_KEY.hex()} "
+            f"hash={_SYNTHETIC_PLAINTEXT_HASH.hex()}"
+        )
+
+    monkeypatch.setattr(atb, "_encrypt_batch_testdata", raise_with_secret)
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert "Failed to assign test dataset for auditor batches." in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+class _EstimationFailureEth:
+    chain_id = 31337
+    gas_price = 1
+    max_priority_fee = 1
+
+    def __init__(self, marker):
+        self.marker = marker
+        self.estimation_calls = 0
+
+    def get_transaction_count(self, address, block_identifier):
+        return 0
+
+    def estimate_gas(self, transaction):
+        self.estimation_calls += 1
+        raise RuntimeError(self.marker)
+
+
+class _EstimationFailureW3:
+    def __init__(self, marker):
+        self.eth = _EstimationFailureEth(marker)
+
+
+class _BuildableAssignment:
+    def build_transaction(self, params):
+        return dict(params)
+
+
+def test_cli_transaction_estimation_failure_redacts_batch_secret(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+    marker = f"key={_SYNTHETIC_AUDIT_KEY.hex()}"
+
+    monkeypatch.setattr(
+        auditor.functions,
+        "assignAuditTestDataset",
+        lambda *args, **kwargs: _BuildableAssignment(),
+    )
+    # Transactions now use the SDK session, not DinContext.get_tx_params.
+    # Keep the real SDK send/estimation path; replace only its RPC boundary.
+    w3 = _EstimationFailureW3(marker)
+    account = DummyAccount()
+    session = SimpleNamespace(
+        network="local", w3=w3, address=account.address, signer=account,
+    )
+    monkeypatch.setattr(DinContext, "session", property(lambda self: session))
+    monkeypatch.setattr(
+        DinContext,
+        "get_en_w3_account_console",
+        lambda self, *a, **kw: ("local", w3, account, self.console),
+    )
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert w3.eth.estimation_calls == 1
+    assert "Transaction estimation failed." in result.output
+    assert "--batch 0" in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_flag_preflight_failure_redacts_batch_secret(monkeypatch, tmp_path):
+    marker = f"key={_SYNTHETIC_AUDIT_KEY.hex()}"
+    coordinator = DummyTaskCoordinatorContract(flag_call_raises=RuntimeError(marker))
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+    monkeypatch.setattr(
+        atb,
+        "build_and_send_tx",
+        lambda *args, **kwargs: SimpleNamespace(transactionHash=b"\xab" * 32),
+    )
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert "Failed to set test dataset assigned flag." in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_service_failure_redacts_embedded_batch_secret(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+
+    def fail_service(*args, **kwargs):
+        raise RuntimeError(
+            f"key={_SYNTHETIC_AUDIT_KEY.hex()} "
+            f"hash={_SYNTHETIC_PLAINTEXT_HASH.hex()}"
+        )
+
+    monkeypatch.setattr(DinContext, "load_custom_fn", lambda self, *a, **kw: fail_service)
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path), submit=False))
+
+    assert result.exit_code == 1, result.output
+    assert "Failed to create encrypted audit datasets (RuntimeError)." in result.output
+    _assert_output_redacts_batch_secrets(result.output)

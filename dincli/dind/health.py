@@ -16,6 +16,11 @@ behind-schedule risks a restart loop under sustained load while destroying
 the state needed to diagnose a hung loop. A genuinely stopped process is
 what ``restart: unless-stopped`` already covers. Operators who want
 restart-on-unhealthy need an external watchdog acting on the 503.
+
+Issue #345: when a ChainHealthMonitor is attached, the body also carries the
+config/RPC/signer checks and each configured model's GI + phase. A failed
+check is "unhealthy" (also 503). The handler only reads the monitor's latest
+snapshot; the network calls happen on the monitor's own thread.
 """
 
 import json
@@ -23,9 +28,11 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from uuid import uuid4
 
 from dincli.dind.capabilities import resource_snapshot
+from dincli.dind.chain_health import snapshot_is_healthy
 from dincli.dind.state import StateStore
 
 logger = logging.getLogger("dincli")
@@ -35,13 +42,9 @@ logger = logging.getLogger("dincli")
 _DEGRADED_STATUS_CODE = 503
 
 
-class _ThreadingHTTPServer(HTTPServer):
-    daemon_threads = True
-
-
 class HealthHandler(BaseHTTPRequestHandler):
-    state: StateStore = None
-    start_time: float = 0.0
+    timeout = 5
+    server: "HealthServer"
     stale_seconds: float = 30.0
 
     def log_message(self, format, *args):
@@ -68,14 +71,16 @@ class HealthHandler(BaseHTTPRequestHandler):
         except Exception:
             logger.exception("Health endpoint error")
             self.send_error(500)
+        finally:
+            self.server.state.close()  # Release this request thread's SQLite connection.
 
     def _build_payload(self) -> dict:
         now_ts = time.time()
-        uptime_s = int(now_ts - self.start_time)
+        uptime_s = int(now_ts - self.server.start_time)
         pid = os.getpid()
 
-        last_tick = self.state.get_meta("last_tick")
-        last_success = self.state.get_meta("last_success")
+        last_tick = self.server.state.get_meta("last_tick")
+        last_success = self.server.state.get_meta("last_success")
 
         status = "healthy"
         if last_tick:
@@ -84,15 +89,23 @@ class HealthHandler(BaseHTTPRequestHandler):
             if age > self.stale_seconds:
                 status = "degraded"
 
-        queue = self.state.get_job_counts()
+        queue = self.server.state.get_job_counts()
 
-        state_dir = self.state.db_path.parent
+        state_dir = self.server.state.db_path.parent
         snap = resource_snapshot(state_dir)
 
-        return {
+        chain = None
+        monitor = getattr(self.server, "chain_monitor", None)
+        if monitor is not None:
+            chain = monitor.snapshot()
+            if not snapshot_is_healthy(chain):
+                status = "unhealthy"
+
+        payload = {
             "status": status,
             "uptime_s": uptime_s,
             "pid": pid,
+            "instance_id": self.server.instance_id,
             "last_tick": last_tick,
             "last_success": last_success,
             "queue": queue,
@@ -105,31 +118,24 @@ class HealthHandler(BaseHTTPRequestHandler):
                 "cpu_speed_mhz": snap["cpu_speed_mhz"],
             },
         }
+        if chain is not None:
+            payload["checked_at"] = chain["checked_at"]
+            payload["checks"] = chain["checks"]
+            payload["models"] = chain["models"]
+        return payload
 
 
-class HealthServer:
+class HealthServer(ThreadingHTTPServer):
     def __init__(self, host: str, port: int, state: StateStore):
-        self.host = host
-        self.port = port
+        super().__init__((host, port), HealthHandler)
         self.state = state
+        self.start_time = time.time()
+        self.instance_id = uuid4().hex
+        self.chain_monitor = None  # set by `dind start` (issue #345)
 
-    def run(self) -> None:
-        HealthHandler.state = self.state
-        HealthHandler.start_time = time.time()
-
-        self.server = _ThreadingHTTPServer((self.host, self.port), HealthHandler)
-
-        actual_host, actual_port = self.server.server_address
-        self.state.set_meta("health_host", actual_host)
-        self.state.set_meta("health_port", str(actual_port))
-
-        logger.info("Health server listening on %s:%d", actual_host, actual_port)
-        try:
-            self.server.serve_forever(poll_interval=0.5)
-        finally:
-            self.server.server_close()
-
-    def shutdown(self) -> None:
-        if hasattr(self, "server") and self.server:
-            self.server.shutdown()
-            self.server.server_close()
+    def publish_endpoint(self) -> None:
+        host, port = self.server_address
+        self.state.set_meta("health_host", host)
+        self.state.set_meta("health_port", str(port))
+        self.state.set_meta("health_instance", self.instance_id)
+        logger.info("Health server listening on %s:%d", host, port)

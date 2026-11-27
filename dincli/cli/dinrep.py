@@ -1,6 +1,8 @@
 import os
 from importlib.resources import files
+from urllib.parse import urlsplit
 
+import requests as _requests
 import typer
 
 from dincli.cli.contract_utils import get_contract_instance
@@ -9,6 +11,42 @@ from dincli.cli.utils import (
     get_env_key,
     resolve_task_coordinator_address,
 )
+
+
+def _subgraph_url() -> str | None:
+    """The subgraph endpoint, or None when the operator hasn't opted in.
+
+    There is deliberately no default. A subgraph indexes one deployment, and
+    the query carries no network filter, so a localhost default would answer
+    for whatever chain the local graph-node indexes, regardless of --network.
+    """
+    url = os.environ.get("DIN_SUBGRAPH_URL", "").strip()
+    return url or None
+
+
+def _query_subgraph(query: str, *, timeout: int = 5) -> dict | None:
+    """POST a GraphQL query to the subgraph named by DIN_SUBGRAPH_URL.
+
+    Returns the data dict, or None if DIN_SUBGRAPH_URL is unset or the call
+    fails for any reason.
+    """
+    url = _subgraph_url()
+    if url is None:
+        return None
+    try:
+        resp = _requests.post(
+            url,
+            json={"query": query},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if "errors" in body:
+            return None
+        return body.get("data")
+    except Exception:
+        return None
+
 
 app = typer.Typer(help="Commands for the DIN-Representative")
 
@@ -406,6 +444,36 @@ def sweep_coordinator_fees(
     _sweep_fees_to_router(ctx, ctx.obj.get_deployed_din_coordinator_contract(), "DinCoordinator", yes)
 
 
+def _subgraph_host(url: str) -> str:
+    """Host and port only: hosted endpoints carry an API key in the path or userinfo."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        return f"{host}:{parts.port}" if parts.port is not None else host
+    except ValueError:
+        return ""
+
+
+def _print_source(console, network: str, from_subgraph: bool) -> None:
+    """Say where a pending-request list came from, so a wrong source is visible."""
+    if from_subgraph:
+        host = _subgraph_host(_subgraph_url() or "")
+        where = f"subgraph at {host}" if host else "subgraph"
+        console.print(
+            f"  [dim]Source: {where} (DIN_SUBGRAPH_URL). "
+            f"It must index the {network} deployment, and it can lag the chain.[/dim]"
+        )
+    elif _subgraph_url() is not None:
+        console.print(
+            f"  [yellow]Subgraph query failed; listing from the {network} "
+            f"DINModelRegistry over RPC instead.[/yellow]"
+        )
+    else:
+        console.print(f"  [dim]Source: {network} DINModelRegistry over RPC.[/dim]")
+
+
 @registry_app.command("list-pending-requests")
 def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None, "--type", "-t", help="Type of request: 'model' or 'manifest'")):
     """Get all unprocessed Model and ManifestUpdate requests."""
@@ -419,31 +487,69 @@ def list_pending_requests(ctx: typer.Context, req_type: str = typer.Option(None,
 
     if normalized_type in (None, "model"):
         console.print("[bold cyan]Pending Model Registration Requests:[/bold cyan]")
-        totalModelRequests = DINModelRegistry_Contract.functions.totalModelRequests().call()
         found_model = False
-        for idx in range(totalModelRequests):
-            req = DINModelRegistry_Contract.functions.modelRequests(idx).call()
-            if not req[6]:
+        # Known limit: subgraph silently truncates results beyond the first
+        # 1000 unprocessed requests. Fine for DevNet scale; the RPC-fallback
+        # path below does not share this cap.
+        gql_data = _query_subgraph(
+            "{ modelRegistrationRequests(where: { processed: false }, first: 1000,"
+            " orderBy: requestId, orderDirection: asc)"
+            " { requestId requester isOpenSource feePaid } }"
+        )
+        _print_source(console, effective_network, gql_data is not None)
+        if gql_data is not None:
+            for r in gql_data.get("modelRegistrationRequests", []):
                 console.print(
-                    f"  [green]Request ID {idx}[/green] - Requester: {req[0]}, "
-                    f"Open Source: {req[1]}, Fee: {w3.from_wei(req[5], 'ether')} ETH"
+                    f"  [green]Request ID {r['requestId']}[/green] - "
+                    f"Requester: {r['requester']}, "
+                    f"Open Source: {r['isOpenSource']}, "
+                    f"Fee: {w3.from_wei(int(r['feePaid']), 'ether')} ETH"
                 )
                 found_model = True
+        else:
+            totalModelRequests = DINModelRegistry_Contract.functions.totalModelRequests().call()
+            for idx in range(totalModelRequests):
+                req = DINModelRegistry_Contract.functions.modelRequests(idx).call()
+                if not req[6]:
+                    console.print(
+                        f"  [green]Request ID {idx}[/green] - Requester: {req[0]}, "
+                        f"Open Source: {req[1]}, Fee: {w3.from_wei(req[5], 'ether')} ETH"
+                    )
+                    found_model = True
         if not found_model:
             console.print("  [gray]No pending model registration requests[/gray]")
 
     if normalized_type in (None, "manifest"):
         console.print("[bold cyan]Pending Manifest Update Requests:[/bold cyan]")
-        totalManifestRequests = DINModelRegistry_Contract.functions.totalManifestRequests().call()
         found_manifest = False
-        for idx in range(totalManifestRequests):
-            req = DINModelRegistry_Contract.functions.manifestRequests(idx).call()
-            if not req[4]:
+        # Known limit: subgraph silently truncates results beyond the first
+        # 1000 unprocessed requests. Fine for DevNet scale; the RPC-fallback
+        # path below does not share this cap.
+        gql_data = _query_subgraph(
+            "{ manifestUpdateRequests(where: { processed: false }, first: 1000,"
+            " orderBy: requestId, orderDirection: asc)"
+            " { requestId model { modelId } requester feePaid } }"
+        )
+        _print_source(console, effective_network, gql_data is not None)
+        if gql_data is not None:
+            for r in gql_data.get("manifestUpdateRequests", []):
                 console.print(
-                    f"  [green]Request ID {idx}[/green] - Model ID: {req[0]}, "
-                    f"Requester: {req[2]}, Fee: {w3.from_wei(req[3], 'ether')} ETH"
+                    f"  [green]Request ID {r['requestId']}[/green] - "
+                    f"Model ID: {r['model']['modelId']}, "
+                    f"Requester: {r['requester']}, "
+                    f"Fee: {w3.from_wei(int(r['feePaid']), 'ether')} ETH"
                 )
                 found_manifest = True
+        else:
+            totalManifestRequests = DINModelRegistry_Contract.functions.totalManifestRequests().call()
+            for idx in range(totalManifestRequests):
+                req = DINModelRegistry_Contract.functions.manifestRequests(idx).call()
+                if not req[4]:
+                    console.print(
+                        f"  [green]Request ID {idx}[/green] - Model ID: {req[0]}, "
+                        f"Requester: {req[2]}, Fee: {w3.from_wei(req[3], 'ether')} ETH"
+                    )
+                    found_manifest = True
         if not found_manifest:
             console.print("  [gray]No pending manifest update requests[/gray]")
 

@@ -89,7 +89,7 @@ contract GasSimulationTest is Test {
         tc.setDINTaskCoordinatorAsSlasher();
         vm.prank(address(coordinator)); stake.addSlasherContract(address(ta));
         tc.setDINTaskAuditorAsSlasher();
-        tc.setGenesisModelIpfsHash(bytes32("genesis"));
+        tc.setGenesisModelIpfsHash("genesis");
         // GIstate is now GenesisModelCreated — ready for startGI
     }
 
@@ -224,7 +224,7 @@ contract GasSimulationTest is Test {
     ///      T2AggregationDone. Post-H-1 worst case: minimum quorum (2 of 3)
     ///      required to reach finalization.
     function _runT1T2WorstCase(uint gi) internal {
-        bytes32 cid = bytes32("agreed_cid");
+        bytes32 cid = "agreed_cid";
         uint t1Cnt = tc.tier1BatchCount(gi);
         for (uint b = 0; b < t1Cnt; b++) {
             (, address[] memory bAggs,,,) = tc.getTier1Batch(gi, b);
@@ -272,7 +272,7 @@ contract GasSimulationTest is Test {
         (, address[] memory bAggs,,,) = tc.getTier1Batch(1, 0);
 
         uint before = gasleft();
-        _commitT1(bAggs[0], 1, 0, bytes32("cid_a"));
+        _commitT1(bAggs[0], 1, 0, "cid_a");
         console.log("[GAS][S1] commitT1Aggregation (1st call, cold SSTORE):", before - gasleft());
     }
 
@@ -280,11 +280,11 @@ contract GasSimulationTest is Test {
     function test_gas_s1_revealT1Aggregation_cold() public {
         _setupToT1Open(3);
         (, address[] memory bAggs,,,) = tc.getTier1Batch(1, 0);
-        _commitT1(bAggs[0], 1, 0, bytes32("cid_a"));
+        _commitT1(bAggs[0], 1, 0, "cid_a");
         tc.startT1AggregationReveal(1);
 
         uint before = gasleft();
-        vm.prank(bAggs[0]); tc.revealT1Aggregation(1, 0, bytes32("cid_a"), TEST_SALT);
+        vm.prank(bAggs[0]); tc.revealT1Aggregation(1, 0, "cid_a", TEST_SALT);
         console.log("[GAS][S1] revealT1Aggregation (1st call, cold SSTORE):", before - gasleft());
     }
 
@@ -292,27 +292,27 @@ contract GasSimulationTest is Test {
     function test_gas_s1_revealT1Aggregation_warm() public {
         _setupToT1Open(3);
         (, address[] memory bAggs,,,) = tc.getTier1Batch(1, 0);
-        _commitT1(bAggs[0], 1, 0, bytes32("cid_a"));
-        _commitT1(bAggs[1], 1, 0, bytes32("cid_a"));
+        _commitT1(bAggs[0], 1, 0, "cid_a");
+        _commitT1(bAggs[1], 1, 0, "cid_a");
         tc.startT1AggregationReveal(1);
-        vm.prank(bAggs[0]); tc.revealT1Aggregation(1, 0, bytes32("cid_a"), TEST_SALT);
+        vm.prank(bAggs[0]); tc.revealT1Aggregation(1, 0, "cid_a", TEST_SALT);
 
         uint before = gasleft();
-        vm.prank(bAggs[1]); tc.revealT1Aggregation(1, 0, bytes32("cid_a"), TEST_SALT); // same CID → warm counter
+        vm.prank(bAggs[1]); tc.revealT1Aggregation(1, 0, "cid_a", TEST_SALT); // same CID → warm counter
         console.log("[GAS][S1] revealT1Aggregation (2nd call, warm vote counter):", before - gasleft());
     }
 
     function _commitRevealT1Batches(uint gi, uint batchCount) internal {
         for (uint b = 0; b < batchCount; b++) {
             (, address[] memory a,,,) = tc.getTier1Batch(gi, b);
-            _commitT1(a[0], gi, b, bytes32("cid"));
-            _commitT1(a[1], gi, b, bytes32("cid")); // quorum needs 2
+            _commitT1(a[0], gi, b, "cid");
+            _commitT1(a[1], gi, b, "cid"); // quorum needs 2
         }
         tc.startT1AggregationReveal(gi);
         for (uint b = 0; b < batchCount; b++) {
             (, address[] memory a,,,) = tc.getTier1Batch(gi, b);
-            vm.prank(a[0]); tc.revealT1Aggregation(gi, b, bytes32("cid"), TEST_SALT);
-            vm.prank(a[1]); tc.revealT1Aggregation(gi, b, bytes32("cid"), TEST_SALT);
+            vm.prank(a[0]); tc.revealT1Aggregation(gi, b, "cid", TEST_SALT);
+            vm.prank(a[1]); tc.revealT1Aggregation(gi, b, "cid", TEST_SALT);
         }
     }
 
@@ -349,11 +349,11 @@ contract GasSimulationTest is Test {
         tc.startT2Aggregation(1);
 
         (, address[] memory t2Aggs,,) = tc.getTier2Batch(1, 0);
-        _commitT2(t2Aggs[0], 1, 0, bytes32("cid_t2"));
+        _commitT2(t2Aggs[0], 1, 0, "cid_t2");
         tc.startT2AggregationReveal(1);
 
         uint before = gasleft();
-        vm.prank(t2Aggs[0]); tc.revealT2Aggregation(1, 0, bytes32("cid_t2"), TEST_SALT);
+        vm.prank(t2Aggs[0]); tc.revealT2Aggregation(1, 0, "cid_t2", TEST_SALT);
         console.log("[GAS][S1] revealT2Aggregation (cold SSTORE):", before - gasleft());
     }
 

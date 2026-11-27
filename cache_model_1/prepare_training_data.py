@@ -39,9 +39,6 @@ from pathlib import Path
 
 try:
     import torch
-    import torchvision
-    import torchvision.transforms as transforms
-    from torch.utils.data import Subset
 except ImportError:
     print("torch and torchvision are required.  Install: pip install torch torchvision")
     sys.exit(1)
@@ -57,7 +54,32 @@ def _cache_dir() -> Path:
     return Path(user_cache_dir("dincli"))
 
 
+def save_client_partitions(full_train, accounts, base_dir: Path) -> None:
+    """Save one contiguous training partition per account."""
+    n = len(full_train)
+    k = len(accounts)
+    per_client = n // k
+
+    for i, account in enumerate(accounts):
+        start = i * per_client
+        end = start + per_client if i < k - 1 else n  # last client gets any remainder
+        partition = [full_train[idx] for idx in range(start, end)]
+
+        dest_dir = base_dir / account
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "data.pt"
+        torch.save(partition, str(dest))
+        print(f"  [{i+1}/{k}] {len(partition)} samples → {dest}")
+
+
 def main() -> None:
+    try:
+        import torchvision
+        import torchvision.transforms as transforms
+    except ImportError:
+        print("torch and torchvision are required.  Install: pip install torch torchvision")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="Prepare Fashion-MNIST client training datasets for dincli."
     )
@@ -94,24 +116,8 @@ def main() -> None:
         transform=transform,
     )
 
-    n = len(full_train)
-    k = len(args.accounts)
-    per_client = n // k
-
-    indices = list(range(n))
     base_dir = _cache_dir() / args.network / f"model_{args.model_id}" / "dataset" / "clients"
-
-    for i, account in enumerate(args.accounts):
-        start = i * per_client
-        end = start + per_client if i < k - 1 else n  # last client gets any remainder
-        subset = Subset(full_train, indices[start:end])
-
-        dest_dir = base_dir / account
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "data.pt"
-        torch.save(subset, str(dest))
-        print(f"  [{i+1}/{k}] {len(subset)} samples → {dest}")
-
+    save_client_partitions(full_train, args.accounts, base_dir)
     print("Done.")
 
 

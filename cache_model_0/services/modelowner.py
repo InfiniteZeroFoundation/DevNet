@@ -1,3 +1,4 @@
+import copy
 import os
 import secrets
 import sys
@@ -149,6 +150,47 @@ def _encrypt_aes_gcm(plaintext: bytes, K: bytes) -> bytes:
     return nonce + AESGCM(K).encrypt(nonce, plaintext, None)
 
 
+def _clone_audit_value(value):
+    """Copy supported audit values without retaining any tensor storage.
+
+    An audit artifact is intentionally a data-only boundary.  Do not fall
+    back to ``deepcopy`` for arbitrary objects: a custom object can retain a
+    tensor view or another reference to the full parent dataset.  Reject it
+    before the plaintext is written or uploaded instead.
+    """
+    if isinstance(value, torch.Tensor):
+        return value.detach().clone()
+    if isinstance(value, tuple):
+        return tuple(_clone_audit_value(item) for item in value)
+    if isinstance(value, list):
+        return [_clone_audit_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _clone_audit_value(key): _clone_audit_value(item)
+            for key, item in value.items()
+        }
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return copy.deepcopy(value)
+    raise TypeError(
+        "unsupported audit sample value "
+        f"{type(value).__name__}; use tensors, lists, tuples, dictionaries, or scalar values"
+    )
+
+
+def _materialize_audit_samples(test_data, indices: torch.Tensor) -> list[tuple]:
+    """Return a standalone `(input, label)` sequence for one auditor batch.
+
+    Persisting a ``Subset`` serializes its parent dataset too, which makes an
+    auditor batch carry the entire held-out test set. Keep only the selected
+    samples and clone tensor storage so the artifact has no parent reference.
+    """
+    samples = []
+    for index in indices.tolist():
+        input_value, label = test_data[index]
+        samples.append((_clone_audit_value(input_value), _clone_audit_value(label)))
+    return samples
+
+
 def create_audit_testDataCIDs(
     batch_counts: int,
     gi: int,
@@ -234,7 +276,7 @@ def create_audit_testDataCIDs(
 
         round_local_indices = torch.randperm(len(round_pool_indices), generator=generator)[:samples_per_batch]
         random_indices = round_pool_indices[round_local_indices]
-        assigned_testData = torch.utils.data.Subset(test_data, random_indices)
+        assigned_testData = _materialize_audit_samples(test_data, random_indices)
 
         # Save plaintext dataset to disk
         audit_path = audit_dir / f"auditorDataset_{gi}_{batch_id}.pt"

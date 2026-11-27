@@ -16,6 +16,7 @@ Exit 1  — at least one required check failed.
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib
 import json
 import os
@@ -111,7 +112,9 @@ def _sanitize_url(url: str) -> str:
     try:
         p = urllib.parse.urlparse(url)
         netloc = p.hostname or ""
-        if p.port:
+        if ":" in netloc:
+            netloc = f"[{netloc}]"
+        if p.port is not None:
             netloc += f":{p.port}"
         return urllib.parse.urlunparse((p.scheme, netloc, "***", "", "", ""))
     except Exception:
@@ -155,11 +158,22 @@ def _check_rpc(url: str, network: str | None = None) -> int:
         {"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1}
     ).encode()
     try:
+        parsed = urllib.parse.urlsplit(url)
+        userinfo, separator, host = parsed.netloc.rpartition("@")
+        if separator:
+            url = parsed._replace(netloc=host).geturl()
         req = urllib.request.Request(
             url,
             data=payload,
             headers={"Content-Type": "application/json"},
         )
+        if separator:
+            username, _, password = userinfo.partition(":")
+            decoded = f"{urllib.parse.unquote(username)}:{urllib.parse.unquote(password)}"
+            # Match the Basic authentication bytes used by web3’s requests transport.
+            token = base64.b64encode(decoded.encode("latin-1")).decode("ascii")
+            # urllib copies regular request headers when following a redirect.
+            req.add_unredirected_header("Authorization", f"Basic {token}")
         with urllib.request.urlopen(req, timeout=5) as resp:
             result = json.loads(resp.read())
         if not isinstance(result, dict) or "error" in result:
@@ -184,12 +198,42 @@ def _check_rpc(url: str, network: str | None = None) -> int:
     return 0
 
 
+def _display_ipfs_provider(provider: str) -> str:
+    # Only echo short, name-like values. Redact the entire value for URLs,
+    # credential-shaped strings, and oversized inputs (including their prefix).
+    if isinstance(provider, str) and re.fullmatch(r"[a-zA-Z \t\r\n]{1,24}", provider):
+        return repr(provider)
+    return "<redacted>"
+
+
+def _ipfs_provider_suggestion(provider: str, supported: tuple[str, ...]) -> str | None:
+    """Recognize short ASCII provider names one edit away from a supported name."""
+    if not isinstance(provider, str) or not re.fullmatch(r"[a-z]{2,9}", provider):
+        return None
+
+    matches = []
+    for candidate in supported:
+        shorter, longer = sorted((provider, candidate), key=len)
+        if len(longer) - len(shorter) == 1:
+            close = any(longer[:i] + longer[i + 1:] == shorter for i in range(len(longer)))
+        elif len(longer) == len(shorter):
+            differences = [i for i, (a, b) in enumerate(zip(provider, candidate)) if a != b]
+            close = len(differences) == 1
+            if len(differences) == 2:
+                i, j = differences
+                close = j == i + 1 and provider[i] == candidate[j] and provider[j] == candidate[i]
+        else:
+            close = False
+        if close:
+            matches.append(candidate)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _check_ipfs_config() -> int:
     """Check that the resolved IPFSConfig has the required fields for its provider."""
     try:
-        from dincli.cli.utils import IPFSConfig  # type: ignore[import]
-        from dincli.services.ipfs import resolve_ipfs_config  # type: ignore[import]
-        cfg: IPFSConfig = resolve_ipfs_config()
+        from dincli.sdk.config import SUPPORTED_IPFS_PROVIDERS, resolve_ipfs_config
+        cfg = resolve_ipfs_config()
         provider = cfg.provider
         if provider == "env":
             missing = [
@@ -228,10 +272,17 @@ def _check_ipfs_config() -> int:
                 _ok("IPFS config resolved (custom provider)")
                 return 0
         else:
-            _missing(
-                "IPFS unknown provider — IPFS operations will fail",
-                fix="dincli system configure-ipfs",
-            )
+            suggestion = _ipfs_provider_suggestion(provider, SUPPORTED_IPFS_PROVIDERS)
+            if suggestion:
+                _missing(
+                    f"IPFS unknown provider '{provider}' — did you mean '{suggestion}'?",
+                    fix=f"dincli system configure-ipfs --provider {suggestion}",
+                )
+            else:
+                _missing(
+                    f"IPFS unknown provider {_display_ipfs_provider(provider)} — IPFS operations will fail",
+                    fix="dincli system configure-ipfs",
+                )
     except ImportError:
         _missing("dincli not importable — IPFS configuration cannot be checked", fix="pip install -e .")
     except Exception:
@@ -239,24 +290,58 @@ def _check_ipfs_config() -> int:
     return 1
 
 
+def _read_cwd_env_value(key: str) -> str:
+    try:
+        env_file = Path.cwd() / ".env"
+        if env_file.exists():
+            return _read_env_value(env_file, key)
+    except Exception:
+        _warn(".env lookup failed — skipping .env lookup")
+    return ""
+
+
+def _resolve_rpc_url(network: str, env_key: str) -> str:
+    # Keep the default checks independent of dincli and its dependencies.
+    try:
+        from dincli.sdk.config import HAS_DOTENV, resolve_network_value
+    except ImportError:
+        pass
+    except Exception:
+        _warn("dincli RPC configuration unavailable — falling back to environment lookup")
+    else:
+        # The SDK skips .env without python-dotenv. Preserve the standalone
+        # lookup in this case without overriding a shell key, even an empty one.
+        if not HAS_DOTENV and env_key not in os.environ:
+            rpc_url = _read_cwd_env_value(env_key)
+            if rpc_url:
+                return rpc_url
+        try:
+            rpc_url = resolve_network_value(network, "rpc_url")
+        except KeyError:
+            return ""
+        except Exception:
+            _warn("RPC configuration lookup failed")
+            return ""
+        return rpc_url if isinstance(rpc_url, str) else ""
+
+    if env_key in os.environ:
+        return os.environ[env_key]
+    return _read_cwd_env_value(env_key)
+
+
 def _network_checks(network: str) -> int:
     failures = 0
     env_key = f"{network.upper()}_RPC_URL"
-
-    # Resolve RPC URL the same way dincli does: os.environ → .env in cwd
-    rpc_url = os.environ.get(env_key, "")
-    if not rpc_url:
-        try:
-            env_file = Path.cwd() / ".env"
-            if env_file.exists():
-                rpc_url = _read_env_value(env_file, env_key)
-        except Exception:
-            _warn(".env lookup failed — skipping .env lookup")
+    rpc_url = _resolve_rpc_url(network, env_key)
 
     if not rpc_url:
         _missing(
-            f"No RPC URL found for {network} (checked os.environ and .env in cwd)",
-            fix=f"Set {env_key}=<url> in .env in your working directory",
+            f"No RPC URL found for {network}",
+            fix=(
+                f"Set {env_key} in your shell or set it in your working directory's "
+                f".env with the shell variable unset. With dincli installed, "
+                f"you can also set networks.{network}.rpc_url in config.json."
+            ),
         )
         failures += 1
     else:
@@ -311,9 +396,11 @@ def main() -> None:
         "--network", metavar="NAME",
         help=(
             "Also verify the configured RPC endpoint and IPFS config for NAME. "
-            "Reads <NAME_UPPER>_RPC_URL from os.environ then .env in the current "
-            "working directory (same lookup dincli uses). Requires a working dincli "
-            "install for the IPFS check. Example values: local, sepolia_op_devnet."
+            "Uses dincli's RPC lookup: <NAME_UPPER>_RPC_URL from the shell or "
+            "the current directory's .env, then networks.NAME.rpc_url in dincli's "
+            "config.json. Falls back to shell/.env lookup if the SDK is unavailable. "
+            "Requires a working dincli install for the IPFS check. "
+            "Example values: local, sepolia_op_devnet."
         ),
     )
     args = parser.parse_args()

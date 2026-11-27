@@ -21,7 +21,7 @@ from pathlib import Path
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
-from dincli.sdk.config import CONFIG_DIR, get_env_key
+from dincli.sdk.config import CONFIG_DIR, get_config, get_env_key
 from dincli.sdk.errors import SignerUnavailable, WalletError
 
 # ---------------------------------------------------------------------------
@@ -51,6 +51,22 @@ def validate_account_name(name: str) -> str:  # :51
             f"Invalid account name '{name}'. Must be 1-64 chars of A-Z, a-z, 0-9, '-', '_'."
         )
     return name
+
+
+def resolve_active_wallet_name() -> str:
+    """DIN_WALLET_NAME, then config ``wallet_name``, then "default".
+
+    Same order as the CLI's get_active_account_name (minus its --wallet
+    flag), so a non-interactive session signs with the wallet the operator
+    connected rather than always "default".
+    """
+    env_name = os.environ.get("DIN_WALLET_NAME", "").strip()
+    if env_name:
+        return validate_account_name(env_name)
+    config_name = get_config("wallet_name", "")
+    if config_name:
+        return validate_account_name(config_name.strip())
+    return "default"
 
 
 def wallet_path_for_name(name: str) -> Path:  # :60

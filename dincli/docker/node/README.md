@@ -217,6 +217,64 @@ the moment their job finishes, so in steady state you'll usually see only
 > daemon activity. Use `docker compose exec din-node dincli <args>` (or
 > `bash`, above) to run one-off commands against the same state.
 
+### Health check
+
+`dind` serves `/health` on `127.0.0.1:8787` inside the container:
+
+```bash
+docker compose exec din-node curl -s localhost:8787/health
+```
+
+Besides uptime, queue and resources, it reports three checks and the GI phase
+of each model you list:
+
+- `checks.config`: the network and its RPC endpoint are configured.
+- `checks.rpc`: the RPC node answers (with the latest block number).
+- `checks.signer`: the wallet can sign without a prompt. This needs
+  `DIN_WALLET_PASSWORD` (or demo mode); it never returns the key.
+- `models`: for each address in `DIN_DIND_HEALTH_MODELS` (comma-separated
+  task-coordinator addresses, set in `.env`), the current `gi`, `state` and
+  how long this daemon has seen that state (`observed_for_s`).
+
+The model list can also be set as `dind_health_models` (a list) in dincli's
+`config.json`; the environment variable wins if both are set. With neither,
+`models` is empty.
+
+Any failed check, or a model whose state can't be read, makes the status
+`unhealthy` with HTTP 503, and `docker ps` shows the container as unhealthy.
+The checks refresh every 15 seconds in the background, so a slow RPC never
+slows the endpoint down.
+
+### Watch for stalled training rounds
+
+Set `DIN_DIND_HEALTH_MODELS` on dind to the coordinator addresses you want
+to watch. dind reads each GI and phase at the block height in `checks.rpc.block`.
+With this checkout installed, run the monitor alongside a local dind
+in the same network namespace (for Compose, prefix the command with
+`docker compose exec din-node`):
+
+```sh
+python -m dincli.dind.gi_monitor --threshold-s 600 --interval-s 15
+```
+
+The monitor polls loopback port 8787 (override with `--port`) and writes JSON
+lines to stdout. The example uses ten minutes for every phase from `GIstarted`
+through `AggregatorsSlashed`. The team can choose a production threshold,
+phase policy and destination separately.
+
+A `stalled` line identifies the coordinator, GI, phase and observed seconds.
+It appears once per stall. A `recovered` line gives the later phase or GI that
+cleared it. Missing models, failed reads and observation resets have separate
+diagnostics and keep open alerts pending. A `daemon_restarted` event means the
+daemon instance changed. The monitor rejects contradictory timers and snapshots
+older than 60 seconds. It follows the first observed network for the life of the
+process. If you intentionally switch networks, restart the monitor.
+Restarting the monitor clears its in-memory alert history.
+
+The timer measures how long this daemon has observed the GI and phase. The
+on-chain transition time, activity within the phase and cause of a delay
+cannot be inferred from these snapshots.
+
 ### Upgrades and your data
 
 `docker compose up -d --build` rebuilds the image with the new code and replaces
@@ -339,11 +397,13 @@ job status first).
 
 ## Scope and limitations (devnet)
 
-- Not included (later roadmap phases): `systemd`/`launchd` units, vault /
-  remote-signer integration. (The `/health` endpoint, structured JSON logs,
-  and graceful `SIGTERM` handling — `dincli/dind/signals.py` — shipped with
-  the `dind` daemon in PR #32.)
+- Not included (later roadmap phases): vault / remote-signer integration.
+  (The `/health` endpoint, structured JSON logs, graceful `SIGTERM` handling —
+  `dincli/dind/signals.py` — and example `systemd`/`launchd` units for host
+  installs — `dincli/dind/examples/` — shipped with the `dind` daemon in
+  PR #32.)
 - The `docker.sock` exposure above is accepted for devnet, not solved.
-- Image pins Python (`3.12-slim`) and `dincli` (built from source, deps pinned via
-  `dincli/requirements.txt`). For stricter reproducibility, pin the base image by
-  digest and `docker-ce-cli` to an exact version.
+- The image uses Python `3.12-slim` and builds `dincli` from source with the same
+  [runtime lock](../../../requirements/dincli-runtime.txt) used by Python CI.
+  For stricter reproducibility, pin the base image by digest and
+  `docker-ce-cli` to an exact version.
