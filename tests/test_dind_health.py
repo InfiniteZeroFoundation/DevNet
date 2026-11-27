@@ -370,10 +370,12 @@ _SECRET_URL = "https://rpc.example/v3/SECRET-API-KEY"
 
 
 class _Call:
-    def __init__(self, value):
+    def __init__(self, value, block):
         self._value = value
+        self._block = block
 
-    def call(self):
+    def call(self, *, block_identifier):
+        assert block_identifier == self._block
         if isinstance(self._value, Exception):
             raise self._value
         return self._value
@@ -394,10 +396,10 @@ class _FakeChain:
             def contract(self, address, abi):
                 class _Functions:
                     def GI(self):
-                        return _Call(outer.gi)
+                        return _Call(outer.gi, outer.block)
 
                     def GIstate(self):
-                        return _Call(outer.state)
+                        return _Call(outer.state, outer.block)
 
                 class _Contract:
                     functions = _Functions()

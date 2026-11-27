@@ -127,6 +127,7 @@ class ChainHealthMonitor:
 
         # RPC: the node answers (and get_w3 checks the chain id on connect).
         w3 = None
+        block = None
         if checks["config"]["ok"]:
             try:
                 w3 = self._session.w3
@@ -146,21 +147,22 @@ class ChainHealthMonitor:
         except Exception as exc:
             checks["signer"] = {"ok": False, "error": _error_code(exc, "signer_unavailable")}
 
-        models = [self._read_model(w3, addr, now) for addr in self.models]
+        models = [self._read_model(w3, addr, now, block) for addr in self.models]
 
         return {"checked_at": now.isoformat(), "checks": checks, "models": models}
 
-    def _read_model(self, w3, coordinator: str, now: datetime) -> dict:
+    def _read_model(self, w3, coordinator: str, now: datetime, block: int | None) -> dict:
         entry: dict = {"coordinator": coordinator}
-        if w3 is None:
+        if block is None or w3 is None:
             entry["error"] = "rpc_unavailable"
             return entry
         try:
             if self._abi is None:
                 self._abi = _load_coordinator_abi()
             contract = w3.eth.contract(address=coordinator, abi=self._abi)
-            gi = int(contract.functions.GI().call())
-            state = int(contract.functions.GIstate().call())
+            # A rollover between latest-block reads would mix two GIs.
+            gi = int(contract.functions.GI().call(block_identifier=block))
+            state = int(contract.functions.GIstate().call(block_identifier=block))
         except Exception as exc:
             entry["error"] = _error_code(exc, "model_read_failed")
             return entry
