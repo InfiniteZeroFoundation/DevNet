@@ -321,24 +321,27 @@ def test_env_read_failure_still_runs_ipfs_check(no_rpc_sdk, monkeypatch, tmp_pat
     assert output.count("[MISSING]") == 1
 
 
-@pytest.mark.parametrize("provider", [
-    "SENTINEL_PROVIDER_SECRET\nINJECTED_PROVIDER_LINE",
-    "filebse_credential_sentinel",
-    "filebse\n",
-    "fïlebase",
-    "unrelated",
+@pytest.mark.parametrize(("provider", "display"), [
+    ("SENTINEL_PROVIDER_SECRET\nINJECTED_PROVIDER_LINE", "<redacted>"),
+    ("filebse_credential_sentinel", "<redacted>"),
+    ("https://user:secret@example.com", "<redacted>"),
+    ("a" * 25, "<redacted>"),
+    ("filebse\n", "'filebse\\n'"),
+    (" filebase ", "' filebase '"),
+    ("fïlebase", "<redacted>"),
+    ("unrelated", "'unrelated'"),
 ])
-def test_unknown_ipfs_provider_fails(ipfs_resolver, capsys, provider):
-    """An unrecognised IPFS provider is a required-check failure."""
+def test_unknown_ipfs_provider_fails(ipfs_resolver, capsys, provider, display):
     ipfs_resolver.return_value = types.SimpleNamespace(
         provider=provider,
     )
     result = preflight._check_ipfs_config()
     output = capsys.readouterr().out
-    assert "[MISSING] IPFS unknown provider — IPFS operations will fail" in output
+    assert f"[MISSING] IPFS unknown provider {display} — IPFS operations will fail" in output
     assert output.count("[MISSING]") == 1
     assert "[WARN]" not in output
-    assert all(line not in output for line in provider.splitlines())
+    if display == "<redacted>":
+        assert all(line not in output for line in provider.splitlines())
     assert "[OK]" not in output
     assert result == 1
 
