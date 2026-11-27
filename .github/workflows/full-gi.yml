@@ -65,6 +65,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: |
+            requirements/dincli-runtime.txt
+            pyproject.toml
+            .github/constraints-ci.txt
+            cache_model_0/requirements/modelowner/requirements.txt
 
       # forge (svm-rs) installs solc into ~/.local/share/svm only when ~/.svm is
       # missing and ~/.local/share already exists, otherwise into ~/.svm (the
@@ -120,10 +125,14 @@ jobs:
         working-directory: hardhat
         run: npx hardhat compile
 
-      - name: Install torch (CPU)
-        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Install model-owner dependencies (CPU)
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu -r cache_model_0/requirements/modelowner/requirements.txt
       - name: Install dincli + test deps
-        run: python -m pip install -e ".[test]"
+        run: python -m pip install -c requirements/dincli-runtime.txt -e ".[test]"
+      - name: Verify installed dependencies
+        run: |
+          python -m pip check
+          python .github/scripts/check_runtime_lock.py
 
       # dincli builds this image on first use otherwise, inside a Phase 4
       # command's 120 s timeout. Same Dockerfile, context and tag as

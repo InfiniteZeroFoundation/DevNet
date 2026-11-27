@@ -20,6 +20,7 @@ per-test so it's clear which layer is under test.
 
 from __future__ import annotations
 
+import json
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -368,3 +369,101 @@ class TestMcMarginalGainScore:
         run_a = scoring.mc_marginal_gain_score(base_state=BASE_STATE, candidate_states=states, evaluate_fn=sum_of_weights_metric, n_perms=10, seed=99)
         run_b = scoring.mc_marginal_gain_score(base_state=BASE_STATE, candidate_states=states, evaluate_fn=sum_of_weights_metric, n_perms=10, seed=99)
         assert run_a == run_b
+
+
+@pytest.fixture(params=["cache_model_0", "cache_model_1"])
+def reference_scoring_module(request):
+    model_name = request.param
+    scoring_path = Path(__file__).resolve().parents[1] / model_name / "services" / "scoring.py"
+    spec = spec_from_file_location(f"{model_name}_manifest_scoring", scoring_path)
+    module = module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_manifest(tmp_path, payload):
+    (tmp_path / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+class TestAuditScoringPolicyManifest:
+    def test_canonical_policy_is_recursive_and_changes_acceptance(self, tmp_path, reference_scoring_module):
+        _write_manifest(
+            tmp_path,
+            {
+                "audit_scoring_policy": {
+                    "metrics": {"thresholds": {"min_accuracy": 70.0}},
+                }
+            },
+        )
+
+        policy = reference_scoring_module.load_scoring_policy(tmp_path)
+        thresholds = policy["metrics"]["thresholds"]
+        assert thresholds["min_accuracy"] == 70.0
+        assert thresholds["min_baseline_delta_bps"] == 0
+        assert thresholds["max_anomaly_score_bps"] == 5000
+
+        baseline = reference_scoring_module.ClassificationMetrics(accuracy=55.0, loss=1.0, macro_f1=55.0, total_examples=10)
+        candidate = reference_scoring_module.ClassificationMetrics(accuracy=65.0, loss=0.5, macro_f1=65.0, total_examples=10)
+        eligibility = reference_scoring_module.EligibilityResult(True, 0, [], 0.0, 0.0)
+        rejected = reference_scoring_module.normalize_holdout_delta_score(
+            candidate_metrics=candidate,
+            baseline_metrics=baseline,
+            eligibility=eligibility,
+            policy=policy,
+        )
+        assert rejected.accepted is False
+
+        _write_manifest(
+            tmp_path,
+            {
+                "audit_scoring_policy": {
+                    "metrics": {"thresholds": {"min_accuracy": 60.0}},
+                }
+            },
+        )
+        accepted = reference_scoring_module.normalize_holdout_delta_score(
+            candidate_metrics=candidate,
+            baseline_metrics=baseline,
+            eligibility=eligibility,
+            policy=reference_scoring_module.load_scoring_policy(tmp_path),
+        )
+        assert accepted.accepted is True
+
+    def test_legacy_policy_is_fallback_and_warns(self, tmp_path, caplog, reference_scoring_module):
+        _write_manifest(
+            tmp_path,
+            {"scoring_policy": {"metrics": {"thresholds": {"min_accuracy": 71.0}}}},
+        )
+
+        with caplog.at_level("WARNING"):
+            policy = reference_scoring_module.load_scoring_policy(tmp_path)
+
+        assert policy["metrics"]["thresholds"]["min_accuracy"] == 71.0
+        assert "deprecated scoring_policy" in caplog.text
+
+    def test_missing_policy_uses_defaults(self, tmp_path, reference_scoring_module):
+        _write_manifest(tmp_path, {"name": "reference"})
+        assert reference_scoring_module.load_scoring_policy(tmp_path) == reference_scoring_module.DEFAULT_SCORING_POLICY
+
+    @pytest.mark.parametrize(
+        "payload, message",
+        [
+            (
+                {
+                    "audit_scoring_policy": {"metrics": {"thresholds": {"min_accuracy": 60.0}}},
+                    "scoring_policy": {"metrics": {"thresholds": {"min_accuracy": 70.0}}},
+                },
+                "conflicts",
+            ),
+            ({"audit_scoring_policy": []}, "must be an object"),
+            ({"audit_scoring_policy": {"metrics": []}}, "metrics must be an object"),
+            ({"audit_scoring_policy": {"evaluation": []}}, "evaluation must be an object"),
+            ({"scoring_policy": "legacy"}, "must be an object"),
+        ],
+    )
+    def test_conflicting_or_malformed_policy_is_rejected(self, tmp_path, reference_scoring_module, payload, message):
+        _write_manifest(tmp_path, payload)
+        with pytest.raises(ValueError, match=message):
+            reference_scoring_module.load_scoring_policy(tmp_path)

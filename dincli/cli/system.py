@@ -34,6 +34,7 @@ from dincli.cli.utils import (
     load_din_info,
     normalize_ipfs_provider,
     print_tx_info,
+    reraise_din_error_cause,
     resolve_ipfs_config,
     resolve_task_coordinator_address,
     resolve_wallet_path,
@@ -42,6 +43,8 @@ from dincli.cli.utils import (
     validate_account_name,
     wallet_path_for_name,
 )
+from dincli.sdk.errors import DinError
+from dincli.sdk.operations.platform import get_platform_addresses
 from dincli.services import bridge as bridge_service
 
 dataset_app = typer.Typer(help="Manage federated datasets.")
@@ -890,8 +893,13 @@ def send_eth(
             raise typer.Exit(0)
 
     # Build and send raw ETH transfer
+    from dincli.sdk.tx import NonceManager
+    nonce = None
+    broadcast = False
+    nonce_mgr = NonceManager.for_session(ctx.obj.session)
     try:
         tx_params = ctx.obj.get_tx_params()
+        nonce = tx_params.get("nonce")
         tx_params.update({"to": to, "value": amount_wei, "from": account.address})
 
         tx_params["gas"] = int(w3.eth.estimate_gas(tx_params) * 1.1)
@@ -900,6 +908,11 @@ def send_eth(
         console.print(f"[bold green]Sending {amount} ETH to {to}...[/bold green]")
 
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        # Past this point the nonce is spent on-chain: it moves to inflight and
+        # must NOT be released, or a later tx would reuse it.
+        broadcast = True
+        if nonce is not None:
+            nonce_mgr.mark_broadcast(nonce)
         print_tx_info(tx_hash, effective_network)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
         if receipt.status == 1:
@@ -909,8 +922,14 @@ def send_eth(
             raise typer.Exit(1)
 
     except typer.Exit:
+        # Only reclaim a nonce that never reached the network. Releasing after
+        # broadcast was a no-op that read like a bug (M8).
+        if nonce is not None and not broadcast:
+            nonce_mgr.release(nonce)
         raise
     except Exception as e:
+        if nonce is not None and not broadcast:
+            nonce_mgr.release(nonce)
         console.print(f"[bold red]✗ Transaction failed: {e}[/bold red]")
         raise typer.Exit(1)
 
@@ -949,38 +968,54 @@ def din_info(ctx: typer.Context,
     # Resolve effective network
     effective_network, _, _, console = ctx.obj.get_en_w3_account_console()
 
-    data = load_din_info()[effective_network]
+    try:
+        addresses = get_platform_addresses(ctx.obj.session)
+    except DinError as e:
+        reraise_din_error_cause(e)
+        console.print(f"[red]{e.message}[/red]")
+        raise typer.Exit(1)
+
+    def render(key: str, value: Optional[str]) -> str:
+        # Reproduces today's `data.get(key, 'N/A')` for every shape a
+        # hand-edited din_info.json entry can take: a key missing from the
+        # file renders "N/A"; a key explicitly present but null renders
+        # "None" (`present` is what makes those two distinguishable — see
+        # PlatformAddresses' docstring). Present and non-null (including the
+        # empty string, or a malformed placeholder) renders as-is.
+        if key not in addresses.present:
+            return "N/A"
+        return "None" if value is None else value
 
     # Print requested info
     if coordinator:
-        console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
+        console.print(f"[cyan]Coordinator:[/cyan] {render('coordinator', addresses.coordinator)}")
     if token:
-        console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
+        console.print(f"[green]DIN Token:[/green] {render('token', addresses.token)}")
     if stake:
-        console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
+        console.print(f"[yellow]Staking Contract:[/yellow] {render('stake', addresses.stake)}")
     if representative:
-        console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
+        console.print(f"[magenta]Representative:[/magenta] {render('representative', addresses.representative)}")
     if registry:
-        console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
+        console.print(f"[magenta]Registry:[/magenta] {render('registry', addresses.registry)}")
     if treasury:
-        console.print(f"[blue]Treasury:[/blue] {data.get('treasury', 'N/A')}")
+        console.print(f"[blue]Treasury:[/blue] {render('treasury', addresses.treasury)}")
     if fee_router:
-        console.print(f"[blue]Fee Router:[/blue] {data.get('fee_router', 'N/A')}")
+        console.print(f"[blue]Fee Router:[/blue] {render('fee_router', addresses.fee_router)}")
     if emission:
-        console.print(f"[blue]Emission:[/blue] {data.get('emission', 'N/A')}")
+        console.print(f"[blue]Emission:[/blue] {render('emission', addresses.emission)}")
 
     if not any([coordinator, token, stake, representative, registry, treasury, fee_router, emission]):
-        console.print(f"[cyan]Coordinator:[/cyan] {data.get('coordinator', 'N/A')}")
-        console.print(f"[green]DIN Token:[/green] {data.get('token', 'N/A')}")
-        console.print(f"[yellow]Staking Contract:[/yellow] {data.get('stake', 'N/A')}")
-        console.print(f"[magenta]Representative:[/magenta] {data.get('representative', 'N/A')}")
-        console.print(f"[magenta]Registry:[/magenta] {data.get('registry', 'N/A')}")
-        if data.get("treasury"):
-            console.print(f"[blue]Treasury:[/blue] {data.get('treasury')}")
-        if data.get("fee_router"):
-            console.print(f"[blue]Fee Router:[/blue] {data.get('fee_router')}")
-        if data.get("emission"):
-            console.print(f"[blue]Emission:[/blue] {data.get('emission')}")
+        console.print(f"[cyan]Coordinator:[/cyan] {render('coordinator', addresses.coordinator)}")
+        console.print(f"[green]DIN Token:[/green] {render('token', addresses.token)}")
+        console.print(f"[yellow]Staking Contract:[/yellow] {render('stake', addresses.stake)}")
+        console.print(f"[magenta]Representative:[/magenta] {render('representative', addresses.representative)}")
+        console.print(f"[magenta]Registry:[/magenta] {render('registry', addresses.registry)}")
+        if addresses.treasury:
+            console.print(f"[blue]Treasury:[/blue] {addresses.treasury}")
+        if addresses.fee_router:
+            console.print(f"[blue]Fee Router:[/blue] {addresses.fee_router}")
+        if addresses.emission:
+            console.print(f"[blue]Emission:[/blue] {addresses.emission}")
 
 
 # ---------------------------------------------------------------------------
@@ -2133,8 +2168,8 @@ def bridge_eth(
         # One sanitized line; every failure outcome in §3.2b maps to exit 1.
         console.print(f"[red]❌ {e}[/red]")
         raise typer.Exit(1)
-    except ConnectionError:
-        # #83 handles this globally once merged; local handling closes the
-        # gap on plain main and stays harmless afterwards.
-        console.print("[red]❌ could not connect to a blockchain RPC endpoint[/red]")
-        raise typer.Exit(1)
+    # Deliberately no local ConnectionError handler: get_w3 now raises NetworkError
+    # (a DinError), so GlobalOptionsGroup.invoke's top-level handler (dincli/cli/core.py)
+    # covers RPC connect failures here too. This local handler used to intercept
+    # builtin ConnectionError before #83 existed globally; it went dead once get_w3
+    # stopped raising it and is removed rather than kept for bespoke wording.

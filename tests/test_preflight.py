@@ -3,6 +3,7 @@
 Uses isolated subprocess fixtures for exit codes and mocks for network checks.
 No installed third-party packages or live RPC/IPFS services are required.
 """
+import base64
 import json
 import os
 import subprocess
@@ -186,17 +187,20 @@ def test_rpc_success_output_does_not_expose_credentials(monkeypatch, capsys):
 def test_rpc_failure_output_does_not_expose_credentials_or_exception(monkeypatch, capsys):
     secret = "SENTINEL_RPC_CREDENTIAL"
     url = f"https://user:{secret}@rpc.example/{secret}?key={secret}#{secret}"
+    token = base64.b64encode(f"user:{secret}".encode()).decode("ascii")
 
-    def fail_request(*args, **kwargs):
-        raise OSError(f"failed for {url}")
+    def fail_request(req, **kwargs):
+        raise OSError(f"failed for {url} using {req.get_header('Authorization')}")
 
     monkeypatch.setattr(preflight.urllib.request, "urlopen", fail_request)
 
     assert preflight._check_rpc(url) == 1
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert "[MISSING] RPC not reachable:" in output
     assert output.count("[MISSING]") == 1
     assert secret not in output
+    assert token not in output
     assert url not in output
     assert "failed for" not in output
 
@@ -216,7 +220,52 @@ def test_env_reader_accepts_dotenv_assignment_forms(tmp_path, assignment, expect
     assert preflight._read_env_value(env_file, "SEPOLIA_OP_DEVNET_RPC_URL") == expected
 
 
-def test_missing_network_env_still_checks_ipfs(monkeypatch, tmp_path, capsys):
+@pytest.fixture
+def no_rpc_sdk(monkeypatch):
+    monkeypatch.setitem(sys.modules, "dincli.sdk.config", None)
+
+
+@pytest.mark.parametrize(
+    ("shell", "dotenv", "has_dotenv", "expected"),
+    [
+        ("https://shell.example", True, True, "https://shell.example"),
+        (None, True, True, "https://last.example"),
+        ("", True, True, "https://config.example"),
+        (None, False, True, "https://config.example"),
+        (None, True, False, "https://first.example"),
+        ("", True, False, "https://config.example"),
+    ],
+)
+def test_rpc_lookup_uses_sdk_precedence(monkeypatch, tmp_path, shell, dotenv, has_dotenv, expected):
+    sdk = pytest.importorskip("dincli.sdk.config")
+    if has_dotenv and not sdk.HAS_DOTENV:
+        pytest.skip("python-dotenv is required to exercise the SDK's .env lookup")
+    monkeypatch.setattr(sdk, "HAS_DOTENV", has_dotenv)
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({
+        "networks": {"local": {"rpc_url": "https://config.example"}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(sdk, "CONFIG_FILE", config_file)
+    monkeypatch.chdir(tmp_path)
+    if shell is None:
+        monkeypatch.delenv("LOCAL_RPC_URL", raising=False)
+    else:
+        monkeypatch.setenv("LOCAL_RPC_URL", shell)
+    if dotenv:
+        (tmp_path / ".env").write_text(
+            "LOCAL_RPC_URL=https://first.example\n"
+            "LOCAL_RPC_URL=https://last.example\n",
+            encoding="utf-8",
+        )
+    rpc = Mock(return_value=0)
+    monkeypatch.setattr(preflight, "_check_rpc", rpc)
+    monkeypatch.setattr(preflight, "_check_ipfs_config", lambda: 0)
+
+    assert preflight._network_checks("local") == 0
+    rpc.assert_called_once_with(expected, network="local")
+
+
+def test_missing_network_env_still_checks_ipfs(no_rpc_sdk, monkeypatch, tmp_path, capsys):
     """IPFS check must run even when there is no RPC URL in env or cwd/.env."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LOCAL_RPC_URL", raising=False)
@@ -231,7 +280,7 @@ def test_missing_network_env_still_checks_ipfs(monkeypatch, tmp_path, capsys):
     assert output.count("[MISSING]") == 1
 
 
-def test_env_read_from_cwd_not_repo_root(monkeypatch, tmp_path, capsys):
+def test_env_read_from_cwd_not_repo_root(no_rpc_sdk, monkeypatch, tmp_path, capsys):
     """RPC URL must be read from .env in the current working directory, not the
     repository root (which may differ when dincli is installed from a wheel)."""
     env_file = tmp_path / ".env"
@@ -251,7 +300,7 @@ def test_env_read_from_cwd_not_repo_root(monkeypatch, tmp_path, capsys):
     )
 
 
-def test_env_read_failure_still_runs_ipfs_check(monkeypatch, tmp_path, capsys):
+def test_env_read_failure_still_runs_ipfs_check(no_rpc_sdk, monkeypatch, tmp_path, capsys):
     """.env decode errors must produce a warning and not abort the IPFS check."""
     env_file = tmp_path / ".env"
     env_file.write_bytes(b"\xff\xfe invalid utf-8 \xff")
@@ -272,20 +321,47 @@ def test_env_read_failure_still_runs_ipfs_check(monkeypatch, tmp_path, capsys):
     assert output.count("[MISSING]") == 1
 
 
-def test_unknown_ipfs_provider_fails(ipfs_resolver, capsys):
-    """An unrecognised IPFS provider is a required-check failure."""
+@pytest.mark.parametrize(("provider", "display"), [
+    ("SENTINEL_PROVIDER_SECRET\nINJECTED_PROVIDER_LINE", "<redacted>"),
+    ("filebse_credential_sentinel", "<redacted>"),
+    ("https://user:secret@example.com", "<redacted>"),
+    ("a" * 25, "<redacted>"),
+    ("filebse\n", "'filebse\\n'"),
+    (" filebase ", "' filebase '"),
+    ("fïlebase", "<redacted>"),
+    ("unrelated", "'unrelated'"),
+])
+def test_unknown_ipfs_provider_fails(ipfs_resolver, capsys, provider, display):
     ipfs_resolver.return_value = types.SimpleNamespace(
-        provider="SENTINEL_PROVIDER_SECRET\nINJECTED_PROVIDER_LINE",
+        provider=provider,
     )
     result = preflight._check_ipfs_config()
     output = capsys.readouterr().out
-    assert "[MISSING] IPFS unknown provider — IPFS operations will fail" in output
+    assert f"[MISSING] IPFS unknown provider {display} — IPFS operations will fail" in output
     assert output.count("[MISSING]") == 1
     assert "[WARN]" not in output
-    assert "SENTINEL_PROVIDER_SECRET" not in output
-    assert "INJECTED_PROVIDER_LINE" not in output
+    if display == "<redacted>":
+        assert all(line not in output for line in provider.splitlines())
     assert "[OK]" not in output
     assert result == 1
+
+
+@pytest.mark.parametrize(("provider", "suggestion"), [
+    ("filebse", "filebase"),
+    ("fileabse", "filebase"),
+    ("custon", "custom"),
+    ("ennv", "env"),
+])
+def test_close_ipfs_provider_typo_suggests_correction(ipfs_resolver, capsys, provider, suggestion):
+    ipfs_resolver.return_value = types.SimpleNamespace(provider=provider)
+
+    assert preflight._check_ipfs_config() == 1
+
+    output = capsys.readouterr().out
+    assert f"[MISSING] IPFS unknown provider '{provider}' — did you mean '{suggestion}'?" in output
+    assert f"dincli system configure-ipfs --provider {suggestion}" in output
+    assert output.count("[MISSING]") == 1
+    assert "[OK]" not in output
 
 
 def test_run_annotations_are_postponed_for_python_39_compatibility():
@@ -359,17 +435,55 @@ def test_chain_id_mismatch_remains_advisory(rpc_response, capsys):
     assert "[MISSING]" not in output
 
 
+@pytest.mark.parametrize(
+    ("userinfo", "decoded"),
+    [("agent%40mail:pa%3Ass+%C3%A9", "agent@mail:pa:ss+é"), ("agent", "agent:")],
+)
+def test_rpc_userinfo_becomes_unredirected_basic_auth(rpc_response, capsys, userinfo, decoded):
+    reply, transport = rpc_response
+    reply.read.return_value = b'{"result":"0x1"}'
+    url = f"https://{userinfo}@[::1]:8545/path%2Fsentinel;param?key=query-secret#fragment-secret"
+
+    assert preflight._check_rpc(url) == 0
+    req, = transport.call_args.args
+    assert transport.call_args.kwargs == {"timeout": 5}
+    assert req.full_url == "https://[::1]:8545/path%2Fsentinel;param?key=query-secret#fragment-secret"
+    assert req.get_method() == "POST"
+    assert req.get_header("Content-type") == "application/json"
+    assert json.loads(req.data) == {"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1}
+    token = base64.b64encode(decoded.encode("latin-1")).decode("ascii")
+    assert req.get_header("Authorization") == f"Basic {token}"
+
+    redirect = preflight.urllib.request.HTTPRedirectHandler().redirect_request(
+        req, None, 302, "Found", {}, "https://other.example/redirect"
+    )
+    assert not redirect.has_header("Authorization")
+    captured = capsys.readouterr()
+    assert "https://[::1]:8545/***" in captured.out
+    username, _, password = decoded.partition(":")
+    secrets = (userinfo, username, password, token, "path%2Fsentinel", "query-secret", "fragment-secret")
+    for secret in filter(None, secrets):
+        assert secret not in captured.out + captured.err
+
+
+def test_rpc_unauthenticated_request_preserves_original_url(rpc_response):
+    reply, transport = rpc_response
+    reply.read.return_value = b'{"result":"0x1"}'
+    url = "https://rpc.example:8545/path@with-at?key=query@with-at#fragment"
+
+    assert preflight._check_rpc(url) == 0
+    req, = transport.call_args.args
+    assert req.full_url == url
+    assert not req.has_header("Authorization")
+
+
 @pytest.fixture
 def ipfs_resolver(monkeypatch):
     resolver = Mock()
-    fake_ipfs = types.ModuleType("dincli.services.ipfs")
-    fake_ipfs.resolve_ipfs_config = resolver
-    fake_utils = types.ModuleType("dincli.cli.utils")
-    fake_utils.IPFSConfig = types.SimpleNamespace
-    for name in ("dincli", "dincli.services", "dincli.cli"):
-        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
-    monkeypatch.setitem(sys.modules, "dincli.services.ipfs", fake_ipfs)
-    monkeypatch.setitem(sys.modules, "dincli.cli.utils", fake_utils)
+    fake_config = types.ModuleType("dincli.sdk.config")
+    fake_config.resolve_ipfs_config = resolver
+    fake_config.SUPPORTED_IPFS_PROVIDERS = ("env", "filebase", "custom")
+    monkeypatch.setitem(sys.modules, "dincli.sdk.config", fake_config)
     return resolver
 
 
@@ -383,7 +497,6 @@ def ipfs_resolver(monkeypatch):
     ("filebase", {"api_key": "SENTINEL_IPFS_SECRET"}, 0),
     ("custom", {}, 1),
     ("custom", {"service_path": "/fixtures/provider.py"}, 0),
-    ("unknown", {}, 1),
 ])
 def test_ipfs_provider_required_fields(
         ipfs_resolver, capsys, provider, fields, expected):
@@ -419,12 +532,26 @@ def test_unresolved_ipfs_fails_without_exposing_exception(
 
 
 def test_unimportable_dincli_fails_ipfs(monkeypatch, capsys):
-    monkeypatch.setitem(sys.modules, "dincli.services.ipfs", None)
+    monkeypatch.setitem(sys.modules, "dincli.sdk.config", None)
     assert preflight._check_ipfs_config() == 1
     output = capsys.readouterr().out
     assert "[MISSING] dincli not importable — IPFS configuration cannot be checked" in output
     assert output.count("[MISSING]") == 1
     assert "[WARN]" not in output
+
+
+def test_preflight_reads_provider_from_real_config(monkeypatch, tmp_path, capsys):
+    sdk_config = pytest.importorskip("dincli.sdk.config")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sdk_config, "CONFIG_DIR", tmp_path)
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(sdk_config, "CONFIG_FILE", config_file)
+    config_file.write_text('{"ipfs_provider": "custon"}', encoding="utf-8")
+
+    assert preflight._check_ipfs_config() == 1
+    output = capsys.readouterr().out
+    assert "[MISSING] IPFS unknown provider 'custon' — did you mean 'custom'?" in output
+    assert "dincli system configure-ipfs --provider custom" in output
 
 
 @pytest.mark.parametrize(("rpc_failure", "ipfs_failure", "expected"), [
@@ -448,7 +575,7 @@ def test_network_results_reach_main(
 
 @pytest.mark.parametrize("operation", ["cwd", "exists", "read"])
 def test_env_lookup_exception_is_sanitized_and_still_checks_ipfs(
-        monkeypatch, tmp_path, capsys, operation):
+        no_rpc_sdk, monkeypatch, tmp_path, capsys, operation):
     (tmp_path / ".env").touch()
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LOCAL_RPC_URL", raising=False)

@@ -49,15 +49,16 @@ RUN set -eux; \
 WORKDIR /opt/dincli
 # Copy only what the build needs, in cache-friendly order: pinned requirements
 # first (rarely change) so the heavy dependency layer is reused across edits.
-COPY dincli/requirements.txt ./dincli/requirements.txt
+COPY requirements/dincli-runtime.txt ./requirements/dincli-runtime.txt
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir -r dincli/requirements.txt
+    && python -m pip install --no-cache-dir --no-deps -r requirements/dincli-runtime.txt
 
 COPY pyproject.toml README.md MANIFEST.in ./
 COPY dincli ./dincli
 # Non-editable install: din-node is a release artifact; upgrades rebuild the
 # image rather than mutating mounted source.
-RUN python -m pip install --no-cache-dir . \
+RUN python -m pip install --no-cache-dir --no-deps . \
+    && python -m pip check \
     && dincli version
 
 # ---- Non-root user ---------------------------------------------------------
@@ -73,7 +74,6 @@ RUN groupadd --gid "$DIN_GID" dinuser \
 USER dinuser
 WORKDIR /home/dinuser
 
-# dincli is a CLI, not yet a daemon (the `dind` daemon is a future phase). To
-# keep a long-lived container that operators `docker compose exec` into, the
-# main process just idles. When `dind` exists this CMD becomes its entrypoint.
-CMD ["sleep", "infinity"]
+# dind daemon entrypoint: the long-lived container process that drives the
+# protocol event loop, health endpoint, and job queue.
+CMD ["dind", "start"]

@@ -1,3 +1,4 @@
+import base64
 import secrets
 from types import SimpleNamespace
 
@@ -75,7 +76,7 @@ class DummyTaskAuditorFunctions:
         return DummyCall((batch_id, [_AUDITOR_ADDRESS], [], b""))
 
     def assignAuditTestDataset(self, gi, batch_id, encrypted_cid, encrypted_keys, commitment):
-        return ("assignAuditTestDataset", batch_id)
+        return ("assignAuditTestDataset", batch_id, commitment)
 
 
 class DummyTaskAuditorContract:
@@ -344,6 +345,32 @@ def _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor, stake=No
     monkeypatch.setattr(DinContext, "load_custom_fn", lambda self, *a, **kw: fake_fn)
 
 
+_SYNTHETIC_AUDIT_KEY = bytes(range(32))
+_SYNTHETIC_PLAINTEXT_HASH = bytes(range(32, 64))
+
+
+def _patch_fixed_secret_batch_factory(monkeypatch):
+    """Return deterministic test-only values that must never reach CLI output."""
+    def fake_fn(batch_count, gi, model_base_path, test_data_path):
+        return [
+            {
+                "raw_cid": f"cid-{i}",
+                "K": _SYNTHETIC_AUDIT_KEY,
+                "plaintext_keccak": _SYNTHETIC_PLAINTEXT_HASH,
+            }
+            for i in range(batch_count)
+        ]
+
+    monkeypatch.setattr(DinContext, "load_custom_fn", lambda self, *a, **kw: fake_fn)
+
+
+def _assert_output_redacts_batch_secrets(output):
+    for secret in (_SYNTHETIC_AUDIT_KEY, _SYNTHETIC_PLAINTEXT_HASH):
+        assert repr(secret) not in output
+        assert secret.hex() not in output
+        assert base64.b64encode(secret).decode() not in output
+
+
 def _make_test_data_file(tmp_path):
     test_data_file = tmp_path / "test_dataset.pt"
     test_data_file.write_bytes(b"dummy")
@@ -534,19 +561,270 @@ def test_missing_auditor_encryption_key_exits_before_any_tx(monkeypatch, tmp_pat
     assert "register-encryption-key" in out
 
 
+def _record_assigns(monkeypatch, fail_batches=(), lost_receipt_batches=()):
+    """Fakes build_and_send_tx; returns {batch_id: commitment} for the assign
+    txs that land on-chain. Batches in `fail_batches` don't land and get no
+    receipt; batches in `lost_receipt_batches` land but get no receipt."""
+    landed = {}
+
+    def fake(ctx, fn, *a, **kw):
+        if isinstance(fn, tuple) and fn[0] == "assignAuditTestDataset":
+            if fn[1] in fail_batches:
+                return None
+            landed[fn[1]] = fn[2]
+            if fn[1] in lost_receipt_batches:
+                return None
+        return SimpleNamespace(transactionHash=b"\xab" * 32)
+
+    monkeypatch.setattr(atb, "build_and_send_tx", fake)
+    return landed
+
+
 def test_submit_saves_each_batch_secret_owner_only(monkeypatch, tmp_path):
     ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
-    monkeypatch.setattr(
-        atb, "build_and_send_tx",
-        lambda *a, **kw: SimpleNamespace(transactionHash=b"\xab" * 32),
-    )
+    landed = _record_assigns(monkeypatch)
 
     _invoke(tmp_path, ctx)
 
     for batch_id in (0, 1):
         path = atb._testdata_secret_path(tmp_path, 0, batch_id)
         assert path.stat().st_mode & 0o777 == 0o600
-        K, plaintext_keccak = atb._load_testdata_secret(tmp_path, 0, batch_id)
+        assert atb._pending_testdata_secret_paths(tmp_path, 0, batch_id) == []
+        K, plaintext_keccak = atb._load_testdata_secret(tmp_path, 0, batch_id, landed[batch_id])
         assert len(K) == 32
         assert plaintext_keccak == b"\x00" * 32
     assert (tmp_path / "config" / "owner_x25519.key").stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_retry_keeps_the_k_behind_the_onchain_commitment(monkeypatch, tmp_path):
+    # Batch 1 lands on the first run; a retry of batch 1 then fails. The
+    # confirmed K must still be the one matching the first commitment
+    # (task_061026_21 close-out, Discussion 231).
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    landed = _record_assigns(monkeypatch)
+    _invoke(tmp_path, ctx)
+    onchain = landed[1]
+    confirmed_before = atb._testdata_secret_path(tmp_path, 0, 1).read_text()
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    _record_assigns(monkeypatch, fail_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx, batch=[1])
+
+    assert atb._testdata_secret_path(tmp_path, 0, 1).read_text() == confirmed_before
+    secret = atb._load_testdata_secret(tmp_path, 0, 1, onchain)
+    assert secret is not None
+    assert atb._testdata_commitment(0, 1, *secret) == onchain
+
+
+@pytest.mark.parametrize("older_confirmed_k", [False, True])
+def test_lost_receipt_then_failed_retry_keeps_the_landed_k(monkeypatch, tmp_path, older_confirmed_k):
+    # Santiago's PR No. 341 case: the first assignment lands but its receipt
+    # is lost, so its K is only pending; the retry then fails without
+    # changing the chain. The K behind the on-chain commitment must survive,
+    # with or without an older confirmed K already saved.
+    if older_confirmed_k:
+        atb._save_testdata_secret(tmp_path, 0, 1, b"\x44" * 32, b"\x00" * 32)
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    landed = _record_assigns(monkeypatch, lost_receipt_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx)
+    onchain = landed[1]
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    _record_assigns(monkeypatch, fail_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx, batch=[1])
+
+    # Both attempts' keys are still on disk, each in its own pending file.
+    assert len(atb._pending_testdata_secret_paths(tmp_path, 0, 1)) == 2
+    secret = atb._load_testdata_secret(tmp_path, 0, 1, onchain)
+    assert secret is not None
+    assert atb._testdata_commitment(0, 1, *secret) == onchain
+    # The match is promoted to confirmed; the failed retry's K stays pending.
+    assert atb._read_secret(atb._testdata_secret_path(tmp_path, 0, 1)) == secret
+    assert len(atb._pending_testdata_secret_paths(tmp_path, 0, 1)) == 1
+
+
+def test_lost_receipt_then_landed_retry_confirms_the_retry_k(monkeypatch, tmp_path):
+    # If the retry lands, its commitment replaces the first one on-chain and
+    # its K becomes the confirmed one.
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    _record_assigns(monkeypatch, lost_receipt_batches={1})
+    with pytest.raises(typer.Exit):
+        _invoke(tmp_path, ctx)
+
+    ctx, coordinator, auditor = make_ctx(tmp_path, batch_count=2)
+    landed = _record_assigns(monkeypatch)
+    _invoke(tmp_path, ctx, batch=[1])
+
+    secret = atb._read_secret(atb._testdata_secret_path(tmp_path, 0, 1))
+    assert atb._testdata_commitment(0, 1, *secret) == landed[1]
+    assert atb._load_testdata_secret(tmp_path, 0, 1, landed[1]) == secret
+
+
+# ---------------------------------------------------------------------------
+# Issue #328: dataset-assignment output is operator-visible, so it may expose
+# public ciphertext CIDs/counts but never a batch key, plaintext hash or an
+# exception whose text embeds either one.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_creation_summary_shows_cid_and_redacts_batch_secrets(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=2)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+
+    result = runner.invoke(
+        main_app, _cli_args(1, _make_test_data_file(tmp_path), submit=False)
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Created 2 encrypted audit dataset(s)." in result.output
+    assert "Batch 0: ciphertext CID cid-0" in result.output
+    assert "Batch 1: ciphertext CID cid-1" in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_retry_output_redacts_batch_secrets(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=2)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+
+    def fail_first_assign(ctx, contract_function, *args, **kwargs):
+        if isinstance(contract_function, tuple) and contract_function[1] == 0:
+            return None
+        return SimpleNamespace(transactionHash=b"\xab" * 32)
+
+    monkeypatch.setattr(atb, "build_and_send_tx", fail_first_assign)
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert "--batch 0" in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_assignment_exception_redacts_embedded_batch_secret(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+
+    def raise_with_secret(*args, **kwargs):
+        raise RuntimeError(
+            f"test failure key={_SYNTHETIC_AUDIT_KEY.hex()} "
+            f"hash={_SYNTHETIC_PLAINTEXT_HASH.hex()}"
+        )
+
+    monkeypatch.setattr(atb, "_encrypt_batch_testdata", raise_with_secret)
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert "Failed to assign test dataset for auditor batches." in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+class _EstimationFailureEth:
+    chain_id = 31337
+    gas_price = 1
+    max_priority_fee = 1
+
+    def __init__(self, marker):
+        self.marker = marker
+        self.estimation_calls = 0
+
+    def get_transaction_count(self, address, block_identifier):
+        return 0
+
+    def estimate_gas(self, transaction):
+        self.estimation_calls += 1
+        raise RuntimeError(self.marker)
+
+
+class _EstimationFailureW3:
+    def __init__(self, marker):
+        self.eth = _EstimationFailureEth(marker)
+
+
+class _BuildableAssignment:
+    def build_transaction(self, params):
+        return dict(params)
+
+
+def test_cli_transaction_estimation_failure_redacts_batch_secret(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+    marker = f"key={_SYNTHETIC_AUDIT_KEY.hex()}"
+
+    monkeypatch.setattr(
+        auditor.functions,
+        "assignAuditTestDataset",
+        lambda *args, **kwargs: _BuildableAssignment(),
+    )
+    # Transactions now use the SDK session, not DinContext.get_tx_params.
+    # Keep the real SDK send/estimation path; replace only its RPC boundary.
+    w3 = _EstimationFailureW3(marker)
+    account = DummyAccount()
+    session = SimpleNamespace(
+        network="local", w3=w3, address=account.address, signer=account,
+    )
+    monkeypatch.setattr(DinContext, "session", property(lambda self: session))
+    monkeypatch.setattr(
+        DinContext,
+        "get_en_w3_account_console",
+        lambda self, *a, **kw: ("local", w3, account, self.console),
+    )
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert w3.eth.estimation_calls == 1
+    assert "Transaction estimation failed." in result.output
+    assert "--batch 0" in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_flag_preflight_failure_redacts_batch_secret(monkeypatch, tmp_path):
+    marker = f"key={_SYNTHETIC_AUDIT_KEY.hex()}"
+    coordinator = DummyTaskCoordinatorContract(flag_call_raises=RuntimeError(marker))
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+    _patch_fixed_secret_batch_factory(monkeypatch)
+    monkeypatch.setattr(
+        atb,
+        "build_and_send_tx",
+        lambda *args, **kwargs: SimpleNamespace(transactionHash=b"\xab" * 32),
+    )
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
+
+    assert result.exit_code == 1, result.output
+    assert "Failed to set test dataset assigned flag." in result.output
+    _assert_output_redacts_batch_secrets(result.output)
+
+
+def test_cli_service_failure_redacts_embedded_batch_secret(monkeypatch, tmp_path):
+    coordinator = DummyTaskCoordinatorContract()
+    auditor = DummyTaskAuditorContract(batch_count=1)
+    _patch_context_methods(monkeypatch, tmp_path, coordinator, auditor)
+
+    def fail_service(*args, **kwargs):
+        raise RuntimeError(
+            f"key={_SYNTHETIC_AUDIT_KEY.hex()} "
+            f"hash={_SYNTHETIC_PLAINTEXT_HASH.hex()}"
+        )
+
+    monkeypatch.setattr(DinContext, "load_custom_fn", lambda self, *a, **kw: fail_service)
+
+    result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path), submit=False))
+
+    assert result.exit_code == 1, result.output
+    assert "Failed to create encrypted audit datasets (RuntimeError)." in result.output
+    _assert_output_redacts_batch_secrets(result.output)
