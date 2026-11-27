@@ -198,6 +198,14 @@ def _check_rpc(url: str, network: str | None = None) -> int:
     return 0
 
 
+def _display_ipfs_provider(provider: str) -> str:
+    # Only echo short, name-like values. Redact the entire value for URLs,
+    # credential-shaped strings, and oversized inputs (including their prefix).
+    if isinstance(provider, str) and re.fullmatch(r"[a-zA-Z \t\r\n]{1,24}", provider):
+        return repr(provider)
+    return "<redacted>"
+
+
 def _ipfs_provider_suggestion(provider: str, supported: tuple[str, ...]) -> str | None:
     """Recognize short ASCII provider names one edit away from a supported name."""
     if not isinstance(provider, str) or not re.fullmatch(r"[a-z]{2,9}", provider):
@@ -272,7 +280,7 @@ def _check_ipfs_config() -> int:
                 )
             else:
                 _missing(
-                    "IPFS unknown provider — IPFS operations will fail",
+                    f"IPFS unknown provider {_display_ipfs_provider(provider)} — IPFS operations will fail",
                     fix="dincli system configure-ipfs",
                 )
     except ImportError:
