@@ -49,3 +49,4 @@ One guide per network role: [Clients](public/roles/clients.md) · [Auditors](pub
 | [`upgradable-contracts/`](technical/upgradable-contracts/) | Transparent Proxy deployment architecture and upgrade test documentation; [Foundry upgradeability reference](technical/upgradable-contracts/foundry/README.md) (deploy, upgrade, validate) |
 | [manifest.md](technical/manifest.md) | Manifest runtime resolution and service loading internals |
 | [requirements.md](technical/requirements.md) | Pinned pip requirements reference |
+| [incident-response-runbook.md](technical/incident-response-runbook.md) | Invite-only testnet incident-response runbook: roles, severity, monitoring, playbooks, and emergency levers |
