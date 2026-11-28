@@ -126,7 +126,7 @@ A stuck round can't yet be recovered on-chain, and its pool and validators' regi
 ### 7. A participant's key is leaked (SEV3, SEV2 if many)
 
 - Advise them to move remaining funds and unstake (the unbonding period applies).
-- Consider freezing the address with `blacklistValidator`: nobody can then stake, unstake or claim unstaked tokens with it, so an attacker can't withdraw the stake. It's reversible with `unblacklistValidator` once the owner has a safe new key.
+- Consider freezing the address with `blacklistValidator`: nobody can then stake, unstake or claim unstaked tokens with it (or register in new rounds), so an attacker can't withdraw the stake. If the validator is currently registered in an in-flight round, jailing them reverts while blacklisted and can stall that round, so wait for active rounds to settle if safe. It's reversible with `unblacklistValidator` once the owner has a safe new key.
 - Remind everyone to use encrypted keystores, never plaintext keys.
 
 ### 8. Scams and impersonation (SEV3, SEV2 if spreading)
@@ -158,7 +158,7 @@ Auditors score each local model before aggregation, and the reference manifest's
 For example, the open issue #238: `DinEmission.fundGI` can be called by anyone, so a model's emission schedule can be used up on far-future rounds.
 
 - **Contain:** freeze new minting with `setMintCap` (set it to the current total minted), and `disableModel` to stop emission funding for an affected model.
-- **Fix:** adjust the schedule with `setEmissionParams` after the cause is fixed.
+- **Fix:** once the cause is fixed, `setEmissionParams` updates the schedule only for models that have not yet started (`emissionState` is stored per model). An already-started model whose schedule was drained — or permanently zeroed out after hitting `maxEpochs` — cannot be restored via `setEmissionParams` and requires upgrading `DinEmission` through its ProxyAdmin (or redeploying its task contracts).
 - Never use `retireFaucet` as a quick stop: it is permanent.
 
 ## Emergency levers
@@ -171,9 +171,9 @@ These are the on-chain actions the team can take today on `develop`'s contracts.
 | Retire the faucet | `DinCoordinator.retireFaucet` | Permanently stops all new DIN: the ETH faucet and emission. Also locks the mint cap. | No, one-way |
 | Stop a contract slashing | `DinCoordinator.removeSlasherContract` | That task pair can no longer slash, jail or register validators, or release their slots; its current round may stall until it's re-added | Yes, re-add it |
 | Disable a model | `DINModelRegistry.disableModel` | Blocks manifest updates, emission funding and new rounds; the round in progress finishes | Yes, `enableModel` |
-| Freeze an address | `DinValidatorStake.blacklistValidator` | The address can't stake, unstake or claim unstaked tokens | Yes, `unblacklistValidator` |
+| Freeze an address | `DinValidatorStake.blacklistValidator` | The address can't stake, unstake, claim unstaked tokens or register in new rounds; jailing it in an in-flight round reverts and can stall that round | Yes, `unblacklistValidator` |
 | Change penalty settings | `DinValidatorStake.setS5GlobalParams`, `setS5RecidivismParams`, `setMinStake`, `setUnbondingPeriod` | Adjusts penalties and stake rules; `setS5GlobalParams(0, 0)` switches the cross-model escalation off | Yes |
-| Change emission | `DinEmission.setEmissionParams` | Adjusts the per-round emission schedule | Yes |
+| Change emission | `DinEmission.setEmissionParams` | Updates the per-round emission schedule for unstarted models only (already-started per-model `emissionState` is unchanged) | Yes |
 | Change the pool split | `DINTaskAuditor.setRewardSplit` (model owner) | Changes who receives each round's pool. #340 moves the split to the protocol before the public testnet. | Yes |
 | Upgrade a platform contract | The contract's ProxyAdmin | Replaces the contract's code after a reviewed fix | Yes, by another upgrade |
 | Move control to a safe key | `transferOwnership` on each contract and ProxyAdmin | Hands control to a new owner address | Only by the new owner |
