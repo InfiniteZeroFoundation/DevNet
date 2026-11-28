@@ -8,7 +8,7 @@ pragma solidity ^0.8.28;
 // Run: forge test --match-contract P3AdversarialTest -vv
 // ─────────────────────────────────────────────────────────────────────────────
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {TransparentUpgradeableProxy} from
     "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -42,10 +42,6 @@ contract P3AdversarialTest is Test {
     // ── Primary task contract pair ────────────────────────────────────────────
     DINTaskCoordinator tc;
     DINTaskAuditor     ta;
-
-    // ── Secondary task pair - Row 11 (per-slasher S5 ring evasion) ───────────
-    DINTaskCoordinator tc2;
-    DINTaskAuditor     ta2;
 
     // ── Participants ──────────────────────────────────────────────────────────
     address admin      = makeAddr("admin");
@@ -326,100 +322,136 @@ contract P3AdversarialTest is Test {
     // slashAggregators.  For gi==1, GI is already started by _deployTaskPair.
     // For gi>1, calls startGI(gi) first.  On exit: state = GIended.
     function _runOneGIWithMiss(uint gi, address missedAgg) internal {
+        _runOneGIWithMissOn(tc, ta, gi, missedAgg, "");
+    }
+
+    /// @dev _runOneGIWithMiss on an explicit task pair. `tag` namespaces the
+    ///      per-GI honest aggregators so several models can run side by side
+    ///      (Row 11). Releases the GI's registration slots after endGI so a
+    ///      validator can keep registering across many sequential GIs.
+    function _runOneGIWithMissOn(
+        DINTaskCoordinator c,
+        DINTaskAuditor a_,
+        uint gi,
+        address missedAgg,
+        string memory tag
+    ) internal {
         if (gi > 1) {
             // Reward pool must be funded before startGI checks giRewardPool > 0.
             vm.startPrank(modelOwner);
-            ta.depositRewards(gi, 1 ether);
-            tc.startGI(gi);
+            a_.depositRewards(gi, 1 ether);
+            c.startGI(gi);
             vm.stopPrank();
         }
 
-        address honestA = makeAddr(string(abi.encodePacked("hA_gi", vm.toString(gi))));
-        address honestB = makeAddr(string(abi.encodePacked("hB_gi", vm.toString(gi))));
+        address honestA = makeAddr(string(abi.encodePacked("hA", tag, "_gi", vm.toString(gi))));
+        address honestB = makeAddr(string(abi.encodePacked("hB", tag, "_gi", vm.toString(gi))));
         _fundAndStake(honestA);
         _fundAndStake(honestB);
 
-        vm.prank(modelOwner); tc.startDINaggregatorsRegistration(gi);
-        vm.prank(honestA);   tc.registerDINaggregator(gi);
-        vm.prank(honestB);   tc.registerDINaggregator(gi);
-        vm.prank(missedAgg); tc.registerDINaggregator(gi);
-        vm.prank(modelOwner); tc.closeDINaggregatorsRegistration(gi);
-        vm.prank(modelOwner); tc.startDINauditorsRegistration(gi);
-        vm.prank(auditor1); ta.registerDINAuditor(gi);
-        vm.prank(auditor2); ta.registerDINAuditor(gi);
-        vm.prank(auditor3); ta.registerDINAuditor(gi);
-        vm.prank(modelOwner); tc.closeDINauditorsRegistration(gi);
+        vm.prank(modelOwner); c.startDINaggregatorsRegistration(gi);
+        vm.prank(honestA);   c.registerDINaggregator(gi);
+        vm.prank(honestB);   c.registerDINaggregator(gi);
+        vm.prank(missedAgg); c.registerDINaggregator(gi);
+        vm.prank(modelOwner); c.closeDINaggregatorsRegistration(gi);
+        vm.prank(modelOwner); c.startDINauditorsRegistration(gi);
+        vm.prank(auditor1); a_.registerDINAuditor(gi);
+        vm.prank(auditor2); a_.registerDINAuditor(gi);
+        vm.prank(auditor3); a_.registerDINAuditor(gi);
+        vm.prank(modelOwner); c.closeDINauditorsRegistration(gi);
 
-        vm.prank(modelOwner); tc.startLMsubmissions(gi);
-        vm.prank(client1); ta.submitLocalModel(bytes32(uint256(gi * 100)), gi);
-        vm.prank(client2); ta.submitLocalModel(bytes32(uint256(gi * 200)), gi);
-        vm.prank(client3); ta.submitLocalModel(bytes32(uint256(gi * 300)), gi);
-        vm.prank(modelOwner); tc.closeLMsubmissions(gi);
-        _lockAuditSeedNow(gi);
+        vm.prank(modelOwner); c.startLMsubmissions(gi);
+        vm.prank(client1); a_.submitLocalModel(bytes32(uint256(gi * 100)), gi);
+        vm.prank(client2); a_.submitLocalModel(bytes32(uint256(gi * 200)), gi);
+        vm.prank(client3); a_.submitLocalModel(bytes32(uint256(gi * 300)), gi);
+        vm.prank(modelOwner); c.closeLMsubmissions(gi);
+        vm.roll(block.number + c.disputeSeedDelay() + 1);
+        c.lockAuditSeed(gi);
         vm.startPrank(modelOwner);
-        tc.createAuditorsBatches(gi);
-        assignPlaceholderTestData(ta, address(stake), gi);
-        tc.setTestDataAssignedFlag(gi, true);
-        tc.startLMsubmissionsEvaluation(gi);
+        c.createAuditorsBatches(gi);
+        assignPlaceholderTestData(a_, address(stake), gi);
+        c.setTestDataAssignedFlag(gi, true);
+        c.startLMsubmissionsEvaluation(gi);
         vm.stopPrank();
 
-        (, address[] memory bAuds, uint[] memory bMods,) = ta.getAuditorsBatch(gi, 0);
+        (, address[] memory bAuds, uint[] memory bMods,) = a_.getAuditorsBatch(gi, 0);
         for (uint a = 0; a < bAuds.length; a++) {
             for (uint m = 0; m < bMods.length; m++) {
                 vm.prank(bAuds[a]);
-                ta.commitAuditScore(gi, 0, bMods[m],
+                a_.commitAuditScore(gi, 0, bMods[m],
                     auditCommitHash(100, true, TEST_SALT, bAuds[a], gi, 0, bMods[m]));
             }
         }
-        vm.prank(modelOwner); tc.startLMsubmissionsEvaluationReveal(gi);
+        vm.prank(modelOwner); c.startLMsubmissionsEvaluationReveal(gi);
         for (uint a = 0; a < bAuds.length; a++) {
             for (uint m = 0; m < bMods.length; m++) {
-                vm.prank(bAuds[a]); ta.revealAuditScore(gi, 0, bMods[m], 100, true, TEST_SALT);
+                vm.prank(bAuds[a]); a_.revealAuditScore(gi, 0, bMods[m], 100, true, TEST_SALT);
             }
         }
-        vm.prank(modelOwner); tc.closeLMsubmissionsEvaluation(gi);
-        _lockAggSeedNow(gi);
-        vm.prank(modelOwner); tc.autoCreateTier1AndTier2(gi);
-        vm.prank(modelOwner); tc.startT1Aggregation(gi);
+        vm.prank(modelOwner); c.closeLMsubmissionsEvaluation(gi);
+        vm.roll(block.number + c.disputeSeedDelay() + 1);
+        c.lockAggSeed(gi);
+        vm.prank(modelOwner); c.autoCreateTier1AndTier2(gi);
+        vm.prank(modelOwner); c.startT1Aggregation(gi);
 
         // 3 aggs → all placed in T1, no T2 batch; missedAgg skips commit.
-        (, address[] memory t1aggs,,, ) = tc.getTier1Batch(gi, 0);
+        (, address[] memory t1aggs,,, ) = c.getTier1Batch(gi, 0);
         for (uint i = 0; i < t1aggs.length; i++) {
             if (t1aggs[i] == missedAgg) continue;
             vm.prank(t1aggs[i]);
-            tc.commitT1Aggregation(gi, 0, _t1CommitHash(t1aggs[i], CORRECT_CID, TEST_SALT, gi, 0));
+            c.commitT1Aggregation(gi, 0, _t1CommitHash(t1aggs[i], CORRECT_CID, TEST_SALT, gi, 0));
         }
-        vm.prank(modelOwner); tc.startT1AggregationReveal(gi);
+        vm.prank(modelOwner); c.startT1AggregationReveal(gi);
         for (uint i = 0; i < t1aggs.length; i++) {
             if (t1aggs[i] == missedAgg) continue;
-            vm.prank(t1aggs[i]); tc.revealT1Aggregation(gi, 0, CORRECT_CID, TEST_SALT);
+            vm.prank(t1aggs[i]); c.revealT1Aggregation(gi, 0, CORRECT_CID, TEST_SALT);
         }
-        vm.prank(modelOwner); tc.finalizeT1Aggregation(gi);
+        vm.prank(modelOwner); c.finalizeT1Aggregation(gi);
 
         // No T2 batch (all 3 aggs consumed by T1); run T2 state machine empty.
-        vm.prank(modelOwner); tc.startT2Aggregation(gi);
-        vm.prank(modelOwner); tc.startT2AggregationReveal(gi);
-        vm.prank(modelOwner); tc.finalizeT2Aggregation(gi);
+        vm.prank(modelOwner); c.startT2Aggregation(gi);
+        vm.prank(modelOwner); c.startT2AggregationReveal(gi);
+        vm.prank(modelOwner); c.finalizeT2Aggregation(gi);
 
         vm.startPrank(modelOwner);
-        tc.slashAuditors(gi);
-        tc.slashAggregators(gi); // S2-slashes missedAgg
-        tc.endGI(gi);
+        c.slashAuditors(gi);
+        c.slashAggregators(gi); // S2-slashes missedAgg
+        c.endGI(gi);
+        c.releaseGIRegistrationSlots(gi);
         vm.stopPrank();
+    }
+
+    /// @dev The single registrant in `aggs` that sits in neither batch.
+    function _onlyUnassigned(
+        address[] memory aggs,
+        address[] memory t1aggs,
+        address[] memory t2aggs
+    ) internal pure returns (address unassigned) {
+        uint found;
+        for (uint i = 0; i < aggs.length; i++) {
+            bool seated;
+            for (uint j = 0; j < t1aggs.length; j++) if (t1aggs[j] == aggs[i]) seated = true;
+            for (uint j = 0; j < t2aggs.length; j++) if (t2aggs[j] == aggs[i]) seated = true;
+            if (!seated) { unassigned = aggs[i]; found++; }
+        }
+        require(found == 1, "fixture: expected exactly one unassigned aggregator");
     }
 
     // ── Row 1: COST-BOUNDED - Sybil N-identity no-participation ──────────────
 
-    // 7 aggs registered → 3 T1, 3 T2, 1 unassigned (the 7th, aggs[6]).
+    // 7 aggs registered → 3 T1, 3 T2, 1 unassigned. The seed-driven shuffle
+    // decides which registrant is left out, so the unassigned one is found from
+    // the real T1/T2 batch membership (#154 review: aggs[6] is not reliably it).
     // T1 agg[2] misses submission (will be S2 slashed).
     // Asserts: (a) unassigned agg faces NO slash; (b) T1 non-submitter slashed s2Amount;
     // (c) repeated T1 misses across 3 real GIs escalate to S5 on the threshold-th miss.
     function test_costBounded_sybilNoParticipation() public {
         address[] memory aggs = _runToAuditorsSlashed(7);
         (, address[] memory t1aggs,,, ) = tc.getTier1Batch(1, 0);
+        (, address[] memory t2aggs,,) = tc.getTier2Batch(1, 0);
 
         address missedAgg = t1aggs[2];  // intentionally left uncommitted above
-        address unassigned = aggs[6];   // 7th registered; not placed in any batch
+        address unassigned = _onlyUnassigned(aggs, t1aggs, t2aggs);
 
         uint256 unassignedBefore = stake.getStake(unassigned);
         uint256 missedBefore     = stake.getStake(missedAgg);
@@ -1009,63 +1041,98 @@ contract P3AdversarialTest is Test {
             "no slash fires - s3 still in shadow mode");
     }
 
-    // ── Row 11: KNOWN GAP - per-slasher S5 ring evasion ──────────────────────
+    // ── Row 11: DEFENDED - per-slasher S5 ring evasion (global S5, #193) ─────
 
-    // Validator spreads (threshold-1) misses across TWO model slashers: no single
-    // slasher reaches threshold, so S5 never fires.
-    // A final miss on tc2 (now = threshold there) confirms S5 fires once the ring fills.
-    /// @dev Flip to test_defended_perSlasherS5 once #193 (PR #236) merges — assert that
-    ///      S5 fires on aggregate cross-model miss count rather than per-slasher ring.
-    function test_knownGap_perSlasherS5Evasion() public {
+    // A validator spreads misses over three models, two real GIs each, so no
+    // model's per-slasher ring reaches s5RecidivismThreshold (3). The global
+    // ring (s5GlobalThreshold 6 within s5GlobalWindow) still adds them up:
+    // the 6th S2 miss escalates to S5 -- MIN_STAKE slashed instead of the S2
+    // amount, jail, and rejection of the next registration.
+    function test_defended_crossModelS5Escalation() public {
         _deployPlatform();
-        _deployTaskPair(); // tc / ta for model-1
+        _deployTaskPair(); // model 1: tc / ta, GI 1 already started
+        (DINTaskCoordinator c2, DINTaskAuditor a2) = _deployExtraTaskPair(2);
+        (DINTaskCoordinator c3, DINTaskAuditor a3) = _deployExtraTaskPair(3);
 
-        // Deploy second task pair (tc2 / ta2) for model-2.
-        vm.startPrank(modelOwner);
-        tc2 = new DINTaskCoordinator(address(stake), 2);
-        ta2 = new DINTaskAuditor(address(stake), address(tc2), 2, address(new EnabledModelRegistry()));
-        tc2.setDINTaskAuditorContract(address(ta2));
-        vm.stopPrank();
-        vm.startPrank(admin);
-        coordinator.addSlasherContract(address(tc2));
-        coordinator.addSlasherContract(address(ta2));
-        vm.stopPrank();
-        vm.startPrank(modelOwner);
-        tc2.setDINTaskCoordinatorAsSlasher();
-        tc2.setDINTaskAuditorAsSlasher();
-        vm.stopPrank();
+        _fundAndStake(auditor1);
+        _fundAndStake(auditor2);
+        _fundAndStake(auditor3);
 
         address attacker = makeAddr("multiModelEvader");
         _fundAndStake(attacker);
-        // Extra stake so partial slashes don't exhaust MIN_STAKE before S5 test.
-        vm.startPrank(attacker);
-        token.approve(address(stake), type(uint256).max);
-        stake.stake(90 ether);
+        vm.prank(attacker); stake.stake(90 ether); // 100 DIN: room for 5 S2 slashes + S5
+
+        uint256 perSlasher = stake.s5RecidivismThreshold();
+        uint256 global     = stake.s5GlobalThreshold();
+        assertEq(perSlasher, 3, "default per-slasher threshold");
+        assertEq(global, 6, "default global threshold");
+        uint256 s2Amount = (stake.MIN_STAKE() * tc.s2SlashFractionBps()) / 10_000;
+
+        // GIs 1-2 on each model: 2 misses per slasher (< 3), 6 in the global ring.
+        _runOneGIWithMissOn(tc, ta, 1, attacker, "m1");
+        _runOneGIWithMissOn(c2, a2, 1, attacker, "m2");
+        _runOneGIWithMissOn(c3, a3, 1, attacker, "m3");
+        _runOneGIWithMissOn(tc, ta, 2, attacker, "m1");
+        _runOneGIWithMissOn(c2, a2, 2, attacker, "m2");
+        assertTrue(stake.isValidatorActive(attacker), "5 misses: below both thresholds");
+        assertEq(stake.getStake(attacker), 100 ether - 5 * s2Amount, "5 partial S2 slashes so far");
+
+        uint256 before = stake.getStake(attacker);
+        vm.recordLogs();
+        _runOneGIWithMissOn(c3, a3, 2, attacker, "m3"); // 6th miss, 2nd on model 3
+        assertTrue(_sawGlobalS5(attacker, address(c3)),
+            "ValidatorEscalatedS5Global emitted for the attacker by model 3's coordinator");
+
+        assertFalse(stake.isValidatorActive(attacker), "jailed by the global S5 level");
+        assertEq(before - stake.getStake(attacker), stake.MIN_STAKE(),
+            "S5 takes MIN_STAKE in place of the 6th S2 amount");
+
+        // Jailed: the next registration on any model is rejected.
+        vm.startPrank(modelOwner);
+        ta.depositRewards(3, 1 ether);
+        tc.startGI(3);
+        tc.startDINaggregatorsRegistration(3);
         vm.stopPrank();
+        vm.prank(attacker);
+        vm.expectRevert(TC_AggregatorNotActive.selector);
+        tc.registerDINaggregator(3);
+    }
 
-        uint256 threshold = stake.s5RecidivismThreshold(); // 3
-        uint256 s2Amount  = (stake.MIN_STAKE() * tc.s2SlashFractionBps()) / 10_000;
-
-        // (threshold-1) misses on model-A (tc) - ring at tc: [1, 2]
-        for (uint gi = 1; gi < threshold; gi++) {
-            vm.prank(address(tc));
-            stake.slashPartial(attacker, s2Amount, "AGG_T1_NO_SUBMISSION", gi);
+    function _sawGlobalS5(address validator, address slasher) internal returns (bool) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = DinValidatorStake.ValidatorEscalatedS5Global.selector;
+        for (uint i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(stake) && logs[i].topics[0] == sig
+                && logs[i].topics[1] == bytes32(uint256(uint160(validator)))
+                && logs[i].topics[2] == bytes32(uint256(uint160(slasher)))) return true;
         }
-        // (threshold-1) misses on model-B (tc2) - ring at tc2: [1, 2]
-        for (uint gi = 1; gi < threshold; gi++) {
-            vm.prank(address(tc2));
-            stake.slashPartial(attacker, s2Amount, "AGG_T1_NO_SUBMISSION", gi);
-        }
+        return false;
+    }
 
-        // 4 total misses; neither ring at threshold → S5 never fired.
-        assertTrue(stake.isValidatorActive(attacker),
-            "validator still active: per-slasher ring, not aggregate across models");
-
-        // One more miss on tc2 reaches its threshold (ring: [1, 2, 3]) → S5 fires on tc2.
-        vm.prank(address(tc2));
-        stake.slashPartial(attacker, s2Amount, "AGG_T1_NO_SUBMISSION", threshold);
-
-        assertFalse(stake.isValidatorActive(attacker),
-            "S5 fires only when a single slasher's ring reaches threshold");
+    /// @dev A second/third model's task pair, wired and funded like
+    ///      _deployTaskPair, with GI 1 started.
+    function _deployExtraTaskPair(uint256 modelId)
+        internal
+        returns (DINTaskCoordinator c, DINTaskAuditor a_)
+    {
+        vm.startPrank(modelOwner);
+        c = new DINTaskCoordinator(address(stake), modelId);
+        a_ = new DINTaskAuditor(address(stake), address(c), modelId, address(new EnabledModelRegistry()));
+        c.setDINTaskAuditorContract(address(a_));
+        vm.stopPrank();
+        vm.startPrank(admin);
+        coordinator.addSlasherContract(address(c));
+        coordinator.addSlasherContract(address(a_));
+        vm.stopPrank();
+        vm.startPrank(modelOwner);
+        c.setDINTaskCoordinatorAsSlasher();
+        c.setDINTaskAuditorAsSlasher();
+        c.setGenesisModelIpfsHash(bytes32(uint256(1)));
+        c.setDinToken(address(token));
+        a_.setDinToken(address(token));
+        token.approve(address(a_), type(uint256).max);
+        a_.depositRewards(1, 1 ether);
+        c.startGI(1);
+        vm.stopPrank();
     }
 }
