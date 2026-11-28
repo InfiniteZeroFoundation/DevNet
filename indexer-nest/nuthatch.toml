@@ -1,0 +1,192 @@
+[nest]
+name = "din-nest"
+chain = "din-local"
+chain_id = 1337
+rpc_urls = ["http://127.0.0.1:8545"]
+schema_version = 1
+block_timestamps = true
+
+[[contracts]]
+alias = "registry"
+address = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+start_block = 0
+abi = "abis/DINModelRegistry.json"
+
+[[contracts]]
+alias = "stake"
+address = "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+start_block = 0
+abi = "abis/DinValidatorStake.json"
+
+[[contracts]]
+alias = "coordinator"
+address = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+start_block = 0
+abi = "abis/DinCoordinator.json"
+
+[[contracts]]
+alias = "token"
+address = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+start_block = 0
+abi = "abis/DinToken.json"
+
+[[contracts]]
+alias = "fee_router"
+address = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+start_block = 0
+abi = "abis/DinFeeRouter.json"
+
+[[contracts]]
+alias = "treasury"
+address = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+start_block = 0
+abi = "abis/DinTreasury.json"
+
+[[contracts]]
+alias = "emission"
+address = "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d"
+start_block = 0
+abi = "abis/DinEmission.json"
+
+# Every task contract is authorised as a slasher before a model can be registered, and
+# DinCoordinator announces each one. A child takes one template, so the coordinator and auditor
+# ABIs are merged into one; which contract a row came from is its address.
+[[templates]]
+name = "task"
+abi = "abis/DINTask.json"
+
+[[factories]]
+watch = "coordinator"
+event = "SlasherContractAdded"
+child_param = "slasher"
+template = "task"
+
+# The registry's events carry no addresses, so each approval reads the model back at its block,
+# as the subgraph's handler does. Needs --state-rpc.
+[[calls]]
+name = "model_record"
+on = "registry__model_approved"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "getModel(uint256)"
+args = ["{modelId}"]
+
+# The other registry reads the subgraph's handlers make, each pinned to the block of the event that
+# triggers it. The views in views/40-din-reads.sql slice the answers.
+[[calls]]
+name = "model_request_record"
+on = "registry__model_registration_requested"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "modelRequests(uint256)"
+args = ["{requestId}"]
+
+[[calls]]
+name = "manifest_request_record"
+on = "registry__manifest_update_requested"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "manifestRequests(uint256)"
+args = ["{requestId}"]
+
+[[calls]]
+name = "registry_fee_router_record"
+on = "registry__fees_swept_to_router"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "feeRouter()"
+
+# The four fee getters. Each of the four single-fee setters makes the subgraph read the whole
+# schedule, so each getter is declared once per setter event: 16 small tables, fee_<getter>_<event>.
+
+[[calls]]
+name = "fee_os_on_open_source_fee"
+on = "registry__open_source_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceFee()"
+
+[[calls]]
+name = "fee_pr_on_open_source_fee"
+on = "registry__open_source_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryFee()"
+
+[[calls]]
+name = "fee_osu_on_open_source_fee"
+on = "registry__open_source_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceUpdateFee()"
+
+[[calls]]
+name = "fee_pru_on_open_source_fee"
+on = "registry__open_source_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryUpdateFee()"
+
+[[calls]]
+name = "fee_os_on_proprietary_fee"
+on = "registry__proprietary_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceFee()"
+
+[[calls]]
+name = "fee_pr_on_proprietary_fee"
+on = "registry__proprietary_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryFee()"
+
+[[calls]]
+name = "fee_osu_on_proprietary_fee"
+on = "registry__proprietary_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceUpdateFee()"
+
+[[calls]]
+name = "fee_pru_on_proprietary_fee"
+on = "registry__proprietary_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryUpdateFee()"
+
+[[calls]]
+name = "fee_os_on_open_source_update_fee"
+on = "registry__open_source_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceFee()"
+
+[[calls]]
+name = "fee_pr_on_open_source_update_fee"
+on = "registry__open_source_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryFee()"
+
+[[calls]]
+name = "fee_osu_on_open_source_update_fee"
+on = "registry__open_source_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceUpdateFee()"
+
+[[calls]]
+name = "fee_pru_on_open_source_update_fee"
+on = "registry__open_source_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryUpdateFee()"
+
+[[calls]]
+name = "fee_os_on_proprietary_update_fee"
+on = "registry__proprietary_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceFee()"
+
+[[calls]]
+name = "fee_pr_on_proprietary_update_fee"
+on = "registry__proprietary_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryFee()"
+
+[[calls]]
+name = "fee_osu_on_proprietary_update_fee"
+on = "registry__proprietary_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "openSourceUpdateFee()"
+
+[[calls]]
+name = "fee_pru_on_proprietary_update_fee"
+on = "registry__proprietary_update_fee_updated"
+contract = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+signature = "proprietaryUpdateFee()"

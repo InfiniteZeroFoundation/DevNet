@@ -1,0 +1,5 @@
+nuthatch.redb
+segments/
+data/
+*.log
+.admin-token
