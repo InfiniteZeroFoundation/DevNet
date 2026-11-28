@@ -253,14 +253,23 @@ Exits 0 when all required checks pass; exits 1 if Python is below 3.12,
 package (`eth-account`, `py-multibase`, `web3`) cannot be imported. Missing
 optional `torch` only warns and does not fail preflight.
 
-To also verify the configured RPC endpoint (read from `os.environ` or `.env`, the same lookup dincli uses) and the IPFS config:
+To also verify the configured RPC endpoint and the IPFS config, run:
 
 ```bash
 python3 scripts/preflight.py --network sepolia_op_devnet
 # or: python3 scripts/preflight.py --network local
 ```
 
-Network checks run only with `--network`. When requested, missing RPC
+With `--network`, preflight uses dincli's RPC lookup. It reads
+`<NAME_UPPER>_RPC_URL` from the shell or the current directory's `.env`,
+then checks `networks.<name>.rpc_url` in dincli's `config.json`. A shell
+variable set to an empty string skips `.env` and goes straight to
+`config.json`. If the SDK cannot be imported, only the shell and `.env`
+are checked for the RPC URL. If the SDK is available but python-dotenv
+is missing, preflight uses its built-in `.env` reader. The IPFS config
+check still requires dincli.
+
+When network checks are requested, missing RPC
 configuration, an unreachable endpoint or invalid RPC response, and unresolved
 or incomplete IPFS configuration also cause exit 1. A reachable RPC reporting
 an unexpected chain ID remains a warning.

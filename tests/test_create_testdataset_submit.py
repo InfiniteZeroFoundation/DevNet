@@ -730,10 +730,19 @@ def test_cli_assignment_exception_redacts_embedded_batch_secret(monkeypatch, tmp
 
 
 class _EstimationFailureEth:
+    chain_id = 31337
+    gas_price = 1
+    max_priority_fee = 1
+
     def __init__(self, marker):
         self.marker = marker
+        self.estimation_calls = 0
+
+    def get_transaction_count(self, address, block_identifier):
+        return 0
 
     def estimate_gas(self, transaction):
+        self.estimation_calls += 1
         raise RuntimeError(self.marker)
 
 
@@ -759,16 +768,24 @@ def test_cli_transaction_estimation_failure_redacts_batch_secret(monkeypatch, tm
         "assignAuditTestDataset",
         lambda *args, **kwargs: _BuildableAssignment(),
     )
-    monkeypatch.setattr(DinContext, "get_tx_params", lambda self: {})
+    # Transactions now use the SDK session, not DinContext.get_tx_params.
+    # Keep the real SDK send/estimation path; replace only its RPC boundary.
+    w3 = _EstimationFailureW3(marker)
+    account = DummyAccount()
+    session = SimpleNamespace(
+        network="local", w3=w3, address=account.address, signer=account,
+    )
+    monkeypatch.setattr(DinContext, "session", property(lambda self: session))
     monkeypatch.setattr(
         DinContext,
         "get_en_w3_account_console",
-        lambda self, *a, **kw: ("local", _EstimationFailureW3(marker), DummyAccount(), self.console),
+        lambda self, *a, **kw: ("local", w3, account, self.console),
     )
 
     result = runner.invoke(main_app, _cli_args(1, _make_test_data_file(tmp_path)))
 
     assert result.exit_code == 1, result.output
+    assert w3.eth.estimation_calls == 1
     assert "Transaction estimation failed." in result.output
     assert "--batch 0" in result.output
     _assert_output_redacts_batch_secrets(result.output)

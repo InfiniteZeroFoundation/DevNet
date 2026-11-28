@@ -32,7 +32,7 @@ contract MockTaskAuditorReal {
     constructor(DinToken din_) { din = din_; }
 
     function depositRewards(uint256 gi, uint256 amount) external {
-        din.transferFrom(msg.sender, address(this), amount);
+        require(din.transferFrom(msg.sender, address(this), amount), "DIN transfer failed");
         giRewardPool[gi] += amount;
     }
 }
@@ -48,7 +48,7 @@ contract EvilTaskAuditor {
     constructor(DinToken din_) { din = din_; }
 
     function depositRewards(uint256, uint256 amount) external {
-        din.transferFrom(msg.sender, address(this), amount);
+        require(din.transferFrom(msg.sender, address(this), amount), "DIN transfer failed");
     }
 }
 

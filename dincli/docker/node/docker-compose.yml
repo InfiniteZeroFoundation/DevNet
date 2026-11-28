@@ -58,6 +58,8 @@ services:
     environment:
       XDG_CONFIG_HOME: ${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}/config
       XDG_CACHE_HOME: ${DIN_STATE_DIR:?set DIN_STATE_DIR to an absolute host path in .env}/cache
+      # Optional: task-coordinator addresses whose GI phase /health reports.
+      DIN_DIND_HEALTH_MODELS: ${DIN_DIND_HEALTH_MODELS:-}
 
     volumes:
       # The Docker socket: lets din-node spawn worker containers as siblings on
@@ -72,7 +74,19 @@ services:
     # Survive host reboots / daemon restarts; `docker compose down` still stops it.
     restart: unless-stopped
 
-    # Inherited from the image (CMD ["sleep", "infinity"]): dincli is a CLI, not
-    # yet a daemon, so the container idles and operators `exec` in. Stated here
-    # for clarity; remove when the `dind` daemon becomes the entrypoint.
-    command: ["sleep", "infinity"]
+    # din-node now runs the dind daemon as the entrypoint (CMD ["dind","start"]
+    # in the Dockerfile). The container is the long-lived daemon process.
+    command: ["dind", "start"]
+
+    # A failing check marks the container "unhealthy" (visible in `docker ps`
+    # and `docker inspect`). It does NOT trigger `restart: unless-stopped`
+    # above — plain `docker compose` restart policies react to container
+    # termination only, not health status (that only drives restarts in
+    # Swarm). Operators who want restart-on-unhealthy need an external
+    # watchdog acting on this status.
+    healthcheck:
+      test: ["CMD", "python", "-m", "dincli.dind.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -448,14 +448,16 @@ contract RewardEngineTest is Test {
         assertEq(ta.modelId(), 1);
         vm.prank(admin);
         registry.disableModel(0);
-        (, bytes memory beforeParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        (bool beforeParamsOk, bytes memory beforeParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        assertTrue(beforeParamsOk, "params() call failed before startGI");
         vm.startPrank(modelOwner);
         vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
         tc.startGI(1);
         vm.expectRevert(abi.encodeWithSelector(TA_ModelDisabled.selector, 0));
         tc.startGI(1, 77);
         vm.stopPrank();
-        (, bytes memory afterParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        (bool afterParamsOk, bytes memory afterParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        assertTrue(afterParamsOk, "params() call failed after startGI");
         assertEq(afterParams, beforeParams);
         assertEq(tc.GI(), 0);
         assertEq(uint256(tc.GIstate()), uint256(GIstates.GenesisModelCreated));
@@ -507,7 +509,8 @@ contract RewardEngineTest is Test {
         bytes memory callData = disabledStatus
             ? abi.encodeWithSignature("modelDisabled(uint256)", 0)
             : abi.encodeWithSignature("getModelIdByTaskAuditor(address)", address(ta));
-        (, bytes memory beforeParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        (bool beforeParamsOk, bytes memory beforeParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        assertTrue(beforeParamsOk, "params() call failed before startGI");
         uint256 beforeGI = tc.GI();
         GIstates beforeState = tc.GIstate();
         vm.mockCallRevert(address(registry), callData, bytes("registry unavailable"));
@@ -517,7 +520,8 @@ contract RewardEngineTest is Test {
         vm.expectRevert(bytes("registry unavailable"));
         tc.startGI(1, 77);
         vm.stopPrank();
-        (, bytes memory afterParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        (bool afterParamsOk, bytes memory afterParams) = address(ta).staticcall(abi.encodeWithSignature("params()"));
+        assertTrue(afterParamsOk, "params() call failed after startGI");
         assertEq(afterParams, beforeParams);
         assertEq(tc.GI(), beforeGI);
         assertEq(uint256(tc.GIstate()), uint256(beforeState));
